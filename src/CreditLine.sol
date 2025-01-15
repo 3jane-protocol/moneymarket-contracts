@@ -10,7 +10,6 @@ import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 /// @title CreditLine
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
-/// @notice The Morpho contract.
 contract CreditLine is ICreditLine {
     /// @inheritdoc ICreditLine
     address public owner;
@@ -23,9 +22,8 @@ contract CreditLine is ICreditLine {
 
     /* CONSTRUCTOR */
 
-    /// @param newOwner The new owner of the contract.
     constructor(address newMorpho, address newOwner, address newOzd) {
-        require(morpho != address(0), ErrorsLib.ZERO_ADDRESS);
+        require(newMorpho != address(0), ErrorsLib.ZERO_ADDRESS);
         require(newOwner != address(0), ErrorsLib.ZERO_ADDRESS);
         require(newOzd != address(0), ErrorsLib.ZERO_ADDRESS);
         morpho = newMorpho;
