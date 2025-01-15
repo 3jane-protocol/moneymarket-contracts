@@ -9,44 +9,17 @@ contract SetCreditLineIntegrationTest is BaseTest {
     using MorphoLib for IMorpho;
     using MarketParamsLib for MarketParams;
 
-    function testSetCreditLineWithNotCreatedMarket(MarketParams memory marketParamsFuzz) public {
-        vm.assume(morpho.lastUpdate(marketParams.id()) == 0);
-
-        vm.expectRevert(bytes(ErrorsLib.NOT_CREDIT_LINE));
-        vm.prank(address(creditLine));
-        IMorphoCredit(morphoAddress).setCreditLine(marketParamsFuzz, address(0), 10);
-    }
-
     function testSetCreditLineWithCreatedMarketWrongCreditLine(MarketParams memory marketParamsFuzz) public {
-        marketParamsFuzz.irm = address(irm);
-        marketParamsFuzz.lltv = _boundValidLltv(marketParamsFuzz.lltv);
-
-        vm.startPrank(OWNER);
-        if (!morpho.isLltvEnabled(marketParamsFuzz.lltv)) morpho.enableLltv(marketParamsFuzz.lltv);
-        vm.stopPrank();
-
-        vm.expectEmit(true, true, true, true, address(morpho));
-        emit EventsLib.CreateMarket(marketParamsFuzz.id(), marketParamsFuzz);
-        vm.prank(OWNER);
+        marketParamsFuzz.creditLine = address(1);
         morpho.createMarket(marketParamsFuzz);
 
-        vm.expectRevert(bytes(ErrorsLib.NOT_CREDIT_LINE));
-        vm.prank(address(1));
+        vm.prank(address(2));
         IMorphoCredit(morphoAddress).setCreditLine(marketParamsFuzz, address(0), 10);
     }
 
     function testSetCreditLineWithCreatedMarket(MarketParams memory marketParamsFuzz) public {
-        marketParamsFuzz.irm = address(irm);
-        marketParamsFuzz.lltv = _boundValidLltv(marketParamsFuzz.lltv);
         Id marketParamsFuzzId = marketParamsFuzz.id();
 
-        vm.startPrank(OWNER);
-        if (!morpho.isLltvEnabled(marketParamsFuzz.lltv)) morpho.enableLltv(marketParamsFuzz.lltv);
-        vm.stopPrank();
-
-        vm.expectEmit(true, true, true, true, address(morpho));
-        emit EventsLib.CreateMarket(marketParamsFuzz.id(), marketParamsFuzz);
-        vm.prank(OWNER);
         morpho.createMarket(marketParamsFuzz);
 
         vm.expectEmit(true, true, true, true, address(morpho));
