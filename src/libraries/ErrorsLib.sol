@@ -21,6 +21,9 @@ library ErrorsLib {
     /// @notice Thrown when the IRM is not enabled at market creation.
     string internal constant IRM_NOT_ENABLED = "IRM not enabled";
 
+    /// @notice Thrown when the caller is not the market's credit line.
+    string internal constant NOT_CREDIT_LINE = "not credit line";
+
     /// @notice Thrown when the LLTV is not enabled at market creation.
     string internal constant LLTV_NOT_ENABLED = "LLTV not enabled";
 
