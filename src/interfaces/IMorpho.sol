@@ -358,3 +358,12 @@ interface IMorpho is IMorphoBase {
     /// 2s by creating a wrapper contract with functions that take `id` as input instead of `marketParams`.
     function idToMarketParams(Id id) external view returns (MarketParams memory);
 }
+
+/// @title IMorphoCredit
+/// @author Morpho Labs
+/// @custom:contact security@morpho.org
+/// @dev Use this interface for Morpho to have access to all the functions with the appropriate function signatures.
+interface IMorphoCredit {
+    /// @notice Sets the collateral of an address
+    function setCreditLine(MarketParams memory marketParams, address borrower, uint256 credit) external;
+}

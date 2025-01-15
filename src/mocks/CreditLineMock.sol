@@ -2,11 +2,12 @@
 pragma solidity ^0.8.0;
 
 import {ICreditLine} from "../interfaces/ICreditLine.sol";
+import {MarketParams} from "../interfaces/IMorpho.sol";
 
 contract CreditLineMock is ICreditLine {
-    uint256 public price;
+    mapping(address account => uint256) public creditLines;
 
-    function setPrice(uint256 newPrice) external {
-        price = newPrice;
+    function setCreditLine(MarketParams memory marketParams, address borrower, uint256 credit) external {
+        creditLines[borrower] = credit;
     }
 }

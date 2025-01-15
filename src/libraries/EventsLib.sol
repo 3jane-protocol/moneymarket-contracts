@@ -21,6 +21,12 @@ library EventsLib {
     /// @param newFeeRecipient The new fee recipient.
     event SetFeeRecipient(address indexed newFeeRecipient);
 
+    /// @notice Emitted when setting a credit line.
+    /// @param id The market id.
+    /// @param borrower The borrower.
+    /// @param credit The credit size.
+    event SetCreditLine(Id indexed id, address indexed borrower, uint256 credit);
+
     /// @notice Emitted when enabling an IRM.
     /// @param irm The IRM that was enabled.
     event EnableIrm(address indexed irm);

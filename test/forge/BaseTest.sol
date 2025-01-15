@@ -12,6 +12,7 @@ import {OracleMock} from "../../src/mocks/OracleMock.sol";
 import {CreditLineMock} from "../../src/mocks/CreditLineMock.sol";
 
 import "../../src/Morpho.sol";
+import "../../src/MorphoCredit.sol";
 import {Math} from "./helpers/Math.sol";
 import {SigUtils} from "./helpers/SigUtils.sol";
 import {ArrayLib} from "./helpers/ArrayLib.sol";
@@ -49,6 +50,8 @@ contract BaseTest is Test {
     address internal OWNER;
     address internal FEE_RECIPIENT;
 
+    address internal morphoAddress;
+
     IMorpho internal morpho;
     ERC20Mock internal loanToken;
     ERC20Mock internal collateralToken;
@@ -69,7 +72,8 @@ contract BaseTest is Test {
         OWNER = makeAddr("Owner");
         FEE_RECIPIENT = makeAddr("FeeRecipient");
 
-        morpho = IMorpho(address(new Morpho(OWNER)));
+        morphoAddress = address(new MorphoCredit(OWNER));
+        morpho = IMorpho(morphoAddress);
 
         loanToken = new ERC20Mock();
         vm.label(address(loanToken), "LoanToken");
