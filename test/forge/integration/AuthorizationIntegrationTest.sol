@@ -13,10 +13,11 @@ contract AuthorizationIntegrationTest is BaseTest {
         IMorphoCredit(morphoAddress).setAuthorizationV2(address(2), true);
     }
 
-    function testSetAuthorizationV2(address addressFuzz) public {
+    function testSetAuthorizationV2() public {
         address helper = address(1);
         address authorizee = address(2);
 
+        vm.prank(OWNER);
         IMorphoCredit(morphoAddress).setHelper(helper);
         vm.prank(helper);
         IMorphoCredit(morphoAddress).setAuthorizationV2(authorizee, true);
