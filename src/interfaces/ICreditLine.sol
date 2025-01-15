@@ -16,6 +16,9 @@ interface ICreditLine {
     /// @notice The defender
     function ozd() external view returns (address);
 
+    /// @notice The zktls prover
+    function prover() external view returns (address);
+
     /// @notice The morpho contract.
     function morpho() external view returns (address);
 
@@ -28,6 +31,11 @@ interface ICreditLine {
     /// @dev Warning: No two-step transfer ownership.
     /// @dev Warning: The ozd can be set to the zero address.
     function setOzd(address newOzd) external;
+
+    /// @notice Sets `newProver` as `prover` of the contract.
+    /// @dev Warning: No two-step transfer ownership.
+    /// @dev Warning: The prover can be set to the zero address.
+    function setProver(address newProver) external;
 
     /// @notice Sets credit line
     function setCreditLine(MarketParams memory marketParams, address borrower, uint256 credit) external;

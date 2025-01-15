@@ -18,6 +18,9 @@ library ErrorsLib {
     /// @notice Thrown when the caller is not the owner or ozd.
     string internal constant NOT_OWNER_OR_OZD = "not owner or ozd";
 
+    /// @notice Thrown when the TVV to enable exceeds the maximum TVV.
+    string internal constant UNSAFE_TVV = "max tvv exceeded";
+
     /// @notice Thrown when the LLTV to enable exceeds the maximum LLTV.
     string internal constant MAX_LLTV_EXCEEDED = "max LLTV exceeded";
 
