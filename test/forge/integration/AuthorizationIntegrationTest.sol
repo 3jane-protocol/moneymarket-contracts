@@ -4,6 +4,31 @@ pragma solidity ^0.8.0;
 import "../BaseTest.sol";
 
 contract AuthorizationIntegrationTest is BaseTest {
+    function testSetAuthorizationV2NotHelper() public {
+        address helper = address(1);
+
+        IMorphoCredit(morphoAddress).setHelper(helper);
+
+        vm.expectRevert(bytes(ErrorsLib.NOT_HELPER));
+        IMorphoCredit(morphoAddress).setAuthorizationV2(address(2), true);
+    }
+
+    function testSetAuthorizationV2(address addressFuzz) public {
+        address helper = address(1);
+        address authorizee = address(2);
+
+        IMorphoCredit(morphoAddress).setHelper(helper);
+        vm.prank(helper);
+        IMorphoCredit(morphoAddress).setAuthorizationV2(authorizee, true);
+
+        assertTrue(morpho.isAuthorized(authorizee, helper));
+
+        vm.prank(helper);
+        morpho.setAuthorization(authorizee, false);
+
+        assertFalse(morpho.isAuthorized(authorizee, helper));
+    }
+
     function testSetAuthorization(address addressFuzz) public {
         vm.assume(addressFuzz != address(this));
 
