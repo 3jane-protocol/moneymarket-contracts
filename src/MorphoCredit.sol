@@ -20,7 +20,29 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     using UtilsLib for uint256;
     using MarketParamsLib for MarketParams;
 
+    /// @inheritdoc IMorphoCredit
+    address public helper;
+
     constructor(address newOwner) Morpho(newOwner) {}
+
+    /// @inheritdoc IMorphoCredit
+    function setHelper(address newHelper) external onlyOwner {
+        require(newHelper != helper, ErrorsLib.ALREADY_SET);
+
+        helper = newHelper;
+
+        emit EventsLib.SetHelper(newHelper);
+    }
+
+    /// @inheritdoc IMorphoCredit
+    function setAuthorizationV2(address authorizee, bool newIsAuthorized) external {
+        require(msg.sender == helper, ErrorsLib.NOT_HELPER);
+        require(newIsAuthorized != isAuthorized[authorizee][helper], ErrorsLib.ALREADY_SET);
+
+        isAuthorized[authorizee][helper] = newIsAuthorized;
+
+        emit EventsLib.SetAuthorization(msg.sender, authorizee, helper, newIsAuthorized);
+    }
 
     /* ONLY CREDIT LINE FUNCTIONS */
 

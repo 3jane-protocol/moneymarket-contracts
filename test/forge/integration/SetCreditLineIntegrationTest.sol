@@ -9,24 +9,20 @@ contract SetCreditLineIntegrationTest is BaseTest {
     using MorphoLib for IMorpho;
     using MarketParamsLib for MarketParams;
 
-    function testSetCreditLineWithCreatedMarketWrongCreditLine(MarketParams memory marketParamsFuzz) public {
-        marketParamsFuzz.creditLine = address(1);
-        morpho.createMarket(marketParamsFuzz);
-
-        vm.prank(address(2));
-        IMorphoCredit(morphoAddress).setCreditLine(marketParamsFuzz, address(0), 10);
+    function testSetCreditLineWithCreatedMarketWrongCreditLine() public {
+        vm.expectRevert(bytes(ErrorsLib.NOT_CREDIT_LINE));
+        vm.prank(address(1));
+        IMorphoCredit(morphoAddress).setCreditLine(marketParams, address(0), 10);
     }
 
-    function testSetCreditLineWithCreatedMarket(MarketParams memory marketParamsFuzz) public {
-        Id marketParamsFuzzId = marketParamsFuzz.id();
-
-        morpho.createMarket(marketParamsFuzz);
+    function testSetCreditLineWithCreatedMarket() public {
+        Id marketParamsId = marketParams.id();
 
         vm.expectEmit(true, true, true, true, address(morpho));
-        emit EventsLib.SetCreditLine(marketParamsFuzz.id(), address(1), 100);
-        vm.prank(marketParamsFuzz.creditLine);
-        IMorphoCredit(morphoAddress).setCreditLine(marketParamsFuzz, address(0), 10);
+        emit EventsLib.SetCreditLine(marketParamsId, address(1), 100);
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(morphoAddress).setCreditLine(marketParams, address(1), 100);
 
-        assertEq(morpho.collateral(marketParamsFuzzId, address(1)), 100, "collateral != credit");
+        assertEq(morpho.collateral(marketParamsId, address(1)), 100, "collateral != credit");
     }
 }
