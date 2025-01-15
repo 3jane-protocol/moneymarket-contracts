@@ -6,9 +6,29 @@ import {MarketParams} from "./IMorpho.sol";
 /// @title ICreditLine
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
-/// @notice Interface that oracles used by Morpho must implement.
-/// @dev It is the user's responsibility to select markets with safe oracles.
+/// @notice Interface that credit line used by Morpho must implement.
+/// @dev It is the user's responsibility to select markets with safe credit line.
 interface ICreditLine {
+    /// @notice The owner of the contract.
+    /// @dev It has the power to change the owner.
+    function owner() external view returns (address);
+
+    /// @notice The defender
+    function ozd() external view returns (address);
+
+    /// @notice The morpho contract.
+    function morpho() external view returns (address);
+
+    /// @notice Sets `newOwner` as `owner` of the contract.
+    /// @dev Warning: No two-step transfer ownership.
+    /// @dev Warning: The owner can be set to the zero address.
+    function setOwner(address newOwner) external;
+
+    /// @notice Sets `newOzd` as `ozd` of the contract.
+    /// @dev Warning: No two-step transfer ownership.
+    /// @dev Warning: The ozd can be set to the zero address.
+    function setOzd(address newOzd) external;
+
     /// @notice Sets credit line
     function setCreditLine(MarketParams memory marketParams, address borrower, uint256 credit) external;
 }

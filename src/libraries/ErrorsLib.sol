@@ -15,6 +15,9 @@ library ErrorsLib {
     /// @notice Thrown when the caller is not the market's helper.
     string internal constant NOT_HELPER = "not helper";
 
+    /// @notice Thrown when the caller is not the owner or ozd.
+    string internal constant NOT_OWNER_OR_OZD = "not owner or ozd";
+
     /// @notice Thrown when the LLTV to enable exceeds the maximum LLTV.
     string internal constant MAX_LLTV_EXCEEDED = "max LLTV exceeded";
 
