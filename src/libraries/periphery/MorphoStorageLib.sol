@@ -28,6 +28,7 @@ library MorphoStorageLib {
     uint256 internal constant ORACLE_OFFSET = 2;
     uint256 internal constant IRM_OFFSET = 3;
     uint256 internal constant LLTV_OFFSET = 4;
+    uint256 internal constant CREDIT_LINE_OFFSET = 5;
 
     uint256 internal constant SUPPLY_SHARES_OFFSET = 0;
     uint256 internal constant BORROW_SHARES_AND_COLLATERAL_OFFSET = 1;
@@ -105,5 +106,9 @@ library MorphoStorageLib {
 
     function idToLltvSlot(Id id) internal pure returns (bytes32) {
         return bytes32(uint256(keccak256(abi.encode(id, ID_TO_MARKET_PARAMS_SLOT))) + LLTV_OFFSET);
+    }
+
+    function idToCreditLineSlot(Id id) internal pure returns (bytes32) {
+        return bytes32(uint256(keccak256(abi.encode(id, ID_TO_MARKET_PARAMS_SLOT))) + CREDIT_LINE_OFFSET);
     }
 }

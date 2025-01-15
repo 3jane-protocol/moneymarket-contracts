@@ -93,5 +93,6 @@ contract CreateMarketIntegrationTest is BaseTest {
         assertEq(marketParamsFuzz.oracle, params.oracle, "oracle != oracle");
         assertEq(marketParamsFuzz.irm, params.irm, "irm != irm");
         assertEq(marketParamsFuzz.lltv, params.lltv, "lltv != lltv");
+        assertEq(marketParamsFuzz.creditLine, params.creditLine, "creditLine != creditLine");
     }
 }
