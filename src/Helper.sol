@@ -37,8 +37,11 @@ contract Helper is IHelper {
     /// @inheritdoc IHelper
     function deposit(IERC4626 vault, uint256 assets, address receiver) external returns (uint256) {
         address vaultAsset = vault.asset();
+        address underlying = IAaveToken(vaultAsset).UNDERLYING_ASSET_ADDRESS();
 
-        IAaveMarket(aaveMarket).supply(IAaveToken(vaultAsset).UNDERLYING_ASSET_ADDRESS(), assets, address(this), 0);
+        IERC20(underlying).safeTransferFrom(msg.sender, address(this), assets);
+
+        IAaveMarket(aaveMarket).supply(underlying, assets, address(this), 0);
 
         IERC20(vaultAsset).approve(address(vault), assets);
 
