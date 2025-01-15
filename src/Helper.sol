@@ -2,9 +2,11 @@
 pragma solidity >=0.5.0;
 
 import {IMorpho, IMorphoCredit} from "./interfaces/IMorpho.sol";
-import {IAaveMarket} from "./interfaces/IAaveMarket.sol";
+import {IAaveMarket, IAaveToken} from "./interfaces/IAaveMarket.sol";
 import {MarketParams} from "./interfaces/IMorpho.sol";
 import {IHelper} from "./interfaces/IHelper.sol";
+
+import {IERC4626} from "../lib/forge-std/src/interfaces/IERC4626.sol";
 
 import {IERC20} from "./interfaces/IERC20.sol";
 
@@ -30,6 +32,32 @@ contract Helper is IHelper {
         require(newAaveMarket != address(0), ErrorsLib.ZERO_ADDRESS);
         morpho = newMorpho;
         aaveMarket = newAaveMarket;
+    }
+
+    /// @inheritdoc IHelper
+    function deposit(IERC4626 vault, uint256 assets, address receiver) external returns (uint256) {
+        address vaultAsset = vault.asset();
+
+        IAaveMarket(aaveMarket).supply(IAaveToken(vaultAsset).UNDERLYING_ASSET_ADDRESS(), assets, address(this), 0);
+
+        IERC20(vaultAsset).approve(address(vault), assets);
+
+        uint256 shares = vault.deposit(assets, receiver);
+
+        return shares;
+    }
+
+    /// @inheritdoc IHelper
+    function redeem(IERC4626 vault, uint256 shares, address receiver, address owner) external returns (uint256) {
+        address vaultAsset = vault.asset();
+
+        IERC20(address(vault)).safeTransferFrom(msg.sender, address(this), shares);
+
+        uint256 assets = vault.redeem(shares, address(this), owner);
+
+        IAaveMarket(aaveMarket).withdraw(IAaveToken(vaultAsset).UNDERLYING_ASSET_ADDRESS(), assets, receiver);
+
+        return assets;
     }
 
     /// @inheritdoc IHelper
@@ -64,9 +92,9 @@ contract Helper is IHelper {
         IERC20 collateralToken = IERC20(marketParams.collateralToken);
         collateralToken.safeTransferFrom(msg.sender, address(this), assets);
 
-        IAaveMarket(aaveMarket).supply(marketParams.collateralToken, assets, address(this), 0);
+        IAaveMarket(aaveMarket).supply(address(collateralToken), assets, address(this), 0);
 
-        collateralToken.approve(morpho, assets);
+        IERC20(marketParams.loanToken).approve(morpho, assets);
 
         (assets, shares) = IMorpho(morpho).repay(marketParams, assets, shares, onBehalf, data);
 

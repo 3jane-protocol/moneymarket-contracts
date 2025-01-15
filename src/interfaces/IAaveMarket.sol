@@ -11,3 +11,11 @@ interface IAaveMarket {
     /// @notice Withdraw
     function withdraw(address asset, uint256 amount, address to) external;
 }
+
+/// @title IAaveToken
+/// @author Morpho Labs
+/// @custom:contact security@morpho.org
+interface IAaveToken {
+    /// @notice UNDERLYING_ASSET_ADDRESS
+    function UNDERLYING_ASSET_ADDRESS() external view returns (address);
+}
