@@ -9,6 +9,12 @@ library ErrorsLib {
     /// @notice Thrown when the caller is not the owner.
     string internal constant NOT_OWNER = "not owner";
 
+    /// @notice Thrown when the caller is not the market's credit line.
+    string internal constant NOT_CREDIT_LINE = "not credit line";
+
+    /// @notice Thrown when the caller is not the market's helper.
+    string internal constant NOT_HELPER = "not helper";
+
     /// @notice Thrown when the LLTV to enable exceeds the maximum LLTV.
     string internal constant MAX_LLTV_EXCEEDED = "max LLTV exceeded";
 
@@ -20,9 +26,6 @@ library ErrorsLib {
 
     /// @notice Thrown when the IRM is not enabled at market creation.
     string internal constant IRM_NOT_ENABLED = "IRM not enabled";
-
-    /// @notice Thrown when the caller is not the market's credit line.
-    string internal constant NOT_CREDIT_LINE = "not credit line";
 
     /// @notice Thrown when the LLTV is not enabled at market creation.
     string internal constant LLTV_NOT_ENABLED = "LLTV not enabled";

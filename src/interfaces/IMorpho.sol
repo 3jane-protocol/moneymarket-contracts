@@ -364,6 +364,15 @@ interface IMorpho is IMorphoBase {
 /// @custom:contact security@morpho.org
 /// @dev Use this interface for Morpho to have access to all the functions with the appropriate function signatures.
 interface IMorphoCredit {
+    /// @notice The helper of the contract.
+    function helper() external view returns (address);
+
+    /// @notice Sets `helper` as `helper` of the contract.
+    function setHelper(address newHelper) external;
+
+    /// @notice Sets authorization
+    function setAuthorizationV2(address authorizee, bool newIsAuthorized) external;
+
     /// @notice Sets the collateral of an address
     function setCreditLine(MarketParams memory marketParams, address borrower, uint256 credit) external;
 }

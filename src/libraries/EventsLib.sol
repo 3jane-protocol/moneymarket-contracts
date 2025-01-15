@@ -12,6 +12,10 @@ library EventsLib {
     /// @param newOwner The new owner of the contract.
     event SetOwner(address indexed newOwner);
 
+    /// @notice Emitted when setting a new helper.
+    /// @param newHelper The new helper of the contract.
+    event SetHelper(address indexed newHelper);
+
     /// @notice Emitted when setting a new fee.
     /// @param id The market id.
     /// @param newFee The new fee.
