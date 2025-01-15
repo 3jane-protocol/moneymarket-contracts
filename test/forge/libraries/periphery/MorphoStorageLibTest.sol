@@ -57,7 +57,7 @@ contract MorphoStorageLibTest is BaseTest {
 
         morpho.setAuthorizationWithSig(authorization, sig);
 
-        bytes32[] memory slots = new bytes32[](16);
+        bytes32[] memory slots = new bytes32[](17);
         slots[0] = MorphoStorageLib.ownerSlot();
         slots[1] = MorphoStorageLib.feeRecipientSlot();
         slots[2] = MorphoStorageLib.positionSupplySharesSlot(id, address(this));
@@ -74,6 +74,7 @@ contract MorphoStorageLibTest is BaseTest {
         slots[13] = MorphoStorageLib.idToOracleSlot(id);
         slots[14] = MorphoStorageLib.idToIrmSlot(id);
         slots[15] = MorphoStorageLib.idToLltvSlot(id);
+        slots[16] = MorphoStorageLib.idToCreditLineSlot(id);
 
         bytes32[] memory values = morpho.extSloads(slots);
 
@@ -100,5 +101,6 @@ contract MorphoStorageLibTest is BaseTest {
         assertEq(abi.decode(abi.encode(values[13]), (address)), expectedParams.oracle);
         assertEq(abi.decode(abi.encode(values[14]), (address)), expectedParams.irm);
         assertEq(uint256(values[15]), expectedParams.lltv);
+        assertEq(abi.decode(abi.encode(values[16]), (address)), expectedParams.creditLine);
     }
 }

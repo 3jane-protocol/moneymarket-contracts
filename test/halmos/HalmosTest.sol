@@ -8,6 +8,7 @@ import {IMorpho} from "../../src/interfaces/IMorpho.sol";
 import {IrmMock} from "../../src/mocks/IrmMock.sol";
 import {ERC20Mock} from "../../src/mocks/ERC20Mock.sol";
 import {OracleMock} from "../../src/mocks/OracleMock.sol";
+import {CreditLineMock} from "../../src/mocks/CreditLineMock.sol";
 import {FlashBorrowerMock} from "../../src/mocks/FlashBorrowerMock.sol";
 
 import "../../src/Morpho.sol";
@@ -27,6 +28,7 @@ contract HalmosTest is SymTest, Test {
     OracleMock internal oracle;
     IrmMock internal irm;
     uint256 internal lltv;
+    CreditLineMock internal creditLine;
 
     MarketParams internal marketParams;
 
@@ -43,8 +45,11 @@ contract HalmosTest is SymTest, Test {
         oracle.setPrice(ORACLE_PRICE_SCALE);
         irm = new IrmMock();
         lltv = svm.createUint256("lltv");
+        creditLine = new CreditLineMock();
 
-        marketParams = MarketParams(address(loanToken), address(collateralToken), address(oracle), address(irm), lltv);
+        marketParams = MarketParams(
+            address(loanToken), address(collateralToken), address(oracle), address(irm), lltv, address(creditLine)
+        );
 
         vm.startPrank(owner);
         morpho.enableIrm(address(irm));
@@ -63,6 +68,7 @@ contract HalmosTest is SymTest, Test {
         svm.enableSymbolicStorage(address(collateralToken));
         svm.enableSymbolicStorage(address(oracle));
         svm.enableSymbolicStorage(address(irm));
+        svm.enableSymbolicStorage(address(creditLine));
         svm.enableSymbolicStorage(address(otherToken));
         svm.enableSymbolicStorage(address(flashBorrower));
 

@@ -38,7 +38,8 @@ contract BaseInvariantTest is InvariantTest {
                 collateralToken: address(collateralToken),
                 oracle: address(oracle),
                 irm: address(irm),
-                lltv: MAX_TEST_LLTV / i
+                lltv: MAX_TEST_LLTV / i,
+                creditLine: address(creditLine)
             });
 
             vm.startPrank(OWNER);
