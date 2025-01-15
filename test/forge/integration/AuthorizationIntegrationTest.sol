@@ -7,6 +7,7 @@ contract AuthorizationIntegrationTest is BaseTest {
     function testSetAuthorizationV2NotHelper() public {
         address helper = address(1);
 
+        vm.prank(OWNER);
         IMorphoCredit(morphoAddress).setHelper(helper);
 
         vm.expectRevert(bytes(ErrorsLib.NOT_HELPER));
@@ -19,13 +20,14 @@ contract AuthorizationIntegrationTest is BaseTest {
 
         vm.prank(OWNER);
         IMorphoCredit(morphoAddress).setHelper(helper);
+
         vm.prank(helper);
         IMorphoCredit(morphoAddress).setAuthorizationV2(authorizee, true);
 
         assertTrue(morpho.isAuthorized(authorizee, helper));
 
         vm.prank(helper);
-        morpho.setAuthorization(authorizee, false);
+        IMorphoCredit(morphoAddress).setAuthorizationV2(authorizee, false);
 
         assertFalse(morpho.isAuthorized(authorizee, helper));
     }
