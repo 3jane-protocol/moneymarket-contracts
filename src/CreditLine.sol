@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0;
 
-import {IMorphoCredit} from "./interfaces/IMorpho.sol";
+import {Id, IMorphoCredit} from "./interfaces/IMorpho.sol";
 import {MarketParams} from "./interfaces/IMorpho.sol";
 import {ICreditLine} from "./interfaces/ICreditLine.sol";
 import {IProver} from "./interfaces/IProver.sol";
@@ -67,9 +67,9 @@ contract CreditLine is ICreditLine {
     }
 
     /// @inheritdoc ICreditLine
-    function setCreditLine(MarketParams memory marketParams, address borrower, uint256 credit) external {
+    function setCreditLine(Id id, address borrower, uint256 credit) external {
         require(msg.sender == owner || msg.sender == ozd, ErrorsLib.NOT_OWNER_OR_OZD);
         require(prover == address(0) || IProver(prover).isSafeTVV(borrower, credit), ErrorsLib.UNSAFE_TVV);
-        IMorphoCredit(morpho).setCreditLine(marketParams, borrower, credit);
+        IMorphoCredit(morpho).setCreditLine(id, borrower, credit);
     }
 }

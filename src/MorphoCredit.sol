@@ -47,10 +47,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /* ONLY CREDIT LINE FUNCTIONS */
 
     /// @inheritdoc IMorphoCredit
-    function setCreditLine(MarketParams memory marketParams, address borrower, uint256 credit) external {
-        require(marketParams.creditLine == msg.sender, ErrorsLib.NOT_CREDIT_LINE);
-
-        Id id = marketParams.id();
+    function setCreditLine(Id id, address borrower, uint256 credit) external {
+        require(idToMarketParams[id].creditLine == msg.sender, ErrorsLib.NOT_CREDIT_LINE);
 
         position[id][borrower].collateral = credit.toUint128();
 

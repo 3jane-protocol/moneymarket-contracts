@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
-import {MarketParams} from "../interfaces/IMorpho.sol";
+import {Id} from "../interfaces/IMorpho.sol";
 
 contract CreditLineMock {
     address public owner;
@@ -9,7 +9,7 @@ contract CreditLineMock {
 
     mapping(address account => uint256) public creditLines;
 
-    function setCreditLine(MarketParams memory marketParams, address borrower, uint256 credit) external {
+    function setCreditLine(Id id, address borrower, uint256 credit) external {
         creditLines[borrower] = credit;
     }
 
