@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0;
 
-import {MarketParams} from "./IMorpho.sol";
+import {Id} from "./IMorpho.sol";
 
 /// @title ICreditLine
 /// @author Morpho Labs
@@ -38,5 +38,5 @@ interface ICreditLine {
     function setProver(address newProver) external;
 
     /// @notice Sets credit line
-    function setCreditLine(MarketParams memory marketParams, address borrower, uint256 credit) external;
+    function setCreditLine(Id id, address borrower, uint256 credit) external;
 }
