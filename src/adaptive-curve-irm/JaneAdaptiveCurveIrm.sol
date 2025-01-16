@@ -10,7 +10,7 @@ import {ConstantsLib} from "./libraries/ConstantsLib.sol";
 import {MarketParamsLib} from "../../lib/morpho-blue/src/libraries/MarketParamsLib.sol";
 import {Id, Market, IMorpho} from "../../lib/morpho-blue/src/interfaces/IMorpho.sol";
 
-/// @title 3JaneAdaptiveCurveIrm
+/// @title JaneAdaptiveCurveIrm
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
 contract JaneAdaptiveCurveIrm is AdaptiveCurveIrm {
@@ -28,8 +28,8 @@ contract JaneAdaptiveCurveIrm is AdaptiveCurveIrm {
 
         ReserveDataLegacy memory reserveData = IAaveMarket(AAVE_MARKET).getReserveData(underlying);
 
-        int256 aaveBorrowRateBase = int128((reserveData.currentVariableBorrowRate / 1e9)) / int256(365 days);
-        int256 aaveBorrowRateAtTarget = aaveBorrowRateBase * ConstantsLib.CURVE_STEEPNESS / 1e18;
+        int256 aaveBorrowRateBase = int128((reserveData.currentVariableBorrowRate / 1e9)) / int128(365 days);
+        int256 aaveBorrowRateAtTarget = aaveBorrowRateBase * (ConstantsLib.CURVE_STEEPNESS / 1e18);
 
         return (avgRate, endRateAtTarget + aaveBorrowRateAtTarget);
     }
