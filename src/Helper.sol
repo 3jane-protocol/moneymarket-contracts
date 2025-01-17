@@ -41,6 +41,8 @@ contract Helper is IHelper {
 
         IERC20(underlying).safeTransferFrom(msg.sender, address(this), assets);
 
+        IERC20(underlying).approve(aaveMarket, assets);
+
         IAaveMarket(aaveMarket).supply(underlying, assets, address(this), 0);
 
         IERC20(vaultAsset).approve(address(vault), assets);
@@ -92,10 +94,13 @@ contract Helper is IHelper {
         address onBehalf,
         bytes calldata data
     ) external returns (uint256, uint256) {
-        IERC20 collateralToken = IERC20(marketParams.collateralToken);
-        collateralToken.safeTransferFrom(msg.sender, address(this), assets);
+        address collateralToken = marketParams.collateralToken;
 
-        IAaveMarket(aaveMarket).supply(address(collateralToken), assets, address(this), 0);
+        IERC20(collateralToken).safeTransferFrom(msg.sender, address(this), assets);
+
+        IERC20(collateralToken).approve(aaveMarket, assets);
+
+        IAaveMarket(aaveMarket).supply(collateralToken, assets, address(this), 0);
 
         IERC20(marketParams.loanToken).approve(morpho, assets);
 
