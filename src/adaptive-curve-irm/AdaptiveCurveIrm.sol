@@ -56,7 +56,7 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm {
     }
 
     /// @inheritdoc IIrm
-    function borrowRate(MarketParams memory marketParams, Market memory market) external returns (uint256) {
+    function borrowRate(MarketParams memory marketParams, Market memory market) public virtual returns (uint256) {
         require(msg.sender == MORPHO, ErrorsLib.NOT_MORPHO);
 
         Id id = marketParams.id();
@@ -73,7 +73,7 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm {
 
     /// @dev Returns avgRate and endRateAtTarget.
     /// @dev Assumes that the inputs `marketParams` and `id` match.
-    function _borrowRate(Id id, Market memory market) internal view virtual returns (uint256, int256) {
+    function _borrowRate(Id id, Market memory market) internal view returns (uint256, int256) {
         // Safe "unchecked" cast because the utilization is smaller than 1 (scaled by WAD).
         int256 utilization =
             int256(market.totalSupplyAssets > 0 ? market.totalBorrowAssets.wDivDown(market.totalSupplyAssets) : 0);

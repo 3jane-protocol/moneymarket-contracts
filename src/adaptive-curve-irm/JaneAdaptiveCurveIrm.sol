@@ -8,21 +8,25 @@ import {AdaptiveCurveIrm} from "./AdaptiveCurveIrm.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {ConstantsLib} from "./libraries/ConstantsLib.sol";
 import {MarketParamsLib} from "../../lib/morpho-blue/src/libraries/MarketParamsLib.sol";
-import {Id, Market, IMorpho} from "../../lib/morpho-blue/src/interfaces/IMorpho.sol";
+import {Id, Market, MarketParams, IMorpho} from "../../lib/morpho-blue/src/interfaces/IMorpho.sol";
 
 /// @title JaneAdaptiveCurveIrm
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
 contract JaneAdaptiveCurveIrm is AdaptiveCurveIrm {
+    using MarketParamsLib for MarketParams;
+
     address public immutable AAVE_MARKET;
+
+    mapping(Id => int256) public baseAtTarget;
 
     constructor(address morpho, address aaveMarket) AdaptiveCurveIrm(morpho) {
         require(aaveMarket != address(0), ErrorsLib.ZERO_ADDRESS);
         AAVE_MARKET = aaveMarket;
     }
 
-    function _borrowRate(Id id, Market memory market) internal view override returns (uint256, int256) {
-        (uint256 avgRate, int256 endRateAtTarget) = super._borrowRate(id, market);
+    function borrowRate(MarketParams memory marketParams, Market memory market) public override returns (uint256) {
+        Id id = marketParams.id();
 
         address underlying = IMorpho(MORPHO).idToMarketParams(id).collateralToken;
 
@@ -31,6 +35,9 @@ contract JaneAdaptiveCurveIrm is AdaptiveCurveIrm {
         int256 aaveBorrowRateBase = int128((reserveData.currentVariableBorrowRate / 1e9)) / int128(365 days);
         int256 aaveBorrowRateAtTarget = aaveBorrowRateBase * (ConstantsLib.CURVE_STEEPNESS / 1e18);
 
-        return (avgRate, endRateAtTarget + aaveBorrowRateAtTarget);
+        rateAtTarget[id] = rateAtTarget[id] + aaveBorrowRateAtTarget - baseAtTarget[id];
+        baseAtTarget[id] = aaveBorrowRateAtTarget;
+
+        return super.borrowRate(marketParams, market);
     }
 }
