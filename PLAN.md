@@ -69,6 +69,70 @@ Repos:
 
 - **Careful Integration**: Ensure that the new premium accrual logic integrates correctly with the existing interest accrual (`_accrueInterest`) and fee mechanisms in `Morpho.sol` to prevent double counting or other inconsistencies.
 
+**Potential Gas Cost Inefficiencies**
+
+*   **Increased Cost for Core User Actions:**
+    *   Functions like `borrow`, `repay`, and `liquidate` will now also call `_accrueIndividualBorrowerPremium`.
+    *   This involves additional SLOADs for `borrowerPremiumDetails`, arithmetic for premium calculation, and SSTOREs for updating `borrowerPremiumDetails.lastPremiumAccrualTime`, `position.borrowShares`, `market.totalBorrowAssets`, `market.totalSupplyAssets`, and fee-related storage.
+*   **Storage Operations:**
+    *   New `borrowerPremiumDetails` mapping means at least one new SLOAD and SSTORE per individual premium accrual.
+    *   Updates to market totals and user positions involve SSTOREs.
+*   **Arithmetic Operations:**
+    *   Premium calculation (scaling annual rate to elapsed time).
+    *   Asset-to-shares conversions for premium and fees involve divisions.
+*   **Function to Update `premiumRate`:**
+    *   Will trigger `_accrueIndividualBorrowerPremium` (with its costs) plus an SSTORE for the rate.
+*   **Keeper Mechanism:**
+    *   Keeper transactions for inactive borrowers will bear the full gas cost of individual accrual.
+
+**Testing Plan**
+
+**A. Unit Tests for New Logic (`_accrueIndividualBorrowerPremium` and related setters):**
+
+*   **`_accrueIndividualBorrowerPremium` Function:**
+    *   Correct Premium Calculation: Vary `premiumRate`, `elapsedTime`, `borrowShares`.
+    *   State Updates: Verify `position.borrowShares`, `market.totalBorrowAssets`, `market.totalSupplyAssets`, `borrowerPremiumDetails.lastPremiumAccrualTime`.
+    *   Fee Accrual: Verify fee calculation, `feeRecipient.supplyShares`, `market.totalSupplyShares`. Test zero/non-zero fees.
+    *   Event Emission: Verify `PremiumAccrued` event with correct parameters.
+    *   Edge Cases: Accrual with zero/small market totals.
+*   **Function to Set/Update `premiumRate` (e.g., `setBorrowerPremiumRate`):**
+    *   Authorization: Ensure only authorized entity can call.
+    *   Prior Accrual: Verify `_accrueIndividualBorrowerPremium` called with old rate before update.
+    *   State Update: Verify `borrowerPremiumDetails.premiumRate` updated.
+    *   Event Emission: Verify rate change event.
+    *   Test setting for new borrower and updating existing.
+
+**B. Integration Tests (Interaction with `MorphoCredit.sol` operations):**
+
+*   For `borrow`, `repay`, `liquidate`:
+    *   Ensure `_accrueIndividualBorrowerPremium` called *before* `_accrueInterest`.
+    *   Verify combined state changes are correct.
+    *   Health Checks: Ensure `_isHealthy` uses `borrowShares` including accrued premium.
+*   For `withdrawCollateral`, `withdraw`:
+    *   Ensure `_accrueIndividualBorrowerPremium` called for borrower if `_accrueInterest` is triggered.
+*   **`accrueInterest` (public function):**
+    *   Confirm it only triggers market-wide `_accrueInterest`, not individual premium accruals for all borrowers.
+*   **No Double Counting/Accrual:**
+    *   Rigorously test to prevent double counting of premiums or fees.
+
+**C. Scenario Tests:**
+
+*   **Lifecycle of a Loan with Premium:**
+    *   Supply -> Borrow (no premium) -> Set `premiumRate` -> User interaction (triggers accrual) -> Verify balances -> Change `premiumRate` -> Verify accrual/new rate -> Repay fully -> Liquidate (ensure premium accrued first).
+*   **Multiple Borrowers:** Market with different premium rates, verify independent accrual.
+*   **Impact on Suppliers:** Demonstrate `totalSupplyAssets` growth reflects base interest and all accrued premiums.
+
+**D. Gas Benchmarking:**
+
+*   Measure gas increase for `borrow`, `repay`, `liquidate` with/without active premium.
+*   Measure gas cost of `setBorrowerPremiumRate`.
+*   Measure gas cost of keeper-triggered `_accrueIndividualBorrowerPremium`.
+
+**E. Fuzz Testing:**
+
+*   Fuzz inputs to `_accrueIndividualBorrowerPremium`.
+*   Fuzz sequences of operations involving borrowers with premiums.
+
 **Further reading**
 
 1. 3.1.3, 3.1.4: https://www.3jane.xyz/pdf/whitepaper.pdf
