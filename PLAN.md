@@ -40,6 +40,7 @@ Repos:
       struct BorrowerPremiumDetails {
           uint128 lastPremiumAccrualTime; // Timestamp of the last premium accrual for this borrower
           uint128 premiumRate;            // Current risk premium rate (e.g., annual rate in WAD)
+          uint256 borrowAssetsAtLastAccrual; // Snapshot of borrow position at last premium accrual
       }
       mapping(Id => mapping(address => BorrowerPremiumDetails)) public borrowerPremiumDetails;
       ```
@@ -47,7 +48,7 @@ Repos:
     - Add validation to ensure `premiumRate <= MAX_PREMIUM_RATE` (e.g., 1e18 for 100% APR max).
 
 - **Premium Accrual Mechanism**:
-    - Create an internal function `_accrueIndividualBorrowerPremium(Id marketId, address borrower)` within `MorphoCredit.sol`.
+    - Create an internal function `_accrueBorrowerPremium(Id marketId, address borrower)` within `MorphoCredit.sol`.
     - This function will:
         - Calculate the premium owed by the `borrower` since `lastPremiumAccrualTime` based on their `borrowShares` and `premiumRate`.
         - Increase the `borrower`'s `position[marketId][borrower].borrowShares` by the shares equivalent of this accrued premium.
@@ -56,7 +57,7 @@ Repos:
         - Calculate and process protocol fees on the accrued premium, adding fee shares to `position[marketId][feeRecipient].supplyShares` and `market[marketId].totalSupplyShares`.
         - Update the `borrower`'s `lastPremiumAccrualTime`.
         - Emit an event detailing the premium accrual.
-    - The `_accrueIndividualBorrowerPremium` function will be called:
+    - The `_accrueBorrowerPremium` function will be called:
         - Before the standard market-wide `_accrueInterest` when a borrower interacts with their debt position (e.g., `borrow`, `repay`, `liquidate`).
         - When a borrower's `premiumRate` is updated.
         - Potentially by a keeper for inactive borrowers to ensure regular accrual.
@@ -74,7 +75,7 @@ Repos:
 **Potential Gas Cost Inefficiencies**
 
 *   **Increased Cost for Core User Actions:**
-    *   Functions like `borrow`, `repay`, and `liquidate` will now also call `_accrueIndividualBorrowerPremium`.
+    *   Functions like `borrow`, `repay`, and `liquidate` will now also call `_accrueBorrowerPremium`.
     *   This involves additional SLOADs for `borrowerPremiumDetails`, arithmetic for premium calculation, and SSTOREs for updating `borrowerPremiumDetails.lastPremiumAccrualTime`, `position.borrowShares`, `market.totalBorrowAssets`, `market.totalSupplyAssets`, and fee-related storage.
 *   **Storage Operations:**
     *   New `borrowerPremiumDetails` mapping means at least one new SLOAD and SSTORE per individual premium accrual.
@@ -83,15 +84,15 @@ Repos:
     *   Premium calculation (scaling annual rate to elapsed time).
     *   Asset-to-shares conversions for premium and fees involve divisions.
 *   **Function to Update `premiumRate`:**
-    *   Will trigger `_accrueIndividualBorrowerPremium` (with its costs) plus an SSTORE for the rate.
+    *   Will trigger `_accrueBorrowerPremium` (with its costs) plus an SSTORE for the rate.
 *   **Keeper Mechanism:**
     *   Keeper transactions for inactive borrowers will bear the full gas cost of individual accrual.
 
 **Testing Plan**
 
-**A. Unit Tests for New Logic (`_accrueIndividualBorrowerPremium` and related setters):**
+**A. Unit Tests for New Logic (`_accrueBorrowerPremium` and related setters):**
 
-*   **`_accrueIndividualBorrowerPremium` Function:**
+*   **`_accrueBorrowerPremium` Function:**
     *   Correct Premium Calculation: Vary `premiumRate`, `elapsedTime`, `borrowShares`.
     *   State Updates: Verify `position.borrowShares`, `market.totalBorrowAssets`, `market.totalSupplyAssets`, `borrowerPremiumDetails.lastPremiumAccrualTime`.
     *   Fee Accrual: Verify fee calculation, `feeRecipient.supplyShares`, `market.totalSupplyShares`. Test zero/non-zero fees.
@@ -101,7 +102,7 @@ Repos:
     *   Overflow Protection: Test with extreme time gaps.
 *   **Function to Set/Update `premiumRate` (e.g., `setBorrowerPremiumRate`):**
     *   Authorization: Ensure only authorized entity can call.
-    *   Prior Accrual: Verify `_accrueIndividualBorrowerPremium` called with old rate before update.
+    *   Prior Accrual: Verify `_accrueBorrowerPremium` called with old rate before update.
     *   State Update: Verify `borrowerPremiumDetails.premiumRate` updated.
     *   Event Emission: Verify rate change event.
     *   Test setting for new borrower and updating existing.
@@ -110,11 +111,11 @@ Repos:
 **B. Integration Tests (Interaction with `MorphoCredit.sol` operations):**
 
 *   For `borrow`, `repay`, `liquidate`:
-    *   Ensure `_accrueIndividualBorrowerPremium` called *before* `_accrueInterest`.
+    *   Ensure `_accrueBorrowerPremium` called *before* `_accrueInterest`.
     *   Verify combined state changes are correct.
     *   Health Checks: Ensure `_isHealthy` uses `borrowShares` including accrued premium.
 *   For `withdrawCollateral`, `withdraw`:
-    *   Ensure `_accrueIndividualBorrowerPremium` called for borrower if `_accrueInterest` is triggered.
+    *   Ensure `_accrueBorrowerPremium` called for borrower if `_accrueInterest` is triggered.
 *   **`accrueInterest` (public function):**
     *   Confirm it only triggers market-wide `_accrueInterest`, not individual premium accruals for all borrowers.
 *   **No Double Counting/Accrual:**
@@ -135,11 +136,11 @@ Repos:
 
 *   Measure gas increase for `borrow`, `repay`, `liquidate` with/without active premium.
 *   Measure gas cost of `setBorrowerPremiumRate`.
-*   Measure gas cost of keeper-triggered `_accrueIndividualBorrowerPremium`.
+*   Measure gas cost of keeper-triggered `_accrueBorrowerPremium`.
 
 **E. Fuzz Testing:**
 
-*   Fuzz inputs to `_accrueIndividualBorrowerPremium`.
+*   Fuzz inputs to `_accrueBorrowerPremium`.
 *   Fuzz sequences of operations involving borrowers with premiums.
 
 **Future Considerations**
