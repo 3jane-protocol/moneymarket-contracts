@@ -54,7 +54,7 @@ Repos:
         - Calculate base growth factor: `baseGrowthFactor = currentBorrowAssets / borrowAssetsAtLastAccrual` (captures how much the position grew from base rate).
         - Calculate premium with compounding: 
             - Simple approach: `premiumAmount = borrowAssetsAtLastAccrual * premiumRate * timeElapsed * baseGrowthFactor`
-            - This applies the base rate growth to the premium linearly over the period
+            - This calculates the premium on the current total asset value of the borrower's debt, which implicitly includes all prior base rate growth.
         - Convert `premiumAmount` to shares and add to `position[marketId][borrower].borrowShares`.
         - Increase `market[marketId].totalBorrowAssets` by `premiumAmount`.
         - Increase `market[marketId].totalSupplyAssets` by `premiumAmount` (this is how suppliers benefit).
