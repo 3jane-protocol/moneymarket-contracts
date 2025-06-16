@@ -38,12 +38,13 @@ Repos:
     - Introduce a new struct to store individual borrower premium details per market:
       ```solidity
       struct BorrowerPremiumDetails {
-          uint256 lastPremiumAccrualTime; // Timestamp of the last premium accrual for this borrower
-          uint256 premiumRate;            // Current risk premium rate (e.g., annual rate in WAD)
+          uint128 lastPremiumAccrualTime; // Timestamp of the last premium accrual for this borrower
+          uint128 premiumRate;            // Current risk premium rate (e.g., annual rate in WAD)
       }
       mapping(Id => mapping(address => BorrowerPremiumDetails)) public borrowerPremiumDetails;
       ```
     - Implement a function callable by an authorized entity (e.g., 3CA) to set/update a borrower's `premiumRate`. This function will also trigger an accrual of any outstanding premium at the old rate.
+    - Add validation to ensure `premiumRate <= MAX_PREMIUM_RATE` (e.g., 1e18 for 100% APR max).
 
 - **Premium Accrual Mechanism**:
     - Create an internal function `_accrueIndividualBorrowerPremium(Id marketId, address borrower)` within `MorphoCredit.sol`.
@@ -59,6 +60,7 @@ Repos:
         - Before the standard market-wide `_accrueInterest` when a borrower interacts with their debt position (e.g., `borrow`, `repay`, `liquidate`).
         - When a borrower's `premiumRate` is updated.
         - Potentially by a keeper for inactive borrowers to ensure regular accrual.
+    - Add batch premium accrual function `accruePremiumsForBorrowers(Id marketId, address[] calldata borrowers)` for gas-efficient keeper operations.
 
 - **Supply Interest**:
     - Suppliers will implicitly benefit from the accrued borrower premiums because these premiums increase the `market.totalSupplyAssets`, thereby increasing the value of each supply share.
@@ -95,12 +97,15 @@ Repos:
     *   Fee Accrual: Verify fee calculation, `feeRecipient.supplyShares`, `market.totalSupplyShares`. Test zero/non-zero fees.
     *   Event Emission: Verify `PremiumAccrued` event with correct parameters.
     *   Edge Cases: Accrual with zero/small market totals.
+    *   Precision Loss: Test with very small premiums/shares.
+    *   Overflow Protection: Test with extreme time gaps.
 *   **Function to Set/Update `premiumRate` (e.g., `setBorrowerPremiumRate`):**
     *   Authorization: Ensure only authorized entity can call.
     *   Prior Accrual: Verify `_accrueIndividualBorrowerPremium` called with old rate before update.
     *   State Update: Verify `borrowerPremiumDetails.premiumRate` updated.
     *   Event Emission: Verify rate change event.
     *   Test setting for new borrower and updating existing.
+    *   Rate Bounds: Test rejection of rates exceeding MAX_PREMIUM_RATE.
 
 **B. Integration Tests (Interaction with `MorphoCredit.sol` operations):**
 
@@ -114,6 +119,10 @@ Repos:
     *   Confirm it only triggers market-wide `_accrueInterest`, not individual premium accruals for all borrowers.
 *   **No Double Counting/Accrual:**
     *   Rigorously test to prevent double counting of premiums or fees.
+*   **Race Conditions:**
+    *   Test concurrent keeper and user actions.
+*   **Authorization Edge Cases:**
+    *   Test scenarios with compromised rate setter.
 
 **C. Scenario Tests:**
 
@@ -132,6 +141,27 @@ Repos:
 
 *   Fuzz inputs to `_accrueIndividualBorrowerPremium`.
 *   Fuzz sequences of operations involving borrowers with premiums.
+
+**Future Considerations**
+
+1. **Rate Update Frequency**: Define how often 3CA will update premium rates to optimize gas costs versus premium accuracy.
+
+2. **Historical Premium Tracking**: Consider emitting events with old/new rates for comprehensive audit trails and off-chain analytics.
+
+3. **Emergency Pause Mechanism**: Design a circuit breaker to pause premium accrual in case of critical issues or market anomalies.
+
+4. **Premium Caps**: Implement maximum debt limits (base + premium) relative to collateral value to prevent runaway debt accumulation.
+
+5. **Keeper Incentive Model**: Design economic incentives for keepers to accrue premiums for inactive borrowers, potentially through:
+   - Fee sharing from accrued premiums
+   - Batch operation rewards
+   - Priority fee rebates
+
+6. **Integration with Existing Morpho Ecosystem**: Ensure compatibility with Morpho's existing periphery contracts and integrations.
+
+7. **Cross-Market Premium Correlation**: Consider future enhancements where premium rates might be influenced by borrower behavior across multiple markets.
+
+8. **Automated Premium Adjustment**: Explore on-chain mechanisms for dynamic premium adjustment based on utilization or other risk indicators.
 
 **Further reading**
 
