@@ -32,7 +32,7 @@ Repos:
 - Designing the utilisation curve itself (we reuse AdaptiveCurve parameters).
 - Alternative SOFR oracles (Aave deposit rate is the initial proxy, managed by the external IRM).
 
-**Ideas**
+**Implementation**
 
 - **Per-Borrower Premium Tracking in `MorphoCredit.sol`**:
     - Introduce a new struct to store individual borrower premium details per market:
@@ -51,13 +51,14 @@ Repos:
     - Create an internal function `_accrueBorrowerPremium(Id marketId, address borrower)` within `MorphoCredit.sol`.
     - This function will:
         - Calculate current borrow position: `currentBorrowAssets = borrowShares.toAssetsUp(totalBorrowAssets, totalBorrowShares)`.
-        - Calculate base rate growth: `baseGrowth = currentBorrowAssets - borrowAssetsAtLastAccrual`.
-        - Calculate premium owed: `premiumAmount = borrowAssetsAtLastAccrual * premiumRate * timeElapsed`.
-        - Total accrual: `totalAccrual = baseGrowth + premiumAmount`.
-        - Convert `totalAccrual` to shares and add to `position[marketId][borrower].borrowShares`.
-        - Increase `market[marketId].totalBorrowAssets` by `totalAccrual`.
-        - Increase `market[marketId].totalSupplyAssets` by `totalAccrual` (this is how suppliers benefit).
-        - Calculate and process protocol fees on `totalAccrual`, adding fee shares to `position[marketId][feeRecipient].supplyShares` and `market[marketId].totalSupplyShares`.
+        - Calculate base growth factor: `baseGrowthFactor = currentBorrowAssets / borrowAssetsAtLastAccrual` (captures how much the position grew from base rate).
+        - Calculate premium with compounding: 
+            - Simple approach: `premiumAmount = borrowAssetsAtLastAccrual * premiumRate * timeElapsed * baseGrowthFactor`
+            - This applies the base rate growth to the premium linearly over the period
+        - Convert `premiumAmount` to shares and add to `position[marketId][borrower].borrowShares`.
+        - Increase `market[marketId].totalBorrowAssets` by `premiumAmount`.
+        - Increase `market[marketId].totalSupplyAssets` by `premiumAmount` (this is how suppliers benefit).
+        - Calculate and process protocol fees on `premiumAmount`, adding fee shares to `position[marketId][feeRecipient].supplyShares` and `market[marketId].totalSupplyShares`.
         - Update `borrowerPremiumDetails[marketId][borrower]`:
             - Set `lastPremiumAccrualTime` to current timestamp.
             - Set `borrowAssetsAtLastAccrual` to `currentBorrowAssets`.
