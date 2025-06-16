@@ -50,12 +50,17 @@ Repos:
 - **Premium Accrual Mechanism**:
     - Create an internal function `_accrueBorrowerPremium(Id marketId, address borrower)` within `MorphoCredit.sol`.
     - This function will:
-        - Calculate the premium owed by the `borrower` since `lastPremiumAccrualTime` based on their `borrowShares` and `premiumRate`.
-        - Increase the `borrower`'s `position[marketId][borrower].borrowShares` by the shares equivalent of this accrued premium.
-        - Increase `market[marketId].totalBorrowAssets` by the accrued premium amount.
-        - Increase `market[marketId].totalSupplyAssets` by the same accrued premium amount (this is how suppliers benefit).
-        - Calculate and process protocol fees on the accrued premium, adding fee shares to `position[marketId][feeRecipient].supplyShares` and `market[marketId].totalSupplyShares`.
-        - Update the `borrower`'s `lastPremiumAccrualTime`.
+        - Calculate current borrow position: `currentBorrowAssets = borrowShares.toAssetsUp(totalBorrowAssets, totalBorrowShares)`.
+        - Calculate base rate growth: `baseGrowth = currentBorrowAssets - borrowAssetsAtLastAccrual`.
+        - Calculate premium owed: `premiumAmount = borrowAssetsAtLastAccrual * premiumRate * timeElapsed`.
+        - Total accrual: `totalAccrual = baseGrowth + premiumAmount`.
+        - Convert `totalAccrual` to shares and add to `position[marketId][borrower].borrowShares`.
+        - Increase `market[marketId].totalBorrowAssets` by `totalAccrual`.
+        - Increase `market[marketId].totalSupplyAssets` by `totalAccrual` (this is how suppliers benefit).
+        - Calculate and process protocol fees on `totalAccrual`, adding fee shares to `position[marketId][feeRecipient].supplyShares` and `market[marketId].totalSupplyShares`.
+        - Update `borrowerPremiumDetails[marketId][borrower]`:
+            - Set `lastPremiumAccrualTime` to current timestamp.
+            - Set `borrowAssetsAtLastAccrual` to `currentBorrowAssets`.
         - Emit an event detailing the premium accrual.
     - The `_accrueBorrowerPremium` function will be called:
         - Before the standard market-wide `_accrueInterest` when a borrower interacts with their debt position (e.g., `borrow`, `repay`, `liquidate`).
@@ -94,7 +99,8 @@ Repos:
 
 *   **`_accrueBorrowerPremium` Function:**
     *   Correct Premium Calculation: Vary `premiumRate`, `elapsedTime`, `borrowShares`.
-    *   State Updates: Verify `position.borrowShares`, `market.totalBorrowAssets`, `market.totalSupplyAssets`, `borrowerPremiumDetails.lastPremiumAccrualTime`.
+    *   Base Growth Calculation: Test scenarios where market interest has accrued multiple times between premium accruals.
+    *   State Updates: Verify `position.borrowShares`, `market.totalBorrowAssets`, `market.totalSupplyAssets`, `borrowerPremiumDetails.lastPremiumAccrualTime`, `borrowerPremiumDetails.borrowAssetsAtLastAccrual`.
     *   Fee Accrual: Verify fee calculation, `feeRecipient.supplyShares`, `market.totalSupplyShares`. Test zero/non-zero fees.
     *   Event Emission: Verify `PremiumAccrued` event with correct parameters.
     *   Edge Cases: Accrual with zero/small market totals.
