@@ -117,4 +117,31 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // This will call _accrueBorrowerPremium(id, onBehalf) once implemented
         // Only if position[id][onBehalf].borrowShares > 0
     }
+
+    /// @inheritdoc Morpho
+    function _afterBorrow(
+        MarketParams memory marketParams,
+        Id id,
+        address onBehalf
+    ) internal override {
+        // TODO: Update borrowAssetsAtLastAccrual snapshot
+    }
+
+    /// @inheritdoc Morpho
+    function _afterRepay(
+        MarketParams memory marketParams,
+        Id id,
+        address onBehalf
+    ) internal override {
+        // TODO: Update borrowAssetsAtLastAccrual snapshot
+    }
+
+    /// @inheritdoc Morpho
+    function _afterLiquidate(
+        MarketParams memory marketParams,
+        Id id,
+        address borrower
+    ) internal override {
+        // TODO: Update borrowAssetsAtLastAccrual snapshot
+    }
 }

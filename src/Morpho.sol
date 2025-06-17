@@ -262,6 +262,8 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 
         emit EventsLib.Borrow(id, msg.sender, onBehalf, receiver, assets, shares);
 
+        _afterBorrow(marketParams, id, onBehalf);
+
         IERC20(marketParams.loanToken).safeTransfer(receiver, assets);
 
         return (assets, shares);
@@ -292,6 +294,8 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 
         // `assets` may be greater than `totalBorrowAssets` by 1.
         emit EventsLib.Repay(id, msg.sender, onBehalf, assets, shares);
+
+        _afterRepay(marketParams, id, onBehalf);
 
         if (data.length > 0) IMorphoRepayCallback(msg.sender).onMorphoRepay(assets, data);
 
@@ -411,6 +415,8 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
         emit EventsLib.Liquidate(
             id, msg.sender, borrower, repaidAssets, repaidShares, seizedAssets, badDebtAssets, badDebtShares
         );
+
+        _afterLiquidate(marketParams, id, borrower);
 
         IERC20(marketParams.collateralToken).safeTransfer(msg.sender, seizedAssets);
 
@@ -611,6 +617,36 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
         address onBehalf,
         uint256 assets,
         uint256 shares
+    ) internal virtual {}
+
+    /// @dev Hook called after borrow operations to allow for post-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param onBehalf The address that borrowed.
+    function _afterBorrow(
+        MarketParams memory marketParams,
+        Id id,
+        address onBehalf
+    ) internal virtual {}
+
+    /// @dev Hook called after repay operations to allow for post-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param onBehalf The address whose debt was repaid.
+    function _afterRepay(
+        MarketParams memory marketParams,
+        Id id,
+        address onBehalf
+    ) internal virtual {}
+
+    /// @dev Hook called after liquidate operations to allow for post-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param borrower The address that was liquidated.
+    function _afterLiquidate(
+        MarketParams memory marketParams,
+        Id id,
+        address borrower
     ) internal virtual {}
 
     /* STORAGE VIEW */
