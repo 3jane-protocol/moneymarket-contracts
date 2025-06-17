@@ -58,25 +58,19 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /* HOOK IMPLEMENTATIONS */
 
     /// @inheritdoc Morpho
-    function _beforeBorrow(
-        MarketParams memory marketParams,
-        Id id,
-        address onBehalf,
-        uint256 assets,
-        uint256 shares
-    ) internal override {
+    function _beforeBorrow(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
+        internal
+        override
+    {
         // TODO: Implement premium accrual for borrower
         // This will call _accrueBorrowerPremium(id, onBehalf) once implemented
     }
 
     /// @inheritdoc Morpho
-    function _beforeRepay(
-        MarketParams memory marketParams,
-        Id id,
-        address onBehalf,
-        uint256 assets,
-        uint256 shares
-    ) internal override {
+    function _beforeRepay(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
+        internal
+        override
+    {
         // TODO: Implement premium accrual for borrower
         // This will call _accrueBorrowerPremium(id, onBehalf) once implemented
     }
@@ -94,54 +88,37 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @inheritdoc Morpho
-    function _beforeWithdrawCollateral(
-        MarketParams memory marketParams,
-        Id id,
-        address onBehalf,
-        uint256 assets
-    ) internal override {
+    function _beforeWithdrawCollateral(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets)
+        internal
+        override
+    {
         // TODO: Implement premium accrual for borrower if they have debt
         // This will call _accrueBorrowerPremium(id, onBehalf) once implemented
         // Only if position[id][onBehalf].borrowShares > 0
     }
 
     /// @inheritdoc Morpho
-    function _beforeWithdraw(
-        MarketParams memory marketParams,
-        Id id,
-        address onBehalf,
-        uint256 assets,
-        uint256 shares
-    ) internal override {
+    function _beforeWithdraw(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
+        internal
+        override
+    {
         // TODO: Implement premium accrual for borrower if they have debt
         // This will call _accrueBorrowerPremium(id, onBehalf) once implemented
         // Only if position[id][onBehalf].borrowShares > 0
     }
 
     /// @inheritdoc Morpho
-    function _afterBorrow(
-        MarketParams memory marketParams,
-        Id id,
-        address onBehalf
-    ) internal override {
+    function _afterBorrow(MarketParams memory marketParams, Id id, address onBehalf) internal override {
         // TODO: Update borrowAssetsAtLastAccrual snapshot
     }
 
     /// @inheritdoc Morpho
-    function _afterRepay(
-        MarketParams memory marketParams,
-        Id id,
-        address onBehalf
-    ) internal override {
+    function _afterRepay(MarketParams memory marketParams, Id id, address onBehalf) internal override {
         // TODO: Update borrowAssetsAtLastAccrual snapshot
     }
 
     /// @inheritdoc Morpho
-    function _afterLiquidate(
-        MarketParams memory marketParams,
-        Id id,
-        address borrower
-    ) internal override {
+    function _afterLiquidate(MarketParams memory marketParams, Id id, address borrower) internal override {
         // TODO: Update borrowAssetsAtLastAccrual snapshot
     }
 }

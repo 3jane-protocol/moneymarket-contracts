@@ -35,7 +35,8 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
 /// @notice The Morpho contract.
-/* abstract */ contract Morpho is IMorphoStaticTyping {
+/* abstract */
+contract Morpho is IMorphoStaticTyping {
     using MathLib for uint128;
     using MathLib for uint256;
     using UtilsLib for uint256;
@@ -557,13 +558,10 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
     /// @param onBehalf The address that will receive the debt.
     /// @param assets The amount of assets to borrow.
     /// @param shares The amount of shares to borrow.
-    function _beforeBorrow(
-        MarketParams memory marketParams,
-        Id id,
-        address onBehalf,
-        uint256 assets,
-        uint256 shares
-    ) internal virtual {}
+    function _beforeBorrow(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
+        internal
+        virtual
+    {}
 
     /// @dev Hook called before repay operations to allow for premium accrual or other pre-processing.
     /// @param marketParams The market parameters.
@@ -571,13 +569,10 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
     /// @param onBehalf The address whose debt is being repaid.
     /// @param assets The amount of assets to repay.
     /// @param shares The amount of shares to repay.
-    function _beforeRepay(
-        MarketParams memory marketParams,
-        Id id,
-        address onBehalf,
-        uint256 assets,
-        uint256 shares
-    ) internal virtual {}
+    function _beforeRepay(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
+        internal
+        virtual
+    {}
 
     /// @dev Hook called before liquidate operations to allow for premium accrual or other pre-processing.
     /// @param marketParams The market parameters.
@@ -598,12 +593,10 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
     /// @param id The market id.
     /// @param onBehalf The address withdrawing collateral.
     /// @param assets The amount of collateral to withdraw.
-    function _beforeWithdrawCollateral(
-        MarketParams memory marketParams,
-        Id id,
-        address onBehalf,
-        uint256 assets
-    ) internal virtual {}
+    function _beforeWithdrawCollateral(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets)
+        internal
+        virtual
+    {}
 
     /// @dev Hook called before withdraw operations to allow for premium accrual or other pre-processing.
     /// @param marketParams The market parameters.
@@ -611,43 +604,28 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
     /// @param onBehalf The address withdrawing supply.
     /// @param assets The amount of assets to withdraw.
     /// @param shares The amount of shares to withdraw.
-    function _beforeWithdraw(
-        MarketParams memory marketParams,
-        Id id,
-        address onBehalf,
-        uint256 assets,
-        uint256 shares
-    ) internal virtual {}
+    function _beforeWithdraw(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
+        internal
+        virtual
+    {}
 
     /// @dev Hook called after borrow operations to allow for post-processing.
     /// @param marketParams The market parameters.
     /// @param id The market id.
     /// @param onBehalf The address that borrowed.
-    function _afterBorrow(
-        MarketParams memory marketParams,
-        Id id,
-        address onBehalf
-    ) internal virtual {}
+    function _afterBorrow(MarketParams memory marketParams, Id id, address onBehalf) internal virtual {}
 
     /// @dev Hook called after repay operations to allow for post-processing.
     /// @param marketParams The market parameters.
     /// @param id The market id.
     /// @param onBehalf The address whose debt was repaid.
-    function _afterRepay(
-        MarketParams memory marketParams,
-        Id id,
-        address onBehalf
-    ) internal virtual {}
+    function _afterRepay(MarketParams memory marketParams, Id id, address onBehalf) internal virtual {}
 
     /// @dev Hook called after liquidate operations to allow for post-processing.
     /// @param marketParams The market parameters.
     /// @param id The market id.
     /// @param borrower The address that was liquidated.
-    function _afterLiquidate(
-        MarketParams memory marketParams,
-        Id id,
-        address borrower
-    ) internal virtual {}
+    function _afterLiquidate(MarketParams memory marketParams, Id id, address borrower) internal virtual {}
 
     /* STORAGE VIEW */
 
