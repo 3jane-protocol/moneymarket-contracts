@@ -157,4 +157,22 @@ library EventsLib {
     /// @param interest The amount of interest accrued.
     /// @param feeShares The amount of shares minted as fee.
     event AccrueInterest(Id indexed id, uint256 prevBorrowRate, uint256 interest, uint256 feeShares);
+
+    /// @notice Emitted when premium is accrued for a borrower.
+    /// @param id Market ID.
+    /// @param borrower Borrower address.
+    /// @param premiumAmount Amount of premium accrued.
+    /// @param feeAmount Protocol fee on the premium.
+    event PremiumAccrued(Id indexed id, address indexed borrower, uint256 premiumAmount, uint256 feeAmount);
+
+    /// @notice Emitted when a borrower's premium rate is updated.
+    /// @param id Market ID.
+    /// @param borrower Borrower address.
+    /// @param oldRate Previous premium rate.
+    /// @param newRate New premium rate.
+    event BorrowerPremiumRateSet(Id indexed id, address indexed borrower, uint128 oldRate, uint128 newRate);
+
+    /// @notice Emitted when the premium rate setter is updated.
+    /// @param newSetter New premium rate setter address.
+    event PremiumRateSetterUpdated(address indexed newSetter);
 }

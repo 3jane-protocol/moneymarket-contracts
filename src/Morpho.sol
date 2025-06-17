@@ -248,8 +248,8 @@ contract Morpho is IMorphoStaticTyping {
         // No need to verify that onBehalf != address(0) thanks to the following authorization check.
         require(_isSenderAuthorized(onBehalf), ErrorsLib.UNAUTHORIZED);
 
-        _beforeBorrow(marketParams, id, onBehalf, assets, shares);
         _accrueInterest(marketParams, id);
+        _beforeBorrow(marketParams, id, onBehalf, assets, shares);
 
         if (assets > 0) shares = assets.toSharesUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
         else assets = shares.toAssetsDown(market[id].totalBorrowAssets, market[id].totalBorrowShares);
@@ -283,8 +283,8 @@ contract Morpho is IMorphoStaticTyping {
         require(UtilsLib.exactlyOneZero(assets, shares), ErrorsLib.INCONSISTENT_INPUT);
         require(onBehalf != address(0), ErrorsLib.ZERO_ADDRESS);
 
-        _beforeRepay(marketParams, id, onBehalf, assets, shares);
         _accrueInterest(marketParams, id);
+        _beforeRepay(marketParams, id, onBehalf, assets, shares);
 
         if (assets > 0) shares = assets.toSharesDown(market[id].totalBorrowAssets, market[id].totalBorrowShares);
         else assets = shares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
@@ -364,8 +364,8 @@ contract Morpho is IMorphoStaticTyping {
         require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
         require(UtilsLib.exactlyOneZero(seizedAssets, repaidShares), ErrorsLib.INCONSISTENT_INPUT);
 
-        _beforeLiquidate(marketParams, id, borrower, seizedAssets, repaidShares);
         _accrueInterest(marketParams, id);
+        _beforeLiquidate(marketParams, id, borrower, seizedAssets, repaidShares);
 
         {
             uint256 collateralPrice = IOracle(marketParams.oracle).price();

@@ -12,6 +12,16 @@ import {MathLib} from "./libraries/MathLib.sol";
 import {MarketParamsLib} from "./libraries/MarketParamsLib.sol";
 import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 
+/// @notice Details for per-borrower premium tracking
+/// @param lastPremiumAccrualTime Timestamp of the last premium accrual for this borrower
+/// @param premiumRate Current risk premium rate in WAD (annual rate)
+/// @param borrowAssetsAtLastAccrual Snapshot of borrow position at last premium accrual
+struct BorrowerPremiumDetails {
+    uint128 lastPremiumAccrualTime;
+    uint128 premiumRate;
+    uint256 borrowAssetsAtLastAccrual;
+}
+
 /// @title Morpho Credit
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
@@ -19,9 +29,19 @@ import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 contract MorphoCredit is Morpho, IMorphoCredit {
     using UtilsLib for uint256;
     using MarketParamsLib for MarketParams;
+    using SharesMathLib for uint256;
 
     /// @inheritdoc IMorphoCredit
     address public helper;
+
+    /// @notice Mapping of market ID to borrower address to premium details
+    mapping(Id => mapping(address => BorrowerPremiumDetails)) public borrowerPremiumDetails;
+
+    /// @notice Address authorized to set borrower premium rates (e.g., 3CA)
+    address public premiumRateSetter;
+
+    /// @notice Maximum premium rate allowed (100% APR)
+    uint256 public constant MAX_PREMIUM_RATE = 1e18;
 
     constructor(address newOwner) Morpho(newOwner) {}
 
@@ -42,6 +62,76 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         isAuthorized[authorizee][helper] = newIsAuthorized;
 
         emit EventsLib.SetAuthorization(msg.sender, authorizee, helper, newIsAuthorized);
+    }
+
+    /* PREMIUM RATE MANAGEMENT */
+
+    /// @notice Modifier to restrict access to premium rate setter
+    modifier onlyPremiumRateSetter() {
+        require(msg.sender == premiumRateSetter, ErrorsLib.NOT_PREMIUM_RATE_SETTER);
+        _;
+    }
+
+    /// @notice Set the premium rate setter address
+    /// @param newSetter New premium rate setter address
+    function setPremiumRateSetter(address newSetter) external onlyOwner {
+        require(newSetter != premiumRateSetter, ErrorsLib.ALREADY_SET);
+        premiumRateSetter = newSetter;
+        emit EventsLib.PremiumRateSetterUpdated(newSetter);
+    }
+
+    /// @notice Set or update a borrower's premium rate
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @param newRate New premium rate in WAD
+    function setBorrowerPremiumRate(Id id, address borrower, uint128 newRate) external onlyPremiumRateSetter {
+        require(newRate <= MAX_PREMIUM_RATE, ErrorsLib.PREMIUM_RATE_TOO_HIGH);
+
+        BorrowerPremiumDetails storage details = borrowerPremiumDetails[id][borrower];
+        uint128 oldRate = details.premiumRate;
+
+        // Accrue premium at old rate before updating
+        if (oldRate > 0 && position[id][borrower].borrowShares > 0) {
+            _accrueBorrowerPremium(id, borrower);
+        }
+
+        // Update rate and initialize timestamp if first time
+        details.premiumRate = newRate;
+        if (details.lastPremiumAccrualTime == 0) {
+            details.lastPremiumAccrualTime = uint128(block.timestamp);
+            // Initialize snapshot for new borrowers
+            if (position[id][borrower].borrowShares > 0) {
+                details.borrowAssetsAtLastAccrual = uint256(position[id][borrower].borrowShares).toAssetsUp(
+                    market[id].totalBorrowAssets, market[id].totalBorrowShares
+                );
+            }
+        }
+
+        emit EventsLib.BorrowerPremiumRateSet(id, borrower, oldRate, newRate);
+    }
+
+    /// @notice Manually accrue premium for a borrower (callable by anyone, useful for keepers)
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    function accrueBorrowerPremium(Id id, address borrower) external {
+        _accrueBorrowerPremium(id, borrower);
+    }
+
+    /// @notice Batch accrue premiums for multiple borrowers
+    /// @param id Market ID
+    /// @param borrowers Array of borrower addresses
+    function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) external {
+        for (uint256 i = 0; i < borrowers.length; i++) {
+            _accrueBorrowerPremium(id, borrowers[i]);
+        }
+    }
+
+    /// @notice Accrue premium for a specific borrower
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    function _accrueBorrowerPremium(Id id, address borrower) internal {
+        // TODO: Implement premium accrual logic with base rate compounding
+        // This will be implemented in the next phase
     }
 
     /* ONLY CREDIT LINE FUNCTIONS */
