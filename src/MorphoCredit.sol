@@ -114,6 +114,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @param borrower Borrower address
     function accrueBorrowerPremium(Id id, address borrower) external {
+        MarketParams memory marketParams = idToMarketParams[id];
+        _accrueInterest(marketParams, id);
         _accrueBorrowerPremium(id, borrower);
     }
 
@@ -121,6 +123,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @param borrowers Array of borrower addresses
     function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) external {
+        MarketParams memory marketParams = idToMarketParams[id];
+        _accrueInterest(marketParams, id);
         for (uint256 i = 0; i < borrowers.length; i++) {
             _accrueBorrowerPremium(id, borrowers[i]);
         }
