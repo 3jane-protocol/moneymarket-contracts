@@ -54,4 +54,67 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         emit EventsLib.SetCreditLine(id, borrower, credit);
     }
+
+    /* HOOK IMPLEMENTATIONS */
+
+    /// @inheritdoc Morpho
+    function _beforeBorrow(
+        MarketParams memory marketParams,
+        Id id,
+        address onBehalf,
+        uint256 assets,
+        uint256 shares
+    ) internal override {
+        // TODO: Implement premium accrual for borrower
+        // This will call _accrueBorrowerPremium(id, onBehalf) once implemented
+    }
+
+    /// @inheritdoc Morpho
+    function _beforeRepay(
+        MarketParams memory marketParams,
+        Id id,
+        address onBehalf,
+        uint256 assets,
+        uint256 shares
+    ) internal override {
+        // TODO: Implement premium accrual for borrower
+        // This will call _accrueBorrowerPremium(id, onBehalf) once implemented
+    }
+
+    /// @inheritdoc Morpho
+    function _beforeLiquidate(
+        MarketParams memory marketParams,
+        Id id,
+        address borrower,
+        uint256 seizedAssets,
+        uint256 repaidShares
+    ) internal override {
+        // TODO: Implement premium accrual for borrower
+        // This will call _accrueBorrowerPremium(id, borrower) once implemented
+    }
+
+    /// @inheritdoc Morpho
+    function _beforeWithdrawCollateral(
+        MarketParams memory marketParams,
+        Id id,
+        address onBehalf,
+        uint256 assets
+    ) internal override {
+        // TODO: Implement premium accrual for borrower if they have debt
+        // This will call _accrueBorrowerPremium(id, onBehalf) once implemented
+        // Only if position[id][onBehalf].borrowShares > 0
+    }
+
+    /// @inheritdoc Morpho
+    function _beforeWithdraw(
+        MarketParams memory marketParams,
+        Id id,
+        address onBehalf,
+        uint256 assets,
+        uint256 shares
+    ) internal override {
+        // TODO: Implement premium accrual for borrower if they have debt
+        // This will call _accrueBorrowerPremium(id, onBehalf) once implemented
+        // Only if position[id][onBehalf].borrowShares > 0
+    }
 }

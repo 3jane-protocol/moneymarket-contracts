@@ -35,7 +35,7 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
 /// @notice The Morpho contract.
-contract Morpho is IMorphoStaticTyping {
+/* abstract */ contract Morpho is IMorphoStaticTyping {
     using MathLib for uint128;
     using MathLib for uint256;
     using UtilsLib for uint256;
@@ -211,6 +211,7 @@ contract Morpho is IMorphoStaticTyping {
         // No need to verify that onBehalf != address(0) thanks to the following authorization check.
         require(_isSenderAuthorized(onBehalf), ErrorsLib.UNAUTHORIZED);
 
+        _beforeWithdraw(marketParams, id, onBehalf, assets, shares);
         _accrueInterest(marketParams, id);
 
         if (assets > 0) shares = assets.toSharesUp(market[id].totalSupplyAssets, market[id].totalSupplyShares);
@@ -246,6 +247,7 @@ contract Morpho is IMorphoStaticTyping {
         // No need to verify that onBehalf != address(0) thanks to the following authorization check.
         require(_isSenderAuthorized(onBehalf), ErrorsLib.UNAUTHORIZED);
 
+        _beforeBorrow(marketParams, id, onBehalf, assets, shares);
         _accrueInterest(marketParams, id);
 
         if (assets > 0) shares = assets.toSharesUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
@@ -278,6 +280,7 @@ contract Morpho is IMorphoStaticTyping {
         require(UtilsLib.exactlyOneZero(assets, shares), ErrorsLib.INCONSISTENT_INPUT);
         require(onBehalf != address(0), ErrorsLib.ZERO_ADDRESS);
 
+        _beforeRepay(marketParams, id, onBehalf, assets, shares);
         _accrueInterest(marketParams, id);
 
         if (assets > 0) shares = assets.toSharesDown(market[id].totalBorrowAssets, market[id].totalBorrowShares);
@@ -330,6 +333,7 @@ contract Morpho is IMorphoStaticTyping {
         // No need to verify that onBehalf != address(0) thanks to the following authorization check.
         require(_isSenderAuthorized(onBehalf), ErrorsLib.UNAUTHORIZED);
 
+        _beforeWithdrawCollateral(marketParams, id, onBehalf, assets);
         _accrueInterest(marketParams, id);
 
         position[id][onBehalf].collateral -= assets.toUint128();
@@ -355,6 +359,7 @@ contract Morpho is IMorphoStaticTyping {
         require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
         require(UtilsLib.exactlyOneZero(seizedAssets, repaidShares), ErrorsLib.INCONSISTENT_INPUT);
 
+        _beforeLiquidate(marketParams, id, borrower, seizedAssets, repaidShares);
         _accrueInterest(marketParams, id);
 
         {
@@ -537,6 +542,76 @@ contract Morpho is IMorphoStaticTyping {
 
         return maxBorrow >= borrowed;
     }
+
+    /* HOOKS */
+
+    /// @dev Hook called before borrow operations to allow for premium accrual or other pre-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param onBehalf The address that will receive the debt.
+    /// @param assets The amount of assets to borrow.
+    /// @param shares The amount of shares to borrow.
+    function _beforeBorrow(
+        MarketParams memory marketParams,
+        Id id,
+        address onBehalf,
+        uint256 assets,
+        uint256 shares
+    ) internal virtual {}
+
+    /// @dev Hook called before repay operations to allow for premium accrual or other pre-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param onBehalf The address whose debt is being repaid.
+    /// @param assets The amount of assets to repay.
+    /// @param shares The amount of shares to repay.
+    function _beforeRepay(
+        MarketParams memory marketParams,
+        Id id,
+        address onBehalf,
+        uint256 assets,
+        uint256 shares
+    ) internal virtual {}
+
+    /// @dev Hook called before liquidate operations to allow for premium accrual or other pre-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param borrower The address being liquidated.
+    /// @param seizedAssets The amount of collateral to seize.
+    /// @param repaidShares The amount of debt shares to repay.
+    function _beforeLiquidate(
+        MarketParams memory marketParams,
+        Id id,
+        address borrower,
+        uint256 seizedAssets,
+        uint256 repaidShares
+    ) internal virtual {}
+
+    /// @dev Hook called before withdrawCollateral operations to allow for premium accrual or other pre-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param onBehalf The address withdrawing collateral.
+    /// @param assets The amount of collateral to withdraw.
+    function _beforeWithdrawCollateral(
+        MarketParams memory marketParams,
+        Id id,
+        address onBehalf,
+        uint256 assets
+    ) internal virtual {}
+
+    /// @dev Hook called before withdraw operations to allow for premium accrual or other pre-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param onBehalf The address withdrawing supply.
+    /// @param assets The amount of assets to withdraw.
+    /// @param shares The amount of shares to withdraw.
+    function _beforeWithdraw(
+        MarketParams memory marketParams,
+        Id id,
+        address onBehalf,
+        uint256 assets,
+        uint256 shares
+    ) internal virtual {}
 
     /* STORAGE VIEW */
 
