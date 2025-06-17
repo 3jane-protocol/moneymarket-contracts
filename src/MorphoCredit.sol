@@ -197,6 +197,24 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         emit EventsLib.PremiumAccrued(id, borrower, premiumAmountToAdd, feeAmount);
     }
 
+    /// @notice Snapshot borrower's position for premium tracking
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    function _snapshotBorrowerPosition(Id id, address borrower) internal {
+        BorrowerPremiumDetails storage details = borrowerPremiumDetails[id][borrower];
+        if (details.premiumRate > 0) {
+            uint256 currentBorrowAssets = uint256(position[id][borrower].borrowShares).toAssetsUp(
+                market[id].totalBorrowAssets, market[id].totalBorrowShares
+            );
+            details.borrowAssetsAtLastAccrual = currentBorrowAssets;
+
+            // Initialize timestamp if first time
+            if (details.lastPremiumAccrualTime == 0) {
+                details.lastPremiumAccrualTime = uint128(block.timestamp);
+            }
+        }
+    }
+
     /* ONLY CREDIT LINE FUNCTIONS */
 
     /// @inheritdoc IMorphoCredit
@@ -215,8 +233,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         internal
         override
     {
-        // TODO: Implement premium accrual for borrower
-        // This will call _accrueBorrowerPremium(id, onBehalf) once implemented
+        _accrueBorrowerPremium(id, onBehalf);
     }
 
     /// @inheritdoc Morpho
@@ -224,8 +241,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         internal
         override
     {
-        // TODO: Implement premium accrual for borrower
-        // This will call _accrueBorrowerPremium(id, onBehalf) once implemented
+        _accrueBorrowerPremium(id, onBehalf);
     }
 
     /// @inheritdoc Morpho
@@ -236,8 +252,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 seizedAssets,
         uint256 repaidShares
     ) internal override {
-        // TODO: Implement premium accrual for borrower
-        // This will call _accrueBorrowerPremium(id, borrower) once implemented
+        _accrueBorrowerPremium(id, borrower);
     }
 
     /// @inheritdoc Morpho
@@ -245,9 +260,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         internal
         override
     {
-        // TODO: Implement premium accrual for borrower if they have debt
-        // This will call _accrueBorrowerPremium(id, onBehalf) once implemented
-        // Only if position[id][onBehalf].borrowShares > 0
+        _accrueBorrowerPremium(id, onBehalf);
     }
 
     /// @inheritdoc Morpho
@@ -255,23 +268,21 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         internal
         override
     {
-        // TODO: Implement premium accrual for borrower if they have debt
-        // This will call _accrueBorrowerPremium(id, onBehalf) once implemented
-        // Only if position[id][onBehalf].borrowShares > 0
+        _accrueBorrowerPremium(id, onBehalf);
     }
 
     /// @inheritdoc Morpho
     function _afterBorrow(MarketParams memory marketParams, Id id, address onBehalf) internal override {
-        // TODO: Update borrowAssetsAtLastAccrual snapshot
+        _snapshotBorrowerPosition(id, onBehalf);
     }
 
     /// @inheritdoc Morpho
     function _afterRepay(MarketParams memory marketParams, Id id, address onBehalf) internal override {
-        // TODO: Update borrowAssetsAtLastAccrual snapshot
+        _snapshotBorrowerPosition(id, onBehalf);
     }
 
     /// @inheritdoc Morpho
     function _afterLiquidate(MarketParams memory marketParams, Id id, address borrower) internal override {
-        // TODO: Update borrowAssetsAtLastAccrual snapshot
+        _snapshotBorrowerPosition(id, borrower);
     }
 }
