@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.19;
 
-import {Id, MarketParams, IMorphoCredit} from "./interfaces/IMorpho.sol";
+import {Id, MarketParams, Position, Market, IMorphoCredit} from "./interfaces/IMorpho.sol";
 
 import {Morpho} from "./Morpho.sol";
 
@@ -135,17 +135,22 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @param borrower Borrower address
     function _accrueBorrowerPremium(Id id, address borrower) internal {
-        BorrowerPremiumDetails storage details = borrowerPremiumDetails[id][borrower];
+        BorrowerPremiumDetails memory details = borrowerPremiumDetails[id][borrower];
 
         // Early returns for optimization
         if (details.premiumRate == 0) return;
         if (details.lastPremiumAccrualTime == block.timestamp) return;
-        if (position[id][borrower].borrowShares == 0) return;
+
+        // Copy borrower position to memory
+        Position memory borrowerPosition = position[id][borrower];
+        if (borrowerPosition.borrowShares == 0) return;
+
+        Market memory marketData = market[id];
 
         // Get asset amounts and time elapsed
         uint256 borrowAssetsAtLastAccrual = details.borrowAssetsAtLastAccrual;
-        uint256 borrowAssetsCurrent = uint256(position[id][borrower].borrowShares).toAssetsUp(
-            market[id].totalBorrowAssets, market[id].totalBorrowShares
+        uint256 borrowAssetsCurrent = uint256(borrowerPosition.borrowShares).toAssetsUp(
+            marketData.totalBorrowAssets, marketData.totalBorrowShares
         );
         uint256 timeElapsed = block.timestamp - details.lastPremiumAccrualTime;
 
@@ -163,27 +168,31 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             borrowAssetsAtLastAccrual.wMulDown(combinedRateAnnual.wTaylorCompounded(timeElapsed));
         uint256 premiumAmountToAdd = totalGrowthWithPremium - baseGrowthActual;
 
-        // Convert premium to shares and update market state
+        // Convert premium to shares
         uint256 premiumShares =
-            premiumAmountToAdd.toSharesDown(market[id].totalBorrowAssets, market[id].totalBorrowShares);
+            premiumAmountToAdd.toSharesUp(marketData.totalBorrowAssets, marketData.totalBorrowShares);
 
-        position[id][borrower].borrowShares += premiumShares.toUint128();
-        market[id].totalBorrowShares += premiumShares.toUint128();
-        market[id].totalBorrowAssets += premiumAmountToAdd.toUint128();
-        market[id].totalSupplyAssets += premiumAmountToAdd.toUint128();
+        // Update borrower position
+        position[id][borrower].borrowShares = borrowerPosition.borrowShares + premiumShares.toUint128();
 
-        // Handle protocol fees (similar to _accrueInterest pattern)
+        // Update market totals
+        market[id].totalBorrowShares = marketData.totalBorrowShares + premiumShares.toUint128();
+        market[id].totalBorrowAssets = marketData.totalBorrowAssets + premiumAmountToAdd.toUint128();
+        market[id].totalSupplyAssets = marketData.totalSupplyAssets + premiumAmountToAdd.toUint128();
+
+        // Handle protocol fees
         uint256 feeAmount = 0;
-        if (market[id].fee != 0) {
-            feeAmount = premiumAmountToAdd.wMulDown(market[id].fee);
-            uint256 feeShares =
-                feeAmount.toSharesDown(market[id].totalSupplyAssets - feeAmount, market[id].totalSupplyShares);
+        if (marketData.fee != 0) {
+            feeAmount = premiumAmountToAdd.wMulDown(marketData.fee);
+            uint256 feeShares = feeAmount.toSharesDown(
+                marketData.totalSupplyAssets + premiumAmountToAdd.toUint128() - feeAmount, marketData.totalSupplyShares
+            );
             position[id][feeRecipient].supplyShares += feeShares.toUint128();
-            market[id].totalSupplyShares += feeShares.toUint128();
+            market[id].totalSupplyShares = marketData.totalSupplyShares + feeShares.toUint128();
         }
 
         // Update premium tracking timestamp
-        details.lastPremiumAccrualTime = uint128(block.timestamp);
+        borrowerPremiumDetails[id][borrower].lastPremiumAccrualTime = uint128(block.timestamp);
 
         emit EventsLib.PremiumAccrued(id, borrower, premiumAmountToAdd, feeAmount);
     }
