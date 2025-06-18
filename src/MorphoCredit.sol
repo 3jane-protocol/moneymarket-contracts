@@ -131,70 +131,77 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         }
     }
 
-    /// @notice Accrue premium for a specific borrower
-    /// @param id Market ID
-    /// @param borrower Borrower address
-    function _accrueBorrowerPremium(Id id, address borrower) internal {
-        BorrowerPremiumDetails memory details = borrowerPremiumDetails[id][borrower];
-
-        // Early returns for optimization
-        if (details.premiumRate == 0) return;
-        if (details.lastPremiumAccrualTime == block.timestamp) return;
-
-        // Copy borrower position to memory
-        Position memory borrowerPosition = position[id][borrower];
-        if (borrowerPosition.borrowShares == 0) return;
-
-        Market memory marketData = market[id];
-
-        // Get asset amounts and time elapsed
-        uint256 borrowAssetsAtLastAccrual = details.borrowAssetsAtLastAccrual;
-        uint256 borrowAssetsCurrent = uint256(borrowerPosition.borrowShares).toAssetsUp(
-            marketData.totalBorrowAssets, marketData.totalBorrowShares
-        );
-        uint256 timeElapsed = block.timestamp - details.lastPremiumAccrualTime;
-
+    /// @dev Calculates the premium amount to be added based on observed base rate growth
+    /// @param borrowAssetsAtLastAccrual The borrower's assets at last premium accrual
+    /// @param borrowAssetsCurrent The borrower's current assets (including base interest)
+    /// @param premiumRate The borrower's annual premium rate
+    /// @param elapsed Time elapsed since last accrual
+    /// @return premiumAmount The premium amount to add
+    function _calculateBorrowerPremiumAmount(
+        uint256 borrowAssetsAtLastAccrual,
+        uint256 borrowAssetsCurrent,
+        uint256 premiumRate,
+        uint256 elapsed
+    ) internal pure returns (uint256 premiumAmount) {
         // Calculate the actual base rate that occurred over this period
         uint256 baseGrowthRatio = borrowAssetsCurrent.wDivUp(borrowAssetsAtLastAccrual);
-        uint256 baseRateAnnualized = (baseGrowthRatio - WAD).wDivUp(timeElapsed * WAD / 365 days);
+        uint256 baseRateAnnualized = (baseGrowthRatio - WAD).wDivUp(elapsed * WAD / 365 days);
 
         // Combine observed base rate with premium rate
-        uint256 premiumRateAnnual = details.premiumRate;
-        uint256 combinedRateAnnual = baseRateAnnualized + premiumRateAnnual;
+        uint256 combinedRateAnnual = baseRateAnnualized + premiumRate;
 
         // Calculate growth amounts
         uint256 baseGrowthActual = borrowAssetsCurrent - borrowAssetsAtLastAccrual;
         uint256 totalGrowthWithPremium =
-            borrowAssetsAtLastAccrual.wMulDown(combinedRateAnnual.wTaylorCompounded(timeElapsed));
-        uint256 premiumAmountToAdd = totalGrowthWithPremium - baseGrowthActual;
+            borrowAssetsAtLastAccrual.wMulDown(combinedRateAnnual.wTaylorCompounded(elapsed));
 
-        // Convert premium to shares
-        uint256 premiumShares =
-            premiumAmountToAdd.toSharesUp(marketData.totalBorrowAssets, marketData.totalBorrowShares);
+        premiumAmount = totalGrowthWithPremium - baseGrowthActual;
+    }
 
-        // Update borrower position
-        position[id][borrower].borrowShares = borrowerPosition.borrowShares + premiumShares.toUint128();
+    /// @notice Accrue premium for a specific borrower
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    function _accrueBorrowerPremium(Id id, address borrower) internal {
+        uint256 elapsed = block.timestamp - borrowerPremiumDetails[id][borrower].lastPremiumAccrualTime;
+        if (elapsed == 0) return;
 
-        // Update market totals
-        market[id].totalBorrowShares = marketData.totalBorrowShares + premiumShares.toUint128();
-        market[id].totalBorrowAssets = marketData.totalBorrowAssets + premiumAmountToAdd.toUint128();
-        market[id].totalSupplyAssets = marketData.totalSupplyAssets + premiumAmountToAdd.toUint128();
+        BorrowerPremiumDetails memory details = borrowerPremiumDetails[id][borrower];
+        if (details.premiumRate == 0) return;
+
+        Position memory borrowerPosition = position[id][borrower];
+        if (borrowerPosition.borrowShares == 0) return;
+
+        // Calculate premium using helper function
+        uint256 borrowAssetsCurrent = uint256(borrowerPosition.borrowShares).toAssetsUp(
+            market[id].totalBorrowAssets, market[id].totalBorrowShares
+        );
+        uint256 premiumAmount = _calculateBorrowerPremiumAmount(
+            details.borrowAssetsAtLastAccrual, borrowAssetsCurrent, details.premiumRate, elapsed
+        );
+
+        // Convert premium to shares and update position
+        uint256 premiumShares = premiumAmount.toSharesUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
+        position[id][borrower].borrowShares += premiumShares.toUint128();
+        market[id].totalBorrowShares += premiumShares.toUint128();
+        market[id].totalBorrowAssets += premiumAmount.toUint128();
+        market[id].totalSupplyAssets += premiumAmount.toUint128();
 
         // Handle protocol fees
-        uint256 feeAmount = 0;
-        if (marketData.fee != 0) {
-            feeAmount = premiumAmountToAdd.wMulDown(marketData.fee);
-            uint256 feeShares = feeAmount.toSharesDown(
-                marketData.totalSupplyAssets + premiumAmountToAdd.toUint128() - feeAmount, marketData.totalSupplyShares
-            );
-            position[id][feeRecipient].supplyShares += feeShares.toUint128();
-            market[id].totalSupplyShares = marketData.totalSupplyShares + feeShares.toUint128();
+        uint256 feeAmount;
+        if (market[id].fee != 0) {
+            feeAmount = premiumAmount.wMulDown(market[id].fee);
+            // The fee amount is subtracted from the total supply in this calculation to compensate for the fact
+            // that total supply is already increased by the full premium (including the fee amount).
+            uint256 feeShares =
+                feeAmount.toSharesDown(market[id].totalSupplyAssets - feeAmount, market[id].totalSupplyShares);
+            position[id][feeRecipient].supplyShares += feeShares;
+            market[id].totalSupplyShares += feeShares.toUint128();
         }
 
-        // Update premium tracking timestamp
-        borrowerPremiumDetails[id][borrower].lastPremiumAccrualTime = uint128(block.timestamp);
+        emit EventsLib.PremiumAccrued(id, borrower, premiumAmount, feeAmount);
 
-        emit EventsLib.PremiumAccrued(id, borrower, premiumAmountToAdd, feeAmount);
+        // Safe "unchecked" cast.
+        borrowerPremiumDetails[id][borrower].lastPremiumAccrualTime = uint128(block.timestamp);
     }
 
     /// @notice Snapshot borrower's position for premium tracking
