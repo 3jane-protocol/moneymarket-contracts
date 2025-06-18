@@ -14,7 +14,7 @@ import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 
 /// @notice Details for per-borrower premium tracking
 /// @param lastPremiumAccrualTime Timestamp of the last premium accrual for this borrower
-/// @param premiumRate Current risk premium rate in WAD (annual rate)
+/// @param premiumRate Current risk premium rate per second (scaled by WAD)
 /// @param borrowAssetsAtLastAccrual Snapshot of borrow position at last premium accrual
 struct BorrowerPremiumDetails {
     uint128 lastPremiumAccrualTime;
@@ -41,8 +41,15 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Address authorized to set borrower premium rates (e.g., 3CA)
     address public premiumRateSetter;
 
-    /// @notice Maximum premium rate allowed (100% APR)
-    uint256 public constant MAX_PREMIUM_RATE = 1e18;
+    /// @notice Maximum premium rate allowed per second (100% APR / 365 days)
+    /// @dev ~31.7 billion per second for 100% APR
+    uint256 public constant MAX_PREMIUM_RATE = 31709791983;
+
+    /// @notice Minimum premium amount to accrue (prevents precision loss)
+    uint256 internal constant MIN_PREMIUM_THRESHOLD = 1;
+
+    /// @notice Maximum elapsed time for premium accrual (365 days)
+    uint256 internal constant MAX_ELAPSED_TIME = 365 days;
 
     constructor(address newOwner) Morpho(newOwner) {}
 
@@ -84,20 +91,22 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Set or update a borrower's premium rate
     /// @param id Market ID
     /// @param borrower Borrower address
-    /// @param newRate New premium rate in WAD
-    function setBorrowerPremiumRate(Id id, address borrower, uint128 newRate) external onlyPremiumRateSetter {
-        require(newRate <= MAX_PREMIUM_RATE, ErrorsLib.PREMIUM_RATE_TOO_HIGH);
+    /// @param newRateAnnual New annual premium rate in WAD (e.g., 0.1e18 for 10% APR)
+    function setBorrowerPremiumRate(Id id, address borrower, uint128 newRateAnnual) external onlyPremiumRateSetter {
+        // Convert annual rate to per-second rate
+        uint128 newRatePerSecond = uint128(uint256(newRateAnnual) / 365 days);
+        require(newRatePerSecond <= MAX_PREMIUM_RATE, ErrorsLib.PREMIUM_RATE_TOO_HIGH);
 
         BorrowerPremiumDetails storage details = borrowerPremiumDetails[id][borrower];
-        uint128 oldRate = details.premiumRate;
+        uint128 oldRatePerSecond = details.premiumRate;
 
         // Accrue premium at old rate before updating
-        if (oldRate > 0 && position[id][borrower].borrowShares > 0) {
+        if (oldRatePerSecond > 0 && position[id][borrower].borrowShares > 0) {
             _accrueBorrowerPremium(id, borrower);
         }
 
         // Update rate and initialize timestamp if first time
-        details.premiumRate = newRate;
+        details.premiumRate = newRatePerSecond;
         if (details.lastPremiumAccrualTime == 0) {
             details.lastPremiumAccrualTime = uint128(block.timestamp);
             // Initialize snapshot for new borrowers
@@ -108,7 +117,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             }
         }
 
-        emit EventsLib.BorrowerPremiumRateSet(id, borrower, oldRate, newRate);
+        emit EventsLib.BorrowerPremiumRateSet(id, borrower, oldRatePerSecond, newRatePerSecond);
     }
 
     /// @notice Manually accrue premium for a borrower (callable by anyone, useful for keepers)
@@ -134,7 +143,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @dev Calculates the premium amount to be added based on observed base rate growth
     /// @param borrowAssetsAtLastAccrual The borrower's assets at last premium accrual
     /// @param borrowAssetsCurrent The borrower's current assets (including base interest)
-    /// @param premiumRate The borrower's annual premium rate
+    /// @param premiumRate The borrower's premium rate per second (scaled by WAD)
     /// @param elapsed Time elapsed since last accrual
     /// @return premiumAmount The premium amount to add
     function _calculateBorrowerPremiumAmount(
@@ -143,19 +152,29 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 premiumRate,
         uint256 elapsed
     ) internal pure returns (uint256 premiumAmount) {
-        // Calculate the actual base rate that occurred over this period
-        uint256 baseGrowthRatio = borrowAssetsCurrent.wDivUp(borrowAssetsAtLastAccrual);
-        uint256 baseRateAnnualized = (baseGrowthRatio - WAD).wDivUp(elapsed * WAD / 365 days);
-
-        // Combine observed base rate with premium rate
-        uint256 combinedRateAnnual = baseRateAnnualized + premiumRate;
-
-        // Calculate growth amounts
-        uint256 baseGrowthActual = borrowAssetsCurrent - borrowAssetsAtLastAccrual;
-        uint256 totalGrowthWithPremium =
-            borrowAssetsAtLastAccrual.wMulDown(combinedRateAnnual.wTaylorCompounded(elapsed));
-
-        premiumAmount = totalGrowthWithPremium - baseGrowthActual;
+        // Prevent division by zero
+        if (borrowAssetsAtLastAccrual == 0 || elapsed == 0) return 0;
+        
+        // Calculate the actual base growth
+        uint256 baseGrowthActual = borrowAssetsCurrent > borrowAssetsAtLastAccrual 
+            ? borrowAssetsCurrent - borrowAssetsAtLastAccrual 
+            : 0;
+        
+        // Calculate base rate per second from observed growth
+        // baseRate = growth / (principal * elapsed)
+        uint256 baseRatePerSecond = baseGrowthActual.wDivDown(borrowAssetsAtLastAccrual * elapsed);
+        
+        // Combine base rate with premium rate (both per-second)
+        uint256 combinedRate = baseRatePerSecond + premiumRate;
+        
+        // Calculate compound growth using wTaylorCompounded
+        uint256 totalGrowth = combinedRate.wTaylorCompounded(elapsed);
+        uint256 totalGrowthAmount = borrowAssetsAtLastAccrual.wMulDown(totalGrowth);
+        
+        // Premium amount is the difference between total growth and actual base growth
+        premiumAmount = totalGrowthAmount > baseGrowthActual 
+            ? totalGrowthAmount - baseGrowthActual 
+            : totalGrowthAmount; // If position decreased, entire growth is premium
     }
 
     /// @notice Accrue premium for a specific borrower
@@ -164,6 +183,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     function _accrueBorrowerPremium(Id id, address borrower) internal {
         uint256 elapsed = block.timestamp - borrowerPremiumDetails[id][borrower].lastPremiumAccrualTime;
         if (elapsed == 0) return;
+
+        // Cap elapsed time to prevent overflow in compound calculations
+        if (elapsed > MAX_ELAPSED_TIME) {
+            elapsed = MAX_ELAPSED_TIME;
+        }
 
         BorrowerPremiumDetails memory details = borrowerPremiumDetails[id][borrower];
         if (details.premiumRate == 0) return;
@@ -178,6 +202,13 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 premiumAmount = _calculateBorrowerPremiumAmount(
             details.borrowAssetsAtLastAccrual, borrowAssetsCurrent, details.premiumRate, elapsed
         );
+
+        // Skip if premium amount is below threshold (prevents precision loss)
+        if (premiumAmount < MIN_PREMIUM_THRESHOLD) {
+            // Still update timestamp to prevent repeated negligible calculations
+            borrowerPremiumDetails[id][borrower].lastPremiumAccrualTime = uint128(block.timestamp);
+            return;
+        }
 
         // Convert premium to shares and update position
         uint256 premiumShares = premiumAmount.toSharesUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
