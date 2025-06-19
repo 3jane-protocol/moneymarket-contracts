@@ -2,7 +2,6 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
-import {IrmMock} from "../../../src/mocks/IrmMock.sol";
 
 contract AccrueInterestIntegrationTest is BaseTest {
     using MathLib for uint256;
