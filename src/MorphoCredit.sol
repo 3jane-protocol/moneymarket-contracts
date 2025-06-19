@@ -49,6 +49,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     uint256 internal constant MIN_PREMIUM_THRESHOLD = 1;
 
     /// @notice Maximum elapsed time for premium accrual (365 days)
+    /// @dev This limit serves multiple purposes:
+    /// 1. Maintains accuracy of wTaylorCompounded approximation (error < 8% for periods up to 365 days)
+    /// 2. Prevents numerical overflow when combined with MAX_PREMIUM_RATE (100% APR)
+    /// 3. Protects against runaway debt accumulation on abandoned positions
+    /// 4. Aligns with the test bounds in MathLibTest which validate behavior up to 365 days
     uint256 internal constant MAX_ELAPSED_TIME = 365 days;
 
     constructor(address newOwner) Morpho(newOwner) {}
