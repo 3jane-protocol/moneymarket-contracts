@@ -9,17 +9,6 @@ contract AccrueInterestIntegrationTest is BaseTest {
     using MorphoLib for IMorpho;
     using SharesMathLib for uint256;
 
-    function setUp() public override {
-        super.setUp();
-
-        IrmMock irmMock = new IrmMock();
-        vm.prank(OWNER);
-        morpho.enableIrm(address(irmMock));
-        marketParams.irm = address(irmMock);
-        morpho.createMarket(marketParams);
-        id = MarketParamsLib.id(marketParams);
-    }
-
     function testAccrueInterestMarketNotCreated(MarketParams memory marketParamsFuzz) public {
         vm.assume(neq(marketParamsFuzz, marketParams));
 

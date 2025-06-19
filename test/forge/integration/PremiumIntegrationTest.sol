@@ -21,6 +21,13 @@ contract PremiumIntegrationTest is BaseTest {
     function setUp() public override {
         super.setUp();
 
+        irm = new ConfigurableIrmMock();
+        vm.prank(OWNER);
+        morpho.enableIrm(address(irm));
+        marketParams.irm = address(irm);
+        morpho.createMarket(marketParams);
+        id = MarketParamsLib.id(marketParams);
+
         premiumRateSetter = makeAddr("PremiumRateSetter");
 
         // Set up premium rate setter

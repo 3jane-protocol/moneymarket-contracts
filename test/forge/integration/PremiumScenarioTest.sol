@@ -23,6 +23,13 @@ contract PremiumScenarioTest is BaseTest {
     function setUp() public override {
         super.setUp();
 
+        irm = new ConfigurableIrmMock();
+        vm.prank(OWNER);
+        morpho.enableIrm(address(irm));
+        marketParams.irm = address(irm);
+        morpho.createMarket(marketParams);
+        id = MarketParamsLib.id(marketParams);
+
         premiumRateSetter = makeAddr("PremiumRateSetter");
         creditAnalyst = makeAddr("CreditAnalyst");
 
@@ -33,9 +40,6 @@ contract PremiumScenarioTest is BaseTest {
         // Enable LLTV for second market (first is already enabled in BaseTest)
         vm.prank(OWNER);
         morpho.enableLltv(0.9e18); // Higher LLTV for second market
-
-        // First market is already created in BaseTest, just get the id
-        id = marketParams.id();
 
         // Create second market with different LLTV
         marketParams2 = MarketParams({
