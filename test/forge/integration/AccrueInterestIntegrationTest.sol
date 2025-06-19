@@ -2,11 +2,23 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
+import {IrmMock} from "../../../src/mocks/IrmMock.sol";
 
 contract AccrueInterestIntegrationTest is BaseTest {
     using MathLib for uint256;
     using MorphoLib for IMorpho;
     using SharesMathLib for uint256;
+
+    function setUp() public override {
+        super.setUp();
+
+        IrmMock irmMock = new IrmMock();
+        vm.prank(OWNER);
+        morpho.enableIrm(address(irmMock));
+        marketParams.irm = address(irmMock);
+        morpho.createMarket(marketParams);
+        id = MarketParamsLib.id(marketParams);
+    }
 
     function testAccrueInterestMarketNotCreated(MarketParams memory marketParamsFuzz) public {
         vm.assume(neq(marketParamsFuzz, marketParams));
@@ -98,13 +110,12 @@ contract AccrueInterestIntegrationTest is BaseTest {
 
         _forward(blocks);
 
+        uint256 borrowRate = (morpho.totalBorrowAssets(id).wDivDown(morpho.totalSupplyAssets(id))) / 365 days;
         uint256 totalBorrowBeforeAccrued = morpho.totalBorrowAssets(id);
         uint256 totalSupplyBeforeAccrued = morpho.totalSupplyAssets(id);
         uint256 totalSupplySharesBeforeAccrued = morpho.totalSupplyShares(id);
-
-        // ConfigurableIrmMock returns 0 by default, so we expect no interest accrual
-        uint256 borrowRate = 0;
-        uint256 expectedAccruedInterest = 0;
+        uint256 expectedAccruedInterest =
+            totalBorrowBeforeAccrued.wMulDown(borrowRate.wTaylorCompounded(blocks * BLOCK_TIME));
 
         vm.expectEmit(true, true, true, true, address(morpho));
         emit EventsLib.AccrueInterest(id, borrowRate, expectedAccruedInterest, 0);
@@ -156,15 +167,17 @@ contract AccrueInterestIntegrationTest is BaseTest {
 
         _forward(blocks);
 
+        params.borrowRate = (morpho.totalBorrowAssets(id).wDivDown(morpho.totalSupplyAssets(id))) / 365 days;
         params.totalBorrowBeforeAccrued = morpho.totalBorrowAssets(id);
         params.totalSupplyBeforeAccrued = morpho.totalSupplyAssets(id);
         params.totalSupplySharesBeforeAccrued = morpho.totalSupplyShares(id);
-
-        // ConfigurableIrmMock returns 0 by default, so we expect no interest accrual
-        params.borrowRate = 0;
-        params.expectedAccruedInterest = 0;
-        params.feeAmount = 0;
-        params.feeShares = 0;
+        params.expectedAccruedInterest =
+            params.totalBorrowBeforeAccrued.wMulDown(params.borrowRate.wTaylorCompounded(blocks * BLOCK_TIME));
+        params.feeAmount = params.expectedAccruedInterest.wMulDown(fee);
+        params.feeShares = params.feeAmount.toSharesDown(
+            params.totalSupplyBeforeAccrued + params.expectedAccruedInterest - params.feeAmount,
+            params.totalSupplySharesBeforeAccrued
+        );
 
         vm.expectEmit(true, true, true, true, address(morpho));
         emit EventsLib.AccrueInterest(id, params.borrowRate, params.expectedAccruedInterest, params.feeShares);
