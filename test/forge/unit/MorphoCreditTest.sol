@@ -345,7 +345,7 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower2, uint128(uint256(0.2e18) / 365 days)); // 20%
             // APR
 
-        // Advance time (1 day to avoid overflow)
+        // Advance time
         vm.warp(block.timestamp + 1 hours);
 
         // Batch accrue
