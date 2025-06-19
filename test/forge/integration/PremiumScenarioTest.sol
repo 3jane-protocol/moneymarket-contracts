@@ -83,7 +83,7 @@ contract PremiumScenarioTest is BaseTest {
         morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
 
         // 3CA assesses borrower and sets initial premium rate based on credit score
-        uint128 initialPremiumRate = 0.08e18; // 8% APR - good credit
+        uint128 initialPremiumRate = uint128(uint256(0.08e18) / 365 days); // 8% APR - good credit
         vm.prank(premiumRateSetter);
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, initialPremiumRate);
 
@@ -106,7 +106,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // Phase 4: Credit improvement - 3CA reduces premium rate
         vm.warp(block.timestamp + 30 days);
-        uint128 improvedPremiumRate = 0.05e18; // 5% APR - improved credit
+        uint128 improvedPremiumRate = uint128(uint256(0.05e18) / 365 days); // 5% APR - improved credit
         vm.prank(premiumRateSetter);
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, improvedPremiumRate);
 
@@ -127,7 +127,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // Phase 7: Credit deterioration - 3CA increases premium
         vm.warp(block.timestamp + 30 days);
-        uint128 deterioratedPremiumRate = 0.15e18; // 15% APR - credit issues
+        uint128 deterioratedPremiumRate = uint128(uint256(0.15e18) / 365 days); // 15% APR - credit issues
         vm.prank(premiumRateSetter);
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, deterioratedPremiumRate);
 
@@ -181,8 +181,8 @@ contract PremiumScenarioTest is BaseTest {
         morpho.supplyCollateral(marketParams2, collateralAmount, BORROWER, "");
 
         // Different premium rates for different markets (risk assessment)
-        uint128 market1Premium = 0.1e18; // 10% APR - standard risk
-        uint128 market2Premium = 0.2e18; // 20% APR - higher risk market
+        uint128 market1Premium = uint128(uint256(0.1e18) / 365 days); // 10% APR - standard risk
+        uint128 market2Premium = uint128(uint256(0.2e18) / 365 days); // 20% APR - higher risk market
 
         vm.prank(premiumRateSetter);
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, market1Premium);
@@ -275,7 +275,7 @@ contract PremiumScenarioTest is BaseTest {
         morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
 
         // Initial borrow with standard premium
-        uint128 standardPremium = 0.12e18; // 12% APR
+        uint128 standardPremium = uint128(uint256(0.12e18) / 365 days); // 12% APR
         vm.prank(premiumRateSetter);
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, standardPremium);
 
@@ -301,7 +301,9 @@ contract PremiumScenarioTest is BaseTest {
 
                 // 3CA reduces premium every 2 months for good behavior
                 if (i % 2 == 1) {
-                    uint128 newPremium = standardPremium - uint128((i / 2 + 1) * 0.01e18);
+                    // Convert reduction to per-second
+                    uint128 reduction = uint128(uint256((i / 2 + 1) * 0.01e18) / 365 days);
+                    uint128 newPremium = standardPremium - reduction;
                     premiumAdjustments[i] = newPremium;
 
                     vm.prank(premiumRateSetter);
@@ -313,7 +315,7 @@ contract PremiumScenarioTest is BaseTest {
 
                 // 3CA increases premium for missed payments
                 if (i == 7) {
-                    uint128 penaltyPremium = 0.18e18; // 18% APR
+                    uint128 penaltyPremium = uint128(uint256(0.18e18) / 365 days); // 18% APR
                     premiumAdjustments[i] = penaltyPremium;
 
                     vm.prank(premiumRateSetter);
@@ -330,7 +332,7 @@ contract PremiumScenarioTest is BaseTest {
 
                 // 3CA gradually reduces premium again
                 if (i == 11) {
-                    uint128 recoveryPremium = 0.14e18; // 14% APR
+                    uint128 recoveryPremium = uint128(uint256(0.14e18) / 365 days); // 14% APR
                     premiumAdjustments[i] = recoveryPremium;
 
                     vm.prank(premiumRateSetter);
@@ -382,11 +384,11 @@ contract PremiumScenarioTest is BaseTest {
             borrowers[3] = makeAddr("SubprimeBorrower");
             borrowers[4] = makeAddr("HighRiskBorrower");
 
-            riskPremiums[0] = 0.02e18; // 2% APR - Prime
-            riskPremiums[1] = 0.05e18; // 5% APR - Good
-            riskPremiums[2] = 0.1e18; // 10% APR - Standard
-            riskPremiums[3] = 0.2e18; // 20% APR - Subprime
-            riskPremiums[4] = 0.35e18; // 35% APR - High Risk
+            riskPremiums[0] = uint128(uint256(0.02e18) / 365 days); // 2% APR - Prime
+            riskPremiums[1] = uint128(uint256(0.05e18) / 365 days); // 5% APR - Good
+            riskPremiums[2] = uint128(uint256(0.1e18) / 365 days); // 10% APR - Standard
+            riskPremiums[3] = uint128(uint256(0.2e18) / 365 days); // 20% APR - Subprime
+            riskPremiums[4] = uint128(uint256(0.35e18) / 365 days); // 35% APR - High Risk
         }
 
         // Supplier provides liquidity
@@ -434,8 +436,7 @@ contract PremiumScenarioTest is BaseTest {
             uint256 balanceAfterBase = borrowPerBorrower + borrowPerBorrower.wMulDown(baseGrowth);
 
             // Second: premium rate growth on the new balance
-            uint256 premiumRatePerSecond = riskPremiums[i] / 365 days;
-            uint256 premiumGrowth = premiumRatePerSecond.wTaylorCompounded(365 days);
+            uint256 premiumGrowth = uint256(riskPremiums[i]).wTaylorCompounded(365 days);
             uint256 premiumAmount = balanceAfterBase.wMulDown(premiumGrowth);
 
             // Total interest for this borrower
@@ -476,7 +477,7 @@ contract PremiumScenarioTest is BaseTest {
         morpho.supplyCollateral(marketParams, initialCollateral, BORROWER, "");
 
         // Initial credit assessment - moderate risk
-        uint128 initialPremium = 0.15e18; // 15% APR
+        uint128 initialPremium = uint128(uint256(0.15e18) / 365 days); // 15% APR
         vm.prank(premiumRateSetter);
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, initialPremium);
 
@@ -497,7 +498,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // Credit line increase approved by 3CA
         // 1. Reduce premium rate
-        uint128 improvedPremium = 0.08e18; // 8% APR
+        uint128 improvedPremium = uint128(uint256(0.08e18) / 365 days); // 8% APR
         vm.prank(premiumRateSetter);
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, improvedPremium);
 
@@ -565,7 +566,11 @@ contract PremiumScenarioTest is BaseTest {
             borrowerArray[2] = borrowerC;
 
             uint256[3] memory borrowAmounts = [uint256(30_000e18), uint256(40_000e18), uint256(50_000e18)];
-            uint128[3] memory premiumRates = [uint128(0.05e18), uint128(0.12e18), uint128(0.25e18)]; // 5%, 12%, 25% APR
+            uint128[3] memory premiumRates = [
+                uint128(uint256(0.05e18) / 365 days),
+                uint128(uint256(0.12e18) / 365 days),
+                uint128(uint256(0.25e18) / 365 days)
+            ]; // 5%, 12%, 25% APR
 
             _setupBorrowers(borrowerArray, borrowAmounts, premiumRates);
         }
@@ -697,8 +702,7 @@ contract PremiumScenarioTest is BaseTest {
             uint256 balanceAfterBase = borrowPerBorrower + borrowPerBorrower.wMulDown(baseGrowth);
 
             // Second: premium rate growth on the new balance
-            uint256 premiumRatePerSecond = riskPremiums[i] / 365 days;
-            uint256 premiumGrowth = premiumRatePerSecond.wTaylorCompounded(365 days);
+            uint256 premiumGrowth = uint256(riskPremiums[i]).wTaylorCompounded(365 days);
             uint256 premiumAmount = balanceAfterBase.wMulDown(premiumGrowth);
 
             uint256 expectedDebt = balanceAfterBase + premiumAmount;

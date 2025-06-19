@@ -96,9 +96,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Set or update a borrower's premium rate
     /// @param id Market ID
     /// @param borrower Borrower address
-    /// @param newRateAnnual New annual premium rate in WAD (e.g., 0.1e18 for 10% APR)
-    function setBorrowerPremiumRate(Id id, address borrower, uint128 newRateAnnual) external onlyPremiumRateSetter {
-        uint128 newRatePerSecond = uint128(uint256(newRateAnnual) / 365 days);
+    /// @param newRatePerSecond New premium rate per second in WAD (e.g., 0.1e18 / 365 days for 10% APR)
+    function setBorrowerPremiumRate(Id id, address borrower, uint128 newRatePerSecond) external onlyPremiumRateSetter {
         require(newRatePerSecond <= MAX_PREMIUM_RATE, ErrorsLib.PREMIUM_RATE_TOO_HIGH);
 
         // Accrue base interest first to ensure premium calculations are accurate
@@ -115,10 +114,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         premium.rate = newRatePerSecond;
         if (premium.lastAccrualTime == 0) {
             premium.lastAccrualTime = uint128(block.timestamp);
-            if (position[id][borrower].borrowShares > 0) {
-                premium.borrowAssetsAtLastAccrual = uint256(position[id][borrower].borrowShares).toAssetsUp(
-                    market[id].totalBorrowAssets, market[id].totalBorrowShares
-                );
+            uint256 borrowShares = uint256(position[id][borrower].borrowShares);
+            if (borrowShares > 0) {
+                premium.borrowAssetsAtLastAccrual =
+                    borrowShares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
             }
         }
 
@@ -183,6 +182,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Accrue premium for a specific borrower
     /// @param id Market ID
     /// @param borrower Borrower address
+    /// @dev _accrueInterest must be called prior to ensure calculation is accurate
     function _accrueBorrowerPremium(Id id, address borrower) internal {
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
         if (premium.rate == 0) return;

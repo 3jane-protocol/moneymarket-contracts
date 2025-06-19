@@ -133,7 +133,7 @@ contract MorphoCreditTest is Test {
         emit BorrowerPremiumRateSet(marketId, borrower, 0, newRatePerSecond);
 
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, newRateAnnual);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, newRatePerSecond);
 
         (uint128 lastAccrualTime, uint128 rate,) = MorphoCredit(address(morpho)).borrowerPremium(marketId, borrower);
         assertEq(rate, newRatePerSecond);
@@ -143,7 +143,7 @@ contract MorphoCreditTest is Test {
     function testSetBorrowerPremiumRateNotAuthorized() public {
         vm.expectRevert(bytes(ErrorsLib.NOT_PREMIUM_RATE_SETTER));
         vm.prank(borrower);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, 0.05e18);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, uint128(uint256(0.05e18) / 365 days));
     }
 
     function testSetBorrowerPremiumRateTooHigh() public {
@@ -151,12 +151,12 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
 
         // Use a rate that will definitely exceed the per-second limit
-        // 10,000% APR = 100e18, which when converted to per-second will exceed MAX_PREMIUM_RATE
-        uint128 tooHighAnnualRate = 100e18;
+        // MAX_PREMIUM_RATE_PER_SECOND + 1
+        uint128 tooHighRatePerSecond = uint128(MAX_PREMIUM_RATE_PER_SECOND + 1);
 
         vm.expectRevert(bytes(ErrorsLib.PREMIUM_RATE_TOO_HIGH));
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, tooHighAnnualRate);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, tooHighRatePerSecond);
     }
 
     function testSetBorrowerPremiumRateWithExistingPosition() public {
@@ -174,10 +174,10 @@ contract MorphoCreditTest is Test {
         vm.prank(owner);
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
 
-        uint128 newRate = 0.1e18; // 10% APR
+        uint128 newRatePerSecond = uint128(uint256(0.1e18) / 365 days); // 10% APR converted to per-second
 
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, newRate);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, newRatePerSecond);
 
         // Check that snapshot was taken
         (,, uint256 borrowAssetsAtLastAccrual) = MorphoCredit(address(morpho)).borrowerPremium(marketId, borrower);
@@ -203,9 +203,9 @@ contract MorphoCreditTest is Test {
         vm.prank(owner);
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
 
-        uint128 premiumRate = 0.2e18; // 20% APR
+        uint128 premiumRatePerSecond = uint128(uint256(0.2e18) / 365 days); // 20% APR converted to per-second
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRate);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRatePerSecond);
 
         // Advance time (1 day to avoid overflow)
         vm.warp(block.timestamp + 1 hours);
@@ -242,9 +242,9 @@ contract MorphoCreditTest is Test {
         vm.prank(owner);
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
 
-        uint128 premiumRate = 0.2e18; // 20% APR
+        uint128 premiumRatePerSecond = uint128(uint256(0.2e18) / 365 days); // 20% APR converted to per-second
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRate);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRatePerSecond);
 
         // Advance time (1 day to avoid overflow)
         vm.warp(block.timestamp + 1 hours);
@@ -298,7 +298,8 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
 
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, 0.2e18);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, uint128(uint256(0.2e18) / 365 days)); // 20%
+            // APR
 
         uint256 borrowSharesBefore = morpho.position(marketId, borrower).borrowShares;
 
@@ -338,9 +339,11 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
 
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, 0.1e18); // 10% APR
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, uint128(uint256(0.1e18) / 365 days)); // 10%
+            // APR
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower2, 0.2e18); // 20% APR
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower2, uint128(uint256(0.2e18) / 365 days)); // 20%
+            // APR
 
         // Advance time (1 day to avoid overflow)
         vm.warp(block.timestamp + 1 hours);
@@ -384,7 +387,8 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
 
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, 0.1e18);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, uint128(uint256(0.1e18) / 365 days)); // 10%
+            // APR
 
         // First borrow
         vm.prank(borrower);
@@ -422,7 +426,8 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
 
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, 0.1e18);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, uint128(uint256(0.1e18) / 365 days)); // 10%
+            // APR
 
         // Advance time
         vm.warp(block.timestamp + 1 hours);
@@ -468,7 +473,8 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
 
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, 0.1e18);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, uint128(uint256(0.1e18) / 365 days)); // 10%
+            // APR
 
         // This should not revert even in edge cases
         vm.warp(block.timestamp + 1);
@@ -490,7 +496,8 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
 
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, 0.01e18); // 1% APR
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, uint128(uint256(0.01e18) / 365 days)); // 1%
+            // APR
 
         // Should handle precision gracefully
         vm.warp(block.timestamp + 1 hours);
@@ -524,7 +531,8 @@ contract MorphoCreditTest is Test {
 
         // Set premium rate - this should trigger _accrueInterest first
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, 0.2e18); // 20% APR
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, uint128(uint256(0.2e18) / 365 days)); // 20%
+            // APR
 
         // Get market state after
         Market memory marketAfter = morpho.market(marketId);
@@ -558,7 +566,7 @@ contract MorphoCreditTest is Test {
         // Setup positions
         uint256 supplyAmount = 5_000e18; // Use amount within initial balance
         uint256 borrowAmount = 2_500e18;
-        uint128 premiumRateAnnual = 0.5e18; // 50% APR
+        uint128 premiumRatePerSecond = uint128(uint256(0.5e18) / 365 days); // 50% APR converted to per-second
 
         vm.prank(supplier);
         morpho.supply(marketParams, supplyAmount, 0, supplier, "");
@@ -575,7 +583,7 @@ contract MorphoCreditTest is Test {
         vm.prank(owner);
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRateAnnual);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRatePerSecond);
 
         // Warp time beyond MAX_ELAPSED_TIME (365 days + extra)
         uint256 MAX_ELAPSED_TIME = 365 days;
@@ -585,7 +593,7 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
 
         // Calculate expected premium for exactly MAX_ELAPSED_TIME (not actual elapsed)
-        uint256 ratePerSecond = uint256(premiumRateAnnual) / 365 days;
+        uint256 ratePerSecond = uint256(premiumRatePerSecond);
         uint256 expectedGrowth = ratePerSecond.wTaylorCompounded(MAX_ELAPSED_TIME);
         uint256 expectedPremium = borrowAmount.wMulDown(expectedGrowth);
 
@@ -602,7 +610,7 @@ contract MorphoCreditTest is Test {
         // Setup with extremely small amounts to ensure premium < MIN_PREMIUM_THRESHOLD
         uint256 supplyAmount = 1000e18;
         uint256 borrowAmount = 1; // 1 wei borrow
-        uint128 premiumRateAnnual = 0.001e18; // 0.1% APR
+        uint128 premiumRatePerSecond = uint128(uint256(0.001e18) / 365 days); // 0.1% APR converted to per-second
 
         vm.prank(supplier);
         morpho.supply(marketParams, supplyAmount, 0, supplier, "");
@@ -619,7 +627,7 @@ contract MorphoCreditTest is Test {
         vm.prank(owner);
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRateAnnual);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRatePerSecond);
 
         // Record state before
         Position memory posBefore = morpho.position(marketId, borrower);
@@ -649,7 +657,7 @@ contract MorphoCreditTest is Test {
         // Setup to ensure premium == MIN_PREMIUM_THRESHOLD
         uint256 supplyAmount = 5_000e18; // Within initial balance
         uint256 borrowAmount = 1000e18;
-        uint128 premiumRateAnnual = 0.1e18; // 10% APR
+        uint128 premiumRatePerSecond = uint128(uint256(0.1e18) / 365 days); // 10% APR converted to per-second
 
         vm.prank(supplier);
         morpho.supply(marketParams, supplyAmount, 0, supplier, "");
@@ -666,7 +674,7 @@ contract MorphoCreditTest is Test {
         vm.prank(owner);
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRateAnnual);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRatePerSecond);
 
         // Calculate time needed for premium to be exactly 1 (MIN_PREMIUM_THRESHOLD)
         // premium = borrowAmount * rate * time / (365 days * WAD)
@@ -694,7 +702,7 @@ contract MorphoCreditTest is Test {
         // Setup positions
         uint256 supplyAmount = 5_000e18; // Within initial balance
         uint256 borrowAmount = 2_500e18;
-        uint128 premiumRateAnnual = 0.2e18; // 20% APR
+        uint128 premiumRatePerSecond = uint128(uint256(0.2e18) / 365 days); // 20% APR converted to per-second
 
         vm.prank(supplier);
         morpho.supply(marketParams, supplyAmount, 0, supplier, "");
@@ -711,7 +719,7 @@ contract MorphoCreditTest is Test {
         vm.prank(owner);
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRateAnnual);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRatePerSecond);
 
         // Advance time and let some premium accrue
         vm.warp(block.timestamp + 30 days);
@@ -754,7 +762,8 @@ contract MorphoCreditTest is Test {
         // Setup positions
         uint256 supplyAmount = 5_000e18; // Within initial balance
         uint256 borrowAmount = 2_500e18;
-        uint128 premiumRateAnnual = 0.001e18; // 0.1% APR - very low
+        uint128 premiumRatePerSecond = uint128(uint256(0.001e18) / 365 days); // 0.1% APR converted to per-second - very
+            // low
 
         vm.prank(supplier);
         morpho.supply(marketParams, supplyAmount, 0, supplier, "");
@@ -774,7 +783,7 @@ contract MorphoCreditTest is Test {
         vm.prank(owner);
         MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
         vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRateAnnual);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRatePerSecond);
 
         // Advance short time
         vm.warp(block.timestamp + 1 days);
