@@ -12,7 +12,7 @@ import {EventsLib} from "../../../src/libraries/EventsLib.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 import {ERC20Mock} from "../../../src/mocks/ERC20Mock.sol";
 import {OracleMock} from "../../../src/mocks/OracleMock.sol";
-import {IrmMock} from "../../../src/mocks/IrmMock.sol";
+import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
 
 contract MorphoCreditTest is Test {
     using MathLib for uint256;
@@ -29,7 +29,7 @@ contract MorphoCreditTest is Test {
     ERC20Mock public loanToken;
     ERC20Mock public collateralToken;
     OracleMock public oracle;
-    IrmMock public irm;
+    ConfigurableIrmMock public irm;
     
     MarketParams public marketParams;
     Id public marketId;
@@ -59,7 +59,7 @@ contract MorphoCreditTest is Test {
         loanToken = new ERC20Mock();
         collateralToken = new ERC20Mock();
         oracle = new OracleMock();
-        irm = new IrmMock();
+        irm = new ConfigurableIrmMock();
         
         // Set oracle price
         oracle.setPrice(ORACLE_PRICE);

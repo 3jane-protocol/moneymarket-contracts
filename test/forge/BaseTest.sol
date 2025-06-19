@@ -6,7 +6,7 @@ import "../../lib/forge-std/src/console.sol";
 
 import {IMorpho} from "../../src/interfaces/IMorpho.sol";
 import "../../src/interfaces/IMorphoCallbacks.sol";
-import {IrmMock} from "../../src/mocks/IrmMock.sol";
+import {ConfigurableIrmMock} from "./mocks/ConfigurableIrmMock.sol";
 import {ERC20Mock} from "../../src/mocks/ERC20Mock.sol";
 import {OracleMock} from "../../src/mocks/OracleMock.sol";
 import {CreditLineMock} from "../../src/mocks/CreditLineMock.sol";
@@ -56,7 +56,7 @@ contract BaseTest is Test {
     ERC20Mock internal loanToken;
     ERC20Mock internal collateralToken;
     OracleMock internal oracle;
-    IrmMock internal irm;
+    ConfigurableIrmMock internal irm;
     CreditLineMock internal creditLine;
 
     MarketParams internal marketParams;
@@ -85,7 +85,7 @@ contract BaseTest is Test {
 
         oracle.setPrice(ORACLE_PRICE_SCALE);
 
-        irm = new IrmMock();
+        irm = new ConfigurableIrmMock();
 
         creditLine = new CreditLineMock();
         vm.label(address(creditLine), "CreditLine");
