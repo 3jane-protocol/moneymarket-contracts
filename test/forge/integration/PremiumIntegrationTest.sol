@@ -463,49 +463,6 @@ contract PremiumIntegrationTest is BaseTest {
                     WITHDRAW OPERATIONS TESTS
     //////////////////////////////////////////////////////////////*/
 
-    function testWithdrawCollateralAccruesPremium() public {
-        uint256 supplyAmount = 10_000e18;
-        uint256 borrowAmount = 4_000e18;
-        uint256 collateralAmount = 10_000e18;
-        uint128 premiumRateAnnual = 0.15e18; // 15% APR
-
-        // Setup position
-        vm.prank(SUPPLIER);
-        morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
-
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
-
-        vm.prank(BORROWER);
-        morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set premium rate
-        vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, premiumRateAnnual);
-
-        // Advance time
-        vm.warp(block.timestamp + 3 days);
-
-        // Record debt before withdrawal
-        Position memory positionBefore = morpho.position(id, BORROWER);
-        Market memory marketBefore = morpho.market(id);
-        uint256 debtBefore = uint256(positionBefore.borrowShares).toAssetsUp(
-            marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares
-        );
-
-        // Withdraw some collateral
-        vm.prank(BORROWER);
-        morpho.withdrawCollateral(marketParams, 2_000e18, BORROWER, BORROWER);
-
-        // Check debt increased due to premium
-        Position memory positionAfter = morpho.position(id, BORROWER);
-        Market memory marketAfter = morpho.market(id);
-        uint256 debtAfter =
-            uint256(positionAfter.borrowShares).toAssetsUp(marketAfter.totalBorrowAssets, marketAfter.totalBorrowShares);
-
-        assertGt(debtAfter, debtBefore);
-    }
-
     function testWithdrawSupplyWithBorrowerPremium() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;

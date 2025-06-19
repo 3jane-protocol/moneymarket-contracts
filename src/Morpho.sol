@@ -337,7 +337,6 @@ contract Morpho is IMorphoStaticTyping {
         // No need to verify that onBehalf != address(0) thanks to the following authorization check.
         require(_isSenderAuthorized(onBehalf), ErrorsLib.UNAUTHORIZED);
 
-        _beforeWithdrawCollateral(marketParams, id, onBehalf, assets);
         _accrueInterest(marketParams, id);
 
         position[id][onBehalf].collateral -= assets.toUint128();
@@ -586,16 +585,6 @@ contract Morpho is IMorphoStaticTyping {
         uint256 seizedAssets,
         uint256 repaidShares
     ) internal virtual {}
-
-    /// @dev Hook called before withdrawCollateral operations to allow for premium accrual or other pre-processing.
-    /// @param marketParams The market parameters.
-    /// @param id The market id.
-    /// @param onBehalf The address withdrawing collateral.
-    /// @param assets The amount of collateral to withdraw.
-    function _beforeWithdrawCollateral(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets)
-        internal
-        virtual
-    {}
 
     /// @dev Hook called after borrow operations to allow for post-processing.
     /// @param marketParams The market parameters.

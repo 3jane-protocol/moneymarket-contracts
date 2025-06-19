@@ -133,6 +133,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Batch accrue premiums for multiple borrowers
     /// @param id Market ID
     /// @param borrowers Array of borrower addresses
+    /// @dev Gas usage scales linearly with array size. Callers should manage batch sizes based on block gas limits.
     function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) external {
         MarketParams memory marketParams = idToMarketParams[id];
         _accrueInterest(marketParams, id);
@@ -172,8 +173,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 totalGrowthAmount = borrowAssetsAtLastAccrual.wMulDown(totalGrowth);
 
         // Premium amount is the difference between total growth and actual base growth
-        premiumAmount = totalGrowthAmount > baseGrowthActual ? totalGrowthAmount - baseGrowthActual : totalGrowthAmount; // If
-            // position decreased, entire growth is premium
+        premiumAmount = totalGrowthAmount > baseGrowthActual ? totalGrowthAmount - baseGrowthActual : 0;
     }
 
     /// @notice Accrue premium for a specific borrower
@@ -241,6 +241,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             );
             premium.borrowAssetsAtLastAccrual = currentBorrowAssets;
 
+            // Safety check: Initialize timestamp if not already set (edge case protection)
             if (premium.lastAccrualTime == 0) {
                 premium.lastAccrualTime = uint128(block.timestamp);
             }
@@ -285,14 +286,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 repaidShares
     ) internal override {
         _accrueBorrowerPremium(id, borrower);
-    }
-
-    /// @inheritdoc Morpho
-    function _beforeWithdrawCollateral(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets)
-        internal
-        override
-    {
-        _accrueBorrowerPremium(id, onBehalf);
     }
 
     /// @inheritdoc Morpho
