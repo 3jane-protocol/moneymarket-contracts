@@ -135,8 +135,7 @@ contract MorphoCreditTest is Test {
         vm.prank(premiumRateSetter);
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, newRateAnnual);
 
-        (uint128 lastAccrualTime, uint128 rate,) =
-            MorphoCredit(address(morpho)).borrowerPremiumDetails(marketId, borrower);
+        (uint128 lastAccrualTime, uint128 rate,) = MorphoCredit(address(morpho)).borrowerPremium(marketId, borrower);
         assertEq(rate, newRatePerSecond);
         assertEq(lastAccrualTime, block.timestamp);
     }
@@ -181,8 +180,7 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, newRate);
 
         // Check that snapshot was taken
-        (,, uint256 borrowAssetsAtLastAccrual) =
-            MorphoCredit(address(morpho)).borrowerPremiumDetails(marketId, borrower);
+        (,, uint256 borrowAssetsAtLastAccrual) = MorphoCredit(address(morpho)).borrowerPremium(marketId, borrower);
         assertGt(borrowAssetsAtLastAccrual, 0);
         assertEq(borrowAssetsAtLastAccrual, 500e18); // Initial borrow amount
     }
@@ -393,7 +391,7 @@ contract MorphoCreditTest is Test {
         morpho.borrow(marketParams, 300e18, 0, borrower, borrower);
 
         // Check snapshot was taken
-        (,, uint256 snapshot1) = MorphoCredit(address(morpho)).borrowerPremiumDetails(marketId, borrower);
+        (,, uint256 snapshot1) = MorphoCredit(address(morpho)).borrowerPremium(marketId, borrower);
         assertEq(snapshot1, 300e18);
 
         // Advance time and accrue some interest/premium
@@ -404,7 +402,7 @@ contract MorphoCreditTest is Test {
         morpho.borrow(marketParams, 200e18, 0, borrower, borrower);
 
         // Snapshot should now reflect total position including accrued amounts
-        (,, uint256 snapshot2) = MorphoCredit(address(morpho)).borrowerPremiumDetails(marketId, borrower);
+        (,, uint256 snapshot2) = MorphoCredit(address(morpho)).borrowerPremium(marketId, borrower);
         assertGt(snapshot2, 500e18); // More than just 300 + 200 due to accrued interest/premium
     }
 
@@ -439,8 +437,7 @@ contract MorphoCreditTest is Test {
         morpho.repay(marketParams, 100e18, 0, borrower, "");
 
         // Check snapshot was updated
-        (uint128 lastAccrualTime,, uint256 snapshot) =
-            MorphoCredit(address(morpho)).borrowerPremiumDetails(marketId, borrower);
+        (uint128 lastAccrualTime,, uint256 snapshot) = MorphoCredit(address(morpho)).borrowerPremium(marketId, borrower);
         assertEq(lastAccrualTime, block.timestamp);
         // Check that snapshot reflects remaining position after repayment
         // The snapshot should be less than what it was before repayment

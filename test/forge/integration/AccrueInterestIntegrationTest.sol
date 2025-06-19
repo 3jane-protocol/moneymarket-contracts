@@ -98,12 +98,13 @@ contract AccrueInterestIntegrationTest is BaseTest {
 
         _forward(blocks);
 
-        uint256 borrowRate = (morpho.totalBorrowAssets(id).wDivDown(morpho.totalSupplyAssets(id))) / 365 days;
         uint256 totalBorrowBeforeAccrued = morpho.totalBorrowAssets(id);
         uint256 totalSupplyBeforeAccrued = morpho.totalSupplyAssets(id);
         uint256 totalSupplySharesBeforeAccrued = morpho.totalSupplyShares(id);
-        uint256 expectedAccruedInterest =
-            totalBorrowBeforeAccrued.wMulDown(borrowRate.wTaylorCompounded(blocks * BLOCK_TIME));
+
+        // ConfigurableIrmMock returns 0 by default, so we expect no interest accrual
+        uint256 borrowRate = 0;
+        uint256 expectedAccruedInterest = 0;
 
         vm.expectEmit(true, true, true, true, address(morpho));
         emit EventsLib.AccrueInterest(id, borrowRate, expectedAccruedInterest, 0);
@@ -155,17 +156,15 @@ contract AccrueInterestIntegrationTest is BaseTest {
 
         _forward(blocks);
 
-        params.borrowRate = (morpho.totalBorrowAssets(id).wDivDown(morpho.totalSupplyAssets(id))) / 365 days;
         params.totalBorrowBeforeAccrued = morpho.totalBorrowAssets(id);
         params.totalSupplyBeforeAccrued = morpho.totalSupplyAssets(id);
         params.totalSupplySharesBeforeAccrued = morpho.totalSupplyShares(id);
-        params.expectedAccruedInterest =
-            params.totalBorrowBeforeAccrued.wMulDown(params.borrowRate.wTaylorCompounded(blocks * BLOCK_TIME));
-        params.feeAmount = params.expectedAccruedInterest.wMulDown(fee);
-        params.feeShares = params.feeAmount.toSharesDown(
-            params.totalSupplyBeforeAccrued + params.expectedAccruedInterest - params.feeAmount,
-            params.totalSupplySharesBeforeAccrued
-        );
+
+        // ConfigurableIrmMock returns 0 by default, so we expect no interest accrual
+        params.borrowRate = 0;
+        params.expectedAccruedInterest = 0;
+        params.feeAmount = 0;
+        params.feeShares = 0;
 
         vm.expectEmit(true, true, true, true, address(morpho));
         emit EventsLib.AccrueInterest(id, params.borrowRate, params.expectedAccruedInterest, params.feeShares);

@@ -103,7 +103,7 @@ contract PremiumIntegrationTest is BaseTest {
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, premiumRateAnnual);
 
         // Get initial snapshot
-        (,, uint256 snapshot1) = MorphoCredit(address(morpho)).borrowerPremiumDetails(id, BORROWER);
+        (,, uint256 snapshot1) = MorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
         assertEq(snapshot1, borrowAmount);
 
         // Advance time and borrow more
@@ -113,7 +113,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, 1_000e18, 0, BORROWER, BORROWER);
 
         // Check updated snapshot includes accrued premium
-        (,, uint256 snapshot2) = MorphoCredit(address(morpho)).borrowerPremiumDetails(id, BORROWER);
+        (,, uint256 snapshot2) = MorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
         assertGt(snapshot2, borrowAmount + 1_000e18);
     }
 
@@ -225,8 +225,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Check snapshot was initialized
-        (uint128 lastAccrualTime,, uint256 snapshot) =
-            MorphoCredit(address(morpho)).borrowerPremiumDetails(id, BORROWER);
+        (uint128 lastAccrualTime,, uint256 snapshot) = MorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
         assertEq(snapshot, borrowAmount);
         assertEq(lastAccrualTime, block.timestamp);
     }
@@ -391,7 +390,7 @@ contract PremiumIntegrationTest is BaseTest {
         vm.prank(premiumRateSetter);
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, premiumRateAnnual);
 
-        (,, uint256 snapshotBefore) = MorphoCredit(address(morpho)).borrowerPremiumDetails(id, BORROWER);
+        (,, uint256 snapshotBefore) = MorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
 
         // Advance time
         vm.warp(block.timestamp + 5 days);
@@ -402,8 +401,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.repay(marketParams, 1_000e18, 0, BORROWER, "");
 
         // Check snapshot was updated
-        (uint128 lastAccrualTime,, uint256 snapshotAfter) =
-            MorphoCredit(address(morpho)).borrowerPremiumDetails(id, BORROWER);
+        (uint128 lastAccrualTime,, uint256 snapshotAfter) = MorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
         assertEq(lastAccrualTime, block.timestamp);
         assertGt(snapshotAfter, snapshotBefore - 1_000e18); // Should include accrued premium
     }
@@ -669,8 +667,7 @@ contract PremiumIntegrationTest is BaseTest {
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, premiumRateAnnual);
 
         // Get premium details before
-        (uint128 timeBefore,, uint256 snapshotBefore) =
-            MorphoCredit(address(morpho)).borrowerPremiumDetails(id, BORROWER);
+        (uint128 timeBefore,, uint256 snapshotBefore) = MorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
 
         // Advance time
         vm.warp(block.timestamp + 1 days);
@@ -679,7 +676,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.accrueInterest(marketParams);
 
         // Premium details should not change
-        (uint128 timeAfter,, uint256 snapshotAfter) = MorphoCredit(address(morpho)).borrowerPremiumDetails(id, BORROWER);
+        (uint128 timeAfter,, uint256 snapshotAfter) = MorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
         assertEq(timeBefore, timeAfter);
         assertEq(snapshotBefore, snapshotAfter);
     }
@@ -1078,7 +1075,7 @@ contract PremiumIntegrationTest is BaseTest {
 
         // Verify all borrowers have updated timestamps
         for (uint256 i = 0; i < 5; i++) {
-            (uint128 lastAccrualTime,,) = MorphoCredit(address(morpho)).borrowerPremiumDetails(id, borrowers[i]);
+            (uint128 lastAccrualTime,,) = MorphoCredit(address(morpho)).borrowerPremium(id, borrowers[i]);
             assertEq(lastAccrualTime, block.timestamp);
         }
     }
