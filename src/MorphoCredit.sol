@@ -97,8 +97,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint128 newRatePerSecond = uint128(uint256(newRateAnnual) / 365 days);
         require(newRatePerSecond <= MAX_PREMIUM_RATE, ErrorsLib.PREMIUM_RATE_TOO_HIGH);
 
-        BorrowerPremium storage details = borrowerPremium[id][borrower];
-        uint128 oldRatePerSecond = details.rate;
+        BorrowerPremium storage premium = borrowerPremium[id][borrower];
+        uint128 oldRatePerSecond = premium.rate;
 
         // Accrue premium at old rate before updating
         if (oldRatePerSecond > 0 && position[id][borrower].borrowShares > 0) {
@@ -106,12 +106,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         }
 
         // Update rate and initialize timestamp if first time
-        details.rate = newRatePerSecond;
-        if (details.lastAccrualTime == 0) {
-            details.lastAccrualTime = uint128(block.timestamp);
+        premium.rate = newRatePerSecond;
+        if (premium.lastAccrualTime == 0) {
+            premium.lastAccrualTime = uint128(block.timestamp);
             // Initialize snapshot for new borrowers
             if (position[id][borrower].borrowShares > 0) {
-                details.borrowAssetsAtLastAccrual = uint256(position[id][borrower].borrowShares).toAssetsUp(
+                premium.borrowAssetsAtLastAccrual = uint256(position[id][borrower].borrowShares).toAssetsUp(
                     market[id].totalBorrowAssets, market[id].totalBorrowShares
                 );
             }
@@ -179,16 +179,16 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @param borrower Borrower address
     function _accrueBorrowerPremium(Id id, address borrower) internal {
-        uint256 elapsed = block.timestamp - borrowerPremium[id][borrower].lastAccrualTime;
+        BorrowerPremium memory premium = borrowerPremium[id][borrower];
+        if (premium.rate == 0) return;
+
+        uint256 elapsed = block.timestamp - premium.lastAccrualTime;
         if (elapsed == 0) return;
 
         // Cap elapsed time to prevent overflow in compound calculations
         if (elapsed > MAX_ELAPSED_TIME) {
             elapsed = MAX_ELAPSED_TIME;
         }
-
-        BorrowerPremium memory details = borrowerPremium[id][borrower];
-        if (details.rate == 0) return;
 
         Position memory borrowerPosition = position[id][borrower];
         if (borrowerPosition.borrowShares == 0) return;
@@ -198,7 +198,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             market[id].totalBorrowAssets, market[id].totalBorrowShares
         );
         uint256 premiumAmount = _calculateBorrowerPremiumAmount(
-            details.borrowAssetsAtLastAccrual, borrowAssetsCurrent, details.rate, elapsed
+            premium.borrowAssetsAtLastAccrual, borrowAssetsCurrent, premium.rate, elapsed
         );
 
         // Skip if premium amount is below threshold (prevents precision loss)
@@ -237,16 +237,16 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @param borrower Borrower address
     function _snapshotBorrowerPosition(Id id, address borrower) internal {
-        BorrowerPremium storage details = borrowerPremium[id][borrower];
-        if (details.rate > 0) {
+        BorrowerPremium storage premium = borrowerPremium[id][borrower];
+        if (premium.rate > 0) {
             uint256 currentBorrowAssets = uint256(position[id][borrower].borrowShares).toAssetsUp(
                 market[id].totalBorrowAssets, market[id].totalBorrowShares
             );
-            details.borrowAssetsAtLastAccrual = currentBorrowAssets;
+            premium.borrowAssetsAtLastAccrual = currentBorrowAssets;
 
             // Initialize timestamp if first time
-            if (details.lastAccrualTime == 0) {
-                details.lastAccrualTime = uint128(block.timestamp);
+            if (premium.lastAccrualTime == 0) {
+                premium.lastAccrualTime = uint128(block.timestamp);
             }
         }
     }
