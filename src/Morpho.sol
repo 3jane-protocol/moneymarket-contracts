@@ -597,7 +597,6 @@ contract Morpho is IMorphoStaticTyping {
         virtual
     {}
 
-
     /// @dev Hook called after borrow operations to allow for post-processing.
     /// @param marketParams The market parameters.
     /// @param id The market id.

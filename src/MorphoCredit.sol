@@ -154,27 +154,25 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     ) internal pure returns (uint256 premiumAmount) {
         // Prevent division by zero
         if (borrowAssetsAtLastAccrual == 0 || elapsed == 0) return 0;
-        
+
         // Calculate the actual base growth
-        uint256 baseGrowthActual = borrowAssetsCurrent > borrowAssetsAtLastAccrual 
-            ? borrowAssetsCurrent - borrowAssetsAtLastAccrual 
-            : 0;
-        
+        uint256 baseGrowthActual =
+            borrowAssetsCurrent > borrowAssetsAtLastAccrual ? borrowAssetsCurrent - borrowAssetsAtLastAccrual : 0;
+
         // Calculate base rate per second from observed growth
         // baseRate = growth / (principal * elapsed)
         uint256 baseRatePerSecond = baseGrowthActual.wDivDown(borrowAssetsAtLastAccrual * elapsed);
-        
+
         // Combine base rate with premium rate (both per-second)
         uint256 combinedRate = baseRatePerSecond + premiumRate;
-        
+
         // Calculate compound growth using wTaylorCompounded
         uint256 totalGrowth = combinedRate.wTaylorCompounded(elapsed);
         uint256 totalGrowthAmount = borrowAssetsAtLastAccrual.wMulDown(totalGrowth);
-        
+
         // Premium amount is the difference between total growth and actual base growth
-        premiumAmount = totalGrowthAmount > baseGrowthActual 
-            ? totalGrowthAmount - baseGrowthActual 
-            : totalGrowthAmount; // If position decreased, entire growth is premium
+        premiumAmount = totalGrowthAmount > baseGrowthActual ? totalGrowthAmount - baseGrowthActual : totalGrowthAmount; // If
+            // position decreased, entire growth is premium
     }
 
     /// @notice Accrue premium for a specific borrower
@@ -300,7 +298,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     {
         _accrueBorrowerPremium(id, onBehalf);
     }
-
 
     /// @inheritdoc Morpho
     function _afterBorrow(MarketParams memory marketParams, Id id, address onBehalf) internal override {
