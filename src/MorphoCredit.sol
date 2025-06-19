@@ -101,6 +101,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint128 newRatePerSecond = uint128(uint256(newRateAnnual) / 365 days);
         require(newRatePerSecond <= MAX_PREMIUM_RATE, ErrorsLib.PREMIUM_RATE_TOO_HIGH);
 
+        // Accrue base interest first to ensure premium calculations are accurate
+        MarketParams memory marketParams = idToMarketParams[id];
+        _accrueInterest(marketParams, id);
+
         BorrowerPremium storage premium = borrowerPremium[id][borrower];
         uint128 oldRatePerSecond = premium.rate;
 

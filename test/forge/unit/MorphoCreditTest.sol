@@ -497,6 +497,59 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
     }
 
+    function testSetBorrowerPremiumRateAccruesBaseInterestFirst() public {
+        // Setup: Supply and borrow
+        vm.prank(supplier);
+        morpho.supply(marketParams, 5_000e18, 0, supplier, "");
+
+        vm.prank(borrower);
+        morpho.supplyCollateral(marketParams, 10_000e18, borrower, "");
+
+        vm.prank(borrower);
+        morpho.borrow(marketParams, 2_500e18, 0, borrower, borrower);
+
+        // Set up IRM with base rate
+        irm.setApr(0.1e18); // 10% APR base rate
+
+        // Set up premium rate setter
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
+
+        // Advance time to accumulate base interest
+        vm.warp(block.timestamp + 30 days);
+
+        // Get market state before setting premium rate
+        Market memory marketBefore = morpho.market(marketId);
+        uint256 lastUpdateBefore = marketBefore.lastUpdate;
+
+        // Set premium rate - this should trigger _accrueInterest first
+        vm.prank(premiumRateSetter);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, 0.2e18); // 20% APR
+
+        // Get market state after
+        Market memory marketAfter = morpho.market(marketId);
+
+        // Verify that base interest was accrued (lastUpdate should be current timestamp)
+        assertEq(marketAfter.lastUpdate, block.timestamp);
+        assertGt(marketAfter.lastUpdate, lastUpdateBefore);
+
+        // Verify that totalBorrowAssets increased due to base interest
+        assertGt(marketAfter.totalBorrowAssets, marketBefore.totalBorrowAssets);
+
+        // Calculate expected base interest
+        uint256 elapsed = block.timestamp - lastUpdateBefore;
+        uint256 borrowRate = irm.borrowRate(marketParams, marketBefore);
+        uint256 expectedInterest =
+            uint256(marketBefore.totalBorrowAssets).wMulDown(borrowRate.wTaylorCompounded(elapsed));
+
+        // Verify the interest accrued matches expected
+        assertApproxEqRel(
+            marketAfter.totalBorrowAssets - marketBefore.totalBorrowAssets,
+            expectedInterest,
+            0.001e18 // 0.1% tolerance
+        );
+    }
+
     /*//////////////////////////////////////////////////////////////
                         NEW EDGE CASE TESTS
     //////////////////////////////////////////////////////////////*/
