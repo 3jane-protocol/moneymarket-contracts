@@ -67,6 +67,16 @@ contract PremiumIntegrationTest is BaseTest {
             marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares
         );
 
+        // Calculate expected premium
+        uint256 ratePerSecond = uint256(premiumRateAnnual) / 365 days;
+        uint256 elapsed = 1 hours;
+        uint256 expectedGrowth = ratePerSecond.wTaylorCompounded(elapsed);
+        uint256 expectedPremiumAmount = borrowAmount.wMulDown(expectedGrowth);
+
+        // Expect PremiumAccrued event (without fee since market fee is 0)
+        vm.expectEmit(true, true, false, true);
+        emit PremiumAccrued(id, BORROWER, expectedPremiumAmount, 0);
+
         // Second borrow should trigger premium accrual
         uint256 additionalBorrow = 1_000e18;
         vm.prank(BORROWER);
@@ -80,6 +90,8 @@ contract PremiumIntegrationTest is BaseTest {
 
         // Borrow assets should increase by more than just the additional borrow
         assertGt(borrowAssetsAfter, borrowAssetsBefore + additionalBorrow);
+        // More precise check
+        assertApproxEqRel(borrowAssetsAfter, borrowAssetsBefore + expectedPremiumAmount + additionalBorrow, 0.01e18);
     }
 
     function testBorrowUpdatesSnapshotAfterAccrual() public {
@@ -1099,14 +1111,22 @@ contract PremiumIntegrationTest is BaseTest {
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
-        // Set initial premium rate
+        // Set initial premium rate with event verification
+        uint128 initialRatePerSecond = uint128(uint256(initialRate) / 365 days);
+        vm.expectEmit(true, true, false, true);
+        emit BorrowerPremiumRateSet(id, BORROWER, 0, initialRatePerSecond);
+
         vm.prank(premiumRateSetter);
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, initialRate);
 
         // Advance time
         vm.warp(block.timestamp + 30 days);
 
-        // Change rate (this accrues at old rate first)
+        // Change rate (this accrues at old rate first) with event verification
+        uint128 newRatePerSecond = uint128(uint256(newRate) / 365 days);
+        vm.expectEmit(true, true, false, true);
+        emit BorrowerPremiumRateSet(id, BORROWER, initialRatePerSecond, newRatePerSecond);
+
         vm.prank(premiumRateSetter);
         MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, newRate);
 
@@ -1198,19 +1218,20 @@ contract PremiumIntegrationTest is BaseTest {
         // Accrue premium
         MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
 
-        // Calculate debt
+        // Calculate expected debt using wTaylorCompounded
+        uint256 ratePerSecond = uint256(premiumRateAnnual) / 365 days;
+        uint256 growthFactor = ratePerSecond.wTaylorCompounded(365 days);
+        uint256 expectedPremium = borrowAmount.wMulDown(growthFactor);
+        uint256 expectedDebt = borrowAmount + expectedPremium; // Assuming base rate is 0
+
+        // Get actual debt
         Position memory position = morpho.position(id, BORROWER);
         Market memory market = morpho.market(id);
         uint256 finalDebt =
             uint256(position.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
 
-        // With 100% APR compounded continuously, debt should be more than double
-        // Using the continuous compounding formula: A = P * e^(rt)
-        // With r=1 (100%) and t=1 year, e^1 ≈ 2.718, so debt ≈ 2.718x original
-        // However, wTaylorCompounded uses a different approximation
-        // The actual result should be around 2.66x based on the Taylor approximation
-        assertGt(finalDebt, borrowAmount * 2); // Should be more than double
-        assertLt(finalDebt, borrowAmount * 3); // But less than triple
+        // Use precise assertion with reasonable tolerance
+        assertApproxEqRel(finalDebt, expectedDebt, 0.01e18); // 1% tolerance
 
         // Ensure no overflow occurred
         assertLt(finalDebt, type(uint128).max);

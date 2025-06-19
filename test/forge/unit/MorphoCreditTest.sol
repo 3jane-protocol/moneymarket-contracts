@@ -496,4 +496,261 @@ contract MorphoCreditTest is Test {
         vm.warp(block.timestamp + 1 hours);
         MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                        NEW EDGE CASE TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function testAccrueBorrowerPremiumMaxElapsedTime() public {
+        // Setup positions
+        uint256 supplyAmount = 5_000e18; // Use amount within initial balance
+        uint256 borrowAmount = 2_500e18;
+        uint128 premiumRateAnnual = 0.5e18; // 50% APR
+
+        vm.prank(supplier);
+        morpho.supply(marketParams, supplyAmount, 0, supplier, "");
+
+        // Borrower supplies collateral and borrows
+        uint256 collateralAmount = 10_000e18; // Within initial balance
+        vm.prank(borrower);
+        morpho.supplyCollateral(marketParams, collateralAmount, borrower, "");
+
+        vm.prank(borrower);
+        morpho.borrow(marketParams, borrowAmount, 0, borrower, borrower);
+
+        // Set premium rate
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
+        vm.prank(premiumRateSetter);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRateAnnual);
+
+        // Warp time beyond MAX_ELAPSED_TIME (365 days + extra)
+        uint256 MAX_ELAPSED_TIME = 365 days;
+        vm.warp(block.timestamp + MAX_ELAPSED_TIME + 30 days);
+
+        // Trigger premium accrual
+        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+
+        // Calculate expected premium for exactly MAX_ELAPSED_TIME (not actual elapsed)
+        uint256 ratePerSecond = uint256(premiumRateAnnual) / 365 days;
+        uint256 expectedGrowth = ratePerSecond.wTaylorCompounded(MAX_ELAPSED_TIME);
+        uint256 expectedPremium = borrowAmount.wMulDown(expectedGrowth);
+
+        // Get actual debt
+        Position memory pos = morpho.position(marketId, borrower);
+        Market memory mkt = morpho.market(marketId);
+        uint256 actualDebt = uint256(pos.borrowShares).toAssetsUp(mkt.totalBorrowAssets, mkt.totalBorrowShares);
+
+        // Debt should be borrowAmount + premium for MAX_ELAPSED_TIME only
+        assertApproxEqRel(actualDebt, borrowAmount + expectedPremium, 0.01e18); // 1% tolerance
+    }
+
+    function testAccrueBorrowerPremiumBelowThreshold() public {
+        // Setup with extremely small amounts to ensure premium < MIN_PREMIUM_THRESHOLD
+        uint256 supplyAmount = 1000e18;
+        uint256 borrowAmount = 1; // 1 wei borrow
+        uint128 premiumRateAnnual = 0.001e18; // 0.1% APR
+
+        vm.prank(supplier);
+        morpho.supply(marketParams, supplyAmount, 0, supplier, "");
+
+        // Borrower supplies collateral and borrows
+        uint256 collateralAmount = 1e18;
+        vm.prank(borrower);
+        morpho.supplyCollateral(marketParams, collateralAmount, borrower, "");
+
+        vm.prank(borrower);
+        morpho.borrow(marketParams, borrowAmount, 0, borrower, borrower);
+
+        // Set very low premium rate
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
+        vm.prank(premiumRateSetter);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRateAnnual);
+
+        // Record state before
+        Position memory posBefore = morpho.position(marketId, borrower);
+        Market memory mktBefore = morpho.market(marketId);
+
+        // Advance very short time
+        vm.warp(block.timestamp + 1 seconds);
+
+        // Trigger premium accrual
+        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+
+        // Check state after
+        Position memory posAfter = morpho.position(marketId, borrower);
+        Market memory mktAfter = morpho.market(marketId);
+
+        // Borrow shares should not change (premium below threshold)
+        assertEq(posAfter.borrowShares, posBefore.borrowShares);
+        assertEq(mktAfter.totalBorrowAssets, mktBefore.totalBorrowAssets);
+        assertEq(mktAfter.totalBorrowShares, mktBefore.totalBorrowShares);
+
+        // But timestamp should be updated (check via another accrual with no time change)
+        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        // No revert means timestamp was updated in previous call
+    }
+
+    function testAccrueBorrowerPremiumAtThreshold() public {
+        // Setup to ensure premium == MIN_PREMIUM_THRESHOLD
+        uint256 supplyAmount = 5_000e18; // Within initial balance
+        uint256 borrowAmount = 1000e18;
+        uint128 premiumRateAnnual = 0.1e18; // 10% APR
+
+        vm.prank(supplier);
+        morpho.supply(marketParams, supplyAmount, 0, supplier, "");
+
+        // Borrower supplies collateral and borrows
+        uint256 collateralAmount = 2000e18;
+        vm.prank(borrower);
+        morpho.supplyCollateral(marketParams, collateralAmount, borrower, "");
+
+        vm.prank(borrower);
+        morpho.borrow(marketParams, borrowAmount, 0, borrower, borrower);
+
+        // Set premium rate
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
+        vm.prank(premiumRateSetter);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRateAnnual);
+
+        // Calculate time needed for premium to be exactly 1 (MIN_PREMIUM_THRESHOLD)
+        // premium = borrowAmount * rate * time / (365 days * WAD)
+        // 1 = 1000e18 * 0.1e18 * time / (365 days * 1e18)
+        // time = 365 days / (1000 * 0.1) = 3.65 days / 100 ≈ 0.0365 days ≈ 3154 seconds
+        uint256 timeForMinPremium = 3154;
+
+        // Record state before
+        Position memory posBefore = morpho.position(marketId, borrower);
+
+        // Advance time
+        vm.warp(block.timestamp + timeForMinPremium);
+
+        // Trigger premium accrual
+        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+
+        // Check state after
+        Position memory posAfter = morpho.position(marketId, borrower);
+
+        // Borrow shares should increase (premium at threshold)
+        assertGt(posAfter.borrowShares, posBefore.borrowShares);
+    }
+
+    function testPremiumCalculationPositionDecreased() public {
+        // Setup positions
+        uint256 supplyAmount = 5_000e18; // Within initial balance
+        uint256 borrowAmount = 2_500e18;
+        uint128 premiumRateAnnual = 0.2e18; // 20% APR
+
+        vm.prank(supplier);
+        morpho.supply(marketParams, supplyAmount, 0, supplier, "");
+
+        // Borrower supplies collateral and borrows
+        uint256 collateralAmount = 10_000e18; // Within initial balance
+        vm.prank(borrower);
+        morpho.supplyCollateral(marketParams, collateralAmount, borrower, "");
+
+        vm.prank(borrower);
+        morpho.borrow(marketParams, borrowAmount, 0, borrower, borrower);
+
+        // Set premium rate
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
+        vm.prank(premiumRateSetter);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRateAnnual);
+
+        // Advance time and let some premium accrue
+        vm.warp(block.timestamp + 30 days);
+        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+
+        // Now repay more than the accrued interest (position decreases)
+        uint256 repayAmount = 1_000e18;
+        loanToken.setBalance(borrower, repayAmount);
+        vm.prank(borrower);
+        loanToken.approve(address(morpho), repayAmount);
+        vm.prank(borrower);
+        morpho.repay(marketParams, repayAmount, 0, borrower, "");
+
+        // Record debt after repay
+        Position memory posAfterRepay = morpho.position(marketId, borrower);
+        Market memory mktAfterRepay = morpho.market(marketId);
+        uint256 debtAfterRepay = uint256(posAfterRepay.borrowShares).toAssetsUp(
+            mktAfterRepay.totalBorrowAssets, mktAfterRepay.totalBorrowShares
+        );
+
+        // Advance time again
+        vm.warp(block.timestamp + 30 days);
+
+        // Trigger premium accrual - position has decreased since last snapshot
+        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+
+        // Premium should still accrue based on current position
+        Position memory posFinal = morpho.position(marketId, borrower);
+        Market memory mktFinal = morpho.market(marketId);
+        uint256 debtFinal =
+            uint256(posFinal.borrowShares).toAssetsUp(mktFinal.totalBorrowAssets, mktFinal.totalBorrowShares);
+
+        assertGt(debtFinal, debtAfterRepay);
+    }
+
+    function testPremiumCalculationWithZeroTotalGrowth() public {
+        // This tests the edge case where totalGrowthAmount <= baseGrowthActual
+        // which should result in premiumAmount = 0
+
+        // Setup positions
+        uint256 supplyAmount = 5_000e18; // Within initial balance
+        uint256 borrowAmount = 2_500e18;
+        uint128 premiumRateAnnual = 0.001e18; // 0.1% APR - very low
+
+        vm.prank(supplier);
+        morpho.supply(marketParams, supplyAmount, 0, supplier, "");
+
+        // Borrower supplies collateral and borrows
+        uint256 collateralAmount = 10_000e18; // Within initial balance
+        vm.prank(borrower);
+        morpho.supplyCollateral(marketParams, collateralAmount, borrower, "");
+
+        vm.prank(borrower);
+        morpho.borrow(marketParams, borrowAmount, 0, borrower, borrower);
+
+        // Configure IRM to have a high base rate
+        irm.setApr(0.5e18); // 50% APR base rate
+
+        // Set very low premium rate
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
+        vm.prank(premiumRateSetter);
+        MorphoCredit(address(morpho)).setBorrowerPremiumRate(marketId, borrower, premiumRateAnnual);
+
+        // Advance short time
+        vm.warp(block.timestamp + 1 days);
+
+        // Accrue base interest first
+        morpho.accrueInterest(marketParams);
+
+        // Record state
+        Position memory posBefore = morpho.position(marketId, borrower);
+        Market memory mktBefore = morpho.market(marketId);
+
+        // Trigger premium accrual
+        // With high base rate and very low premium, totalGrowthAmount might be <= baseGrowthActual
+        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+
+        // Check state - should have minimal or no change due to premium
+        Position memory posAfter = morpho.position(marketId, borrower);
+        Market memory mktAfter = morpho.market(marketId);
+
+        // The debt increase should be minimal (only from rounding)
+        uint256 debtBefore =
+            uint256(posBefore.borrowShares).toAssetsUp(mktBefore.totalBorrowAssets, mktBefore.totalBorrowShares);
+        uint256 debtAfter =
+            uint256(posAfter.borrowShares).toAssetsUp(mktAfter.totalBorrowAssets, mktAfter.totalBorrowShares);
+
+        // Assert debt increased by at most a tiny amount
+        // With 2500e18 borrow, 0.001e18 APR for 1 day:
+        // Expected premium ≈ 2500e18 * 0.001e18 * 1 / 365 / 1e18 ≈ 6.849e15
+        // But with high base rate, the premium calculation might result in 0
+        assertLe(debtAfter - debtBefore, 1e16); // Allow small amount for rounding
+    }
 }

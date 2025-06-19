@@ -420,29 +420,37 @@ contract PremiumScenarioTest is BaseTest {
             yieldRate = supplierYield.wDivDown(supplyAmount);
         }
 
-        // Calculate expected weighted average yield
-        // With 5 borrowers each borrowing 10k from 200k supply = 50k utilized
-        // Utilization = 25%
-        uint256 totalBorrowed = borrowPerBorrower * 5;
-        uint256 utilization = totalBorrowed.wDivDown(supplyAmount);
+        // Calculate expected yield accounting for sequential accrual
+        // The protocol first accrues base interest via _accrueInterest, then premiums via _accrueBorrowerPremium
+        // This means base rate compounds first, then premium is calculated on the new balance
 
-        // Weighted average premium across all borrowers
-        uint256 avgPremium =
-            (riskPremiums[0] + riskPremiums[1] + riskPremiums[2] + riskPremiums[3] + riskPremiums[4]) / 5;
-
-        // Expected yield with compound interest
-        // For each borrower: compounded growth over 1 year
         uint256 expectedTotalInterest = 0;
+
+        // For each borrower, calculate interest accounting for sequential accrual
         for (uint256 i = 0; i < 5; i++) {
-            uint256 combinedRate = (baseRate + riskPremiums[i]) / 365 days;
-            uint256 compoundedGrowth = combinedRate.wTaylorCompounded(365 days);
-            uint256 interest = borrowPerBorrower.wMulDown(compoundedGrowth);
-            expectedTotalInterest += interest;
+            // First: base rate growth
+            uint256 baseRatePerSecond = baseRate / 365 days;
+            uint256 baseGrowth = baseRatePerSecond.wTaylorCompounded(365 days);
+            uint256 balanceAfterBase = borrowPerBorrower + borrowPerBorrower.wMulDown(baseGrowth);
+
+            // Second: premium rate growth on the new balance
+            uint256 premiumRatePerSecond = riskPremiums[i] / 365 days;
+            uint256 premiumGrowth = premiumRatePerSecond.wTaylorCompounded(365 days);
+            uint256 premiumAmount = balanceAfterBase.wMulDown(premiumGrowth);
+
+            // Total interest for this borrower
+            uint256 totalInterest = (balanceAfterBase + premiumAmount) - borrowPerBorrower;
+            expectedTotalInterest += totalInterest;
         }
+
         uint256 expectedYieldRate = expectedTotalInterest.wDivDown(supplyAmount);
 
         // Verify supplier earned approximately the expected yield
-        assertApproxEqRel(yieldRate, expectedYieldRate, 0.15e18); // 15% tolerance for compound interest
+        // Tolerance accounts for:
+        // 1. Rounding differences in share calculations
+        // 2. Minor timing differences in accrual
+        // 3. Protocol fee calculations (if any)
+        assertApproxEqRel(yieldRate, expectedYieldRate, 0.05e18); // 5% tolerance
 
         // Demonstrate individual borrower debts
         _verifyBorrowerDebts(borrowers, riskPremiums, borrowPerBorrower, baseRate);
@@ -682,11 +690,19 @@ contract PremiumScenarioTest is BaseTest {
                 finalMarket.totalBorrowAssets, finalMarket.totalBorrowShares
             );
 
-            // Higher risk borrowers should have higher debt (compound interest)
-            uint256 combinedRate = (baseRate + riskPremiums[i]) / 365 days;
-            uint256 compoundedGrowth = combinedRate.wTaylorCompounded(365 days);
-            uint256 expectedDebt = borrowPerBorrower + borrowPerBorrower.wMulDown(compoundedGrowth);
-            assertApproxEqRel(debt, expectedDebt, 0.1e18); // 10% tolerance
+            // Calculate expected debt with sequential accrual
+            // First: base rate growth
+            uint256 baseRatePerSecond = baseRate / 365 days;
+            uint256 baseGrowth = baseRatePerSecond.wTaylorCompounded(365 days);
+            uint256 balanceAfterBase = borrowPerBorrower + borrowPerBorrower.wMulDown(baseGrowth);
+
+            // Second: premium rate growth on the new balance
+            uint256 premiumRatePerSecond = riskPremiums[i] / 365 days;
+            uint256 premiumGrowth = premiumRatePerSecond.wTaylorCompounded(365 days);
+            uint256 premiumAmount = balanceAfterBase.wMulDown(premiumGrowth);
+
+            uint256 expectedDebt = balanceAfterBase + premiumAmount;
+            assertApproxEqRel(debt, expectedDebt, 0.05e18); // 5% tolerance
         }
     }
 }
