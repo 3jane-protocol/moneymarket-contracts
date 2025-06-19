@@ -12,13 +12,13 @@ import {MathLib, WAD} from "./libraries/MathLib.sol";
 import {MarketParamsLib} from "./libraries/MarketParamsLib.sol";
 import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 
-/// @notice Details for per-borrower premium tracking
-/// @param lastPremiumAccrualTime Timestamp of the last premium accrual for this borrower
-/// @param premiumRate Current risk premium rate per second (scaled by WAD)
+/// @notice Per-borrower premium tracking
+/// @param lastAccrualTime Timestamp of the last premium accrual for this borrower
+/// @param rate Current risk premium rate per second (scaled by WAD)
 /// @param borrowAssetsAtLastAccrual Snapshot of borrow position at last premium accrual
-struct BorrowerPremiumDetails {
-    uint128 lastPremiumAccrualTime;
-    uint128 premiumRate;
+struct BorrowerPremium {
+    uint128 lastAccrualTime;
+    uint128 rate;
     uint256 borrowAssetsAtLastAccrual;
 }
 
@@ -35,8 +35,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc IMorphoCredit
     address public helper;
 
-    /// @notice Mapping of market ID to borrower address to premium details
-    mapping(Id => mapping(address => BorrowerPremiumDetails)) public borrowerPremiumDetails;
+    /// @notice Mapping of market ID to borrower address to premium data
+    mapping(Id => mapping(address => BorrowerPremium)) public borrowerPremium;
 
     /// @notice Address authorized to set borrower premium rates (e.g., 3CA)
     address public premiumRateSetter;
@@ -97,8 +97,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint128 newRatePerSecond = uint128(uint256(newRateAnnual) / 365 days);
         require(newRatePerSecond <= MAX_PREMIUM_RATE, ErrorsLib.PREMIUM_RATE_TOO_HIGH);
 
-        BorrowerPremiumDetails storage details = borrowerPremiumDetails[id][borrower];
-        uint128 oldRatePerSecond = details.premiumRate;
+        BorrowerPremium storage details = borrowerPremium[id][borrower];
+        uint128 oldRatePerSecond = details.rate;
 
         // Accrue premium at old rate before updating
         if (oldRatePerSecond > 0 && position[id][borrower].borrowShares > 0) {
@@ -106,9 +106,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         }
 
         // Update rate and initialize timestamp if first time
-        details.premiumRate = newRatePerSecond;
-        if (details.lastPremiumAccrualTime == 0) {
-            details.lastPremiumAccrualTime = uint128(block.timestamp);
+        details.rate = newRatePerSecond;
+        if (details.lastAccrualTime == 0) {
+            details.lastAccrualTime = uint128(block.timestamp);
             // Initialize snapshot for new borrowers
             if (position[id][borrower].borrowShares > 0) {
                 details.borrowAssetsAtLastAccrual = uint256(position[id][borrower].borrowShares).toAssetsUp(
@@ -179,7 +179,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @param borrower Borrower address
     function _accrueBorrowerPremium(Id id, address borrower) internal {
-        uint256 elapsed = block.timestamp - borrowerPremiumDetails[id][borrower].lastPremiumAccrualTime;
+        uint256 elapsed = block.timestamp - borrowerPremium[id][borrower].lastAccrualTime;
         if (elapsed == 0) return;
 
         // Cap elapsed time to prevent overflow in compound calculations
@@ -187,8 +187,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             elapsed = MAX_ELAPSED_TIME;
         }
 
-        BorrowerPremiumDetails memory details = borrowerPremiumDetails[id][borrower];
-        if (details.premiumRate == 0) return;
+        BorrowerPremium memory details = borrowerPremium[id][borrower];
+        if (details.rate == 0) return;
 
         Position memory borrowerPosition = position[id][borrower];
         if (borrowerPosition.borrowShares == 0) return;
@@ -198,13 +198,13 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             market[id].totalBorrowAssets, market[id].totalBorrowShares
         );
         uint256 premiumAmount = _calculateBorrowerPremiumAmount(
-            details.borrowAssetsAtLastAccrual, borrowAssetsCurrent, details.premiumRate, elapsed
+            details.borrowAssetsAtLastAccrual, borrowAssetsCurrent, details.rate, elapsed
         );
 
         // Skip if premium amount is below threshold (prevents precision loss)
         if (premiumAmount < MIN_PREMIUM_THRESHOLD) {
             // Still update timestamp to prevent repeated negligible calculations
-            borrowerPremiumDetails[id][borrower].lastPremiumAccrualTime = uint128(block.timestamp);
+            borrowerPremium[id][borrower].lastAccrualTime = uint128(block.timestamp);
             return;
         }
 
@@ -230,23 +230,23 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         emit EventsLib.PremiumAccrued(id, borrower, premiumAmount, feeAmount);
 
         // Safe "unchecked" cast.
-        borrowerPremiumDetails[id][borrower].lastPremiumAccrualTime = uint128(block.timestamp);
+        borrowerPremium[id][borrower].lastAccrualTime = uint128(block.timestamp);
     }
 
     /// @notice Snapshot borrower's position for premium tracking
     /// @param id Market ID
     /// @param borrower Borrower address
     function _snapshotBorrowerPosition(Id id, address borrower) internal {
-        BorrowerPremiumDetails storage details = borrowerPremiumDetails[id][borrower];
-        if (details.premiumRate > 0) {
+        BorrowerPremium storage details = borrowerPremium[id][borrower];
+        if (details.rate > 0) {
             uint256 currentBorrowAssets = uint256(position[id][borrower].borrowShares).toAssetsUp(
                 market[id].totalBorrowAssets, market[id].totalBorrowShares
             );
             details.borrowAssetsAtLastAccrual = currentBorrowAssets;
 
             // Initialize timestamp if first time
-            if (details.lastPremiumAccrualTime == 0) {
-                details.lastPremiumAccrualTime = uint128(block.timestamp);
+            if (details.lastAccrualTime == 0) {
+                details.lastAccrualTime = uint128(block.timestamp);
             }
         }
     }
