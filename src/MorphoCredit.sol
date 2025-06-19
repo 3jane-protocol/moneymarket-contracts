@@ -301,13 +301,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         _accrueBorrowerPremium(id, onBehalf);
     }
 
-    /// @inheritdoc Morpho
-    function _beforeWithdraw(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
-        internal
-        override
-    {
-        _accrueBorrowerPremium(id, onBehalf);
-    }
 
     /// @inheritdoc Morpho
     function _afterBorrow(MarketParams memory marketParams, Id id, address onBehalf) internal override {
