@@ -98,23 +98,19 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param borrower Borrower address
     /// @param newRateAnnual New annual premium rate in WAD (e.g., 0.1e18 for 10% APR)
     function setBorrowerPremiumRate(Id id, address borrower, uint128 newRateAnnual) external onlyPremiumRateSetter {
-        // Convert annual rate to per-second rate
         uint128 newRatePerSecond = uint128(uint256(newRateAnnual) / 365 days);
         require(newRatePerSecond <= MAX_PREMIUM_RATE, ErrorsLib.PREMIUM_RATE_TOO_HIGH);
 
         BorrowerPremium storage premium = borrowerPremium[id][borrower];
         uint128 oldRatePerSecond = premium.rate;
 
-        // Accrue premium at old rate before updating
         if (oldRatePerSecond > 0 && position[id][borrower].borrowShares > 0) {
             _accrueBorrowerPremium(id, borrower);
         }
 
-        // Update rate and initialize timestamp if first time
         premium.rate = newRatePerSecond;
         if (premium.lastAccrualTime == 0) {
             premium.lastAccrualTime = uint128(block.timestamp);
-            // Initialize snapshot for new borrowers
             if (position[id][borrower].borrowShares > 0) {
                 premium.borrowAssetsAtLastAccrual = uint256(position[id][borrower].borrowShares).toAssetsUp(
                     market[id].totalBorrowAssets, market[id].totalBorrowShares
@@ -198,7 +194,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         Position memory borrowerPosition = position[id][borrower];
         if (borrowerPosition.borrowShares == 0) return;
 
-        // Calculate premium using helper function
         uint256 borrowAssetsCurrent = uint256(borrowerPosition.borrowShares).toAssetsUp(
             market[id].totalBorrowAssets, market[id].totalBorrowShares
         );
@@ -213,14 +208,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             return;
         }
 
-        // Convert premium to shares and update position
         uint256 premiumShares = premiumAmount.toSharesUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
         position[id][borrower].borrowShares += premiumShares.toUint128();
         market[id].totalBorrowShares += premiumShares.toUint128();
         market[id].totalBorrowAssets += premiumAmount.toUint128();
         market[id].totalSupplyAssets += premiumAmount.toUint128();
 
-        // Handle protocol fees
         uint256 feeAmount;
         if (market[id].fee != 0) {
             feeAmount = premiumAmount.wMulDown(market[id].fee);
@@ -234,7 +227,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         emit EventsLib.PremiumAccrued(id, borrower, premiumAmount, feeAmount);
 
-        // Safe "unchecked" cast.
         borrowerPremium[id][borrower].lastAccrualTime = uint128(block.timestamp);
     }
 
@@ -249,7 +241,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             );
             premium.borrowAssetsAtLastAccrual = currentBorrowAssets;
 
-            // Initialize timestamp if first time
             if (premium.lastAccrualTime == 0) {
                 premium.lastAccrualTime = uint128(block.timestamp);
             }
