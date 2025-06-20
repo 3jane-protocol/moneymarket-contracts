@@ -56,22 +56,19 @@ contract PremiumIntegrationTest is BaseTest {
     function testBorrowAccruesPremiumBeforeIncrease() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.2e18) / 365 days); // 20% APR
 
         // Supply liquidity
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        // Borrower supplies collateral and borrows
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         // Advance time
         vm.warp(block.timestamp + 1 hours);
@@ -112,21 +109,19 @@ contract PremiumIntegrationTest is BaseTest {
     function testBorrowUpdatesSnapshotAfterAccrual() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.1e18) / 365 days); // 10% APR
 
         // Setup position
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         // Get initial snapshot
         (,, uint256 snapshot1) = MorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
@@ -224,7 +219,7 @@ contract PremiumIntegrationTest is BaseTest {
 
     function testFirstBorrowWithExistingPremiumRate() public {
         uint256 supplyAmount = 10_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.25e18) / 365 days); // 25% APR
 
@@ -232,12 +227,8 @@ contract PremiumIntegrationTest is BaseTest {
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        // Supply collateral
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
-
         // Set credit line with premium rate BEFORE first borrow
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
         // First borrow
         vm.prank(BORROWER);
@@ -256,21 +247,19 @@ contract PremiumIntegrationTest is BaseTest {
     function testRepayAccruesPremiumBeforeDecrease() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.2e18) / 365 days); // 20% APR
 
         // Setup position
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         // Advance time
         vm.warp(block.timestamp + 7 days);
@@ -298,21 +287,19 @@ contract PremiumIntegrationTest is BaseTest {
     function testRepayFullAmountWithPremium() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.1e18) / 365 days); // 10% APR
 
         // Setup position
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         // Advance time
         vm.warp(block.timestamp + 30 days);
@@ -342,21 +329,19 @@ contract PremiumIntegrationTest is BaseTest {
     function testRepayPartialWithPremium() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.15e18) / 365 days); // 15% APR
 
         // Setup position
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         // Advance time
         vm.warp(block.timestamp + 10 days);
@@ -389,21 +374,19 @@ contract PremiumIntegrationTest is BaseTest {
     function testRepaySnapshotUpdateAfterPremium() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.2e18) / 365 days); // 20% APR
 
         // Setup position
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         (,, uint256 snapshotBefore) = MorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
 
@@ -424,21 +407,19 @@ contract PremiumIntegrationTest is BaseTest {
     function testRepayMoreThanDebtWithPremium() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.1e18) / 365 days); // 10% APR
 
         // Setup position
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         // Advance time
         vm.warp(block.timestamp + 10 days);
@@ -480,21 +461,19 @@ contract PremiumIntegrationTest is BaseTest {
     function testWithdrawSupplyWithBorrowerPremium() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.2e18) / 365 days); // 20% APR
 
         // Setup position
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         // Advance time to accrue premium
         vm.warp(block.timestamp + 30 days);
@@ -520,7 +499,7 @@ contract PremiumIntegrationTest is BaseTest {
 
     function testWithdrawHealthCheckWithPremium() public {
         uint256 supplyAmount = 10_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint256 borrowAmount = 7_000e18; // 70% utilization with 80% LLTV
         uint128 premiumRatePerSecond = uint128(uint256(0.3e18) / 365 days); // 30% APR
 
@@ -528,14 +507,12 @@ contract PremiumIntegrationTest is BaseTest {
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         // Advance time
         vm.warp(block.timestamp + 60 days);
@@ -549,12 +526,12 @@ contract PremiumIntegrationTest is BaseTest {
     function testWithdrawBySupplierWithActivePremiums() public {
         uint256 supplyAmount = 20_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.25e18) / 365 days); // 25% APR
 
         // Setup multiple borrowers
         address borrower2 = makeAddr("Borrower2");
-        collateralToken.setBalance(borrower2, collateralAmount);
+        collateralToken.setBalance(borrower2, creditLineAmount);
         vm.prank(borrower2);
         collateralToken.approve(address(morpho), type(uint256).max);
 
@@ -562,20 +539,16 @@ contract PremiumIntegrationTest is BaseTest {
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        // Two borrowers borrow
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit lines with premium rates before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
+        _setCreditLineWithPremium(borrower2, creditLineAmount, premiumRatePerSecond);
+
+        // Two borrowers borrow using credit lines
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         vm.prank(borrower2);
-        morpho.supplyCollateral(marketParams, collateralAmount, borrower2, "");
-        vm.prank(borrower2);
         morpho.borrow(marketParams, borrowAmount, 0, borrower2, borrower2);
-
-        // Set credit lines with premium rates
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
-        _setCreditLineWithPremium(borrower2, 10_000e18, premiumRatePerSecond);
 
         // Advance time
         vm.warp(block.timestamp + 10 days);
@@ -650,7 +623,7 @@ contract PremiumIntegrationTest is BaseTest {
     function testPremiumAccrualAfterMarketInterest() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.15e18) / 365 days); // 15% APR
 
         // Set base interest rate
@@ -660,14 +633,12 @@ contract PremiumIntegrationTest is BaseTest {
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         // Advance time
         vm.warp(block.timestamp + 365 days);
@@ -740,7 +711,7 @@ contract PremiumIntegrationTest is BaseTest {
     function testPremiumWithZeroBaseRate() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.2e18) / 365 days); // 20% APR
 
         // Ensure base rate is zero
@@ -750,9 +721,10 @@ contract PremiumIntegrationTest is BaseTest {
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
@@ -812,14 +784,11 @@ contract PremiumIntegrationTest is BaseTest {
         ]; // 10%, 20%, 30% APR
 
         for (uint256 i = 0; i < 3; i++) {
-            vm.prank(borrowers[i]);
-            morpho.supplyCollateral(marketParams, collateralAmount, borrowers[i], "");
+            // Set credit lines with different premium rates before borrowing
+            _setCreditLineWithPremium(borrowers[i], 10_000e18, premiumRates[i]);
 
             vm.prank(borrowers[i]);
             morpho.borrow(marketParams, borrowAmount, 0, borrowers[i], borrowers[i]);
-
-            // Set credit lines with different premium rates
-            _setCreditLineWithPremium(borrowers[i], 10_000e18, premiumRates[i]);
         }
 
         // Advance time
@@ -877,13 +846,11 @@ contract PremiumIntegrationTest is BaseTest {
         address[3] memory borrowers = [BORROWER, borrower2, borrower3];
 
         for (uint256 i = 0; i < 3; i++) {
-            vm.prank(borrowers[i]);
-            morpho.supplyCollateral(marketParams, collateralAmount, borrowers[i], "");
+            // Set credit line with premium rate before borrowing
+            _setCreditLineWithPremium(borrowers[i], 10_000e18, premiumRatePerSecond);
 
             vm.prank(borrowers[i]);
             morpho.borrow(marketParams, borrowAmount, 0, borrowers[i], borrowers[i]);
-
-            _setCreditLineWithPremium(borrowers[i], 10_000e18, premiumRatePerSecond);
         }
 
         // Record supplier position
@@ -1010,15 +977,13 @@ contract PremiumIntegrationTest is BaseTest {
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        // All borrow and get premium rates
+        // All get credit lines and borrow
         for (uint256 i = 0; i < 5; i++) {
-            vm.prank(borrowers[i]);
-            morpho.supplyCollateral(marketParams, collateralAmount, borrowers[i], "");
+            // Set credit line with premium rate before borrowing
+            _setCreditLineWithPremium(borrowers[i], 10_000e18, rates[i]);
 
             vm.prank(borrowers[i]);
             morpho.borrow(marketParams, borrowAmount, 0, borrowers[i], borrowers[i]);
-
-            _setCreditLineWithPremium(borrowers[i], 10_000e18, rates[i]);
         }
 
         // Advance time
@@ -1089,7 +1054,7 @@ contract PremiumIntegrationTest is BaseTest {
     function testPremiumRateChangesDuringOperation() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 initialRatePerSecond = uint128(uint256(0.1e18) / 365 days); // 10% APR
         uint128 newRatePerSecond = uint128(uint256(0.3e18) / 365 days); // 30% APR
 
@@ -1097,14 +1062,12 @@ contract PremiumIntegrationTest is BaseTest {
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set initial credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, initialRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set initial credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, initialRatePerSecond);
 
         // Advance time
         vm.warp(block.timestamp + 30 days);
@@ -1178,21 +1141,19 @@ contract PremiumIntegrationTest is BaseTest {
     function testVeryLargePremiumAccumulation() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 20_000e18; // Extra collateral for safety
+        uint256 creditLineAmount = 20_000e18; // Extra credit for safety
         uint128 premiumRatePerSecond = uint128(uint256(1e18) / 365 days); // 100% APR - maximum allowed
 
         // Setup position
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with maximum premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with maximum premium rate
-        _setCreditLineWithPremium(BORROWER, 20_000e18, premiumRatePerSecond);
 
         // Advance time significantly
         vm.warp(block.timestamp + 365 days);
@@ -1221,29 +1182,26 @@ contract PremiumIntegrationTest is BaseTest {
     function testPremiumAccrualWithMaxValues() public {
         uint256 supplyAmount = type(uint128).max / 10; // Large but safe amount
         uint256 borrowAmount = supplyAmount / 2;
-        uint256 collateralAmount = borrowAmount * 2;
+        uint256 creditLineAmount = borrowAmount * 2;
         uint128 premiumRatePerSecond = uint128(uint256(0.5e18) / 365 days); // 50% APR
 
         // Use smaller values for this test to avoid overflow
         supplyAmount = 1e24;
         borrowAmount = 5e23;
-        collateralAmount = 1e24;
+        creditLineAmount = 1e24;
 
         // Setup position
         loanToken.setBalance(SUPPLIER, supplyAmount);
-        collateralToken.setBalance(BORROWER, collateralAmount);
 
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         // Advance time
         vm.warp(block.timestamp + 30 days);
@@ -1264,7 +1222,7 @@ contract PremiumIntegrationTest is BaseTest {
     function testProtocolFeeOnPremium() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.2e18) / 365 days); // 20% APR
         uint256 protocolFee = 0.1e18; // 10% of interest
 
@@ -1276,14 +1234,12 @@ contract PremiumIntegrationTest is BaseTest {
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         // Record fee recipient position
         Position memory feePosBefore = morpho.position(id, FEE_RECIPIENT);
@@ -1339,20 +1295,16 @@ contract PremiumIntegrationTest is BaseTest {
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        // Two borrowers borrow
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit lines with premium rates before borrowing
+        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
+        _setCreditLineWithPremium(borrower2, 10_000e18, premiumRatePerSecond);
+
+        // Two borrowers borrow using credit lines
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         vm.prank(borrower2);
-        morpho.supplyCollateral(marketParams, collateralAmount, borrower2, "");
-        vm.prank(borrower2);
         morpho.borrow(marketParams, borrowAmount, 0, borrower2, borrower2);
-
-        // Set credit lines with premium rates
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
-        _setCreditLineWithPremium(borrower2, 10_000e18, premiumRatePerSecond);
 
         // Advance time
         vm.warp(block.timestamp + 180 days);
@@ -1381,7 +1333,7 @@ contract PremiumIntegrationTest is BaseTest {
     function testZeroFeeMarketWithPremium() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
+        uint256 creditLineAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.25e18) / 365 days); // 25% APR
 
         // Ensure zero fee (default)
@@ -1391,14 +1343,12 @@ contract PremiumIntegrationTest is BaseTest {
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Set credit line with premium rate before borrowing
+        _setCreditLineWithPremium(BORROWER, creditLineAmount, premiumRatePerSecond);
 
+        // Borrower borrows using credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
-
-        // Set credit line with premium rate
-        _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         // Record state
         Position memory feePosBefore = morpho.position(id, FEE_RECIPIENT);
