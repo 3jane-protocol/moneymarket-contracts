@@ -279,19 +279,16 @@ contract PremiumScenarioTest is BaseTest {
         // Simulates 3CA dynamically adjusting rates based on borrower behavior
 
         uint256 supplyAmount = 100_000e18;
-        uint256 collateralAmount = 60_000e18;
+        uint256 creditLineAmount = 75_000e18; // Account for 80% LLTV
         uint256 borrowAmount = 30_000e18;
 
         // Initial setup
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
-
         // Initial borrow with standard premium
         uint128 standardPremium = uint128(uint256(0.12e18) / 365 days); // 12% APR
-        _setCreditLineWithPremium(id, BORROWER, 50_000e18, standardPremium);
+        _setCreditLineWithPremium(id, BORROWER, creditLineAmount, standardPremium);
 
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
@@ -320,7 +317,7 @@ contract PremiumScenarioTest is BaseTest {
                     uint128 newPremium = standardPremium - reduction;
                     premiumAdjustments[i] = newPremium;
 
-                    _setCreditLineWithPremium(id, BORROWER, 50_000e18, newPremium);
+                    _setCreditLineWithPremium(id, BORROWER, creditLineAmount, newPremium);
                 }
             } else if (i >= 6 && i < 9) {
                 // Months 7-9: Missed payments
@@ -331,7 +328,7 @@ contract PremiumScenarioTest is BaseTest {
                     uint128 penaltyPremium = uint128(uint256(0.18e18) / 365 days); // 18% APR
                     premiumAdjustments[i] = penaltyPremium;
 
-                    _setCreditLineWithPremium(id, BORROWER, 50_000e18, penaltyPremium);
+                    _setCreditLineWithPremium(id, BORROWER, creditLineAmount, penaltyPremium);
                 }
             } else {
                 // Months 10-12: Recovery with larger payments
@@ -347,7 +344,7 @@ contract PremiumScenarioTest is BaseTest {
                     uint128 recoveryPremium = uint128(uint256(0.14e18) / 365 days); // 14% APR
                     premiumAdjustments[i] = recoveryPremium;
 
-                    _setCreditLineWithPremium(id, BORROWER, 50_000e18, recoveryPremium);
+                    _setCreditLineWithPremium(id, BORROWER, creditLineAmount, recoveryPremium);
                 }
             }
         }
