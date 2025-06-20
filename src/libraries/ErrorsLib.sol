@@ -90,9 +90,6 @@ library ErrorsLib {
     /// @notice Thrown when the maximum uint128 is exceeded.
     string internal constant MAX_UINT128_EXCEEDED = "max uint128 exceeded";
 
-    /// @notice Thrown when the caller is not the premium rate setter.
-    string internal constant NOT_PREMIUM_RATE_SETTER = "not premium rate setter";
-
     /// @notice Thrown when the premium rate exceeds the maximum allowed.
     string internal constant PREMIUM_RATE_TOO_HIGH = "premium rate too high";
 }

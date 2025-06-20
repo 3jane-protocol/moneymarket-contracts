@@ -12,7 +12,7 @@ contract SetCreditLineIntegrationTest is BaseTest {
     function testSetCreditLineWithCreatedMarketWrongCreditLine() public {
         vm.expectRevert(bytes(ErrorsLib.NOT_CREDIT_LINE));
         vm.prank(address(1));
-        IMorphoCredit(morphoAddress).setCreditLine(marketParams.id(), address(0), 10);
+        IMorphoCredit(morphoAddress).setCreditLine(marketParams.id(), address(0), 10, 0);
     }
 
     function testSetCreditLineWithCreatedMarket() public {
@@ -21,7 +21,7 @@ contract SetCreditLineIntegrationTest is BaseTest {
         vm.expectEmit(true, true, true, true, address(morpho));
         emit EventsLib.SetCreditLine(marketParamsId, address(1), 100);
         vm.prank(marketParams.creditLine);
-        IMorphoCredit(morphoAddress).setCreditLine(marketParams.id(), address(1), 100);
+        IMorphoCredit(morphoAddress).setCreditLine(marketParams.id(), address(1), 100, 0);
 
         assertEq(morpho.collateral(marketParamsId, address(1)), 100, "collateral != credit");
     }

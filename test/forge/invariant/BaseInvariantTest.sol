@@ -39,7 +39,7 @@ contract BaseInvariantTest is InvariantTest {
                 oracle: address(oracle),
                 irm: address(irm),
                 lltv: MAX_TEST_LLTV / i,
-                creditLine: address(creditLine)
+                creditLine: address(0)
             });
 
             vm.startPrank(OWNER);

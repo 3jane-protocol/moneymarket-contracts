@@ -374,5 +374,5 @@ interface IMorphoCredit {
     function setAuthorizationV2(address authorizee, bool newIsAuthorized) external;
 
     /// @notice Sets the collateral of an address
-    function setCreditLine(Id id, address borrower, uint256 credit) external;
+    function setCreditLine(Id id, address borrower, uint256 credit, uint128 borrowRatePerSecond) external;
 }

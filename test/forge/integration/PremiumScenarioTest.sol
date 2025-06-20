@@ -6,6 +6,7 @@ import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {EventsLib} from "../../../src/libraries/EventsLib.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
+import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 
 contract PremiumScenarioTest is BaseTest {
     using MathLib for uint256;
@@ -13,7 +14,8 @@ contract PremiumScenarioTest is BaseTest {
     using SharesMathLib for uint256;
     using MarketParamsLib for MarketParams;
 
-    address public premiumRateSetter;
+    CreditLineMock public creditLine;
+    CreditLineMock public creditLine2;
     address public creditAnalyst; // Simulates 3CA role
 
     // Multiple test markets for cross-market scenarios
@@ -23,19 +25,21 @@ contract PremiumScenarioTest is BaseTest {
     function setUp() public override {
         super.setUp();
 
+        // Deploy credit line mocks
+        creditLine = new CreditLineMock(address(morpho));
+        creditLine2 = new CreditLineMock(address(morpho));
+
         irm = new ConfigurableIrmMock();
         vm.prank(OWNER);
         morpho.enableIrm(address(irm));
+
+        // Set credit line in market params before creation
         marketParams.irm = address(irm);
+        marketParams.creditLine = address(creditLine);
         morpho.createMarket(marketParams);
         id = MarketParamsLib.id(marketParams);
 
-        premiumRateSetter = makeAddr("PremiumRateSetter");
         creditAnalyst = makeAddr("CreditAnalyst");
-
-        // Set up premium rate setter
-        vm.prank(OWNER);
-        MorphoCredit(address(morpho)).setPremiumRateSetter(premiumRateSetter);
 
         // Enable LLTV for second market (first is already enabled in BaseTest)
         vm.prank(OWNER);
@@ -48,7 +52,7 @@ contract PremiumScenarioTest is BaseTest {
             oracle: address(oracle),
             irm: address(irm),
             lltv: 0.9e18,
-            creditLine: address(0)
+            creditLine: address(creditLine2)
         });
 
         morpho.createMarket(marketParams2);
@@ -65,6 +69,18 @@ contract PremiumScenarioTest is BaseTest {
         collateralToken.approve(address(morpho), type(uint256).max);
         vm.prank(BORROWER);
         loanToken.approve(address(morpho), type(uint256).max);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            HELPER FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    function _setCreditLineWithPremium(Id marketId, address borrower, uint256 credit, uint128 premiumRatePerSecond)
+        internal
+    {
+        CreditLineMock cl = Id.unwrap(marketId) == Id.unwrap(id) ? creditLine : creditLine2;
+        vm.prank(address(cl));
+        cl.setCreditLine(marketId, borrower, credit, premiumRatePerSecond);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -88,8 +104,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // 3CA assesses borrower and sets initial premium rate based on credit score
         uint128 initialPremiumRate = uint128(uint256(0.08e18) / 365 days); // 8% APR - good credit
-        vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, initialPremiumRate);
+        _setCreditLineWithPremium(id, BORROWER, 50_000e18, initialPremiumRate);
 
         // Phase 2: Initial borrow
         uint256 initialBorrow = 20_000e18;
@@ -111,8 +126,7 @@ contract PremiumScenarioTest is BaseTest {
         // Phase 4: Credit improvement - 3CA reduces premium rate
         vm.warp(block.timestamp + 30 days);
         uint128 improvedPremiumRate = uint128(uint256(0.05e18) / 365 days); // 5% APR - improved credit
-        vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, improvedPremiumRate);
+        _setCreditLineWithPremium(id, BORROWER, 50_000e18, improvedPremiumRate);
 
         // Phase 5: Borrower increases credit line usage
         uint256 additionalBorrow = 10_000e18;
@@ -132,8 +146,7 @@ contract PremiumScenarioTest is BaseTest {
         // Phase 7: Credit deterioration - 3CA increases premium
         vm.warp(block.timestamp + 30 days);
         uint128 deterioratedPremiumRate = uint128(uint256(0.15e18) / 365 days); // 15% APR - credit issues
-        vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, deterioratedPremiumRate);
+        _setCreditLineWithPremium(id, BORROWER, 50_000e18, deterioratedPremiumRate);
 
         // Phase 8: Final repayment
         vm.warp(block.timestamp + 60 days);
@@ -188,10 +201,8 @@ contract PremiumScenarioTest is BaseTest {
         uint128 market1Premium = uint128(uint256(0.1e18) / 365 days); // 10% APR - standard risk
         uint128 market2Premium = uint128(uint256(0.2e18) / 365 days); // 20% APR - higher risk market
 
-        vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, market1Premium);
-        vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(id2, BORROWER, market2Premium);
+        _setCreditLineWithPremium(id, BORROWER, 30_000e18, market1Premium);
+        _setCreditLineWithPremium(id2, BORROWER, 30_000e18, market2Premium);
 
         // Borrow from both markets
         uint256 borrow1 = 15_000e18;
@@ -280,8 +291,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // Initial borrow with standard premium
         uint128 standardPremium = uint128(uint256(0.12e18) / 365 days); // 12% APR
-        vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, standardPremium);
+        _setCreditLineWithPremium(id, BORROWER, 50_000e18, standardPremium);
 
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
@@ -310,8 +320,7 @@ contract PremiumScenarioTest is BaseTest {
                     uint128 newPremium = standardPremium - reduction;
                     premiumAdjustments[i] = newPremium;
 
-                    vm.prank(premiumRateSetter);
-                    MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, newPremium);
+                    _setCreditLineWithPremium(id, BORROWER, 50_000e18, newPremium);
                 }
             } else if (i >= 6 && i < 9) {
                 // Months 7-9: Missed payments
@@ -322,8 +331,7 @@ contract PremiumScenarioTest is BaseTest {
                     uint128 penaltyPremium = uint128(uint256(0.18e18) / 365 days); // 18% APR
                     premiumAdjustments[i] = penaltyPremium;
 
-                    vm.prank(premiumRateSetter);
-                    MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, penaltyPremium);
+                    _setCreditLineWithPremium(id, BORROWER, 50_000e18, penaltyPremium);
                 }
             } else {
                 // Months 10-12: Recovery with larger payments
@@ -339,8 +347,7 @@ contract PremiumScenarioTest is BaseTest {
                     uint128 recoveryPremium = uint128(uint256(0.14e18) / 365 days); // 14% APR
                     premiumAdjustments[i] = recoveryPremium;
 
-                    vm.prank(premiumRateSetter);
-                    MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, recoveryPremium);
+                    _setCreditLineWithPremium(id, BORROWER, 50_000e18, recoveryPremium);
                 }
             }
         }
@@ -478,8 +485,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // Initial credit assessment - moderate risk
         uint128 initialPremium = uint128(uint256(0.15e18) / 365 days); // 15% APR
-        vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, initialPremium);
+        _setCreditLineWithPremium(id, BORROWER, 40_000e18, initialPremium);
 
         // Use initial credit line
         vm.prank(BORROWER);
@@ -499,8 +505,7 @@ contract PremiumScenarioTest is BaseTest {
         // Credit line increase approved by 3CA
         // 1. Reduce premium rate
         uint128 improvedPremium = uint128(uint256(0.08e18) / 365 days); // 8% APR
-        vm.prank(premiumRateSetter);
-        MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, BORROWER, improvedPremium);
+        _setCreditLineWithPremium(id, BORROWER, 40_000e18, improvedPremium);
 
         // 2. Borrower can now access more credit
         uint256 additionalCredit = 15_000e18;
@@ -647,8 +652,7 @@ contract PremiumScenarioTest is BaseTest {
             vm.prank(borrowers[i]);
             morpho.supplyCollateral(marketParams, borrowAmounts[i] * 2, borrowers[i], "");
 
-            vm.prank(premiumRateSetter);
-            MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, borrowers[i], premiumRates[i]);
+            _setCreditLineWithPremium(id, borrowers[i], borrowAmounts[i] * 2, premiumRates[i]);
 
             vm.prank(borrowers[i]);
             morpho.borrow(marketParams, borrowAmounts[i], 0, borrowers[i], borrowers[i]);
@@ -672,8 +676,7 @@ contract PremiumScenarioTest is BaseTest {
             morpho.supplyCollateral(marketParams, collateralPerBorrower, borrowers[i], "");
 
             // Set risk premium
-            vm.prank(premiumRateSetter);
-            MorphoCredit(address(morpho)).setBorrowerPremiumRate(id, borrowers[i], riskPremiums[i]);
+            _setCreditLineWithPremium(id, borrowers[i], collateralPerBorrower, riskPremiums[i]);
 
             // Borrow
             vm.prank(borrowers[i]);

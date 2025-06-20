@@ -171,8 +171,4 @@ library EventsLib {
     /// @param oldRate Previous premium rate.
     /// @param newRate New premium rate.
     event BorrowerPremiumRateSet(Id indexed id, address indexed borrower, uint128 oldRate, uint128 newRate);
-
-    /// @notice Emitted when the premium rate setter is updated.
-    /// @param newSetter New premium rate setter address.
-    event PremiumRateSetterUpdated(address indexed newSetter);
 }

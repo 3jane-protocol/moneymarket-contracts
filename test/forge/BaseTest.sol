@@ -9,7 +9,6 @@ import "../../src/interfaces/IMorphoCallbacks.sol";
 import {IrmMock} from "../../src/mocks/IrmMock.sol";
 import {ERC20Mock} from "../../src/mocks/ERC20Mock.sol";
 import {OracleMock} from "../../src/mocks/OracleMock.sol";
-import {CreditLineMock} from "../../src/mocks/CreditLineMock.sol";
 
 import "../../src/Morpho.sol";
 import "../../src/MorphoCredit.sol";
@@ -57,7 +56,6 @@ contract BaseTest is Test {
     ERC20Mock internal collateralToken;
     OracleMock internal oracle;
     IIrm internal irm;
-    CreditLineMock internal creditLine;
 
     MarketParams internal marketParams;
     Id internal id;
@@ -86,9 +84,6 @@ contract BaseTest is Test {
         oracle.setPrice(ORACLE_PRICE_SCALE);
 
         irm = new IrmMock();
-
-        creditLine = new CreditLineMock();
-        vm.label(address(creditLine), "CreditLine");
 
         vm.startPrank(OWNER);
         morpho.enableIrm(address(0));
@@ -126,9 +121,8 @@ contract BaseTest is Test {
     }
 
     function _setLltv(uint256 lltv) internal {
-        marketParams = MarketParams(
-            address(loanToken), address(collateralToken), address(oracle), address(irm), lltv, address(creditLine)
-        );
+        marketParams =
+            MarketParams(address(loanToken), address(collateralToken), address(oracle), address(irm), lltv, address(0));
         id = marketParams.id();
 
         vm.startPrank(OWNER);

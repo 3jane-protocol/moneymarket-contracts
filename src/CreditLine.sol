@@ -67,9 +67,9 @@ contract CreditLine is ICreditLine {
     }
 
     /// @inheritdoc ICreditLine
-    function setCreditLine(Id id, address borrower, uint256 credit) external {
+    function setCreditLine(Id id, address borrower, uint256 credit, uint128 borrowRatePerSecond) external {
         require(msg.sender == owner || msg.sender == ozd, ErrorsLib.NOT_OWNER_OR_OZD);
         require(prover == address(0) || IProver(prover).isSafeTVV(borrower, credit), ErrorsLib.UNSAFE_TVV);
-        IMorphoCredit(morpho).setCreditLine(id, borrower, credit);
+        IMorphoCredit(morpho).setCreditLine(id, borrower, credit, borrowRatePerSecond);
     }
 }
