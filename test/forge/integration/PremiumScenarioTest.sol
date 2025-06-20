@@ -426,25 +426,21 @@ contract PremiumScenarioTest is BaseTest {
             yieldRate = supplierYield.wDivDown(supplyAmount);
         }
 
-        // Calculate expected yield accounting for sequential accrual
-        // The protocol first accrues base interest via _accrueInterest, then premiums via _accrueBorrowerPremium
-        // This means base rate compounds first, then premium is calculated on the new balance
+        // Calculate expected yield accounting for how the protocol actually works
+        // The protocol calculates base and premium rates together from the same starting principal
 
         uint256 expectedTotalInterest = 0;
 
-        // For each borrower, calculate interest accounting for sequential accrual
+        // For each borrower, calculate interest with combined rates
         for (uint256 i = 0; i < 5; i++) {
-            // First: base rate growth
+            // Calculate combined rate (base + premium)
             uint256 baseRatePerSecond = baseRate / 365 days;
-            uint256 baseGrowth = baseRatePerSecond.wTaylorCompounded(365 days);
-            uint256 balanceAfterBase = borrowPerBorrower + borrowPerBorrower.wMulDown(baseGrowth);
+            uint256 combinedRate = baseRatePerSecond + uint256(riskPremiums[i]);
 
-            // Second: premium rate growth on the new balance
-            uint256 premiumGrowth = uint256(riskPremiums[i]).wTaylorCompounded(365 days);
-            uint256 premiumAmount = balanceAfterBase.wMulDown(premiumGrowth);
+            // Apply combined rate to original principal
+            uint256 totalGrowth = combinedRate.wTaylorCompounded(365 days);
+            uint256 totalInterest = borrowPerBorrower.wMulDown(totalGrowth);
 
-            // Total interest for this borrower
-            uint256 totalInterest = (balanceAfterBase + premiumAmount) - borrowPerBorrower;
             expectedTotalInterest += totalInterest;
         }
 
@@ -699,17 +695,13 @@ contract PremiumScenarioTest is BaseTest {
                 finalMarket.totalBorrowAssets, finalMarket.totalBorrowShares
             );
 
-            // Calculate expected debt with sequential accrual
-            // First: base rate growth
+            // Calculate expected debt with combined rates
             uint256 baseRatePerSecond = baseRate / 365 days;
-            uint256 baseGrowth = baseRatePerSecond.wTaylorCompounded(365 days);
-            uint256 balanceAfterBase = borrowPerBorrower + borrowPerBorrower.wMulDown(baseGrowth);
+            uint256 combinedRate = baseRatePerSecond + uint256(riskPremiums[i]);
 
-            // Second: premium rate growth on the new balance
-            uint256 premiumGrowth = uint256(riskPremiums[i]).wTaylorCompounded(365 days);
-            uint256 premiumAmount = balanceAfterBase.wMulDown(premiumGrowth);
-
-            uint256 expectedDebt = balanceAfterBase + premiumAmount;
+            // Apply combined rate to original principal
+            uint256 totalGrowth = combinedRate.wTaylorCompounded(365 days);
+            uint256 expectedDebt = borrowPerBorrower + borrowPerBorrower.wMulDown(totalGrowth);
             assertApproxEqRel(debt, expectedDebt, 0.05e18); // 5% tolerance
         }
     }
