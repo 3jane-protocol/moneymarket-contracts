@@ -28,10 +28,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc IMorphoCredit
     mapping(Id => mapping(address => BorrowerPremium)) public borrowerPremium;
 
-    /// @notice Maximum premium rate allowed per second (100% APR / 365 days)
-    /// @dev ~31.7 billion per second for 100% APR
-    uint256 internal constant MAX_PREMIUM_RATE = 31709791983;
-
     /// @notice Minimum premium amount to accrue (prevents precision loss)
     uint256 internal constant MIN_PREMIUM_THRESHOLD = 1;
 
@@ -211,52 +207,50 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /* ONLY CREDIT LINE FUNCTIONS */
 
     /// @inheritdoc IMorphoCredit
-    function setCreditLine(Id id, address borrower, uint256 credit, uint128 ratePerSecond) external {
+    function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external {
         require(idToMarketParams[id].creditLine == msg.sender, ErrorsLib.NOT_CREDIT_LINE);
 
         position[id][borrower].collateral = credit.toUint128();
 
         emit EventsLib.SetCreditLine(id, borrower, credit);
 
-        _setBorrowerPremiumRate(id, borrower, ratePerSecond);
+        _setBorrowerPremiumRate(id, borrower, premiumRate);
     }
 
     /// @notice Set or update a borrower's premium rate
     /// @param id Market ID
     /// @param borrower Borrower address
-    /// @param newRatePerSecond New premium rate per second in WAD (e.g., 0.1e18 / 365 days for 10% APR)
-    function _setBorrowerPremiumRate(Id id, address borrower, uint128 newRatePerSecond) internal {
-        require(newRatePerSecond <= MAX_PREMIUM_RATE, ErrorsLib.PREMIUM_RATE_TOO_HIGH);
-
+    /// @param newRate New premium rate per second in WAD (e.g., 0.1e18 / 365 days for 10% APR)
+    function _setBorrowerPremiumRate(Id id, address borrower, uint128 newRate) internal {
         // Accrue base interest first to ensure premium calculations are accurate
         MarketParams memory marketParams = idToMarketParams[id];
         _accrueInterest(marketParams, id);
 
         BorrowerPremium storage premium = borrowerPremium[id][borrower];
-        uint128 oldRatePerSecond = premium.rate;
+        uint128 oldRate = premium.rate;
 
         // If there's an existing position with borrow shares
         uint256 borrowShares = uint256(position[id][borrower].borrowShares);
 
         if (borrowShares > 0) {
             // If there was a previous rate, accrue premium first
-            if (oldRatePerSecond > 0) {
+            if (oldRate > 0) {
                 _accrueBorrowerPremium(id, borrower);
             }
         }
 
         // Set the new rate before taking snapshot
-        premium.rate = newRatePerSecond;
+        premium.rate = newRate;
         if (premium.lastAccrualTime == 0) {
             premium.lastAccrualTime = uint128(block.timestamp);
         }
 
         // Take snapshot after setting the new rate if there are borrow shares
-        if (borrowShares > 0 && newRatePerSecond > 0) {
+        if (borrowShares > 0 && newRate > 0) {
             _snapshotBorrowerPosition(id, borrower);
         }
 
-        emit EventsLib.BorrowerPremiumRateSet(id, borrower, oldRatePerSecond, newRatePerSecond);
+        emit EventsLib.BorrowerPremiumRateSet(id, borrower, oldRate, newRate);
     }
 
     /* HOOK IMPLEMENTATIONS */

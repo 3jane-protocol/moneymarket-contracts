@@ -126,16 +126,6 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, 1_000e18, uint128(uint256(0.05e18) / 365 days));
     }
 
-    function testSetCreditLineTooHighRate() public {
-        // Use a rate that will definitely exceed the per-second limit
-        // MAX_PREMIUM_RATE_PER_SECOND + 1
-        uint128 tooHighRatePerSecond = uint128(MAX_PREMIUM_RATE_PER_SECOND + 1);
-
-        vm.expectRevert(bytes(ErrorsLib.PREMIUM_RATE_TOO_HIGH));
-        vm.prank(address(creditLine));
-        creditLine.setCreditLine(marketId, borrower, 1_000e18, tooHighRatePerSecond);
-    }
-
     function testSetCreditLineWithExistingPosition() public {
         // Supply and borrow first
         vm.prank(supplier);

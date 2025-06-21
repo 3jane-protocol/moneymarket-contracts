@@ -38,5 +38,5 @@ interface ICreditLine {
     function setProver(address newProver) external;
 
     /// @notice Sets credit line
-    function setCreditLine(Id id, address borrower, uint256 credit, uint128 borrowRatePerSecond) external;
+    function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external;
 }

@@ -16,12 +16,12 @@ contract CreditLineMock {
         owner = msg.sender;
     }
 
-    function setCreditLine(Id id, address borrower, uint256 credit, uint128 ratePerSecond) external {
+    function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external {
         creditLines[borrower] = credit;
-        borrowerRates[id][borrower] = ratePerSecond;
+        borrowerRates[id][borrower] = premiumRate;
 
         // Call MorphoCredit to set the actual credit line and premium rate
-        IMorphoCredit(morpho).setCreditLine(id, borrower, credit, ratePerSecond);
+        IMorphoCredit(morpho).setCreditLine(id, borrower, credit, premiumRate);
     }
 
     function setOwner(address newOwner) external {
