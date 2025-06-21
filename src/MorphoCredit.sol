@@ -155,8 +155,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         Position memory borrowerPosition = position[id][borrower];
         if (borrowerPosition.borrowShares == 0) return;
 
+        Market memory targetMarket = market[id];
+
         uint256 borrowAssetsCurrent = uint256(borrowerPosition.borrowShares).toAssetsUp(
-            market[id].totalBorrowAssets, market[id].totalBorrowShares
+            targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
         );
         uint256 premiumAmount = _calculateBorrowerPremiumAmount(
             premium.borrowAssetsAtLastAccrual, borrowAssetsCurrent, premium.rate, elapsed
@@ -169,22 +171,28 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             return;
         }
 
-        uint256 premiumShares = premiumAmount.toSharesUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
+        uint256 premiumShares = premiumAmount.toSharesUp(targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares);
+
+        // Update borrower position
         position[id][borrower].borrowShares += premiumShares.toUint128();
-        market[id].totalBorrowShares += premiumShares.toUint128();
-        market[id].totalBorrowAssets += premiumAmount.toUint128();
-        market[id].totalSupplyAssets += premiumAmount.toUint128();
+
+        // Update market totals
+        targetMarket.totalBorrowShares += premiumShares.toUint128();
+        targetMarket.totalBorrowAssets += premiumAmount.toUint128();
+        targetMarket.totalSupplyAssets += premiumAmount.toUint128();
 
         uint256 feeAmount;
-        if (market[id].fee != 0) {
-            feeAmount = premiumAmount.wMulDown(market[id].fee);
+        if (targetMarket.fee != 0) {
+            feeAmount = premiumAmount.wMulDown(targetMarket.fee);
             // The fee amount is subtracted from the total supply in this calculation to compensate for the fact
             // that total supply is already increased by the full premium (including the fee amount).
             uint256 feeShares =
-                feeAmount.toSharesDown(market[id].totalSupplyAssets - feeAmount, market[id].totalSupplyShares);
+                feeAmount.toSharesDown(targetMarket.totalSupplyAssets - feeAmount, targetMarket.totalSupplyShares);
             position[id][feeRecipient].supplyShares += feeShares;
-            market[id].totalSupplyShares += feeShares.toUint128();
+            targetMarket.totalSupplyShares += feeShares.toUint128();
         }
+
+        market[id] = targetMarket;
 
         emit EventsLib.PremiumAccrued(id, borrower, premiumAmount, feeAmount);
 
@@ -199,12 +207,14 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         if (premium.rate == 0) return;
 
+        Market memory targetMarket = market[id];
+
         uint256 currentBorrowAssets = uint256(position[id][borrower].borrowShares).toAssetsUp(
-            market[id].totalBorrowAssets, market[id].totalBorrowShares
+            targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
         );
         borrowerPremium[id][borrower].borrowAssetsAtLastAccrual = currentBorrowAssets;
 
-        // Safety check: Initialize timestamp if not already set (edge case protection)
+        // Safety check: Initialize timestamp if not already set
         if (premium.lastAccrualTime == 0) {
             borrowerPremium[id][borrower].lastAccrualTime = uint128(block.timestamp);
         }
