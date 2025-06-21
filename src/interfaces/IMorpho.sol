@@ -33,6 +33,16 @@ struct Market {
     uint128 fee;
 }
 
+/// @notice Per-borrower premium tracking
+/// @param lastAccrualTime Timestamp of the last premium accrual for this borrower
+/// @param rate Current risk premium rate per second (scaled by WAD)
+/// @param borrowAssetsAtLastAccrual Snapshot of borrow position at last premium accrual
+struct BorrowerPremium {
+    uint128 lastAccrualTime;
+    uint128 rate;
+    uint256 borrowAssetsAtLastAccrual;
+}
+
 struct Authorization {
     address authorizer;
     address authorized;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.19;
 
-import {Id, MarketParams, Position, Market, IMorphoCredit} from "./interfaces/IMorpho.sol";
+import {Id, MarketParams, Position, Market, BorrowerPremium, IMorphoCredit} from "./interfaces/IMorpho.sol";
 
 import {Morpho} from "./Morpho.sol";
 
@@ -11,16 +11,6 @@ import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {MathLib, WAD} from "./libraries/MathLib.sol";
 import {MarketParamsLib} from "./libraries/MarketParamsLib.sol";
 import {SharesMathLib} from "./libraries/SharesMathLib.sol";
-
-/// @notice Per-borrower premium tracking
-/// @param lastAccrualTime Timestamp of the last premium accrual for this borrower
-/// @param rate Current risk premium rate per second (scaled by WAD)
-/// @param borrowAssetsAtLastAccrual Snapshot of borrow position at last premium accrual
-struct BorrowerPremium {
-    uint128 lastAccrualTime;
-    uint128 rate;
-    uint256 borrowAssetsAtLastAccrual;
-}
 
 /// @title Morpho Credit
 /// @author Morpho Labs
@@ -213,7 +203,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 currentBorrowAssets = uint256(position[id][borrower].borrowShares).toAssetsUp(
             targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
         );
-        
+
         // Update premium struct in memory
         premium.borrowAssetsAtLastAccrual = currentBorrowAssets;
 
@@ -221,7 +211,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (premium.lastAccrualTime == 0) {
             premium.lastAccrualTime = uint128(block.timestamp);
         }
-        
+
         // Write back to storage
         borrowerPremium[id][borrower] = premium;
     }
