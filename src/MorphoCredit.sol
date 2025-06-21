@@ -192,6 +192,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             targetMarket.totalSupplyShares += feeShares.toUint128();
         }
 
+        // Write back to storage
         market[id] = targetMarket;
 
         emit EventsLib.PremiumAccrued(id, borrower, premiumAmount, feeAmount);
@@ -212,12 +213,17 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 currentBorrowAssets = uint256(position[id][borrower].borrowShares).toAssetsUp(
             targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
         );
-        borrowerPremium[id][borrower].borrowAssetsAtLastAccrual = currentBorrowAssets;
+        
+        // Update premium struct in memory
+        premium.borrowAssetsAtLastAccrual = currentBorrowAssets;
 
         // Safety check: Initialize timestamp if not already set
         if (premium.lastAccrualTime == 0) {
-            borrowerPremium[id][borrower].lastAccrualTime = uint128(block.timestamp);
+            premium.lastAccrualTime = uint128(block.timestamp);
         }
+        
+        // Write back to storage
+        borrowerPremium[id][borrower] = premium;
     }
 
     /* ONLY CREDIT LINE FUNCTIONS */
