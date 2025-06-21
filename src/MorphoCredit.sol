@@ -28,9 +28,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Mapping of market ID to borrower address to premium data
     mapping(Id => mapping(address => BorrowerPremium)) public borrowerPremium;
 
-    /// @notice Address authorized to set borrower premium rates (e.g., 3CA)
-    address public premiumRateSetter;
-
     /// @notice Maximum premium rate allowed per second (100% APR / 365 days)
     /// @dev ~31.7 billion per second for 100% APR
     uint256 internal constant MAX_PREMIUM_RATE = 31709791983;
