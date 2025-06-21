@@ -45,7 +45,7 @@ contract HalmosTest is SymTest, Test {
         oracle.setPrice(ORACLE_PRICE_SCALE);
         irm = new IrmMock();
         lltv = svm.createUint256("lltv");
-        creditLine = new CreditLineMock();
+        creditLine = new CreditLineMock(address(morpho));
 
         marketParams = MarketParams(
             address(loanToken), address(collateralToken), address(oracle), address(irm), lltv, address(creditLine)

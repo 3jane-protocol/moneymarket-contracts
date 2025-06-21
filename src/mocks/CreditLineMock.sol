@@ -2,16 +2,30 @@
 pragma solidity ^0.8.0;
 
 import {Id} from "../interfaces/IMorpho.sol";
+import {IMorphoCredit} from "../interfaces/IMorpho.sol";
 
 contract CreditLineMock {
     address public owner;
     address public morpho;
 
     mapping(address account => uint256) public creditLines;
+    mapping(Id => mapping(address => uint128)) public borrowerRates;
 
-    function setCreditLine(Id id, address borrower, uint256 credit) external {
-        creditLines[borrower] = credit;
+    constructor(address _morpho) {
+        morpho = _morpho;
+        owner = msg.sender;
     }
 
-    function setOwner(address newOwner) external {}
+    function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external {
+        creditLines[borrower] = credit;
+        borrowerRates[id][borrower] = premiumRate;
+
+        // Call MorphoCredit to set the actual credit line and premium rate
+        IMorphoCredit(morpho).setCreditLine(id, borrower, credit, premiumRate);
+    }
+
+    function setOwner(address newOwner) external {
+        require(msg.sender == owner, "NOT_OWNER");
+        owner = newOwner;
+    }
 }

@@ -12,6 +12,10 @@ import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
 contract CreditLine is ICreditLine {
+    /// @notice Maximum premium rate allowed per second (100% APR / 365 days)
+    /// @dev ~31.7 billion per second for 100% APR
+    uint256 internal constant MAX_PREMIUM_RATE = 31709791983;
+
     /// @inheritdoc ICreditLine
     address public owner;
 
@@ -67,9 +71,10 @@ contract CreditLine is ICreditLine {
     }
 
     /// @inheritdoc ICreditLine
-    function setCreditLine(Id id, address borrower, uint256 credit) external {
+    function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external {
         require(msg.sender == owner || msg.sender == ozd, ErrorsLib.NOT_OWNER_OR_OZD);
         require(prover == address(0) || IProver(prover).isSafeTVV(borrower, credit), ErrorsLib.UNSAFE_TVV);
-        IMorphoCredit(morpho).setCreditLine(id, borrower, credit);
+        require(premiumRate <= MAX_PREMIUM_RATE, ErrorsLib.PREMIUM_RATE_TOO_HIGH);
+        IMorphoCredit(morpho).setCreditLine(id, borrower, credit, premiumRate);
     }
 }

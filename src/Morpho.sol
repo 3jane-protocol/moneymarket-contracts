@@ -35,6 +35,7 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
 /// @notice The Morpho contract.
+/* abstract */
 contract Morpho is IMorphoStaticTyping {
     using MathLib for uint128;
     using MathLib for uint256;
@@ -247,6 +248,7 @@ contract Morpho is IMorphoStaticTyping {
         require(_isSenderAuthorized(onBehalf), ErrorsLib.UNAUTHORIZED);
 
         _accrueInterest(marketParams, id);
+        _beforeBorrow(marketParams, id, onBehalf, assets, shares);
 
         if (assets > 0) shares = assets.toSharesUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
         else assets = shares.toAssetsDown(market[id].totalBorrowAssets, market[id].totalBorrowShares);
@@ -259,6 +261,8 @@ contract Morpho is IMorphoStaticTyping {
         require(market[id].totalBorrowAssets <= market[id].totalSupplyAssets, ErrorsLib.INSUFFICIENT_LIQUIDITY);
 
         emit EventsLib.Borrow(id, msg.sender, onBehalf, receiver, assets, shares);
+
+        _afterBorrow(marketParams, id, onBehalf);
 
         IERC20(marketParams.loanToken).safeTransfer(receiver, assets);
 
@@ -279,6 +283,7 @@ contract Morpho is IMorphoStaticTyping {
         require(onBehalf != address(0), ErrorsLib.ZERO_ADDRESS);
 
         _accrueInterest(marketParams, id);
+        _beforeRepay(marketParams, id, onBehalf, assets, shares);
 
         if (assets > 0) shares = assets.toSharesDown(market[id].totalBorrowAssets, market[id].totalBorrowShares);
         else assets = shares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
@@ -289,6 +294,8 @@ contract Morpho is IMorphoStaticTyping {
 
         // `assets` may be greater than `totalBorrowAssets` by 1.
         emit EventsLib.Repay(id, msg.sender, onBehalf, assets, shares);
+
+        _afterRepay(marketParams, id, onBehalf);
 
         if (data.length > 0) IMorphoRepayCallback(msg.sender).onMorphoRepay(assets, data);
 
@@ -356,6 +363,7 @@ contract Morpho is IMorphoStaticTyping {
         require(UtilsLib.exactlyOneZero(seizedAssets, repaidShares), ErrorsLib.INCONSISTENT_INPUT);
 
         _accrueInterest(marketParams, id);
+        _beforeLiquidate(marketParams, id, borrower, seizedAssets, repaidShares);
 
         {
             uint256 collateralPrice = IOracle(marketParams.oracle).price();
@@ -406,6 +414,8 @@ contract Morpho is IMorphoStaticTyping {
         emit EventsLib.Liquidate(
             id, msg.sender, borrower, repaidAssets, repaidShares, seizedAssets, badDebtAssets, badDebtShares
         );
+
+        _afterLiquidate(marketParams, id, borrower);
 
         IERC20(marketParams.collateralToken).safeTransfer(msg.sender, seizedAssets);
 
@@ -537,6 +547,62 @@ contract Morpho is IMorphoStaticTyping {
 
         return maxBorrow >= borrowed;
     }
+
+    /* HOOKS */
+
+    /// @dev Hook called before borrow operations to allow for premium accrual or other pre-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param onBehalf The address that will receive the debt.
+    /// @param assets The amount of assets to borrow.
+    /// @param shares The amount of shares to borrow.
+    function _beforeBorrow(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
+        internal
+        virtual
+    {}
+
+    /// @dev Hook called before repay operations to allow for premium accrual or other pre-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param onBehalf The address whose debt is being repaid.
+    /// @param assets The amount of assets to repay.
+    /// @param shares The amount of shares to repay.
+    function _beforeRepay(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
+        internal
+        virtual
+    {}
+
+    /// @dev Hook called before liquidate operations to allow for premium accrual or other pre-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param borrower The address being liquidated.
+    /// @param seizedAssets The amount of collateral to seize.
+    /// @param repaidShares The amount of debt shares to repay.
+    function _beforeLiquidate(
+        MarketParams memory marketParams,
+        Id id,
+        address borrower,
+        uint256 seizedAssets,
+        uint256 repaidShares
+    ) internal virtual {}
+
+    /// @dev Hook called after borrow operations to allow for post-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param onBehalf The address that borrowed.
+    function _afterBorrow(MarketParams memory marketParams, Id id, address onBehalf) internal virtual {}
+
+    /// @dev Hook called after repay operations to allow for post-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param onBehalf The address whose debt was repaid.
+    function _afterRepay(MarketParams memory marketParams, Id id, address onBehalf) internal virtual {}
+
+    /// @dev Hook called after liquidate operations to allow for post-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param borrower The address that was liquidated.
+    function _afterLiquidate(MarketParams memory marketParams, Id id, address borrower) internal virtual {}
 
     /* STORAGE VIEW */
 
