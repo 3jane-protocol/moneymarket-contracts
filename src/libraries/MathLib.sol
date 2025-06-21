@@ -42,4 +42,34 @@ library MathLib {
 
         return firstTerm + secondTerm + thirdTerm;
     }
+
+    /// @dev Computes the inverse of wTaylorCompounded, finding the rate that produces the given growth factor.
+    /// Uses a 3-term Taylor series approximation of ln(x) to solve for rate in the compound interest formula.
+    /// Formula: rate = ln(x) / n ≈ [(x-1) - (x-1)²/2 + (x-1)³/3] / n
+    ///
+    /// Accuracy notes:
+    /// - The Taylor approximation of ln(x) is most accurate for x close to 1
+    /// - At growth factor x = 1.69*WAD (69% growth), approximation error < 2%
+    /// - At growth factor x = 2*WAD (100% growth, where ln(2) ≈ 0.69), approximation error < 5%
+    /// - Accuracy decreases for larger growth factors; not recommended for x > 2.5*WAD (150% growth)
+    ///
+    /// Example: If debt grew from 1000 to 1105 over 1 year (10.5% growth):
+    /// - x = 1.105*WAD (growth factor)
+    /// - n = 365 days (time period)
+    /// - Returns ~10% APR as rate per second
+    ///
+    /// @param x The growth factor scaled by WAD (e.g., 1.1*WAD for 10% growth). Must be >= WAD.
+    /// @param n The time period over which the growth occurred (in seconds)
+    /// @return The continuously compounded rate per second that would produce this growth (scaled by WAD)
+    function wInverseTaylorCompounded(uint256 x, uint256 n) internal pure returns (uint256) {
+        require(x >= WAD, "ln undefined");
+
+        uint256 firstTerm = x - WAD;
+        uint256 secondTerm = wMulDown(firstTerm, firstTerm);
+        uint256 thirdTerm = wMulDown(secondTerm, firstTerm);
+
+        uint256 series = firstTerm - secondTerm / 2 + thirdTerm / 3;
+
+        return series / n;
+    }
 }

@@ -118,12 +118,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (borrowAssetsAtLastAccrual == 0 || elapsed == 0) return 0;
 
         // Calculate the actual base growth
-        uint256 baseGrowthActual =
-            borrowAssetsCurrent > borrowAssetsAtLastAccrual ? borrowAssetsCurrent - borrowAssetsAtLastAccrual : 0;
-
-        // Calculate base rate per second from observed growth
-        // baseRate = growth / (principal * elapsed)
-        uint256 baseRatePerSecond = baseGrowthActual.wDivDown(borrowAssetsAtLastAccrual * elapsed);
+        uint256 baseGrowthActual;
+        uint256 baseRatePerSecond;
+        if (borrowAssetsCurrent > borrowAssetsAtLastAccrual) {
+            baseGrowthActual = borrowAssetsCurrent - borrowAssetsAtLastAccrual;
+            baseRatePerSecond = borrowAssetsCurrent.wDivUp(borrowAssetsAtLastAccrual).wInverseTaylorCompounded(elapsed);
+        }
 
         // Combine base rate with premium rate (both per-second)
         uint256 combinedRate = baseRatePerSecond + premiumRate;
