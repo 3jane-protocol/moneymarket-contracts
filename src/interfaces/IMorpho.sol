@@ -378,11 +378,40 @@ interface IMorphoCredit {
     function helper() external view returns (address);
 
     /// @notice Sets `helper` as `helper` of the contract.
+    /// @param newHelper The new helper address
     function setHelper(address newHelper) external;
 
-    /// @notice Sets authorization
+    /// @notice Sets authorization for the helper
+    /// @param authorizee The address to authorize/unauthorize
+    /// @param newIsAuthorized Whether to authorize or unauthorize
     function setAuthorizationV2(address authorizee, bool newIsAuthorized) external;
 
-    /// @notice Sets the collateral of an address
+    /// @notice Sets the credit line and premium rate for a borrower
+    /// @param id The market ID
+    /// @param borrower The borrower address
+    /// @param credit The credit line amount
+    /// @param borrowRatePerSecond The premium rate per second in WAD
     function setCreditLine(Id id, address borrower, uint256 credit, uint128 borrowRatePerSecond) external;
+
+    /// @notice Returns the premium data for a specific borrower in a market
+    /// @param id The market ID
+    /// @param borrower The borrower address
+    /// @return lastAccrualTime Timestamp of the last premium accrual
+    /// @return rate Current risk premium rate per second (scaled by WAD)
+    /// @return borrowAssetsAtLastAccrual Snapshot of borrow position at last premium accrual
+    function borrowerPremium(Id id, address borrower)
+        external
+        view
+        returns (uint128 lastAccrualTime, uint128 rate, uint256 borrowAssetsAtLastAccrual);
+
+    /// @notice Manually accrue premium for a borrower
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    function accrueBorrowerPremium(Id id, address borrower) external;
+
+    /// @notice Batch accrue premiums for multiple borrowers
+    /// @param id Market ID
+    /// @param borrowers Array of borrower addresses
+    /// @dev Gas usage scales linearly with array size. Callers should manage batch sizes based on block gas limits.
+    function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) external;
 }

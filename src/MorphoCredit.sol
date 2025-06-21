@@ -25,7 +25,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc IMorphoCredit
     address public helper;
 
-    /// @notice Mapping of market ID to borrower address to premium data
+    /// @inheritdoc IMorphoCredit
     mapping(Id => mapping(address => BorrowerPremium)) public borrowerPremium;
 
     /// @notice Maximum premium rate allowed per second (100% APR / 365 days)
@@ -66,9 +66,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /* PREMIUM RATE MANAGEMENT */
 
-    /// @notice Manually accrue premium for a borrower (callable by anyone, useful for keepers)
-    /// @param id Market ID
-    /// @param borrower Borrower address
+    /// @inheritdoc IMorphoCredit
     function accrueBorrowerPremium(Id id, address borrower) external {
         MarketParams memory marketParams = idToMarketParams[id];
         _accrueInterest(marketParams, id);
@@ -76,10 +74,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         _snapshotBorrowerPosition(id, borrower);
     }
 
-    /// @notice Batch accrue premiums for multiple borrowers
-    /// @param id Market ID
-    /// @param borrowers Array of borrower addresses
-    /// @dev Gas usage scales linearly with array size. Callers should manage batch sizes based on block gas limits.
+    /// @inheritdoc IMorphoCredit
     function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) external {
         MarketParams memory marketParams = idToMarketParams[id];
         _accrueInterest(marketParams, id);
