@@ -304,50 +304,6 @@ contract Morpho is IMorphoStaticTyping {
         return (assets, shares);
     }
 
-    /* COLLATERAL MANAGEMENT */
-
-    /// @inheritdoc IMorphoBase
-    function supplyCollateral(MarketParams memory marketParams, uint256 assets, address onBehalf, bytes calldata data)
-        external
-    {
-        Id id = marketParams.id();
-        require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
-        require(assets != 0, ErrorsLib.ZERO_ASSETS);
-        require(onBehalf != address(0), ErrorsLib.ZERO_ADDRESS);
-
-        // Don't accrue interest because it's not required and it saves gas.
-
-        position[id][onBehalf].collateral += assets.toUint128();
-
-        emit EventsLib.SupplyCollateral(id, msg.sender, onBehalf, assets);
-
-        if (data.length > 0) IMorphoSupplyCollateralCallback(msg.sender).onMorphoSupplyCollateral(assets, data);
-
-        IERC20(marketParams.collateralToken).safeTransferFrom(msg.sender, address(this), assets);
-    }
-
-    /// @inheritdoc IMorphoBase
-    function withdrawCollateral(MarketParams memory marketParams, uint256 assets, address onBehalf, address receiver)
-        external
-    {
-        Id id = marketParams.id();
-        require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
-        require(assets != 0, ErrorsLib.ZERO_ASSETS);
-        require(receiver != address(0), ErrorsLib.ZERO_ADDRESS);
-        // No need to verify that onBehalf != address(0) thanks to the following authorization check.
-        require(_isSenderAuthorized(onBehalf), ErrorsLib.UNAUTHORIZED);
-
-        _accrueInterest(marketParams, id);
-
-        position[id][onBehalf].collateral -= assets.toUint128();
-
-        require(_isHealthy(marketParams, id, onBehalf), ErrorsLib.INSUFFICIENT_COLLATERAL);
-
-        emit EventsLib.WithdrawCollateral(id, msg.sender, onBehalf, receiver, assets);
-
-        IERC20(marketParams.collateralToken).safeTransfer(receiver, assets);
-    }
-
     /* LIQUIDATION */
 
     /// @inheritdoc IMorphoBase
