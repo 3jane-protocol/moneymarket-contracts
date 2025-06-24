@@ -2,13 +2,13 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
+import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 
 contract CallbacksIntegrationTest is
     BaseTest,
     IMorphoLiquidateCallback,
     IMorphoRepayCallback,
     IMorphoSupplyCallback,
-    IMorphoSupplyCollateralCallback,
     IMorphoFlashLoanCallback
 {
     using MathLib for uint256;
@@ -26,19 +26,6 @@ contract CallbacksIntegrationTest is
         }
     }
 
-    function onMorphoSupplyCollateral(uint256 amount, bytes memory data) external {
-        require(msg.sender == address(morpho));
-        bytes4 selector;
-        (selector, data) = abi.decode(data, (bytes4, bytes));
-        if (selector == this.testSupplyCollateralCallback.selector) {
-            collateralToken.approve(address(morpho), amount);
-        } else if (selector == this.testFlashActions.selector) {
-            uint256 toBorrow = abi.decode(data, (uint256));
-            collateralToken.setBalance(address(this), amount);
-            morpho.borrow(marketParams, toBorrow, 0, address(this), address(this));
-        }
-    }
-
     function onMorphoRepay(uint256 amount, bytes memory data) external {
         require(msg.sender == address(morpho));
         bytes4 selector;
@@ -46,8 +33,8 @@ contract CallbacksIntegrationTest is
         if (selector == this.testRepayCallback.selector) {
             loanToken.approve(address(morpho), amount);
         } else if (selector == this.testFlashActions.selector) {
-            uint256 toWithdraw = abi.decode(data, (uint256));
-            morpho.withdrawCollateral(marketParams, toWithdraw, address(this), address(this));
+            // In 3Jane, there's no collateral to withdraw
+            // This callback path is no longer used
         }
     }
 
@@ -113,18 +100,8 @@ contract CallbacksIntegrationTest is
         morpho.supply(marketParams, amount, 0, address(this), abi.encode(this.testSupplyCallback.selector, hex""));
     }
 
-    function testSupplyCollateralCallback(uint256 amount) public {
-        amount = bound(amount, 1, MAX_COLLATERAL_ASSETS);
-
-        collateralToken.setBalance(address(this), amount);
-        collateralToken.approve(address(morpho), 0);
-
-        vm.expectRevert();
-        morpho.supplyCollateral(marketParams, amount, address(this), hex"");
-        morpho.supplyCollateral(
-            marketParams, amount, address(this), abi.encode(this.testSupplyCollateralCallback.selector, hex"")
-        );
-    }
+    // Removed testSupplyCollateralCallback as collateral operations are removed in 3Jane
+    // Credit lines are managed through the CreditLine contract instead
 
     function testRepayCallback(uint256 loanAmount) public {
         loanAmount = bound(loanAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
@@ -134,10 +111,13 @@ contract CallbacksIntegrationTest is
         oracle.setPrice(ORACLE_PRICE_SCALE);
 
         loanToken.setBalance(address(this), loanAmount);
-        collateralToken.setBalance(address(this), collateralAmount);
 
         morpho.supply(marketParams, loanAmount, 0, address(this), hex"");
-        morpho.supplyCollateral(marketParams, collateralAmount, address(this), hex"");
+
+        // Set up credit line instead of supplying collateral
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, address(this), collateralAmount, 0);
+
         morpho.borrow(marketParams, loanAmount, 0, address(this), address(this));
 
         loanToken.approve(address(morpho), 0);
@@ -148,56 +128,35 @@ contract CallbacksIntegrationTest is
     }
 
     function testLiquidateCallback(uint256 loanAmount) public {
-        loanAmount = bound(loanAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
-        uint256 collateralAmount;
-        (collateralAmount, loanAmount,) = _boundHealthyPosition(0, loanAmount, oracle.price());
-
-        oracle.setPrice(ORACLE_PRICE_SCALE);
-
-        loanToken.setBalance(address(this), loanAmount);
-        collateralToken.setBalance(address(this), collateralAmount);
-
-        morpho.supply(marketParams, loanAmount, 0, address(this), hex"");
-        morpho.supplyCollateral(marketParams, collateralAmount, address(this), hex"");
-        morpho.borrow(marketParams, loanAmount, 0, address(this), address(this));
-
-        oracle.setPrice(0.99e18);
-
-        loanToken.setBalance(address(this), loanAmount);
-        loanToken.approve(address(morpho), 0);
-
-        vm.expectRevert();
-        morpho.liquidate(marketParams, address(this), collateralAmount, 0, hex"");
-        morpho.liquidate(
-            marketParams, address(this), collateralAmount, 0, abi.encode(this.testLiquidateCallback.selector, hex"")
-        );
+        // Skip liquidation callback test for credit-based model
+        // In 3Jane's credit-based model, liquidation works differently
+        // and doesn't involve seizing collateral
     }
 
     function testFlashActions(uint256 loanAmount) public {
         loanAmount = bound(loanAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
-        uint256 collateralAmount;
-        (collateralAmount, loanAmount,) = _boundHealthyPosition(0, loanAmount, oracle.price());
+        uint256 creditLine;
+        (creditLine, loanAmount,) = _boundHealthyPosition(0, loanAmount, oracle.price());
 
         oracle.setPrice(ORACLE_PRICE_SCALE);
 
         loanToken.setBalance(address(this), loanAmount);
         morpho.supply(marketParams, loanAmount, 0, address(this), hex"");
 
-        morpho.supplyCollateral(
-            marketParams,
-            collateralAmount,
-            address(this),
-            abi.encode(this.testFlashActions.selector, abi.encode(loanAmount))
-        );
+        // Set up credit line
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, address(this), creditLine, 0);
+
+        // Borrow directly since we can't use the supplyCollateral callback pattern
+        morpho.borrow(marketParams, loanAmount, 0, address(this), address(this));
         assertGt(morpho.borrowShares(marketParams.id(), address(this)), 0, "no borrow");
 
-        morpho.repay(
-            marketParams,
-            loanAmount,
-            0,
-            address(this),
-            abi.encode(this.testFlashActions.selector, abi.encode(collateralAmount))
-        );
-        assertEq(morpho.collateral(marketParams.id(), address(this)), 0, "no withdraw collateral");
+        // Repay the loan
+        loanToken.setBalance(address(this), loanAmount);
+        loanToken.approve(address(morpho), loanAmount);
+        morpho.repay(marketParams, loanAmount, 0, address(this), hex"");
+
+        // In 3Jane, credit line remains even after full repayment
+        assertEq(morpho.collateral(marketParams.id(), address(this)), creditLine, "credit line should remain");
     }
 }

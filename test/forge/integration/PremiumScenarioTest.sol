@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
+import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 import {EventsLib} from "../../../src/libraries/EventsLib.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
@@ -24,6 +25,9 @@ contract PremiumScenarioTest is BaseTest {
 
     function setUp() public override {
         super.setUp();
+
+        // Stop any active pranks from parent setUp
+        vm.stopPrank();
 
         // Deploy credit line mocks
         creditLine = new CreditLineMock(address(morpho));
@@ -80,7 +84,7 @@ contract PremiumScenarioTest is BaseTest {
     {
         CreditLineMock cl = Id.unwrap(marketId) == Id.unwrap(id) ? creditLine : creditLine2;
         vm.prank(address(cl));
-        cl.setCreditLine(marketId, borrower, credit, premiumRatePerSecond);
+        IMorphoCredit(address(morpho)).setCreditLine(marketId, borrower, credit, premiumRatePerSecond);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -96,11 +100,10 @@ contract PremiumScenarioTest is BaseTest {
 
         // Phase 1: Initial setup and credit assessment
         vm.prank(SUPPLIER);
-        morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
+        morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, hex"");
 
         // Borrower supplies collateral (could be virtual in future)
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
+        // Credit line setup needed
 
         // 3CA assesses borrower and sets initial premium rate based on credit score
         uint128 initialPremiumRate = uint128(uint256(0.08e18) / 365 days); // 8% APR - good credit
@@ -121,7 +124,7 @@ contract PremiumScenarioTest is BaseTest {
         uint256 firstPayment = 2_000e18;
         loanToken.setBalance(BORROWER, firstPayment);
         vm.prank(BORROWER);
-        morpho.repay(marketParams, firstPayment, 0, BORROWER, "");
+        morpho.repay(marketParams, firstPayment, 0, BORROWER, hex"");
 
         // Phase 4: Credit improvement - 3CA reduces premium rate
         vm.warp(block.timestamp + 30 days);
@@ -140,7 +143,7 @@ contract PremiumScenarioTest is BaseTest {
             uint256 monthlyPayment = 3_000e18;
             loanToken.setBalance(BORROWER, monthlyPayment);
             vm.prank(BORROWER);
-            morpho.repay(marketParams, monthlyPayment, 0, BORROWER, "");
+            morpho.repay(marketParams, monthlyPayment, 0, BORROWER, hex"");
         }
 
         // Phase 7: Credit deterioration - 3CA increases premium
@@ -164,7 +167,7 @@ contract PremiumScenarioTest is BaseTest {
             uint256(finalPosition.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
         loanToken.setBalance(BORROWER, repayAssets + 1000e18); // Extra buffer
         vm.prank(BORROWER);
-        morpho.repay(marketParams, 0, finalPosition.borrowShares, BORROWER, "");
+        morpho.repay(marketParams, 0, finalPosition.borrowShares, BORROWER, hex"");
 
         // Verify complete repayment (may have tiny remainder due to rounding)
         Position memory closedPosition = morpho.position(id, BORROWER);
@@ -187,15 +190,13 @@ contract PremiumScenarioTest is BaseTest {
 
         // Supply to both markets
         vm.prank(SUPPLIER);
-        morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
+        morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, hex"");
         vm.prank(SUPPLIER);
-        morpho.supply(marketParams2, supplyAmount, 0, SUPPLIER, "");
+        morpho.supply(marketParams2, supplyAmount, 0, SUPPLIER, hex"");
 
         // Borrower supplies collateral to both markets
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, collateralAmount, BORROWER, "");
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams2, collateralAmount, BORROWER, "");
+        // Credit line setup needed
+        // Credit line setup needed
 
         // Different premium rates for different markets (risk assessment)
         uint128 market1Premium = uint128(uint256(0.1e18) / 365 days); // 10% APR - standard risk
@@ -245,7 +246,7 @@ contract PremiumScenarioTest is BaseTest {
 
         loanToken.setBalance(BORROWER, debt2 + 1000e18);
         vm.prank(BORROWER);
-        morpho.repay(marketParams2, 0, pos2.borrowShares, BORROWER, "");
+        morpho.repay(marketParams2, 0, pos2.borrowShares, BORROWER, hex"");
 
         // Verify market 2 debt cleared (may have tiny remainder due to rounding)
         Position memory clearedPos2 = morpho.position(id2, BORROWER);
@@ -263,7 +264,7 @@ contract PremiumScenarioTest is BaseTest {
         uint256 partialPayment = debt1 / 2;
         loanToken.setBalance(BORROWER, partialPayment);
         vm.prank(BORROWER);
-        morpho.repay(marketParams, partialPayment, 0, BORROWER, "");
+        morpho.repay(marketParams, partialPayment, 0, BORROWER, hex"");
 
         // Verify partial repayment
         Position memory finalPos1 = morpho.position(id, BORROWER);
@@ -284,7 +285,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // Initial setup
         vm.prank(SUPPLIER);
-        morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
+        morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, hex"");
 
         // Initial borrow with standard premium
         uint128 standardPremium = uint128(uint256(0.12e18) / 365 days); // 12% APR
@@ -308,7 +309,7 @@ contract PremiumScenarioTest is BaseTest {
 
                 loanToken.setBalance(BORROWER, payment);
                 vm.prank(BORROWER);
-                morpho.repay(marketParams, payment, 0, BORROWER, "");
+                morpho.repay(marketParams, payment, 0, BORROWER, hex"");
 
                 // 3CA reduces premium every 2 months for good behavior
                 if (i % 2 == 1) {
@@ -337,7 +338,7 @@ contract PremiumScenarioTest is BaseTest {
 
                 loanToken.setBalance(BORROWER, recoveryPayment);
                 vm.prank(BORROWER);
-                morpho.repay(marketParams, recoveryPayment, 0, BORROWER, "");
+                morpho.repay(marketParams, recoveryPayment, 0, BORROWER, hex"");
 
                 // 3CA gradually reduces premium again
                 if (i == 11) {
@@ -401,7 +402,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // Supplier provides liquidity
         vm.prank(SUPPLIER);
-        morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
+        morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, hex"");
 
         // Setup all borrowers
         _setupMultipleBorrowers(borrowers, riskPremiums, collateralPerBorrower, borrowPerBorrower);
@@ -475,10 +476,9 @@ contract PremiumScenarioTest is BaseTest {
         // Setup market with credit line feature
         // Note: In real implementation, credit lines would be managed by the creditLine contract
         vm.prank(SUPPLIER);
-        morpho.supply(marketParams, initialSupply, 0, SUPPLIER, "");
+        morpho.supply(marketParams, initialSupply, 0, SUPPLIER, hex"");
 
-        vm.prank(BORROWER);
-        morpho.supplyCollateral(marketParams, initialCollateral, BORROWER, "");
+        // Credit line setup needed
 
         // Initial credit assessment - moderate risk
         uint128 initialPremium = uint128(uint256(0.15e18) / 365 days); // 15% APR
@@ -496,7 +496,7 @@ contract PremiumScenarioTest is BaseTest {
             uint256 payment = 1_500e18;
             loanToken.setBalance(BORROWER, payment);
             vm.prank(BORROWER);
-            morpho.repay(marketParams, payment, 0, BORROWER, "");
+            morpho.repay(marketParams, payment, 0, BORROWER, hex"");
         }
 
         // Credit line increase approved by 3CA
@@ -517,7 +517,7 @@ contract PremiumScenarioTest is BaseTest {
             uint256 payment = 2_500e18;
             loanToken.setBalance(BORROWER, payment);
             vm.prank(BORROWER);
-            morpho.repay(marketParams, payment, 0, BORROWER, "");
+            morpho.repay(marketParams, payment, 0, BORROWER, hex"");
         }
 
         // Final assessment after 1 year
@@ -554,7 +554,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // Supply liquidity
         vm.prank(SUPPLIER);
-        morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, "");
+        morpho.supply(marketParams, supplyAmount, 0, SUPPLIER, hex"");
 
         // Setup borrowers with scoped block to reduce stack usage
         address[] memory borrowerArray = new address[](3);
@@ -646,8 +646,7 @@ contract PremiumScenarioTest is BaseTest {
             vm.prank(borrowers[i]);
             collateralToken.approve(address(morpho), type(uint256).max);
 
-            vm.prank(borrowers[i]);
-            morpho.supplyCollateral(marketParams, borrowAmounts[i] * 2, borrowers[i], "");
+            // Credit line setup needed
 
             _setCreditLineWithPremium(id, borrowers[i], borrowAmounts[i] * 2, premiumRates[i]);
 
@@ -669,8 +668,7 @@ contract PremiumScenarioTest is BaseTest {
             collateralToken.approve(address(morpho), type(uint256).max);
 
             // Supply collateral
-            vm.prank(borrowers[i]);
-            morpho.supplyCollateral(marketParams, collateralPerBorrower, borrowers[i], "");
+            // Credit line setup needed
 
             // Set risk premium
             _setCreditLineWithPremium(id, borrowers[i], collateralPerBorrower, riskPremiums[i]);

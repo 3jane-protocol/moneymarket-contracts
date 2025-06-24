@@ -15,7 +15,6 @@ import {
     IMorphoLiquidateCallback,
     IMorphoRepayCallback,
     IMorphoSupplyCallback,
-    IMorphoSupplyCollateralCallback,
     IMorphoFlashLoanCallback
 } from "./interfaces/IMorphoCallbacks.sol";
 import {IIrm} from "./interfaces/IIrm.sol";
@@ -478,7 +477,12 @@ contract Morpho is IMorphoStaticTyping {
 
     /// @dev Returns whether the position of `borrower` in the given market `marketParams` is healthy.
     /// @dev Assumes that the inputs `marketParams` and `id` match.
-    function _isHealthy(MarketParams memory marketParams, Id id, address borrower) internal view returns (bool) {
+    function _isHealthy(MarketParams memory marketParams, Id id, address borrower)
+        internal
+        view
+        virtual
+        returns (bool)
+    {
         if (position[id][borrower].borrowShares == 0) return true;
 
         uint256 collateralPrice = IOracle(marketParams.oracle).price();
@@ -493,6 +497,7 @@ contract Morpho is IMorphoStaticTyping {
     function _isHealthy(MarketParams memory marketParams, Id id, address borrower, uint256 collateralPrice)
         internal
         view
+        virtual
         returns (bool)
     {
         uint256 borrowed = uint256(position[id][borrower].borrowShares).toAssetsUp(

@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import "../../lib/forge-std/src/Test.sol";
 import "../../lib/forge-std/src/console.sol";
 
-import {IMorpho} from "../../src/interfaces/IMorpho.sol";
+import {IMorpho, IMorphoCredit} from "../../src/interfaces/IMorpho.sol";
 import "../../src/interfaces/IMorphoCallbacks.sol";
 import {IrmMock} from "../../src/mocks/IrmMock.sol";
 import {ERC20Mock} from "../../src/mocks/ERC20Mock.sol";
@@ -149,12 +149,11 @@ contract BaseTest is Test {
         morpho.supply(marketParams, amount, 0, address(this), hex"");
     }
 
-    function _supplyCollateralForBorrower(address borrower) internal {
-        collateralToken.setBalance(borrower, HIGH_COLLATERAL_AMOUNT);
-        vm.startPrank(borrower);
-        collateralToken.approve(address(morpho), type(uint256).max);
-        morpho.supplyCollateral(marketParams, HIGH_COLLATERAL_AMOUNT, borrower, hex"");
-        vm.stopPrank();
+    function _setupCreditLineForBorrower(address borrower) internal {
+        // In 3Jane, we set up a credit line instead of supplying collateral
+        // This assumes the market has a creditLine contract configured
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(marketParams.id(), borrower, HIGH_COLLATERAL_AMOUNT, 0);
     }
 
     function _boundHealthyPosition(uint256 amountCollateral, uint256 amountBorrowed, uint256 priceCollateral)

@@ -208,6 +208,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @inheritdoc IMorphoCredit
     function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external {
+        require(borrower != address(0), ErrorsLib.ZERO_ADDRESS);
+        require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
         require(idToMarketParams[id].creditLine == msg.sender, ErrorsLib.NOT_CREDIT_LINE);
 
         position[id][borrower].collateral = credit.toUint128();
@@ -295,5 +297,52 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc Morpho
     function _afterLiquidate(MarketParams memory marketParams, Id id, address borrower) internal override {
         _snapshotBorrowerPosition(id, borrower);
+    }
+
+    /* HEALTH CHECK OVERRIDE */
+
+    /// @dev Override health check for credit-based lending (without price)
+    /// @param marketParams The market parameters
+    /// @param id The market id
+    /// @param borrower The borrower address
+    /// @return healthy Whether the position is healthy
+    function _isHealthy(MarketParams memory marketParams, Id id, address borrower)
+        internal
+        view
+        override
+        returns (bool)
+    {
+        if (position[id][borrower].borrowShares == 0) return true;
+
+        // For credit-based lending, we don't need oracle price
+        // Just check credit utilization directly
+        uint256 borrowed = uint256(position[id][borrower].borrowShares).toAssetsUp(
+            market[id].totalBorrowAssets, market[id].totalBorrowShares
+        );
+        uint256 creditLimit = position[id][borrower].collateral;
+
+        return creditLimit >= borrowed;
+    }
+
+    /// @dev Override health check for credit-based lending (with price)
+    /// @param marketParams The market parameters
+    /// @param id The market id
+    /// @param borrower The borrower address
+    /// @param collateralPrice The collateral price (unused in credit model)
+    /// @return healthy Whether the position is healthy
+    function _isHealthy(MarketParams memory marketParams, Id id, address borrower, uint256 collateralPrice)
+        internal
+        view
+        override
+        returns (bool)
+    {
+        // For credit-based lending, health is determined by credit utilization
+        // position.collateral represents the credit limit
+        uint256 borrowed = uint256(position[id][borrower].borrowShares).toAssetsUp(
+            market[id].totalBorrowAssets, market[id].totalBorrowShares
+        );
+        uint256 creditLimit = position[id][borrower].collateral;
+
+        return creditLimit >= borrowed;
     }
 }

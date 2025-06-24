@@ -31,16 +31,6 @@ interface IMorphoSupplyCallback {
     function onMorphoSupply(uint256 assets, bytes calldata data) external;
 }
 
-/// @title IMorphoSupplyCollateralCallback
-/// @notice Interface that users willing to use `supplyCollateral`'s callback must implement.
-interface IMorphoSupplyCollateralCallback {
-    /// @notice Callback called when a supply of collateral occurs.
-    /// @dev The callback is called only if data is not empty.
-    /// @param assets The amount of supplied collateral.
-    /// @param data Arbitrary data passed to the `supplyCollateral` function.
-    function onMorphoSupplyCollateral(uint256 assets, bytes calldata data) external;
-}
-
 /// @title IMorphoFlashLoanCallback
 /// @notice Interface that users willing to use `flashLoan`'s callback must implement.
 interface IMorphoFlashLoanCallback {
