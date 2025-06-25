@@ -294,7 +294,7 @@ contract Morpho is IMorphoStaticTyping {
         // `assets` may be greater than `totalBorrowAssets` by 1.
         emit EventsLib.Repay(id, msg.sender, onBehalf, assets, shares);
 
-        _afterRepay(marketParams, id, onBehalf);
+        _afterRepay(marketParams, id, onBehalf, assets);
 
         if (data.length > 0) IMorphoRepayCallback(msg.sender).onMorphoRepay(assets, data);
 
@@ -557,7 +557,8 @@ contract Morpho is IMorphoStaticTyping {
     /// @param marketParams The market parameters.
     /// @param id The market id.
     /// @param onBehalf The address whose debt was repaid.
-    function _afterRepay(MarketParams memory marketParams, Id id, address onBehalf) internal virtual {}
+    /// @param assets The amount of assets repaid.
+    function _afterRepay(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets) internal virtual {}
 
     /// @dev Hook called after liquidate operations to allow for post-processing.
     /// @param marketParams The market parameters.

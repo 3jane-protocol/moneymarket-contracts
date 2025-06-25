@@ -43,6 +43,24 @@ struct BorrowerPremium {
     uint256 borrowAssetsAtLastAccrual;
 }
 
+/// @notice Repayment tracking structures
+enum RepaymentStatus {
+    Current,
+    GracePeriod,
+    Delinquent,
+    Default
+}
+
+struct PaymentCycle {
+    uint256 endDate;
+}
+
+struct RepaymentObligation {
+    uint128 paymentCycleId;
+    uint128 amountDue;
+    uint256 endingBalance;
+}
+
 struct Authorization {
     address authorizer;
     address authorized;
@@ -393,4 +411,54 @@ interface IMorphoCredit {
     /// @param borrowers Array of borrower addresses
     /// @dev Gas usage scales linearly with array size. Callers should manage batch sizes based on block gas limits.
     function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) external;
+
+    /// @notice Close a payment cycle and post obligations for multiple borrowers
+    /// @param id Market ID
+    /// @param endDate Cycle end date
+    /// @param borrowers Array of borrower addresses
+    /// @param amounts Array of amounts due
+    /// @param endingBalances Array of ending balances for penalty calculations
+    function closeCycleAndPostObligations(
+        Id id,
+        uint256 endDate,
+        address[] calldata borrowers,
+        uint256[] calldata amounts,
+        uint256[] calldata endingBalances
+    ) external;
+
+    /// @notice Add obligations to the latest payment cycle
+    /// @param id Market ID
+    /// @param borrowers Array of borrower addresses
+    /// @param amounts Array of amounts due
+    /// @param endingBalances Array of ending balances
+    function addObligationsToLatestCycle(
+        Id id,
+        address[] calldata borrowers,
+        uint256[] calldata amounts,
+        uint256[] calldata endingBalances
+    ) external;
+
+    /// @notice Get repayment status for a borrower
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @return status The borrower's current repayment status
+    function getRepaymentStatus(Id id, address borrower) external view returns (RepaymentStatus status);
+
+    /// @notice Check if borrower can borrow
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @return Whether the borrower can take new loans
+    function canBorrow(Id id, address borrower) external view returns (bool);
+
+    /// @notice Get the ID of the latest payment cycle
+    /// @param id Market ID
+    /// @return The latest cycle ID
+    function getLatestCycleId(Id id) external view returns (uint256);
+
+    /// @notice Get both start and end dates for a given cycle
+    /// @param id Market ID
+    /// @param cycleId Cycle ID
+    /// @return startDate The cycle start date
+    /// @return endDate The cycle end date
+    function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate);
 }

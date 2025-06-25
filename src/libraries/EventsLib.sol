@@ -154,4 +154,26 @@ library EventsLib {
     /// @param oldRate Previous premium rate.
     /// @param newRate New premium rate.
     event BorrowerPremiumRateSet(Id indexed id, address indexed borrower, uint128 oldRate, uint128 newRate);
+
+    /// @notice Emitted when a payment cycle is created.
+    /// @param id Market id.
+    /// @param cycleId Payment cycle ID.
+    /// @param startDate Cycle start date.
+    /// @param endDate Cycle end date.
+    event PaymentCycleCreated(Id indexed id, uint256 cycleId, uint256 startDate, uint256 endDate);
+
+    /// @notice Emitted when a repayment obligation is posted.
+    /// @param id Market id.
+    /// @param borrower Borrower address.
+    /// @param amount Amount due.
+    /// @param cycleId Payment cycle ID.
+    /// @param endingBalance Balance at cycle end for penalty calculations.
+    event RepaymentObligationPosted(Id indexed id, address indexed borrower, uint256 amount, uint256 cycleId, uint256 endingBalance);
+
+    /// @notice Emitted when a repayment is tracked against an obligation.
+    /// @param id Market id.
+    /// @param borrower Borrower address.
+    /// @param payment Payment amount.
+    /// @param remainingDue Remaining amount due.
+    event RepaymentTracked(Id indexed id, address indexed borrower, uint256 payment, uint256 remainingDue);
 }
