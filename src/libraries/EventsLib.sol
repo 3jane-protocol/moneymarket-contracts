@@ -168,7 +168,9 @@ library EventsLib {
     /// @param amount Amount due.
     /// @param cycleId Payment cycle ID.
     /// @param endingBalance Balance at cycle end for penalty calculations.
-    event RepaymentObligationPosted(Id indexed id, address indexed borrower, uint256 amount, uint256 cycleId, uint256 endingBalance);
+    event RepaymentObligationPosted(
+        Id indexed id, address indexed borrower, uint256 amount, uint256 cycleId, uint256 endingBalance
+    );
 
     /// @notice Emitted when a repayment is tracked against an obligation.
     /// @param id Market id.

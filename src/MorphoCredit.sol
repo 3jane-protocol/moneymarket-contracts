@@ -1,7 +1,17 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.19;
 
-import {Id, MarketParams, Position, Market, BorrowerPremium, RepaymentStatus, PaymentCycle, RepaymentObligation, IMorphoCredit} from "./interfaces/IMorpho.sol";
+import {
+    Id,
+    MarketParams,
+    Position,
+    Market,
+    BorrowerPremium,
+    RepaymentStatus,
+    PaymentCycle,
+    RepaymentObligation,
+    IMorphoCredit
+} from "./interfaces/IMorpho.sol";
 
 import {Morpho} from "./Morpho.sol";
 
@@ -169,24 +179,24 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Check repayment status and add penalty interest if delinquent
         RepaymentStatus status = getRepaymentStatus(id, borrower);
-        
+
         if (status == RepaymentStatus.Delinquent || status == RepaymentStatus.Default) {
             RepaymentObligation storage obligation = repaymentObligation[id][borrower];
-            
+
             // Calculate when they entered delinquency
             PaymentCycle storage cycle = paymentCycle[id][obligation.paymentCycleId];
             uint256 delinquencyStartTime = cycle.endDate + GRACE_PERIOD_DURATION;
-            
+
             // Calculate penalty accrual period
-            uint256 penaltyStart = premium.lastAccrualTime > delinquencyStartTime ? premium.lastAccrualTime : delinquencyStartTime;
+            uint256 penaltyStart =
+                premium.lastAccrualTime > delinquencyStartTime ? premium.lastAccrualTime : delinquencyStartTime;
             uint256 penaltyDuration = block.timestamp - penaltyStart;
-            
+
             if (penaltyDuration > 0 && obligation.endingBalance > 0) {
                 // Calculate penalty interest using the ending balance
-                uint256 penaltyInterest = obligation.endingBalance.wMulDown(
-                    PENALTY_RATE_PER_SECOND.wTaylorCompounded(penaltyDuration)
-                );
-                
+                uint256 penaltyInterest =
+                    obligation.endingBalance.wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(penaltyDuration));
+
                 // Add penalty to premium amount
                 premiumAmount += penaltyInterest;
             }
@@ -319,7 +329,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256[] calldata amounts,
         uint256[] calldata endingBalances
     ) external onlyCreditLine(id) {
-        require(borrowers.length == amounts.length && amounts.length == endingBalances.length, ErrorsLib.INCONSISTENT_INPUT);
+        require(
+            borrowers.length == amounts.length && amounts.length == endingBalances.length, ErrorsLib.INCONSISTENT_INPUT
+        );
         require(endDate <= block.timestamp, "Cannot close future cycle");
 
         uint256 cycleLength = paymentCycle[id].length;
@@ -334,9 +346,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // else startDate remains 0 for the first cycle
 
         // Create the payment cycle record
-        paymentCycle[id].push(PaymentCycle({
-            endDate: endDate
-        }));
+        paymentCycle[id].push(PaymentCycle({endDate: endDate}));
 
         uint256 cycleId = paymentCycle[id].length - 1;
 
@@ -359,7 +369,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256[] calldata amounts,
         uint256[] calldata endingBalances
     ) external onlyCreditLine(id) {
-        require(borrowers.length == amounts.length && amounts.length == endingBalances.length, ErrorsLib.INCONSISTENT_INPUT);
+        require(
+            borrowers.length == amounts.length && amounts.length == endingBalances.length, ErrorsLib.INCONSISTENT_INPUT
+        );
         require(paymentCycle[id].length > 0, "No cycles exist");
 
         uint256 latestCycleId = paymentCycle[id].length - 1;
@@ -375,13 +387,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param amount Amount due
     /// @param cycleId Payment cycle ID
     /// @param endingBalance Balance at cycle end for penalty calculations
-    function _postRepaymentObligation(
-        Id id,
-        address borrower,
-        uint256 amount,
-        uint256 cycleId,
-        uint256 endingBalance
-    ) internal {
+    function _postRepaymentObligation(Id id, address borrower, uint256 amount, uint256 cycleId, uint256 endingBalance)
+        internal
+    {
         RepaymentObligation storage obligation = repaymentObligation[id][borrower];
 
         // If there's an existing unpaid obligation, add to it
@@ -429,10 +437,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     {
         // Check if borrower can borrow
         require(
-            getRepaymentStatus(id, onBehalf) == RepaymentStatus.Current,
-            "Cannot borrow with outstanding repayments"
+            getRepaymentStatus(id, onBehalf) == RepaymentStatus.Current, "Cannot borrow with outstanding repayments"
         );
-        
+
         _accrueBorrowerPremium(id, onBehalf);
     }
 
@@ -463,15 +470,15 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc Morpho
     function _afterRepay(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets) internal override {
         _snapshotBorrowerPosition(id, onBehalf);
-        
+
         // Track payment against obligation
         RepaymentObligation storage obligation = repaymentObligation[id][onBehalf];
-        
+
         if (obligation.amountDue > 0 && assets > 0) {
             uint256 paymentToObligation = assets > obligation.amountDue ? obligation.amountDue : assets;
-            
+
             obligation.amountDue = uint128(obligation.amountDue - paymentToObligation);
-            
+
             emit EventsLib.RepaymentTracked(id, onBehalf, paymentToObligation, obligation.amountDue);
         }
     }
@@ -482,7 +489,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /* VIEW FUNCTIONS */
-    
+
     /// @notice Check if borrower can borrow
     /// @param id Market ID
     /// @param borrower Borrower address
@@ -490,7 +497,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     function canBorrow(Id id, address borrower) external view returns (bool) {
         return getRepaymentStatus(id, borrower) == RepaymentStatus.Current;
     }
-    
+
     /// @notice Get the ID of the latest payment cycle
     /// @param id Market ID
     /// @return The latest cycle ID
@@ -498,7 +505,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         require(paymentCycle[id].length > 0, "No cycles exist");
         return paymentCycle[id].length - 1;
     }
-    
+
     /// @notice Get both start and end dates for a given cycle
     /// @param id Market ID
     /// @param cycleId Cycle ID
@@ -506,10 +513,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @return endDate The cycle end date
     function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate) {
         require(cycleId < paymentCycle[id].length, "Invalid cycle ID");
-        
+
         PaymentCycle storage cycle = paymentCycle[id][cycleId];
         endDate = cycle.endDate;
-        
+
         if (cycleId != 0) {
             startDate = paymentCycle[id][cycleId - 1].endDate + 1 days;
         }
