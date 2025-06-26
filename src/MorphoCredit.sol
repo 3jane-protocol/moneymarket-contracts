@@ -143,24 +143,17 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @dev Calculates penalty interest amount for delinquent borrowers
-    /// @param status The borrower's repayment status
     /// @param cycleEndDate The end date of the payment cycle
     /// @param lastAccrualTime The last time premium was accrued
     /// @param endingBalance The balance to calculate penalty on
     /// @param currentTimestamp Current timestamp
     /// @return penaltyAmount The penalty interest amount
     function _calculatePenaltyInterest(
-        RepaymentStatus status,
         uint256 cycleEndDate,
         uint256 lastAccrualTime,
         uint256 endingBalance,
         uint256 currentTimestamp
     ) internal pure returns (uint256 penaltyAmount) {
-        // Only calculate penalty for delinquent or default status
-        if (status != RepaymentStatus.Delinquent && status != RepaymentStatus.Default) {
-            return 0;
-        }
-
         // Calculate when borrower entered delinquency
         uint256 delinquencyStartTime = cycleEndDate + GRACE_PERIOD_DURATION;
 
@@ -217,7 +210,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             RepaymentObligation memory obligation = repaymentObligation[id][borrower];
 
             uint256 penaltyInterest = _calculatePenaltyInterest(
-                status,
                 paymentCycle[id][obligation.paymentCycleId].endDate,
                 premium.lastAccrualTime,
                 obligation.endingBalance,
