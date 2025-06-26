@@ -147,25 +147,36 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param lastAccrualTime The last time premium was accrued
     /// @param endingBalance The balance to calculate penalty on
     /// @param currentTimestamp Current timestamp
-    /// @return penaltyAmount The penalty interest amount
+    /// @return penaltyAmount The incremental penalty interest amount
     function _calculatePenaltyInterest(
         uint256 cycleEndDate,
         uint256 lastAccrualTime,
         uint256 endingBalance,
         uint256 currentTimestamp
     ) internal pure returns (uint256 penaltyAmount) {
+        // No penalty if no balance
+        if (endingBalance == 0) return 0;
+
         // Calculate when borrower entered delinquency
         uint256 delinquencyStartTime = cycleEndDate + GRACE_PERIOD_DURATION;
 
-        // Calculate penalty accrual period
-        // Start from the later of: delinquency start time or last accrual time
-        uint256 penaltyStart = lastAccrualTime > delinquencyStartTime ? lastAccrualTime : delinquencyStartTime;
-        uint256 penaltyDuration = currentTimestamp > penaltyStart ? currentTimestamp - penaltyStart : 0;
+        // No penalty if we haven't reached delinquency yet
+        if (currentTimestamp <= delinquencyStartTime) return 0;
 
-        // Calculate penalty if there's a duration and balance
-        if (penaltyDuration > 0 && endingBalance > 0) {
-            penaltyAmount = endingBalance.wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(penaltyDuration));
+        // Calculate total penalty from delinquency start to now
+        uint256 totalPenaltyDuration = currentTimestamp - delinquencyStartTime;
+        uint256 totalPenalty = endingBalance.wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(totalPenaltyDuration));
+
+        // Calculate previously accrued penalty (if any)
+        uint256 previouslyAccruedPenalty = 0;
+        if (lastAccrualTime > delinquencyStartTime) {
+            uint256 previousDuration = lastAccrualTime - delinquencyStartTime;
+            previouslyAccruedPenalty =
+                endingBalance.wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(previousDuration));
         }
+
+        // Return incremental penalty
+        penaltyAmount = totalPenalty > previouslyAccruedPenalty ? totalPenalty - previouslyAccruedPenalty : 0;
     }
 
     /// @notice Accrue premium for a specific borrower
