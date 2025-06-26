@@ -92,4 +92,7 @@ library ErrorsLib {
 
     /// @notice Thrown when the premium rate exceeds the maximum allowed.
     string internal constant PREMIUM_RATE_TOO_HIGH = "premium rate too high";
+
+    /// @notice Thrown when the borrower has outstanding repayment obligations.
+    string internal constant OUTSTANDING_REPAYMENT = "outstanding repayment";
 }

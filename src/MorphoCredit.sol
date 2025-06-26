@@ -58,14 +58,14 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Grace period duration for repayments
     uint256 internal constant GRACE_PERIOD_DURATION = 7 days;
 
-    /// @notice Default period duration (time after cycle end to enter default status)
-    uint256 internal constant DEFAULT_PERIOD_DURATION = 30 days;
+    /// @notice Default threshold (time after cycle end to enter default status)
+    uint256 internal constant DEFAULT_THRESHOLD = 30 days;
 
     /// @notice Minimum outstanding loan balance to prevent dust
     uint256 internal constant MIN_OUTSTANDING = 1000e18;
 
-    /// @notice Penalty rate per second for delinquent borrowers (~5% APR)
-    uint256 internal constant PENALTY_RATE_PER_SECOND = 1585489599;
+    /// @notice Penalty rate per second for delinquent borrowers (~10% APR)
+    uint256 internal constant PENALTY_RATE_PER_SECOND = 3170979198;
 
     constructor(address newOwner) Morpho(newOwner) {}
 
@@ -259,6 +259,13 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /* ONLY CREDIT LINE FUNCTIONS */
 
+    /// @notice Modifier to restrict access to the market's CreditLine contract
+    modifier onlyCreditLine(Id id) {
+        require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
+        require(msg.sender == idToMarketParams[id].creditLine, ErrorsLib.NOT_CREDIT_LINE);
+        _;
+    }
+
     /// @inheritdoc IMorphoCredit
     function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external {
         require(borrower != address(0), ErrorsLib.ZERO_ADDRESS);
@@ -309,12 +316,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /* REPAYMENT MANAGEMENT */
-
-    /// @notice Modifier to restrict access to the market's CreditLine contract
-    modifier onlyCreditLine(Id id) {
-        require(msg.sender == idToMarketParams[id].creditLine, ErrorsLib.NOT_CREDIT_LINE);
-        _;
-    }
 
     /// @notice Close a payment cycle and create it on-chain retroactively
     /// @param id Market ID
@@ -395,10 +396,13 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // If there's an existing unpaid obligation, add to it
         if (obligation.amountDue > 0) {
             amount += obligation.amountDue;
+            // Don't update paymentCycleId - keep the oldest unpaid cycle
+        } else {
+            // Only set cycleId for new obligations
+            obligation.paymentCycleId = uint128(cycleId);
         }
 
-        // Set new obligation
-        obligation.paymentCycleId = uint128(cycleId);
+        // Update amount and ending balance
         obligation.amountDue = uint128(amount);
         obligation.endingBalance = endingBalance;
 
@@ -421,7 +425,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         if (block.timestamp <= cycleEndDate + GRACE_PERIOD_DURATION) {
             return RepaymentStatus.GracePeriod;
-        } else if (block.timestamp <= cycleEndDate + DEFAULT_PERIOD_DURATION) {
+        } else if (block.timestamp < cycleEndDate + DEFAULT_THRESHOLD) {
             return RepaymentStatus.Delinquent;
         } else {
             return RepaymentStatus.Default;
@@ -436,9 +440,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         override
     {
         // Check if borrower can borrow
-        require(
-            getRepaymentStatus(id, onBehalf) == RepaymentStatus.Current, "Cannot borrow with outstanding repayments"
-        );
+        require(getRepaymentStatus(id, onBehalf) == RepaymentStatus.Current, ErrorsLib.OUTSTANDING_REPAYMENT);
 
         _accrueBorrowerPremium(id, onBehalf);
     }

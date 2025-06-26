@@ -461,4 +461,21 @@ interface IMorphoCredit {
     /// @return startDate The cycle start date
     /// @return endDate The cycle end date
     function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate);
+
+    /// @notice Get repayment obligation for a borrower
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @return cycleId The payment cycle ID
+    /// @return amountDue The amount due
+    /// @return endingBalance The ending balance for penalty calculations
+    function repaymentObligation(Id id, address borrower)
+        external
+        view
+        returns (uint128 cycleId, uint128 amountDue, uint256 endingBalance);
+
+    /// @notice Get payment cycle end date
+    /// @param id Market ID
+    /// @param cycleId Cycle ID
+    /// @return endDate The cycle end date
+    function paymentCycle(Id id, uint256 cycleId) external view returns (uint256 endDate);
 }
