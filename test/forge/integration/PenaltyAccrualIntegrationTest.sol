@@ -4,12 +4,7 @@ pragma solidity ^0.8.0;
 import "../BaseTest.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
-import {
-    Id,
-    MarketParams,
-    RepaymentStatus,
-    IMorphoCredit
-} from "../../../src/interfaces/IMorpho.sol";
+import {Id, MarketParams, RepaymentStatus, IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 import {EventsLib} from "../../../src/libraries/EventsLib.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 import {MathLib} from "../../../src/libraries/MathLib.sol";
@@ -300,7 +295,8 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         uint256 assetsFinal = morpho.expectedBorrowAssets(marketParams, ALICE);
 
         // Should only have normal accrual now (no penalty)
-        uint256 normalAccrual = assetsBeforeFinal.wMulDown((BASE_RATE_PER_SECOND + PREMIUM_RATE_ALICE).wTaylorCompounded(5 days));
+        uint256 normalAccrual =
+            assetsBeforeFinal.wMulDown((BASE_RATE_PER_SECOND + PREMIUM_RATE_ALICE).wTaylorCompounded(5 days));
 
         assertLe(assetsFinal, assetsBeforeFinal + normalAccrual + 100); // Small buffer
     }

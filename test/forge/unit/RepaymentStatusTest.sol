@@ -4,12 +4,7 @@ pragma solidity ^0.8.0;
 import "../BaseTest.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
-import {
-    Id,
-    MarketParams,
-    RepaymentStatus,
-    IMorphoCredit
-} from "../../../src/interfaces/IMorpho.sol";
+import {Id, MarketParams, RepaymentStatus, IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 import {EventsLib} from "../../../src/libraries/EventsLib.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 import {MathLib} from "../../../src/libraries/MathLib.sol";

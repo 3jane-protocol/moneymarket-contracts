@@ -142,6 +142,39 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         premiumAmount = totalGrowthAmount > baseGrowthActual ? totalGrowthAmount - baseGrowthActual : 0;
     }
 
+    /// @dev Calculates penalty interest amount for delinquent borrowers
+    /// @param status The borrower's repayment status
+    /// @param cycleEndDate The end date of the payment cycle
+    /// @param lastAccrualTime The last time premium was accrued
+    /// @param endingBalance The balance to calculate penalty on
+    /// @param currentTimestamp Current timestamp
+    /// @return penaltyAmount The penalty interest amount
+    function _calculatePenaltyInterest(
+        RepaymentStatus status,
+        uint256 cycleEndDate,
+        uint256 lastAccrualTime,
+        uint256 endingBalance,
+        uint256 currentTimestamp
+    ) internal pure returns (uint256 penaltyAmount) {
+        // Only calculate penalty for delinquent or default status
+        if (status != RepaymentStatus.Delinquent && status != RepaymentStatus.Default) {
+            return 0;
+        }
+
+        // Calculate when borrower entered delinquency
+        uint256 delinquencyStartTime = cycleEndDate + GRACE_PERIOD_DURATION;
+
+        // Calculate penalty accrual period
+        // Start from the later of: delinquency start time or last accrual time
+        uint256 penaltyStart = lastAccrualTime > delinquencyStartTime ? lastAccrualTime : delinquencyStartTime;
+        uint256 penaltyDuration = currentTimestamp > penaltyStart ? currentTimestamp - penaltyStart : 0;
+
+        // Calculate penalty if there's a duration and balance
+        if (penaltyDuration > 0 && endingBalance > 0) {
+            penaltyAmount = endingBalance.wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(penaltyDuration));
+        }
+    }
+
     /// @notice Accrue premium for a specific borrower
     /// @param id Market ID
     /// @param borrower Borrower address
@@ -181,25 +214,17 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         RepaymentStatus status = getRepaymentStatus(id, borrower);
 
         if (status == RepaymentStatus.Delinquent || status == RepaymentStatus.Default) {
-            RepaymentObligation storage obligation = repaymentObligation[id][borrower];
+            RepaymentObligation memory obligation = repaymentObligation[id][borrower];
 
-            // Calculate when they entered delinquency
-            PaymentCycle storage cycle = paymentCycle[id][obligation.paymentCycleId];
-            uint256 delinquencyStartTime = cycle.endDate + GRACE_PERIOD_DURATION;
+            uint256 penaltyInterest = _calculatePenaltyInterest(
+                status,
+                paymentCycle[id][obligation.paymentCycleId].endDate,
+                premium.lastAccrualTime,
+                obligation.endingBalance,
+                block.timestamp
+            );
 
-            // Calculate penalty accrual period
-            uint256 penaltyStart =
-                premium.lastAccrualTime > delinquencyStartTime ? premium.lastAccrualTime : delinquencyStartTime;
-            uint256 penaltyDuration = block.timestamp - penaltyStart;
-
-            if (penaltyDuration > 0 && obligation.endingBalance > 0) {
-                // Calculate penalty interest using the ending balance
-                uint256 penaltyInterest =
-                    obligation.endingBalance.wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(penaltyDuration));
-
-                // Add penalty to premium amount
-                premiumAmount += penaltyInterest;
-            }
+            premiumAmount += penaltyInterest;
         }
 
         uint256 premiumShares = premiumAmount.toSharesUp(targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares);

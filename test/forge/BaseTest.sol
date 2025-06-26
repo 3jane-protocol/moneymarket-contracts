@@ -39,12 +39,12 @@ contract BaseTest is Test {
     uint256 internal constant MIN_COLLATERAL_PRICE = 1e10;
     uint256 internal constant MAX_COLLATERAL_PRICE = 1e40;
     uint256 internal constant MAX_COLLATERAL_ASSETS = type(uint128).max;
-    
+
     // Repayment tracking constants
     uint256 internal constant GRACE_PERIOD_DURATION = 7 days;
     uint256 internal constant DEFAULT_THRESHOLD = 30 days;
     uint256 internal constant CYCLE_DURATION = 30 days;
-    
+
     // Rate constants (per second)
     uint256 internal constant BASE_RATE_PER_SECOND = 3170979198; // ~10% APR
     uint256 internal constant PENALTY_RATE_PER_SECOND = 3170979198; // ~10% APR
