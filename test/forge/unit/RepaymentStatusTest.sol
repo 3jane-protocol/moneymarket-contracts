@@ -8,8 +8,6 @@ import {
     Id,
     MarketParams,
     RepaymentStatus,
-    PaymentCycle,
-    RepaymentObligation,
     IMorphoCredit
 } from "../../../src/interfaces/IMorpho.sol";
 import {EventsLib} from "../../../src/libraries/EventsLib.sol";
@@ -27,10 +25,7 @@ contract RepaymentStatusTest is BaseTest {
     address internal ALICE;
     address internal BOB;
 
-    // Test constants
-    uint256 internal constant GRACE_PERIOD_DURATION = 7 days;
-    uint256 internal constant DEFAULT_THRESHOLD = 30 days;
-    uint256 internal constant CYCLE_DURATION = 30 days;
+    // Test-specific constants (common ones are in BaseTest)
 
     function setUp() public override {
         super.setUp();

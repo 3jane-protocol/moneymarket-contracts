@@ -8,10 +8,7 @@ import {
     Id,
     MarketParams,
     RepaymentStatus,
-    PaymentCycle,
-    RepaymentObligation,
-    IMorphoCredit,
-    BorrowerPremium
+    IMorphoCredit
 } from "../../../src/interfaces/IMorpho.sol";
 import {EventsLib} from "../../../src/libraries/EventsLib.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
@@ -30,11 +27,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
     address internal BOB;
     address internal CHARLIE;
 
-    // Test constants
-    uint256 internal constant CYCLE_DURATION = 30 days;
-    uint256 internal constant GRACE_PERIOD_DURATION = 7 days;
-    uint256 internal constant DEFAULT_THRESHOLD = 30 days;
-    uint256 internal constant PENALTY_RATE_PER_SECOND = 3170979198; // ~10% APR
+    // Test-specific constants (common ones are in BaseTest)
 
     function setUp() public override {
         super.setUp();

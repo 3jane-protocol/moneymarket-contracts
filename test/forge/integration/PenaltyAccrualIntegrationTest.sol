@@ -8,10 +8,7 @@ import {
     Id,
     MarketParams,
     RepaymentStatus,
-    PaymentCycle,
-    RepaymentObligation,
-    IMorphoCredit,
-    BorrowerPremium
+    IMorphoCredit
 } from "../../../src/interfaces/IMorpho.sol";
 import {EventsLib} from "../../../src/libraries/EventsLib.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
@@ -30,15 +27,9 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
     address internal BOB;
     address internal CHARLIE;
 
-    // Rate constants (per second)
-    uint256 internal constant BASE_RATE = 3170979198; // ~10% APR
+    // Test-specific rate constants (common ones are in BaseTest)
     uint256 internal constant PREMIUM_RATE_ALICE = 634195840; // ~2% APR
     uint256 internal constant PREMIUM_RATE_BOB = 951293759; // ~3% APR
-    uint256 internal constant PENALTY_RATE = 3170979198; // ~10% APR
-
-    // Time constants
-    uint256 internal constant GRACE_PERIOD_DURATION = 7 days;
-    uint256 internal constant DEFAULT_THRESHOLD = 30 days;
 
     function setUp() public override {
         super.setUp();
@@ -309,7 +300,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         uint256 assetsFinal = morpho.expectedBorrowAssets(marketParams, ALICE);
 
         // Should only have normal accrual now (no penalty)
-        uint256 normalAccrual = assetsBeforeFinal.wMulDown((BASE_RATE + PREMIUM_RATE_ALICE).wTaylorCompounded(5 days));
+        uint256 normalAccrual = assetsBeforeFinal.wMulDown((BASE_RATE_PER_SECOND + PREMIUM_RATE_ALICE).wTaylorCompounded(5 days));
 
         assertLe(assetsFinal, assetsBeforeFinal + normalAccrual + 100); // Small buffer
     }
