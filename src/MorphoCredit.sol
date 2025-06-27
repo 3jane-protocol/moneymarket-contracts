@@ -10,6 +10,7 @@ import {
     RepaymentStatus,
     PaymentCycle,
     RepaymentObligation,
+    MarketCreditTerms,
     IMorphoCredit
 } from "./interfaces/IMorpho.sol";
 
@@ -54,18 +55,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// 3. Protects against runaway debt accumulation on abandoned positions
     /// 4. Aligns with the test bounds in MathLibTest which validate behavior up to 365 days
     uint256 internal constant MAX_ELAPSED_TIME = 365 days;
-
-    /// @notice Grace period duration for repayments
-    uint256 internal constant GRACE_PERIOD_DURATION = 7 days;
-
-    /// @notice Default threshold (time after cycle end to enter default status)
-    uint256 internal constant DEFAULT_THRESHOLD = 30 days;
-
-    /// @notice Minimum outstanding loan balance to prevent dust
-    uint256 internal constant MIN_OUTSTANDING = 1000e18;
-
-    /// @notice Penalty rate per second for delinquent borrowers (~10% APR)
-    uint256 internal constant PENALTY_RATE_PER_SECOND = 3170979198;
 
     constructor(address newOwner) Morpho(newOwner) {}
 
@@ -149,6 +138,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param currentTimestamp Current timestamp
     /// @return penaltyAmount The incremental penalty interest amount
     function _calculatePenaltyInterest(
+        Id id,
         uint256 cycleEndDate,
         uint256 lastAccrualTime,
         uint256 endingBalance,
@@ -157,25 +147,27 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // No penalty if no balance
         if (endingBalance == 0) return 0;
 
+        MarketCreditTerms memory terms = getMarketCreditTerms(id);
+
         // Calculate when borrower entered delinquency
-        uint256 delinquencyStartTime = cycleEndDate + GRACE_PERIOD_DURATION;
+        uint256 delinquencyStartTime = cycleEndDate + terms.gracePeriodDuration;
 
         // No penalty if we haven't reached delinquency yet
         if (currentTimestamp <= delinquencyStartTime) return 0;
 
         // Calculate total penalty from delinquency start to now
         uint256 totalPenaltyDuration = currentTimestamp - delinquencyStartTime;
-        uint256 totalPenalty = endingBalance.wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(totalPenaltyDuration));
+        uint256 totalPenalty =
+            endingBalance.wMulDown(terms.penaltyRatePerSecond.wTaylorCompounded(totalPenaltyDuration));
 
         // Calculate previously accrued penalty (if any)
         uint256 previouslyAccruedPenalty = 0;
         if (lastAccrualTime > delinquencyStartTime) {
             uint256 previousDuration = lastAccrualTime - delinquencyStartTime;
             previouslyAccruedPenalty =
-                endingBalance.wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(previousDuration));
+                endingBalance.wMulDown(terms.penaltyRatePerSecond.wTaylorCompounded(previousDuration));
         }
 
-        // Return incremental penalty
         penaltyAmount = totalPenalty > previouslyAccruedPenalty ? totalPenalty - previouslyAccruedPenalty : 0;
     }
 
@@ -221,6 +213,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             RepaymentObligation memory obligation = repaymentObligation[id][borrower];
 
             uint256 penaltyInterest = _calculatePenaltyInterest(
+                id,
                 paymentCycle[id][obligation.paymentCycleId].endDate,
                 premium.lastAccrualTime,
                 obligation.endingBalance,
@@ -451,9 +444,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         PaymentCycle storage cycle = paymentCycle[id][obligation.paymentCycleId];
         uint256 cycleEndDate = cycle.endDate;
 
-        if (block.timestamp <= cycleEndDate + GRACE_PERIOD_DURATION) {
+        MarketCreditTerms memory terms = getMarketCreditTerms(id);
+
+        if (block.timestamp <= cycleEndDate + terms.gracePeriodDuration) {
             return RepaymentStatus.GracePeriod;
-        } else if (block.timestamp < cycleEndDate + DEFAULT_THRESHOLD) {
+        } else if (block.timestamp < cycleEndDate + terms.defaultThreshold) {
             return RepaymentStatus.Delinquent;
         } else {
             return RepaymentStatus.Default;
@@ -550,6 +545,18 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (cycleId != 0) {
             startDate = paymentCycle[id][cycleId - 1].endDate + 1 days;
         }
+    }
+
+    /// @notice Get market-specific credit terms
+    /// @param id Market ID (unused in current implementation, returns defaults)
+    /// @return terms The credit terms for the market
+    function getMarketCreditTerms(Id id) public pure returns (MarketCreditTerms memory terms) {
+        return MarketCreditTerms({
+            gracePeriodDuration: 7 days, // Grace period for repayments
+            defaultThreshold: 30 days, // Time after cycle end to enter default status
+            minOutstanding: 1000e18, // Minimum outstanding loan balance to prevent dust
+            penaltyRatePerSecond: 3170979198 // ~10% APR penalty rate for delinquent borrowers
+        });
     }
 
     /* HEALTH CHECK OVERRIDE */

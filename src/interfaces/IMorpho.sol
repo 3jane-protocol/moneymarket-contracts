@@ -61,6 +61,14 @@ struct RepaymentObligation {
     uint256 endingBalance;
 }
 
+/// @notice Market-specific credit terms for borrowers
+struct MarketCreditTerms {
+    uint256 gracePeriodDuration; // Duration of grace period after cycle end
+    uint256 defaultThreshold; // Time after cycle end to enter default status
+    uint256 minOutstanding; // Minimum outstanding loan balance to prevent dust
+    uint256 penaltyRatePerSecond; // Penalty rate per second for delinquent borrowers
+}
+
 struct Authorization {
     address authorizer;
     address authorized;
@@ -461,6 +469,11 @@ interface IMorphoCredit {
     /// @return startDate The cycle start date
     /// @return endDate The cycle end date
     function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate);
+
+    /// @notice Get market-specific credit terms
+    /// @param id Market ID
+    /// @return terms The credit terms for the market
+    function getMarketCreditTerms(Id id) external pure returns (MarketCreditTerms memory terms);
 
     /// @notice Get repayment obligation for a borrower
     /// @param id Market ID
