@@ -312,16 +312,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         override
         returns (bool)
     {
-        if (position[id][borrower].borrowShares == 0) return true;
-
-        // For credit-based lending, we don't need oracle price
-        // Just check credit utilization directly
-        uint256 borrowed = uint256(position[id][borrower].borrowShares).toAssetsUp(
-            market[id].totalBorrowAssets, market[id].totalBorrowShares
-        );
-        uint256 creditLimit = position[id][borrower].collateral;
-
-        return creditLimit >= borrowed;
+        // For credit-based lending, price is irrelevant
+        return _isHealthy(marketParams, id, borrower, 0);
     }
 
     /// @dev Override health check for credit-based lending (with price)
@@ -336,12 +328,17 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         override
         returns (bool)
     {
+        Position memory position = position[id][borrower];
+
+        // Early return if no borrow position
+        if (position.borrowShares == 0) return true;
+
+        Market memory market = market[id];
+
         // For credit-based lending, health is determined by credit utilization
         // position.collateral represents the credit limit
-        uint256 borrowed = uint256(position[id][borrower].borrowShares).toAssetsUp(
-            market[id].totalBorrowAssets, market[id].totalBorrowShares
-        );
-        uint256 creditLimit = position[id][borrower].collateral;
+        uint256 borrowed = uint256(position.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
+        uint256 creditLimit = position.collateral;
 
         return creditLimit >= borrowed;
     }
