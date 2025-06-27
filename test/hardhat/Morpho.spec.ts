@@ -5,6 +5,7 @@ import { AbiCoder, MaxUint256, ZeroAddress, keccak256, toBigInt } from "ethers";
 import hre from "hardhat";
 import { Morpho, OracleMock, ERC20Mock, IrmMock } from "types";
 import { MarketParamsStruct } from "types/src/Morpho";
+import { CreditLineMock } from "types/src/mocks/CreditLineMock";
 import { FlashBorrowerMock } from "types/src/mocks/FlashBorrowerMock";
 
 const closePositions = false;
@@ -21,7 +22,7 @@ const random = () => {
 
 const identifier = (marketParams: MarketParamsStruct) => {
   const encodedMarket = AbiCoder.defaultAbiCoder().encode(
-    ["address", "address", "address", "address", "uint256"],
+    ["address", "address", "address", "address", "uint256", "address"],
     Object.values(marketParams),
   );
 
@@ -50,6 +51,7 @@ describe("Morpho", () => {
   let collateralToken: ERC20Mock;
   let oracle: OracleMock;
   let irm: IrmMock;
+  let creditLine: CreditLineMock;
   let flashBorrower: FlashBorrowerMock;
 
   let marketParams: MarketParamsStruct;
@@ -88,12 +90,16 @@ describe("Morpho", () => {
 
     irm = await IrmMockFactory.deploy();
 
+    const CreditLineMockFactory = await hre.ethers.getContractFactory("CreditLineMock", admin);
+    creditLine = await CreditLineMockFactory.deploy(await morpho.getAddress());
+
     updateMarket({
       loanToken: await loanToken.getAddress(),
       collateralToken: await collateralToken.getAddress(),
       oracle: await oracle.getAddress(),
       irm: await irm.getAddress(),
       lltv: BigInt.WAD / 2n + 1n,
+      creditLine: await creditLine.getAddress(),
     });
 
     await morpho.enableLltv(marketParams.lltv);
