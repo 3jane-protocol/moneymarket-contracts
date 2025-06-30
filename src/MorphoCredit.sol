@@ -131,68 +131,76 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         premiumAmount = totalGrowthAmount > baseGrowthActual ? totalGrowthAmount - baseGrowthActual : 0;
     }
 
-    /// @notice Accrue premium for a specific borrower
-    /// @param id Market ID
-    /// @param borrower Borrower address
-    /// @dev _accrueInterest must be called prior to ensure calculation is accurate
-    function _accrueBorrowerPremium(Id id, address borrower) internal {
-        // Check repayment status and add penalty interest if delinquent
-        RepaymentObligation memory obligation = repaymentObligation[id][borrower];
-        RepaymentStatus status = _getRepaymentStatus(id, borrower, obligation);
-
-        BorrowerPremium memory premium = borrowerPremium[id][borrower];
-        if (premium.rate == 0 && status == RepaymentStatus.Current) return;
-
+    /// @dev Calculate and apply premium with penalty rate if applicable
+    /// @return premiumAmount The calculated premium amount
+    function _calculateAndApplyPremium(
+        Id id,
+        address borrower,
+        BorrowerPremium memory premium,
+        RepaymentStatus status,
+        uint256 borrowAssetsCurrent
+    ) internal view returns (uint256 premiumAmount) {
         uint256 elapsed = block.timestamp - premium.lastAccrualTime;
-        if (elapsed == 0) return;
+        if (elapsed == 0) return 0;
 
-        // Cap elapsed time to prevent overflow in compound calculations
         if (elapsed > MAX_ELAPSED_TIME) {
             elapsed = MAX_ELAPSED_TIME;
         }
 
-        Position memory borrowerPosition = position[id][borrower];
-        if (borrowerPosition.borrowShares == 0) return;
-
-        Market memory targetMarket = market[id];
-        MarketCreditTerms memory terms = getMarketCreditTerms(id);
-        uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
-
-        uint256 borrowAssetsCurrent = uint256(borrowerPosition.borrowShares).toAssetsUp(
-            targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
-        );
+        // Calculate base premium
         uint256 totalPremiumRate = premium.rate;
-        if (status != RepaymentStatus.Current && premium.lastAccrualTime > cycleEndDate) {
-            totalPremiumRate += terms.penaltyRatePerSecond;
+
+        // Add penalty rate if already in penalty period
+        if (status != RepaymentStatus.Current) {
+            RepaymentObligation memory obligation = repaymentObligation[id][borrower];
+            uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
+
+            if (premium.lastAccrualTime > cycleEndDate) {
+                MarketCreditTerms memory terms = getMarketCreditTerms(id);
+                totalPremiumRate += terms.penaltyRatePerSecond;
+            }
         }
 
-        uint256 premiumAmount = _calculateBorrowerPremiumAmount(
+        premiumAmount = _calculateBorrowerPremiumAmount(
             premium.borrowAssetsAtLastAccrual, borrowAssetsCurrent, totalPremiumRate, elapsed
         );
+    }
 
-        if (
-            status == RepaymentStatus.Delinquent
-                || status == RepaymentStatus.Default && premium.lastAccrualTime <= cycleEndDate
-        ) {
-            elapsed = block.timestamp - cycleEndDate;
-
-            // Cap elapsed time to prevent overflow in compound calculations
-            if (elapsed > MAX_ELAPSED_TIME) {
-                elapsed = MAX_ELAPSED_TIME;
-            }
-
-            uint256 penaltyInterest = _calculateBorrowerPremiumAmount(
-                obligation.endingBalance, borrowAssetsCurrent + premiumAmount, terms.penaltyRatePerSecond, elapsed
-            );
-
-            premiumAmount += penaltyInterest;
+    /// @dev Calculate penalty if transitioning into penalty period
+    /// @return penaltyAmount The calculated penalty amount
+    function _calculatePenaltyIfNeeded(
+        Id id,
+        address borrower,
+        RepaymentStatus status,
+        uint256 borrowAssetsCurrent,
+        uint256 basePremiumAmount
+    ) internal view returns (uint256 penaltyAmount) {
+        if (status != RepaymentStatus.Delinquent && status != RepaymentStatus.Default) {
+            return 0;
         }
 
-        // Skip if premium amount is below threshold (prevents precision loss)
-        if (premiumAmount < MIN_PREMIUM_THRESHOLD) {
-            // Still update timestamp to prevent repeated negligible calculations
-            borrowerPremium[id][borrower].lastAccrualTime = uint128(block.timestamp);
+        BorrowerPremium memory premium = borrowerPremium[id][borrower];
+        RepaymentObligation memory obligation = repaymentObligation[id][borrower];
+        uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
+
+        if (premium.lastAccrualTime > cycleEndDate) {
+            return 0; // Already handled in premium calculation
         }
+
+        uint256 elapsed = block.timestamp - cycleEndDate;
+        if (elapsed > MAX_ELAPSED_TIME) {
+            elapsed = MAX_ELAPSED_TIME;
+        }
+
+        MarketCreditTerms memory terms = getMarketCreditTerms(id);
+        penaltyAmount = _calculateBorrowerPremiumAmount(
+            obligation.endingBalance, borrowAssetsCurrent + basePremiumAmount, terms.penaltyRatePerSecond, elapsed
+        );
+    }
+
+    /// @dev Update position and market with premium shares
+    function _updatePositionWithPremium(Id id, address borrower, uint256 premiumAmount) internal {
+        Market memory targetMarket = market[id];
 
         uint256 premiumShares = premiumAmount.toSharesUp(targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares);
 
@@ -204,11 +212,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         targetMarket.totalBorrowAssets += premiumAmount.toUint128();
         targetMarket.totalSupplyAssets += premiumAmount.toUint128();
 
+        // Handle fees
         uint256 feeAmount;
         if (targetMarket.fee != 0) {
             feeAmount = premiumAmount.wMulDown(targetMarket.fee);
-            // The fee amount is subtracted from the total supply in this calculation to compensate for the fact
-            // that total supply is already increased by the full premium (including the fee amount).
             uint256 feeShares =
                 feeAmount.toSharesDown(targetMarket.totalSupplyAssets - feeAmount, targetMarket.totalSupplyShares);
             position[id][feeRecipient].supplyShares += feeShares;
@@ -219,7 +226,47 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         market[id] = targetMarket;
 
         emit EventsLib.PremiumAccrued(id, borrower, premiumAmount, feeAmount);
+    }
 
+    /// @notice Accrue premium for a specific borrower
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @dev _accrueInterest must be called prior to ensure calculation is accurate
+    function _accrueBorrowerPremium(Id id, address borrower) internal {
+        RepaymentObligation memory obligation = repaymentObligation[id][borrower];
+        RepaymentStatus status = _getRepaymentStatus(id, borrower, obligation);
+
+        require(status != RepaymentStatus.GracePeriod, "Cannot accrue");
+
+        BorrowerPremium memory premium = borrowerPremium[id][borrower];
+        if (premium.rate == 0 && status == RepaymentStatus.Current) return;
+
+        if (position[id][borrower].borrowShares == 0) return;
+
+        // Calculate current borrow assets
+        Market memory targetMarket = market[id];
+        uint256 borrowAssetsCurrent = uint256(position[id][borrower].borrowShares).toAssetsUp(
+            targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
+        );
+
+        // Calculate premium
+        uint256 premiumAmount = _calculateAndApplyPremium(id, borrower, premium, status, borrowAssetsCurrent);
+
+        // Calculate penalty if needed
+        uint256 penaltyAmount = _calculatePenaltyIfNeeded(id, borrower, status, borrowAssetsCurrent, premiumAmount);
+
+        uint256 totalPremium = premiumAmount + penaltyAmount;
+
+        // Skip if below threshold
+        if (totalPremium < MIN_PREMIUM_THRESHOLD) {
+            borrowerPremium[id][borrower].lastAccrualTime = uint128(block.timestamp);
+            return;
+        }
+
+        // Apply the premium
+        _updatePositionWithPremium(id, borrower, totalPremium);
+
+        // Update timestamp
         borrowerPremium[id][borrower].lastAccrualTime = uint128(block.timestamp);
     }
 
@@ -446,7 +493,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     {
         // Check if borrower can borrow
         require(getRepaymentStatus(id, onBehalf) == RepaymentStatus.Current, ErrorsLib.OUTSTANDING_REPAYMENT);
-
         _accrueBorrowerPremium(id, onBehalf);
     }
 
@@ -455,7 +501,21 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         internal
         override
     {
+        // Track payment against obligation
+        RepaymentObligation memory obligation = repaymentObligation[id][onBehalf];
+        RepaymentStatus status = _getRepaymentStatus(id, onBehalf, obligation);
+
+        // if GracePeriod update obligation before accrue, so user is marked current
+        if (status == RepaymentStatus.GracePeriod) {
+            _trackObligationPayment(id, onBehalf, obligation, assets);
+        }
+
         _accrueBorrowerPremium(id, onBehalf);
+
+        // if Delinquent or Default update obligation after accure
+        if (status == RepaymentStatus.Delinquent || status == RepaymentStatus.Default) {
+            _trackObligationPayment(id, onBehalf, obligation, assets);
+        }
     }
 
     /// @inheritdoc Morpho
@@ -477,22 +537,22 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc Morpho
     function _afterRepay(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets) internal override {
         _snapshotBorrowerPosition(id, onBehalf);
-
-        // Track payment against obligation
-        RepaymentObligation storage obligation = repaymentObligation[id][onBehalf];
-
-        if (obligation.amountDue > 0 && assets > 0) {
-            uint256 paymentToObligation = assets > obligation.amountDue ? obligation.amountDue : assets;
-
-            obligation.amountDue = uint128(obligation.amountDue - paymentToObligation);
-
-            emit EventsLib.RepaymentTracked(id, onBehalf, paymentToObligation, obligation.amountDue);
-        }
     }
 
     /// @inheritdoc Morpho
     function _afterLiquidate(MarketParams memory marketParams, Id id, address borrower) internal override {
         _snapshotBorrowerPosition(id, borrower);
+    }
+
+    function _trackObligationPayment(Id id, address borrower, RepaymentObligation memory obligation, uint256 payment)
+        internal
+    {
+        require(payment >= obligation.amountDue, "Must pay full obligation amount");
+
+        obligation.amountDue = 0;
+        repaymentObligation[id][borrower] = obligation;
+
+        emit EventsLib.RepaymentObligationPaid(id, borrower);
     }
 
     /* VIEW FUNCTIONS */

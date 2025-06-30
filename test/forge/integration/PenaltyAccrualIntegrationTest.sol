@@ -261,13 +261,15 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
 
-        // Advance time and make partial payment
+        // Advance time
         vm.warp(block.timestamp + 5 days);
 
         uint256 assetsBefore = morpho.expectedBorrowAssets(marketParams, ALICE);
 
+        // Verify partial payment is rejected
         deal(address(loanToken), ALICE, 500e18);
         vm.prank(ALICE);
+        vm.expectRevert("Must pay full obligation amount");
         morpho.repay(marketParams, 500e18, 0, ALICE, "");
 
         // Advance more time
@@ -279,12 +281,12 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         uint256 assetsAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
 
         // Should continue accruing penalty on ending balance
-        assertGt(assetsAfter, assetsBefore - 500e18);
+        assertGt(assetsAfter, assetsBefore);
 
-        // Complete payment
-        deal(address(loanToken), ALICE, 500e18);
+        // Pay obligation in full
+        deal(address(loanToken), ALICE, 1000e18);
         vm.prank(ALICE);
-        morpho.repay(marketParams, 500e18, 0, ALICE, "");
+        morpho.repay(marketParams, 1000e18, 0, ALICE, "");
 
         // Advance time again
         uint256 assetsBeforeFinal = morpho.expectedBorrowAssets(marketParams, ALICE);

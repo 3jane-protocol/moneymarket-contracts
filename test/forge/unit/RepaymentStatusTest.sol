@@ -132,12 +132,7 @@ contract RepaymentStatusTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
 
-        // Partial payment
-        deal(address(loanToken), ALICE, 500e18);
-        vm.prank(ALICE);
-        morpho.repay(marketParams, 500e18, 0, ALICE, "");
-
-        // Still within grace period with outstanding debt, should be GracePeriod
+        // No payment - still within grace period with outstanding debt, should be GracePeriod
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod));
     }
@@ -158,12 +153,7 @@ contract RepaymentStatusTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
 
-        // Partial payment
-        deal(address(loanToken), ALICE, 500e18);
-        vm.prank(ALICE);
-        morpho.repay(marketParams, 500e18, 0, ALICE, "");
-
-        // Should be in Grace Period
+        // No payment - should be in Grace Period
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod));
     }
@@ -203,12 +193,7 @@ contract RepaymentStatusTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
 
-        // Partial payment
-        deal(address(loanToken), ALICE, 300e18);
-        vm.prank(ALICE);
-        morpho.repay(marketParams, 300e18, 0, ALICE, "");
-
-        // Should be Delinquent
+        // No payment - should be Delinquent
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
     }
@@ -227,11 +212,7 @@ contract RepaymentStatusTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
 
-        // Small payment
-        deal(address(loanToken), ALICE, 100e18);
-        vm.prank(ALICE);
-        morpho.repay(marketParams, 100e18, 0, ALICE, "");
-
+        // No payment - should be Delinquent (just past grace)
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
     }
@@ -277,7 +258,7 @@ contract RepaymentStatusTest is BaseTest {
     }
 
     function testRepaymentStatus_Default_WithPartialPayment() public {
-        // Even with partial payment, should be Default after 30 days
+        // Test that partial payments are rejected in default status
         uint256 cycleEndDate = block.timestamp - 35 days;
         address[] memory borrowers = new address[](1);
         uint256[] memory amounts = new uint256[](1);
@@ -290,12 +271,13 @@ contract RepaymentStatusTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
 
-        // Partial payment
+        // Verify partial payment is rejected
         deal(address(loanToken), ALICE, 999e18);
         vm.prank(ALICE);
+        vm.expectRevert("Must pay full obligation amount");
         morpho.repay(marketParams, 999e18, 0, ALICE, "");
 
-        // Still Default due to time
+        // Status remains Default
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Default));
     }
@@ -421,19 +403,20 @@ contract RepaymentStatusTest is BaseTest {
         (, uint128 totalDue,) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
         assertEq(totalDue, 1500e18);
 
-        // Pay 1400e18
+        // Must pay full amount - verify partial payment is rejected
         deal(address(loanToken), ALICE, 1400e18);
         vm.prank(ALICE);
+        vm.expectRevert("Must pay full obligation amount");
         morpho.repay(marketParams, 1400e18, 0, ALICE, "");
 
-        // Should still be Delinquent (100e18 outstanding)
+        // Status remains Delinquent
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
 
-        // Pay remaining 100e18
-        deal(address(loanToken), ALICE, 100e18);
+        // Pay full amount (1500e18)
+        deal(address(loanToken), ALICE, 1500e18);
         vm.prank(ALICE);
-        morpho.repay(marketParams, 100e18, 0, ALICE, "");
+        morpho.repay(marketParams, 1500e18, 0, ALICE, "");
 
         // Should now be Current
         status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);

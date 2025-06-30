@@ -407,9 +407,10 @@ contract PenaltyInterestTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
 
-        // Partial payment
+        // Verify partial payment is rejected
         deal(address(loanToken), ALICE, 400e18);
         vm.prank(ALICE);
+        vm.expectRevert("Must pay full obligation amount");
         morpho.repay(marketParams, 400e18, 0, ALICE, "");
 
         uint256 borrowAssetsBefore = morpho.expectedBorrowAssets(marketParams, ALICE);

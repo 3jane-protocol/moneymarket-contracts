@@ -171,13 +171,15 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         vm.prank(BOB);
         morpho.borrow(marketParams, 100e18, 0, BOB, BOB);
 
-        // 5. Alice pays in full, Bob pays partial
+        // 5. Alice pays in full, Bob attempts partial payment
         deal(address(loanToken), ALICE, 1000e18);
         vm.prank(ALICE);
         morpho.repay(marketParams, 1000e18, 0, ALICE, "");
 
+        // Bob's partial payment is rejected
         deal(address(loanToken), BOB, 1000e18);
         vm.prank(BOB);
+        vm.expectRevert("Must pay full obligation amount");
         morpho.repay(marketParams, 1000e18, 0, BOB, "");
 
         // 6. Alice can borrow, Bob cannot
@@ -227,19 +229,20 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         uint256 borrowAssetsAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
         assertGt(borrowAssetsAfter, borrowAssetsBefore);
 
-        // 7. Make partial payment
+        // 7. Verify partial payment is rejected
         deal(address(loanToken), ALICE, 500e18);
         vm.prank(ALICE);
+        vm.expectRevert("Must pay full obligation amount");
         morpho.repay(marketParams, 500e18, 0, ALICE, "");
 
         // 8. Status should still be delinquent
         status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
 
-        // 9. Pay remaining amount
-        deal(address(loanToken), ALICE, 500e18);
+        // 9. Pay full obligation amount
+        deal(address(loanToken), ALICE, 1000e18);
         vm.prank(ALICE);
-        morpho.repay(marketParams, 500e18, 0, ALICE, "");
+        morpho.repay(marketParams, 1000e18, 0, ALICE, "");
 
         // 10. Status should be current
         status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -287,19 +290,16 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Default));
 
-        // Partial payment
+        // Verify partial payment is rejected
         deal(address(loanToken), ALICE, 1500e18);
         vm.prank(ALICE);
+        vm.expectRevert("Must pay full obligation amount");
         morpho.repay(marketParams, 1500e18, 0, ALICE, "");
 
-        // Should still have outstanding amount
-        (, uint128 remainingDue,) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
-        assertEq(remainingDue, 600e18); // 2100 - 1500 = 600
-
-        // Pay remaining
-        deal(address(loanToken), ALICE, 600e18);
+        // Pay full obligation
+        deal(address(loanToken), ALICE, 2100e18);
         vm.prank(ALICE);
-        morpho.repay(marketParams, 600e18, 0, ALICE, "");
+        morpho.repay(marketParams, 2100e18, 0, ALICE, "");
 
         // Should be current now
         status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -366,7 +366,8 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         vm.prank(ALICE);
         morpho.borrow(marketParams, 10000e18, 0, ALICE, ALICE);
 
-        uint256 cycleEndDate = block.timestamp - 1 days;
+        // Create an obligation that will be delinquent (past grace period)
+        uint256 cycleEndDate = block.timestamp - 10 days;
         address[] memory borrowers = new address[](1);
         uint256[] memory amounts = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
@@ -378,15 +379,17 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
 
-        // Zero repayment should still trigger premium accrual
-        uint256 borrowSharesBefore = morpho.position(id, ALICE).borrowShares;
-
+        // Cannot make tiny repayments when obligation exists
         vm.warp(block.timestamp + 1 days);
 
-        // Trigger accrual through a minimal repay operation
+        // Verify tiny repayment is rejected
         deal(address(loanToken), ALICE, 1);
         vm.prank(ALICE);
+        vm.expectRevert("Must pay full obligation amount");
         morpho.repay(marketParams, 1, 0, ALICE, "");
+
+        // Can trigger accrual through accrueBorrowerPremium (since we're past grace period)
+        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
 
         // Premium should have accrued
         (uint128 lastAccrualTime,,) = IMorphoCredit(address(morpho)).borrowerPremium(id, ALICE);

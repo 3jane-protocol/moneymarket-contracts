@@ -462,13 +462,9 @@ contract BaseTest is Test {
     }
 
     function _triggerBorrowerAccrual(address borrower) internal {
-        // Trigger borrower-specific accrual through a minimal repay operation
+        // Trigger borrower-specific accrual using the public accrueBorrowerPremium function
         // This works even for borrowers with outstanding repayments
-        deal(address(loanToken), borrower, 1);
-        vm.startPrank(borrower);
-        loanToken.approve(address(morpho), 1);
-        morpho.repay(marketParams, 1, 0, borrower, "");
-        vm.stopPrank();
+        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, borrower);
     }
 
     function _getRepaymentDetails(Id _id, address borrower)
