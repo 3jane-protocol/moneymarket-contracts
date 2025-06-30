@@ -131,53 +131,17 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         premiumAmount = totalGrowthAmount > baseGrowthActual ? totalGrowthAmount - baseGrowthActual : 0;
     }
 
-    /// @dev Calculates penalty interest amount for delinquent borrowers
-    /// @param cycleEndDate The end date of the payment cycle
-    /// @param lastAccrualTime The last time premium was accrued
-    /// @param endingBalance The balance to calculate penalty on
-    /// @param currentTimestamp Current timestamp
-    /// @return penaltyAmount The incremental penalty interest amount
-    function _calculatePenaltyInterest(
-        Id id,
-        uint256 cycleEndDate,
-        uint256 lastAccrualTime,
-        uint256 endingBalance,
-        uint256 currentTimestamp
-    ) internal pure returns (uint256 penaltyAmount) {
-        // No penalty if no balance
-        if (endingBalance == 0) return 0;
-
-        MarketCreditTerms memory terms = getMarketCreditTerms(id);
-
-        // Calculate when borrower entered delinquency
-        uint256 delinquencyStartTime = cycleEndDate + terms.gracePeriodDuration;
-
-        // No penalty if we haven't reached delinquency yet
-        if (currentTimestamp <= delinquencyStartTime) return 0;
-
-        // Calculate total penalty from delinquency start to now
-        uint256 totalPenaltyDuration = currentTimestamp - delinquencyStartTime;
-        uint256 totalPenalty =
-            endingBalance.wMulDown(terms.penaltyRatePerSecond.wTaylorCompounded(totalPenaltyDuration));
-
-        // Calculate previously accrued penalty (if any)
-        uint256 previouslyAccruedPenalty = 0;
-        if (lastAccrualTime > delinquencyStartTime) {
-            uint256 previousDuration = lastAccrualTime - delinquencyStartTime;
-            previouslyAccruedPenalty =
-                endingBalance.wMulDown(terms.penaltyRatePerSecond.wTaylorCompounded(previousDuration));
-        }
-
-        penaltyAmount = totalPenalty > previouslyAccruedPenalty ? totalPenalty - previouslyAccruedPenalty : 0;
-    }
-
     /// @notice Accrue premium for a specific borrower
     /// @param id Market ID
     /// @param borrower Borrower address
     /// @dev _accrueInterest must be called prior to ensure calculation is accurate
     function _accrueBorrowerPremium(Id id, address borrower) internal {
+        // Check repayment status and add penalty interest if delinquent
+        RepaymentObligation memory obligation = repaymentObligation[id][borrower];
+        RepaymentStatus status = _getRepaymentStatus(id, borrower, obligation);
+
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
-        if (premium.rate == 0) return;
+        if (premium.rate == 0 && status == RepaymentStatus.Current) return;
 
         uint256 elapsed = block.timestamp - premium.lastAccrualTime;
         if (elapsed == 0) return;
@@ -191,36 +155,43 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (borrowerPosition.borrowShares == 0) return;
 
         Market memory targetMarket = market[id];
+        MarketCreditTerms memory terms = getMarketCreditTerms(id);
+        uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
 
         uint256 borrowAssetsCurrent = uint256(borrowerPosition.borrowShares).toAssetsUp(
             targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
         );
+        uint256 totalPremiumRate = premium.rate;
+        if (status != RepaymentStatus.Current && premium.lastAccrualTime > cycleEndDate) {
+            totalPremiumRate += terms.penaltyRatePerSecond;
+        }
+
         uint256 premiumAmount = _calculateBorrowerPremiumAmount(
-            premium.borrowAssetsAtLastAccrual, borrowAssetsCurrent, premium.rate, elapsed
+            premium.borrowAssetsAtLastAccrual, borrowAssetsCurrent, totalPremiumRate, elapsed
         );
+
+        if (
+            status == RepaymentStatus.Delinquent
+                || status == RepaymentStatus.Default && premium.lastAccrualTime <= cycleEndDate
+        ) {
+            elapsed = block.timestamp - cycleEndDate;
+
+            // Cap elapsed time to prevent overflow in compound calculations
+            if (elapsed > MAX_ELAPSED_TIME) {
+                elapsed = MAX_ELAPSED_TIME;
+            }
+
+            uint256 penaltyInterest = _calculateBorrowerPremiumAmount(
+                obligation.endingBalance, borrowAssetsCurrent + premiumAmount, terms.penaltyRatePerSecond, elapsed
+            );
+
+            premiumAmount += penaltyInterest;
+        }
 
         // Skip if premium amount is below threshold (prevents precision loss)
         if (premiumAmount < MIN_PREMIUM_THRESHOLD) {
             // Still update timestamp to prevent repeated negligible calculations
             borrowerPremium[id][borrower].lastAccrualTime = uint128(block.timestamp);
-            return;
-        }
-
-        // Check repayment status and add penalty interest if delinquent
-        RepaymentStatus status = getRepaymentStatus(id, borrower);
-
-        if (status == RepaymentStatus.Delinquent || status == RepaymentStatus.Default) {
-            RepaymentObligation memory obligation = repaymentObligation[id][borrower];
-
-            uint256 penaltyInterest = _calculatePenaltyInterest(
-                id,
-                paymentCycle[id][obligation.paymentCycleId].endDate,
-                premium.lastAccrualTime,
-                obligation.endingBalance,
-                block.timestamp
-            );
-
-            premiumAmount += penaltyInterest;
         }
 
         uint256 premiumShares = premiumAmount.toSharesUp(targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares);
@@ -435,14 +406,25 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param borrower Borrower address
     /// @return status The borrower's current repayment status
     function getRepaymentStatus(Id id, address borrower) public view returns (RepaymentStatus) {
-        RepaymentObligation storage obligation = repaymentObligation[id][borrower];
+        return _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
+    }
+
+    /// @notice Get repayment status for a borrower
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @param obligation the borrower repaymentObligation struct
+    /// @return status The borrower's current repayment status
+    function _getRepaymentStatus(Id id, address borrower, RepaymentObligation memory obligation)
+        internal
+        view
+        returns (RepaymentStatus)
+    {
         if (obligation.amountDue == 0) return RepaymentStatus.Current;
 
         // Validate cycleId is within bounds
         require(obligation.paymentCycleId < paymentCycle[id].length, "Invalid cycle ID");
 
-        PaymentCycle storage cycle = paymentCycle[id][obligation.paymentCycleId];
-        uint256 cycleEndDate = cycle.endDate;
+        uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
 
         MarketCreditTerms memory terms = getMarketCreditTerms(id);
 
