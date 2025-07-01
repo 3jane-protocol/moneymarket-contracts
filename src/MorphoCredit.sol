@@ -42,24 +42,6 @@ import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 ///                                      ↓
 /// Delinquency Check → If delinquent, add penalty rate
 /// ```
-///
-/// **Grace Period Mechanics:**
-/// - During grace period: ALL accruals are BLOCKED (frozen state)
-/// - Payments during grace clear obligations BEFORE accrual attempt
-/// - This allows borrowers to become current without additional charges
-/// - No snapshots or timestamp updates occur during grace period
-///
-/// **Delinquent/Default Mechanics:**
-/// - Full accrual continues: base + premium + penalty rates
-/// - Payments clear obligations AFTER accrual completes
-/// - Penalty calculated on ending balance from cycle end date
-/// - Uses path-independent calculation to ensure consistent results
-///
-/// **Path Independence:**
-/// The implementation ensures that the final debt amount is independent of when
-/// accruals occur, achieved through:
-/// - Backing out base rate from observed growth
-/// - Applying combined rates over full time periods
 /// - Using ending balance for penalty calculations
 contract MorphoCredit is Morpho, IMorphoCredit {
     using UtilsLib for uint256;
@@ -87,11 +69,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     uint256 internal constant MIN_PREMIUM_THRESHOLD = 1;
 
     /// @notice Maximum elapsed time for premium accrual (365 days)
-    /// @dev This limit serves multiple purposes:
-    /// 1. Maintains accuracy of wTaylorCompounded approximation (error < 8% for periods up to 365 days)
-    /// 2. Prevents numerical overflow when combined with MAX_PREMIUM_RATE (100% APR)
-    /// 3. Protects against runaway debt accumulation on abandoned positions
-    /// 4. Aligns with the test bounds in MathLibTest which validate behavior up to 365 days
     uint256 internal constant MAX_ELAPSED_TIME = 365 days;
 
     /* CONSTRUCTOR */
@@ -147,11 +124,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param premiumRate The borrower's premium rate per second (scaled by WAD)
     /// @param elapsed Time elapsed since last accrual
     /// @return premiumAmount The premium amount to add
-    /// @dev This function implements path-independent premium calculation by:
-    /// 1. Backing out the base rate from observed asset growth
-    /// 2. Combining base + premium rates
-    /// 3. Calculating compound growth over the full period
-    /// 4. Subtracting base growth to isolate premium
     function _calculateBorrowerPremiumAmount(
         uint256 borrowAssetsAtLastAccrual,
         uint256 borrowAssetsCurrent,
@@ -182,7 +154,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @dev Calculate and apply premium with penalty rate if applicable
     /// @return premiumAmount The calculated premium amount
-    function _calculateAndApplyPremium(
+    function _calculatePremiumAmount(
         Id id,
         address borrower,
         BorrowerPremium memory premium,
@@ -228,7 +200,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// 3. Uses ending balance from obligation as the principal
     /// 4. Calculates penalty from cycle end date to now
     /// 5. Adds basePremiumAmount to current assets for accurate compounding
-    function _calculatePenaltyIfNeeded(
+    function _calculatePenaltyAmountIfNeeded(
         Id id,
         address borrower,
         RepaymentStatus status,
@@ -315,11 +287,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
         );
 
-        // Calculate premium
-        uint256 premiumAmount = _calculateAndApplyPremium(id, borrower, premium, status, borrowAssetsCurrent);
+        // Calculate premium and penalty accruals
+        uint256 premiumAmount = _calculatePremiumAmount(id, borrower, premium, status, borrowAssetsCurrent);
 
-        // Calculate penalty if needed
-        uint256 penaltyAmount = _calculatePenaltyIfNeeded(id, borrower, status, borrowAssetsCurrent, premiumAmount);
+        // Calculate penalty if needed (handles first penalty accrual)
+        uint256 penaltyAmount =
+            _calculatePenaltyAmountIfNeeded(id, borrower, status, borrowAssetsCurrent, premiumAmount);
 
         uint256 totalPremium = premiumAmount + penaltyAmount;
 
@@ -407,11 +380,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // If there's an existing position with borrow shares
         uint256 borrowShares = uint256(position[id][borrower].borrowShares);
 
-        if (borrowShares > 0) {
-            // If there was a previous rate, accrue premium first
-            if (oldRate > 0) {
-                _accrueBorrowerPremium(id, borrower);
-            }
+        // If there was a previous rate, accrue premium first
+        if (borrowShares > 0 && oldRate > 0) {
+            _accrueBorrowerPremium(id, borrower);
         }
 
         // Set the new rate before taking snapshot
