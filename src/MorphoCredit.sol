@@ -26,12 +26,48 @@ import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 /// @title Morpho Credit
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
-/// @notice The Morpho contract.
+/// @notice The Morpho Credit contract extends Morpho with credit-based lending and per-borrower risk premiums.
+/// @dev This contract implements a three-tier interest accrual system:
+///
+/// **Interest Rate Components:**
+/// 1. Base Rate: Market-wide rate from the IRM, applied to all borrowers
+/// 2. Premium Rate: Per-borrower risk premium based on creditworthiness
+/// 3. Penalty Rate: Additional rate when borrower is delinquent (past grace period)
+///
+/// **Accrual Process Flow:**
+/// ```
+/// Market Interest (continuous) → Base Rate Growth
+///                                      ↓
+/// Borrower Premium Accrual → Premium on top of base
+///                                      ↓
+/// Delinquency Check → If delinquent, add penalty rate
+/// ```
+///
+/// **Grace Period Mechanics:**
+/// - During grace period: ALL accruals are BLOCKED (frozen state)
+/// - Payments during grace clear obligations BEFORE accrual attempt
+/// - This allows borrowers to become current without additional charges
+/// - No snapshots or timestamp updates occur during grace period
+///
+/// **Delinquent/Default Mechanics:**
+/// - Full accrual continues: base + premium + penalty rates
+/// - Payments clear obligations AFTER accrual completes
+/// - Penalty calculated on ending balance from cycle end date
+/// - Uses path-independent calculation to ensure consistent results
+///
+/// **Path Independence:**
+/// The implementation ensures that the final debt amount is independent of when
+/// accruals occur, achieved through:
+/// - Backing out base rate from observed growth
+/// - Applying combined rates over full time periods
+/// - Using ending balance for penalty calculations
 contract MorphoCredit is Morpho, IMorphoCredit {
     using UtilsLib for uint256;
     using MarketParamsLib for MarketParams;
     using SharesMathLib for uint256;
     using MathLib for uint256;
+
+    /* STATE VARIABLES */
 
     /// @inheritdoc IMorphoCredit
     address public helper;
@@ -45,6 +81,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Repayment obligations for each borrower in each market
     mapping(Id => mapping(address => RepaymentObligation)) public repaymentObligation;
 
+    /* CONSTANTS */
+
     /// @notice Minimum premium amount to accrue (prevents precision loss)
     uint256 internal constant MIN_PREMIUM_THRESHOLD = 1;
 
@@ -56,7 +94,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// 4. Aligns with the test bounds in MathLibTest which validate behavior up to 365 days
     uint256 internal constant MAX_ELAPSED_TIME = 365 days;
 
+    /* CONSTRUCTOR */
+
     constructor(address newOwner) Morpho(newOwner) {}
+
+    /* ADMIN FUNCTIONS */
 
     /// @inheritdoc IMorphoCredit
     function setHelper(address newHelper) external onlyOwner {
@@ -77,7 +119,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         emit EventsLib.SetAuthorization(msg.sender, authorizee, helper, newIsAuthorized);
     }
 
-    /* PREMIUM RATE MANAGEMENT */
+    /* EXTERNAL FUNCTIONS - PREMIUM MANAGEMENT */
 
     /// @inheritdoc IMorphoCredit
     function accrueBorrowerPremium(Id id, address borrower) external {
@@ -97,12 +139,19 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         }
     }
 
+    /* INTERNAL FUNCTIONS - PREMIUM CALCULATIONS */
+
     /// @dev Calculates the premium amount to be added based on observed base rate growth
     /// @param borrowAssetsAtLastAccrual The borrower's assets at last premium accrual
     /// @param borrowAssetsCurrent The borrower's current assets (including base interest)
     /// @param premiumRate The borrower's premium rate per second (scaled by WAD)
     /// @param elapsed Time elapsed since last accrual
     /// @return premiumAmount The premium amount to add
+    /// @dev This function implements path-independent premium calculation by:
+    /// 1. Backing out the base rate from observed asset growth
+    /// 2. Combining base + premium rates
+    /// 3. Calculating compound growth over the full period
+    /// 4. Subtracting base growth to isolate premium
     function _calculateBorrowerPremiumAmount(
         uint256 borrowAssetsAtLastAccrual,
         uint256 borrowAssetsCurrent,
@@ -167,7 +216,18 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @dev Calculate penalty if transitioning into penalty period
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @param status Current repayment status
+    /// @param borrowAssetsCurrent Current borrow assets after base accrual
+    /// @param basePremiumAmount Premium amount already calculated
     /// @return penaltyAmount The calculated penalty amount
+    /// @dev Penalty calculation logic:
+    /// 1. Only applies if status is Delinquent or Default
+    /// 2. Only for first accrual after grace period ends (lastAccrualTime <= cycleEndDate)
+    /// 3. Uses ending balance from obligation as the principal
+    /// 4. Calculates penalty from cycle end date to now
+    /// 5. Adds basePremiumAmount to current assets for accurate compounding
     function _calculatePenaltyIfNeeded(
         Id id,
         address borrower,
@@ -231,12 +291,18 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Accrue premium for a specific borrower
     /// @param id Market ID
     /// @param borrower Borrower address
-    /// @dev _accrueInterest must be called prior to ensure calculation is accurate
+    /// @dev Core accrual function that orchestrates the premium and penalty calculation process:
+    /// 1. Check repayment status - block if in grace period
+    /// 2. Calculate premium based on elapsed time and rates
+    /// 3. Calculate penalty if borrower is delinquent/default
+    /// 4. Apply combined premium+penalty as new borrow shares
+    /// 5. Update timestamp to prevent double accrual
+    /// @dev MUST be called after _accrueInterest to ensure base rate is current
     function _accrueBorrowerPremium(Id id, address borrower) internal {
         RepaymentObligation memory obligation = repaymentObligation[id][borrower];
         RepaymentStatus status = _getRepaymentStatus(id, borrower, obligation);
 
-        require(status != RepaymentStatus.GracePeriod, "Cannot accrue");
+        require(status != RepaymentStatus.GracePeriod, ErrorsLib.CANNOT_ACCRUE_GRACE_PERIOD);
 
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
         if (premium.rate == 0 && status == RepaymentStatus.Current) return;
@@ -273,6 +339,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Snapshot borrower's position for premium tracking
     /// @param id Market ID
     /// @param borrower Borrower address
+    /// @dev Snapshots are critical for accurate premium calculation:
+    /// - Captures the current borrow amount after all accruals
+    /// - Updates borrowAssetsAtLastAccrual to this new value
+    /// - Ensures next premium calculation starts from correct base
+    /// - Only updates if borrower has a premium rate set
+    /// @dev Called after every borrow, repay, or liquidation to maintain accuracy
     function _snapshotBorrowerPosition(Id id, address borrower) internal {
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
 
@@ -296,7 +368,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         borrowerPremium[id][borrower] = premium;
     }
 
-    /* ONLY CREDIT LINE FUNCTIONS */
+    /* MODIFIERS */
 
     /// @notice Modifier to restrict access to the market's CreditLine contract
     modifier onlyCreditLine(Id id) {
@@ -304,6 +376,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         require(msg.sender == idToMarketParams[id].creditLine, ErrorsLib.NOT_CREDIT_LINE);
         _;
     }
+
+    /* EXTERNAL FUNCTIONS - CREDIT LINE MANAGEMENT */
 
     /// @inheritdoc IMorphoCredit
     function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external {
@@ -354,7 +428,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         emit EventsLib.BorrowerPremiumRateSet(id, borrower, oldRate, newRate);
     }
 
-    /* REPAYMENT MANAGEMENT */
+    /* EXTERNAL FUNCTIONS - REPAYMENT MANAGEMENT */
 
     /// @notice Close a payment cycle and create it on-chain retroactively
     /// @param id Market ID
@@ -362,6 +436,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param borrowers Array of borrower addresses
     /// @param amounts Array of amounts due
     /// @param endingBalances Array of ending balances for penalty calculations
+    /// @dev The ending balance is crucial for penalty calculations - it represents
+    /// the borrower's debt at cycle end and is used to calculate penalty interest
+    /// from that point forward, ensuring path independence
     function closeCycleAndPostObligations(
         Id id,
         uint256 endDate,
@@ -372,7 +449,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         require(
             borrowers.length == amounts.length && amounts.length == endingBalances.length, ErrorsLib.INCONSISTENT_INPUT
         );
-        require(endDate <= block.timestamp, "Cannot close future cycle");
+        require(endDate <= block.timestamp, ErrorsLib.CANNOT_CLOSE_FUTURE_CYCLE);
 
         uint256 cycleLength = paymentCycle[id].length;
         uint256 startDate;
@@ -381,7 +458,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             // Validate cycle comes after previous one
             PaymentCycle storage prevCycle = paymentCycle[id][cycleLength - 1];
             startDate = prevCycle.endDate + 1 days;
-            require(startDate < endDate, "Invalid cycle duration");
+            require(startDate < endDate, ErrorsLib.INVALID_CYCLE_DURATION);
         }
         // else startDate remains 0 for the first cycle
 
@@ -412,7 +489,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         require(
             borrowers.length == amounts.length && amounts.length == endingBalances.length, ErrorsLib.INCONSISTENT_INPUT
         );
-        require(paymentCycle[id].length > 0, "No cycles exist");
+        require(paymentCycle[id].length > 0, ErrorsLib.NO_CYCLES_EXIST);
 
         uint256 latestCycleId = paymentCycle[id].length - 1;
 
@@ -432,20 +509,18 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     {
         RepaymentObligation storage obligation = repaymentObligation[id][borrower];
 
-        // If there's an existing unpaid obligation, add to it
-        if (obligation.amountDue > 0) {
-            amount += obligation.amountDue;
-            // Don't update paymentCycleId - keep the oldest unpaid cycle
-        } else {
-            // Only set cycleId for new obligations
+        // Only set cycleId and endingBalance for new obligations
+        if (obligation.amountDue == 0) {
             obligation.paymentCycleId = uint128(cycleId);
+            obligation.endingBalance = endingBalance;
         }
 
-        // Update amount and ending balance
+        // Update amount due
         obligation.amountDue = uint128(amount);
-        obligation.endingBalance = endingBalance;
 
-        emit EventsLib.RepaymentObligationPosted(id, borrower, amount, cycleId, endingBalance);
+        emit EventsLib.RepaymentObligationPosted(
+            id, borrower, obligation.amountDue, obligation.paymentCycleId, obligation.endingBalance
+        );
     }
 
     /// @notice Get repayment status for a borrower
@@ -458,10 +533,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @notice Get repayment status for a borrower
     /// @param id Market ID
-    /// @param borrower Borrower address
     /// @param obligation the borrower repaymentObligation struct
     /// @return status The borrower's current repayment status
-    function _getRepaymentStatus(Id id, address borrower, RepaymentObligation memory obligation)
+    function _getRepaymentStatus(Id id, address, RepaymentObligation memory obligation)
         internal
         view
         returns (RepaymentStatus)
@@ -469,7 +543,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (obligation.amountDue == 0) return RepaymentStatus.Current;
 
         // Validate cycleId is within bounds
-        require(obligation.paymentCycleId < paymentCycle[id].length, "Invalid cycle ID");
+        require(obligation.paymentCycleId < paymentCycle[id].length, ErrorsLib.INVALID_CYCLE_ID);
 
         uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
 
@@ -484,78 +558,79 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         }
     }
 
-    /* HOOK IMPLEMENTATIONS */
+    /* INTERNAL FUNCTIONS - HOOK IMPLEMENTATIONS */
 
     /// @inheritdoc Morpho
-    function _beforeBorrow(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
-        internal
-        override
-    {
+    function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
         // Check if borrower can borrow
         require(getRepaymentStatus(id, onBehalf) == RepaymentStatus.Current, ErrorsLib.OUTSTANDING_REPAYMENT);
         _accrueBorrowerPremium(id, onBehalf);
     }
 
     /// @inheritdoc Morpho
-    function _beforeRepay(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
-        internal
-        override
-    {
+    /// @dev Critical hook that implements grace period vs delinquent payment logic:
+    /// - Grace Period: Clear obligation BEFORE accrual (allows becoming current)
+    /// - Delinquent/Default: Clear obligation AFTER accrual (penalty already applied)
+    /// This ordering is essential for the grace period benefit to work correctly
+    function _beforeRepay(MarketParams memory, Id id, address onBehalf, uint256 assets, uint256) internal override {
         // Track payment against obligation
         RepaymentObligation memory obligation = repaymentObligation[id][onBehalf];
         RepaymentStatus status = _getRepaymentStatus(id, onBehalf, obligation);
 
-        // if GracePeriod update obligation before accrue, so user is marked current
+        // Grace Period: update obligation before accrue, so user is marked current
+        // This prevents any premium/penalty accrual during the grace period
         if (status == RepaymentStatus.GracePeriod) {
             _trackObligationPayment(id, onBehalf, obligation, assets);
         }
 
         _accrueBorrowerPremium(id, onBehalf);
 
-        // if Delinquent or Default update obligation after accure
+        // Delinquent/Default: update obligation after accrual
+        // Penalty has already been applied before payment is tracked
         if (status == RepaymentStatus.Delinquent || status == RepaymentStatus.Default) {
             _trackObligationPayment(id, onBehalf, obligation, assets);
         }
     }
 
     /// @inheritdoc Morpho
-    function _beforeLiquidate(
-        MarketParams memory marketParams,
-        Id id,
-        address borrower,
-        uint256 seizedAssets,
-        uint256 repaidShares
-    ) internal override {
+    function _beforeLiquidate(MarketParams memory, Id id, address borrower, uint256, uint256) internal override {
         _accrueBorrowerPremium(id, borrower);
     }
 
     /// @inheritdoc Morpho
-    function _afterBorrow(MarketParams memory marketParams, Id id, address onBehalf) internal override {
+    function _afterBorrow(MarketParams memory, Id id, address onBehalf) internal override {
         _snapshotBorrowerPosition(id, onBehalf);
     }
 
     /// @inheritdoc Morpho
-    function _afterRepay(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets) internal override {
+    function _afterRepay(MarketParams memory, Id id, address onBehalf, uint256) internal override {
         _snapshotBorrowerPosition(id, onBehalf);
     }
 
     /// @inheritdoc Morpho
-    function _afterLiquidate(MarketParams memory marketParams, Id id, address borrower) internal override {
+    function _afterLiquidate(MarketParams memory, Id id, address borrower) internal override {
         _snapshotBorrowerPosition(id, borrower);
     }
 
+    /// @dev Track obligation payment and update state
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @param obligation Current repayment obligation
+    /// @param payment Payment amount being made
+    /// @dev Enforces minimum payment requirement - must pay full obligation
+    /// This prevents partial payments that would leave borrowers in limbo
     function _trackObligationPayment(Id id, address borrower, RepaymentObligation memory obligation, uint256 payment)
         internal
     {
-        require(payment >= obligation.amountDue, "Must pay full obligation amount");
+        require(payment >= obligation.amountDue, ErrorsLib.MUST_PAY_FULL_OBLIGATION);
 
         obligation.amountDue = 0;
         repaymentObligation[id][borrower] = obligation;
 
-        emit EventsLib.RepaymentObligationPaid(id, borrower);
+        emit EventsLib.RepaymentObligationPaid(id, borrower, obligation.paymentCycleId);
     }
 
-    /* VIEW FUNCTIONS */
+    /* EXTERNAL VIEW FUNCTIONS */
 
     /// @notice Check if borrower can borrow
     /// @param id Market ID
@@ -569,7 +644,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @return The latest cycle ID
     function getLatestCycleId(Id id) external view returns (uint256) {
-        require(paymentCycle[id].length > 0, "No cycles exist");
+        require(paymentCycle[id].length > 0, ErrorsLib.NO_CYCLES_EXIST);
         return paymentCycle[id].length - 1;
     }
 
@@ -579,7 +654,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @return startDate The cycle start date
     /// @return endDate The cycle end date
     function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate) {
-        require(cycleId < paymentCycle[id].length, "Invalid cycle ID");
+        require(cycleId < paymentCycle[id].length, ErrorsLib.INVALID_CYCLE_ID);
 
         PaymentCycle storage cycle = paymentCycle[id][cycleId];
         endDate = cycle.endDate;
@@ -590,9 +665,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @notice Get market-specific credit terms
-    /// @param id Market ID (unused in current implementation, returns defaults)
     /// @return terms The credit terms for the market
-    function getMarketCreditTerms(Id id) public pure returns (MarketCreditTerms memory terms) {
+    /// @dev Currently returns default values for all markets
+    function getMarketCreditTerms(Id) public pure returns (MarketCreditTerms memory terms) {
         return MarketCreditTerms({
             gracePeriodDuration: 7 days, // Grace period for repayments
             defaultThreshold: 30 days, // Time after cycle end to enter default status
@@ -601,19 +676,14 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         });
     }
 
-    /* HEALTH CHECK OVERRIDE */
+    /* INTERNAL FUNCTIONS - HEALTH CHECK OVERRIDES */
 
     /// @dev Override health check for credit-based lending (without price)
-    /// @param marketParams The market parameters
     /// @param id The market id
     /// @param borrower The borrower address
     /// @return healthy Whether the position is healthy
-    function _isHealthy(MarketParams memory marketParams, Id id, address borrower)
-        internal
-        view
-        override
-        returns (bool)
-    {
+    /// @dev In credit-based lending, health is simply: borrowed <= creditLimit
+    function _isHealthy(MarketParams memory, Id id, address borrower) internal view override returns (bool) {
         if (position[id][borrower].borrowShares == 0) return true;
 
         // For credit-based lending, we don't need oracle price
@@ -627,17 +697,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @dev Override health check for credit-based lending (with price)
-    /// @param marketParams The market parameters
     /// @param id The market id
     /// @param borrower The borrower address
-    /// @param collateralPrice The collateral price (unused in credit model)
     /// @return healthy Whether the position is healthy
-    function _isHealthy(MarketParams memory marketParams, Id id, address borrower, uint256 collateralPrice)
-        internal
-        view
-        override
-        returns (bool)
-    {
+    /// @dev Ignores collateral price as credit-based lending uses credit limits
+    function _isHealthy(MarketParams memory, Id id, address borrower, uint256) internal view override returns (bool) {
         // For credit-based lending, health is determined by credit utilization
         // position.collateral represents the credit limit
         uint256 borrowed = uint256(position[id][borrower].borrowShares).toAssetsUp(

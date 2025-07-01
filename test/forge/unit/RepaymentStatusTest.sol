@@ -374,7 +374,7 @@ contract RepaymentStatusTest is BaseTest {
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
     }
 
-    function testRepaymentStatus_MultipleCycles_PaymentReducesObligation() public {
+    function testRepaymentStatus_MultipleCycles_PaymentOverwritesObligation() public {
         // Create cycle with 1000e18 obligation
         uint256 cycleEndDate = block.timestamp - 10 days;
         address[] memory borrowers = new address[](1);
@@ -399,24 +399,24 @@ contract RepaymentStatusTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, secondCycleEnd, borrowers, amounts, balances);
 
-        // Total obligation is 1500e18
+        // Total obligation is overwritten to 500e18 (not accumulated)
         (, uint128 totalDue,) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
-        assertEq(totalDue, 1500e18);
+        assertEq(totalDue, 500e18);
 
         // Must pay full amount - verify partial payment is rejected
-        deal(address(loanToken), ALICE, 1400e18);
+        deal(address(loanToken), ALICE, 400e18);
         vm.prank(ALICE);
         vm.expectRevert("Must pay full obligation amount");
-        morpho.repay(marketParams, 1400e18, 0, ALICE, "");
+        morpho.repay(marketParams, 400e18, 0, ALICE, "");
 
         // Status remains Delinquent
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
 
-        // Pay full amount (1500e18)
-        deal(address(loanToken), ALICE, 1500e18);
+        // Pay full amount (500e18)
+        deal(address(loanToken), ALICE, 500e18);
         vm.prank(ALICE);
-        morpho.repay(marketParams, 1500e18, 0, ALICE, "");
+        morpho.repay(marketParams, 500e18, 0, ALICE, "");
 
         // Should now be Current
         status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);

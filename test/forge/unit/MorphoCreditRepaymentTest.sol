@@ -217,7 +217,7 @@ contract MorphoCreditRepaymentTest is BaseTest {
 
     // ============ Obligation Posting Tests ============
 
-    function testPostRepaymentObligation_AccumulateExisting() public {
+    function testPostRepaymentObligation_OverwriteExisting() public {
         // Create cycle and post initial obligation
         uint256 endDate = block.timestamp - 1 days;
         address[] memory borrowers = new address[](1);
@@ -240,9 +240,9 @@ contract MorphoCreditRepaymentTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, secondEndDate, borrowers, amounts, balances);
 
-        // Verify amount was accumulated (1000 + 500)
+        // Verify amount was overwritten (not accumulated)
         (, uint128 amountDue,) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
-        assertEq(amountDue, 1500e18);
+        assertEq(amountDue, 500e18);
     }
 
     function testPostRepaymentObligation_EventEmission() public {

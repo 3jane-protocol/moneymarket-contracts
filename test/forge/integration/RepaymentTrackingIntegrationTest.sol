@@ -251,7 +251,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
 
     // ============ Multiple Cycle Tests ============
 
-    function testMultipleCycles_AccumulatingObligations() public {
+    function testMultipleCycles_OverwritingObligations() public {
         // Setup: Alice borrows
         deal(address(loanToken), ALICE, 10000e18);
         vm.prank(ALICE);
@@ -282,24 +282,24 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycle2EndDate, borrowers, amounts, balances);
 
-        // Check total obligation
+        // Check total obligation (now overwritten, not accumulated)
         (, uint128 totalDue,) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
-        assertEq(totalDue, 2100e18); // 1000 + 1100
+        assertEq(totalDue, 1100e18); // Only the latest amount
 
         // Status should be based on oldest cycle (now in default)
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Default));
 
         // Verify partial payment is rejected
-        deal(address(loanToken), ALICE, 1500e18);
+        deal(address(loanToken), ALICE, 500e18);
         vm.prank(ALICE);
         vm.expectRevert("Must pay full obligation amount");
-        morpho.repay(marketParams, 1500e18, 0, ALICE, "");
+        morpho.repay(marketParams, 500e18, 0, ALICE, "");
 
         // Pay full obligation
-        deal(address(loanToken), ALICE, 2100e18);
+        deal(address(loanToken), ALICE, 1100e18);
         vm.prank(ALICE);
-        morpho.repay(marketParams, 2100e18, 0, ALICE, "");
+        morpho.repay(marketParams, 1100e18, 0, ALICE, "");
 
         // Should be current now
         status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -456,9 +456,9 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
             );
         }
 
-        // Total obligation should be sum
+        // Total obligation should be overwritten to latest
         (, uint128 totalDue,) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
-        assertEq(totalDue, 1200e18); // 300 + 400 + 500
+        assertEq(totalDue, 500e18); // Only the latest amount
 
         // Latest cycle ID should be 2
         uint256 latestCycle = IMorphoCredit(address(morpho)).getLatestCycleId(id);

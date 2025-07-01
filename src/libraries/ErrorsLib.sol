@@ -95,4 +95,22 @@ library ErrorsLib {
 
     /// @notice Thrown when the borrower has outstanding repayment obligations.
     string internal constant OUTSTANDING_REPAYMENT = "outstanding repayment";
+
+    /// @notice Thrown when trying to accrue during grace period.
+    string internal constant CANNOT_ACCRUE_GRACE_PERIOD = "cannot accrue during grace period";
+
+    /// @notice Thrown when trying to close a future cycle.
+    string internal constant CANNOT_CLOSE_FUTURE_CYCLE = "Cannot close future cycle";
+
+    /// @notice Thrown when cycle duration is invalid.
+    string internal constant INVALID_CYCLE_DURATION = "Invalid cycle duration";
+
+    /// @notice Thrown when no payment cycles exist.
+    string internal constant NO_CYCLES_EXIST = "No cycles exist";
+
+    /// @notice Thrown when cycle ID is invalid.
+    string internal constant INVALID_CYCLE_ID = "Invalid cycle ID";
+
+    /// @notice Thrown when partial payment is attempted but full obligation payment is required.
+    string internal constant MUST_PAY_FULL_OBLIGATION = "Must pay full obligation amount";
 }

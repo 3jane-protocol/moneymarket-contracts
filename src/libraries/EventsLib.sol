@@ -175,5 +175,5 @@ library EventsLib {
     /// @notice Emitted when a repayment is paid against an obligation.
     /// @param id Market id.
     /// @param borrower Borrower address.
-    event RepaymentObligationPaid(Id indexed id, address indexed borrower);
+    event RepaymentObligationPaid(Id indexed id, address indexed borrower, uint256 cycleId);
 }
