@@ -536,28 +536,18 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @inheritdoc Morpho
-    /// @dev Critical hook that implements grace period vs delinquent payment logic:
-    /// - Grace Period: Clear obligation BEFORE accrual (allows becoming current)
-    /// - Delinquent/Default: Clear obligation AFTER accrual (penalty already applied)
-    /// This ordering is essential for the grace period benefit to work correctly
+    /// @dev Accrues premium before tracking payment. During grace period, only base + premium
+    /// accrue (no penalty), allowing borrowers to clear obligations without penalty.
+    /// During delinquent/default, penalty also accrues before payment is tracked.
     function _beforeRepay(MarketParams memory, Id id, address onBehalf, uint256 assets, uint256) internal override {
-        // Track payment against obligation
+        // Get current obligation
         RepaymentObligation memory obligation = repaymentObligation[id][onBehalf];
-        RepaymentStatus status = _getRepaymentStatus(id, onBehalf, obligation);
 
-        // Grace Period: update obligation before accrue, so user is marked current
-        // This prevents penalty accrual during the grace period
-        if (status == RepaymentStatus.GracePeriod) {
-            _trackObligationPayment(id, onBehalf, obligation, assets);
-        }
-
+        // Accrue premium (including penalty if past grace period)
         _accrueBorrowerPremium(id, onBehalf);
-
-        // Delinquent/Default: update obligation after accrual
-        // Penalty has already been applied before payment is tracked
-        if (status == RepaymentStatus.Delinquent || status == RepaymentStatus.Default) {
-            _trackObligationPayment(id, onBehalf, obligation, assets);
-        }
+        
+        // Track payment against obligation
+        _trackObligationPayment(id, onBehalf, obligation, assets);
     }
 
     /// @inheritdoc Morpho
