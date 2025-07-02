@@ -294,7 +294,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Skip if below threshold
         if (totalPremium < MIN_PREMIUM_THRESHOLD) {
-            borrowerPremium[id][borrower].lastAccrualTime = uint128(block.timestamp);
             return;
         }
 
