@@ -171,13 +171,13 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // Calculate base premium
         uint256 totalPremiumRate = premium.rate;
 
-        // Add penalty rate if already in penalty period
-        if (status != RepaymentStatus.Current) {
+        // Add penalty rate if already in penalty period (after grace period)
+        if (status != RepaymentStatus.Current && status != RepaymentStatus.GracePeriod) {
             RepaymentObligation memory obligation = repaymentObligation[id][borrower];
             uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
+            MarketCreditTerms memory terms = getMarketCreditTerms(id);
 
-            if (premium.lastAccrualTime > cycleEndDate) {
-                MarketCreditTerms memory terms = getMarketCreditTerms(id);
+            if (premium.lastAccrualTime > cycleEndDate + terms.gracePeriodDuration) {
                 totalPremiumRate += terms.penaltyRatePerSecond;
             }
         }
@@ -214,8 +214,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
         RepaymentObligation memory obligation = repaymentObligation[id][borrower];
         uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
+        MarketCreditTerms memory terms = getMarketCreditTerms(id);
 
-        if (premium.lastAccrualTime > cycleEndDate) {
+        if (premium.lastAccrualTime > cycleEndDate + terms.gracePeriodDuration) {
             return 0; // Already handled in premium calculation
         }
 
@@ -223,8 +224,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (elapsed > MAX_ELAPSED_TIME) {
             elapsed = MAX_ELAPSED_TIME;
         }
-
-        MarketCreditTerms memory terms = getMarketCreditTerms(id);
         penaltyAmount = _calculateBorrowerPremiumAmount(
             obligation.endingBalance, borrowAssetsCurrent + basePremiumAmount, terms.penaltyRatePerSecond, elapsed
         );
@@ -264,17 +263,15 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @param borrower Borrower address
     /// @dev Core accrual function that orchestrates the premium and penalty calculation process:
-    /// 1. Check repayment status - block if in grace period
+    /// 1. Check repayment status
     /// 2. Calculate premium based on elapsed time and rates
-    /// 3. Calculate penalty if borrower is delinquent/default
+    /// 3. Calculate penalty if borrower is delinquent/default (not during grace period)
     /// 4. Apply combined premium+penalty as new borrow shares
     /// 5. Update timestamp to prevent double accrual
     /// @dev MUST be called after _accrueInterest to ensure base rate is current
     function _accrueBorrowerPremium(Id id, address borrower) internal {
         RepaymentObligation memory obligation = repaymentObligation[id][borrower];
         RepaymentStatus status = _getRepaymentStatus(id, borrower, obligation);
-
-        require(status != RepaymentStatus.GracePeriod, ErrorsLib.CANNOT_ACCRUE_GRACE_PERIOD);
 
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
         if (premium.rate == 0 && status == RepaymentStatus.Current) return;
@@ -549,7 +546,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         RepaymentStatus status = _getRepaymentStatus(id, onBehalf, obligation);
 
         // Grace Period: update obligation before accrue, so user is marked current
-        // This prevents any premium/penalty accrual during the grace period
+        // This prevents penalty accrual during the grace period
         if (status == RepaymentStatus.GracePeriod) {
             _trackObligationPayment(id, onBehalf, obligation, assets);
         }
