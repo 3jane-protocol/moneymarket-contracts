@@ -110,4 +110,7 @@ library ErrorsLib {
 
     /// @notice Thrown when partial payment is attempted but full obligation payment is required.
     string internal constant MUST_PAY_FULL_OBLIGATION = "Must pay full obligation amount";
+
+    /// @notice Thrown when repayment basis points exceed 100%.
+    string internal constant REPAYMENT_EXCEEDS_HUNDRED_PERCENT = "repayment exceeds 100%";
 }

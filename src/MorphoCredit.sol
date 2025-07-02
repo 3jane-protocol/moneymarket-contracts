@@ -71,6 +71,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Maximum elapsed time for premium accrual (365 days)
     uint256 internal constant MAX_ELAPSED_TIME = 365 days;
 
+    /// @notice Maximum basis points (100%)
+    uint256 internal constant MAX_BPS = 10000;
+
     /* CONSTRUCTOR */
 
     constructor(address newOwner) Morpho(newOwner) {}
@@ -478,12 +481,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 cycleId,
         uint256 endingBalance
     ) internal {
-        require(repaymentBps <= 10000, "Repayment cannot exceed 100%");
+        require(repaymentBps <= MAX_BPS, ErrorsLib.REPAYMENT_EXCEEDS_HUNDRED_PERCENT);
 
         RepaymentObligation storage obligation = repaymentObligation[id][borrower];
 
         // Calculate actual amount from basis points
-        uint256 amount = endingBalance * repaymentBps / 10000;
+        uint256 amount = endingBalance * repaymentBps / MAX_BPS;
 
         // Only set cycleId and endingBalance for new obligations
         if (obligation.amountDue == 0) {
