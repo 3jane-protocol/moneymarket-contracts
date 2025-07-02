@@ -424,28 +424,56 @@ contract BaseTest is Test {
     ) internal {
         uint256 cycleEndDate = block.timestamp - (daysAgo * 1 days);
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = borrower;
-        amounts[0] = amountDue;
+        // Calculate basis points from amountDue and endingBalance
+        repaymentBps[0] = amountDue * 10000 / endingBalance;
         balances[0] = endingBalance;
 
         vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(_id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            _id, cycleEndDate, borrowers, repaymentBps, balances
+        );
+    }
+
+    // Overloaded version that accepts repaymentBps directly
+    function _createRepaymentObligationBps(
+        Id _id,
+        address borrower,
+        uint256 repaymentBps,
+        uint256 endingBalance,
+        uint256 daysAgo
+    ) internal {
+        uint256 cycleEndDate = block.timestamp - (daysAgo * 1 days);
+        address[] memory borrowers = new address[](1);
+        uint256[] memory repaymentBpsArray = new uint256[](1);
+        uint256[] memory balances = new uint256[](1);
+
+        borrowers[0] = borrower;
+        repaymentBpsArray[0] = repaymentBps;
+        balances[0] = endingBalance;
+
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            _id, cycleEndDate, borrowers, repaymentBpsArray, balances
+        );
     }
 
     function _createMultipleObligations(
         Id _id,
         address[] memory borrowers,
-        uint256[] memory amounts,
+        uint256[] memory repaymentBps,
         uint256[] memory balances,
         uint256 daysAgo
     ) internal {
         uint256 cycleEndDate = block.timestamp - (daysAgo * 1 days);
 
         vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(_id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            _id, cycleEndDate, borrowers, repaymentBps, balances
+        );
     }
 
     function _makePayment(address borrower, uint256 amount) internal {

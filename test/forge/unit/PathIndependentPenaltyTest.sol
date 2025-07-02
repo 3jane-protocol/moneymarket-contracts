@@ -67,8 +67,7 @@ contract PathIndependentPenaltyTest is BaseTest {
         // Record initial state (not needed for this test but removing unused variable)
 
         // Create an obligation that ended 3 days ago (still in grace period)
-        uint256 cycleEndDate = block.timestamp - 3 days;
-        _createObligation(BORROWER, 5000e18, 10_000e18, cycleEndDate);
+        _createRepaymentObligation(id, BORROWER, 5000e18, 10_000e18, 3);
 
         // Touch the contract (should defer premium calculation)
         vm.prank(BORROWER);
@@ -84,8 +83,7 @@ contract PathIndependentPenaltyTest is BaseTest {
         setUp(); // Reset
 
         // Create same obligation
-        cycleEndDate = block.timestamp - 3 days;
-        _createObligation(BORROWER, 5000e18, 10_000e18, cycleEndDate);
+        _createRepaymentObligation(id, BORROWER, 5000e18, 10_000e18, 3);
 
         // Move directly to after grace period without touching
         vm.warp(block.timestamp + 5 days); // Now 8 days after cycle end
@@ -99,8 +97,7 @@ contract PathIndependentPenaltyTest is BaseTest {
 
     function testMinimumRepaymentRequirement() public {
         // Create an obligation
-        uint256 cycleEndDate = block.timestamp - 1 days;
-        _createObligation(BORROWER, 5000e18, 10_000e18, cycleEndDate);
+        _createRepaymentObligation(id, BORROWER, 5000e18, 10_000e18, 1);
 
         // Try to make partial payment (should fail)
         loanToken.setBalance(BORROWER, 3000e18);
@@ -123,8 +120,7 @@ contract PathIndependentPenaltyTest is BaseTest {
 
     function testPenaltyCompoundsAfterGracePeriod() public {
         // Create an obligation that ended more than 7 days ago (past grace period)
-        uint256 cycleEndDate = block.timestamp - 8 days; // 1 day past grace period
-        _createObligation(BORROWER, 5000e18, 10_000e18, cycleEndDate);
+        _createRepaymentObligation(id, BORROWER, 5000e18, 10_000e18, 8); // 8 days ago = 1 day past grace period
 
         // Record debt at this point - penalty should already be active
         uint256 debtAtStart = _calculateBorrowerDebt(id, BORROWER);
@@ -158,22 +154,5 @@ contract PathIndependentPenaltyTest is BaseTest {
         // Convert shares to assets
         if (pos.borrowShares == 0) return 0;
         return uint256(pos.borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
-    }
-
-    // Helper function to create an obligation
-    function _createObligation(address borrower, uint256 amountDue, uint256 endingBalance, uint256 cycleEndDate)
-        internal
-    {
-        address[] memory borrowers = new address[](1);
-        uint256[] memory repaymentBps = new uint256[](1);
-        uint256[] memory balances = new uint256[](1);
-
-        borrowers[0] = borrower;
-        // Calculate basis points from amountDue and endingBalance
-        repaymentBps[0] = amountDue * 10000 / endingBalance;
-        balances[0] = endingBalance;
-
-        vm.prank(creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
     }
 }

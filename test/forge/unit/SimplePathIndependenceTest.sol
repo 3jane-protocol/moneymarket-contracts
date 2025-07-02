@@ -62,8 +62,7 @@ contract SimplePathIndependenceTest is BaseTest {
         vm.warp(block.timestamp + 30 days);
 
         // Create an obligation that just ended (in grace period)
-        uint256 cycleEndDate = block.timestamp - 1 days;
-        _createObligation(BORROWER, 5000e18, 10_000e18, cycleEndDate);
+        _createRepaymentObligation(id, BORROWER, 5000e18, 10_000e18, 1);
 
         // Check status - should be in grace period
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, BORROWER);
@@ -86,8 +85,7 @@ contract SimplePathIndependenceTest is BaseTest {
         vm.warp(block.timestamp + 30 days);
 
         // Create an obligation
-        uint256 cycleEndDate = block.timestamp - 1 days;
-        _createObligation(BORROWER, 5000e18, 10_000e18, cycleEndDate);
+        _createRepaymentObligation(id, BORROWER, 5000e18, 10_000e18, 1);
 
         // Try to make partial payment (should fail)
         loanToken.setBalance(BORROWER, 3000e18);
@@ -106,22 +104,5 @@ contract SimplePathIndependenceTest is BaseTest {
         // Verify obligation is cleared
         (, uint256 amountDue,) = IMorphoCredit(address(morpho)).repaymentObligation(id, BORROWER);
         assertEq(amountDue, 0, "Obligation not cleared");
-    }
-
-    // Helper function to create an obligation
-    function _createObligation(address borrower, uint256 amountDue, uint256 endingBalance, uint256 cycleEndDate)
-        internal
-    {
-        address[] memory borrowers = new address[](1);
-        uint256[] memory repaymentBps = new uint256[](1);
-        uint256[] memory balances = new uint256[](1);
-
-        borrowers[0] = borrower;
-        // Calculate basis points from amountDue and endingBalance
-        repaymentBps[0] = amountDue * 10000 / endingBalance;
-        balances[0] = endingBalance;
-
-        vm.prank(creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
     }
 }

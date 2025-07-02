@@ -96,17 +96,7 @@ contract RepaymentStatusTest is BaseTest {
 
     function testRepaymentStatus_Current_ObligationFullyPaid() public {
         // Create a cycle with obligation
-        uint256 cycleEndDate = block.timestamp - CYCLE_DURATION;
-        address[] memory borrowers = new address[](1);
-        uint256[] memory repaymentBps = new uint256[](1);
-        uint256[] memory balances = new uint256[](1);
-
-        borrowers[0] = ALICE;
-        repaymentBps[0] = 1000; // 10%
-        balances[0] = 10000e18;
-
-        vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
+        _createRepaymentObligationBps(id, ALICE, 1000, 10000e18, CYCLE_DURATION / 1 days);
 
         // ALICE fully pays the obligation
         deal(address(loanToken), ALICE, 1000e18);
@@ -120,17 +110,7 @@ contract RepaymentStatusTest is BaseTest {
 
     function testRepaymentStatus_GracePeriod_WithOutstandingDebt() public {
         // Create a cycle ending 2 days ago (within grace period)
-        uint256 cycleEndDate = block.timestamp - 2 days;
-        address[] memory borrowers = new address[](1);
-        uint256[] memory repaymentBps = new uint256[](1);
-        uint256[] memory balances = new uint256[](1);
-
-        borrowers[0] = ALICE;
-        repaymentBps[0] = 1000; // 10%
-        balances[0] = 10000e18;
-
-        vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
+        _createRepaymentObligationBps(id, ALICE, 1000, 10000e18, 2);
 
         // No payment - still within grace period with outstanding debt, should be GracePeriod
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -141,17 +121,7 @@ contract RepaymentStatusTest is BaseTest {
 
     function testRepaymentStatus_GracePeriod() public {
         // Create a cycle ending 4 days ago (past grace, not yet delinquent)
-        uint256 cycleEndDate = block.timestamp - 4 days;
-        address[] memory borrowers = new address[](1);
-        uint256[] memory repaymentBps = new uint256[](1);
-        uint256[] memory balances = new uint256[](1);
-
-        borrowers[0] = ALICE;
-        repaymentBps[0] = 1000; // 10%
-        balances[0] = 10000e18;
-
-        vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
+        _createRepaymentObligationBps(id, ALICE, 1000, 10000e18, 4);
 
         // No payment - should be in Grace Period
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -181,17 +151,7 @@ contract RepaymentStatusTest is BaseTest {
 
     function testRepaymentStatus_Delinquent() public {
         // Create a cycle ending 10 days ago (delinquent)
-        uint256 cycleEndDate = block.timestamp - 10 days;
-        address[] memory borrowers = new address[](1);
-        uint256[] memory repaymentBps = new uint256[](1);
-        uint256[] memory balances = new uint256[](1);
-
-        borrowers[0] = ALICE;
-        repaymentBps[0] = 1000; // 10%
-        balances[0] = 10000e18;
-
-        vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
+        _createRepaymentObligationBps(id, ALICE, 1000, 10000e18, 10);
 
         // No payment - should be Delinquent
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);

@@ -99,7 +99,6 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         morpho.borrow(marketParams, 15000e18, 0, CHARLIE, CHARLIE);
 
         // Create delinquent obligations for all
-        uint256 cycleEndDate = block.timestamp - 10 days;
         address[] memory borrowers = new address[](3);
         uint256[] memory repaymentBps = new uint256[](3);
         uint256[] memory balances = new uint256[](3);
@@ -114,8 +113,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         balances[1] = 20000e18;
         balances[2] = 15000e18;
 
-        vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
+        _createMultipleObligations(id, borrowers, repaymentBps, balances, 10);
 
         // Record initial states
         uint256 aliceAssetsBefore = morpho.expectedBorrowAssets(marketParams, ALICE);
