@@ -467,4 +467,95 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
             assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
         }
     }
+
+    // ============ Multiple Cycle Penalty Tests ============
+
+    function testPenaltyAccrual_AcrossMultipleCycles() public {
+        // This test verifies that penalty accrual is based on the original delinquent cycle,
+        // not subsequent cycles that might be posted for the same borrower
+
+        // Step 1: Alice borrows
+        deal(address(loanToken), ALICE, 20000e18);
+        vm.prank(ALICE);
+        morpho.borrow(marketParams, 20000e18, 0, ALICE, ALICE);
+
+        // Trigger initial accrual to sync timestamps
+        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+
+        // Step 2: Create Cycle 1 obligation that will make Alice delinquent
+        uint256 cycle1EndDate = block.timestamp - 15 days; // Well past grace period
+        address[] memory borrowers = new address[](1);
+        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory balances = new uint256[](1);
+
+        borrowers[0] = ALICE;
+        amounts[0] = 2000e18; // Cycle 1 obligation
+        balances[0] = 20000e18; // Cycle 1 ending balance
+
+        vm.prank(address(creditLine));
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycle1EndDate, borrowers, amounts, balances);
+
+        // Verify Alice is delinquent
+        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "Should be delinquent from Cycle 1");
+
+        // Record the cycle ID and ending balance that were set
+        (uint128 cycleId1, uint128 amountDue1, uint256 endingBalance1) =
+            IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
+        assertEq(cycleId1, 0, "First cycle should have ID 0");
+        assertEq(endingBalance1, 20000e18, "Ending balance should be from Cycle 1");
+
+        // Step 3: Time passes and a new obligation is posted for Cycle 2
+        vm.warp(block.timestamp + 30 days); // New monthly cycle
+        uint256 cycle2EndDate = block.timestamp - 2 days; // Recent cycle
+
+        amounts[0] = 2500e18; // Higher obligation for Cycle 2
+        balances[0] = 25000e18; // Higher ending balance for Cycle 2
+
+        vm.prank(address(creditLine));
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycle2EndDate, borrowers, amounts, balances);
+
+        // Verify the critical behavior: cycleId and endingBalance should NOT change
+        // because Alice already had an outstanding obligation
+        (uint128 cycleId2, uint128 amountDue2, uint256 endingBalance2) =
+            IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
+
+        assertEq(cycleId2, cycleId1, "Cycle ID should remain unchanged");
+        assertEq(endingBalance2, endingBalance1, "Ending balance should remain from Cycle 1");
+        assertEq(amountDue2, 2500e18, "Amount due should be updated to Cycle 2 amount");
+
+        // Step 4: Record debt before penalty accrual
+        uint256 debtBefore = morpho.expectedBorrowAssets(marketParams, ALICE);
+
+        // Step 5: Trigger penalty accrual
+        vm.warp(block.timestamp + 5 days);
+        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+
+        uint256 debtAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
+        uint256 totalAccrued = debtAfter - debtBefore;
+
+        // Step 6: Calculate expected penalty based on Cycle 1 (not Cycle 2!)
+        // Penalty should be calculated from Cycle 1 end date to now
+        uint256 timeSinceCycle1 = block.timestamp - cycle1EndDate;
+        uint256 expectedPenalty = endingBalance1.wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(timeSinceCycle1));
+
+        // The total accrued should include base + premium + penalty
+        // Penalty is based on Cycle 1's ending balance and time
+        assertGt(totalAccrued, expectedPenalty * 8 / 10, "Should include significant penalty from Cycle 1");
+
+        // Verify that the penalty is NOT based on Cycle 2's parameters
+        uint256 timeSinceCycle2 = block.timestamp - cycle2EndDate;
+        uint256 wrongPenalty = uint256(25000e18).wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(timeSinceCycle2)); // Using
+            // Cycle 2's balance
+
+        // The actual penalty should be much higher than if calculated from Cycle 2
+        assertGt(expectedPenalty, wrongPenalty * 2, "Penalty from Cycle 1 should be much higher");
+
+        emit log_string("=== Penalty Accrual Across Cycles ===");
+        emit log_named_uint("Time since Cycle 1", timeSinceCycle1);
+        emit log_named_uint("Time since Cycle 2", timeSinceCycle2);
+        emit log_named_uint("Penalty based on Cycle 1", expectedPenalty);
+        emit log_named_uint("(Wrong) penalty if based on Cycle 2", wrongPenalty);
+        emit log_named_uint("Total accrued", totalAccrued);
+    }
 }

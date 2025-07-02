@@ -464,4 +464,67 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         uint256 latestCycle = IMorphoCredit(address(morpho)).getLatestCycleId(id);
         assertEq(latestCycle, 2);
     }
+
+    // ============ Critical Edge Case Tests ============
+
+    function testClearingDelinquencyWithZeroAmount() public {
+        // This test verifies that a malicious or faulty creditLine contract
+        // can clear a borrower's delinquency by posting a zero-amount obligation
+
+        // Step 1: Alice borrows
+        deal(address(loanToken), ALICE, 20000e18);
+        vm.prank(ALICE);
+        morpho.borrow(marketParams, 20000e18, 0, ALICE, ALICE);
+
+        // Step 2: Create an obligation that makes Alice delinquent
+        uint256 cycle1EndDate = block.timestamp - 10 days; // Past grace period
+        address[] memory borrowers = new address[](1);
+        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory balances = new uint256[](1);
+
+        borrowers[0] = ALICE;
+        amounts[0] = 5000e18; // Significant obligation
+        balances[0] = 20000e18; // Alice's balance
+
+        vm.prank(address(creditLine));
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycle1EndDate, borrowers, amounts, balances);
+
+        // Verify Alice is delinquent with a non-zero obligation
+        RepaymentStatus statusBefore = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        assertEq(uint256(statusBefore), uint256(RepaymentStatus.Delinquent), "Should be delinquent");
+
+        (, uint128 amountDueBefore,) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
+        assertEq(amountDueBefore, 5000e18, "Should have 5000e18 obligation");
+
+        // Verify Alice cannot borrow while delinquent
+        vm.expectRevert(bytes(ErrorsLib.OUTSTANDING_REPAYMENT));
+        vm.prank(ALICE);
+        morpho.borrow(marketParams, 1000e18, 0, ALICE, ALICE);
+
+        // Step 3: CreditLine posts a new cycle with 0 amount for Alice
+        vm.warp(block.timestamp + 30 days); // New cycle
+        uint256 cycle2EndDate = block.timestamp - 1 days;
+
+        amounts[0] = 0; // Zero amount - this overwrites the existing obligation!
+        balances[0] = 21000e18; // New balance (doesn't matter for this test)
+
+        vm.prank(address(creditLine));
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycle2EndDate, borrowers, amounts, balances);
+
+        // Step 4: Verify the exploit worked
+        (, uint128 amountDueAfter,) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
+        assertEq(amountDueAfter, 0, "Obligation should be cleared to zero");
+
+        RepaymentStatus statusAfter = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        assertEq(uint256(statusAfter), uint256(RepaymentStatus.Current), "Should be current after zero obligation");
+
+        // Step 5: Verify Alice can now borrow again (without paying the original 5000e18!)
+        deal(address(loanToken), ALICE, 1000e18);
+        vm.prank(ALICE);
+        morpho.borrow(marketParams, 1000e18, 0, ALICE, ALICE); // This should succeed
+
+        // The test confirms that the creditLine can effectively forgive debt by posting zero
+        emit log_string("WARNING: CreditLine can clear delinquent obligations with zero amount!");
+        emit log_named_uint("Original obligation cleared", 5000e18);
+    }
 }
