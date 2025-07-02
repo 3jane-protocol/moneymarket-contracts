@@ -64,7 +64,7 @@ struct RepaymentObligation {
 /// @notice Market-specific credit terms for borrowers
 struct MarketCreditTerms {
     uint256 gracePeriodDuration; // Duration of grace period after cycle end
-    uint256 defaultThreshold; // Time after cycle end to enter default status
+    uint256 delinquencyPeriodDuration; // Duration of delinquency period before default
     uint256 minOutstanding; // Minimum outstanding loan balance to prevent dust
     uint256 penaltyRatePerSecond; // Penalty rate per second for delinquent borrowers
 }

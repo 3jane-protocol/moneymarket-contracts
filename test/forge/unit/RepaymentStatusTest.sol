@@ -240,7 +240,7 @@ contract RepaymentStatusTest is BaseTest {
 
     function testRepaymentStatus_Default_ExactBoundary() public {
         // Test exactly at default boundary (30 days)
-        uint256 cycleEndDate = block.timestamp - DEFAULT_THRESHOLD;
+        uint256 cycleEndDate = block.timestamp - (GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION);
         address[] memory borrowers = new address[](1);
         uint256[] memory amounts = new uint256[](1);
         uint256[] memory balances = new uint256[](1);

@@ -516,7 +516,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         if (block.timestamp <= cycleEndDate + terms.gracePeriodDuration) {
             return RepaymentStatus.GracePeriod;
-        } else if (block.timestamp < cycleEndDate + terms.defaultThreshold) {
+        } else if (block.timestamp < cycleEndDate + terms.gracePeriodDuration + terms.delinquencyPeriodDuration) {
             return RepaymentStatus.Delinquent;
         } else {
             return RepaymentStatus.Default;
@@ -623,7 +623,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     function getMarketCreditTerms(Id) public pure returns (MarketCreditTerms memory terms) {
         return MarketCreditTerms({
             gracePeriodDuration: 7 days, // Grace period for repayments
-            defaultThreshold: 30 days, // Time after cycle end to enter default status
+            delinquencyPeriodDuration: 23 days, // Delinquency period before default (total 30 days from cycle end)
             minOutstanding: 1000e18, // Minimum outstanding loan balance to prevent dust
             penaltyRatePerSecond: 3170979198 // ~10% APR penalty rate for delinquent borrowers
         });

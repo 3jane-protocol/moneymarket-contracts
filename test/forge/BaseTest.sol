@@ -42,7 +42,7 @@ contract BaseTest is Test {
 
     // Repayment tracking constants
     uint256 internal constant GRACE_PERIOD_DURATION = 7 days;
-    uint256 internal constant DEFAULT_THRESHOLD = 30 days;
+    uint256 internal constant DELINQUENCY_PERIOD_DURATION = 23 days;
     uint256 internal constant CYCLE_DURATION = 30 days;
 
     // Rate constants (per second)
