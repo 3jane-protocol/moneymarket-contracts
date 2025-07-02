@@ -25,7 +25,7 @@ contract GracePeriodAccrualTest is BaseTest {
 
     // Test constants
     uint256 internal constant INITIAL_BORROW = 10000e18;
-    uint256 internal constant OBLIGATION_AMOUNT = 1000e18;
+    uint256 internal constant OBLIGATION_BPS = 1000; // 10%
     uint256 internal constant ENDING_BALANCE = 10000e18;
 
     function setUp() public override {
@@ -91,15 +91,15 @@ contract GracePeriodAccrualTest is BaseTest {
         uint256 cycleEndDate = block.timestamp - 3 days;
 
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = OBLIGATION_AMOUNT;
+        repaymentBps[0] = OBLIGATION_BPS;
         balances[0] = ENDING_BALANCE;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Verify we're in grace period
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -150,15 +150,15 @@ contract GracePeriodAccrualTest is BaseTest {
         // Create obligation 5 days ago (in grace period)
         uint256 cycleEndDate = block.timestamp - 5 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = OBLIGATION_AMOUNT;
+        repaymentBps[0] = OBLIGATION_BPS;
         balances[0] = ENDING_BALANCE;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Record state
         uint256 borrowAssetsBefore = morpho.expectedBorrowAssets(marketParams, ALICE);
@@ -199,15 +199,15 @@ contract GracePeriodAccrualTest is BaseTest {
         // Create obligation exactly at grace period boundary
         uint256 cycleEndDate = block.timestamp - GRACE_PERIOD_DURATION;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = OBLIGATION_AMOUNT;
+        repaymentBps[0] = OBLIGATION_BPS;
         balances[0] = ENDING_BALANCE;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Should still be in grace period
         assertEq(
@@ -265,23 +265,23 @@ contract GracePeriodAccrualTest is BaseTest {
         // Create obligation 4 days ago
         uint256 cycleEndDate = block.timestamp - 4 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = OBLIGATION_AMOUNT;
+        repaymentBps[0] = OBLIGATION_BPS;
         balances[0] = ENDING_BALANCE;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Record debt before repayment
         uint256 debtBefore = morpho.expectedBorrowAssets(marketParams, ALICE);
 
         // Pay the obligation during grace period
-        deal(address(loanToken), ALICE, OBLIGATION_AMOUNT);
+        deal(address(loanToken), ALICE, 1000e18); // Amount calculated from 10% of 10000e18
         vm.prank(ALICE);
-        morpho.repay(marketParams, OBLIGATION_AMOUNT, 0, ALICE, "");
+        morpho.repay(marketParams, 1000e18, 0, ALICE, ""); // 10% of 10000e18
 
         // Verify obligation is cleared
         (, uint256 amountDue,) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
@@ -296,7 +296,7 @@ contract GracePeriodAccrualTest is BaseTest {
 
         // The debt should have decreased by exactly the payment amount
         uint256 debtAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
-        assertEq(debtBefore - debtAfter, OBLIGATION_AMOUNT, "Debt should decrease by payment amount");
+        assertEq(debtBefore - debtAfter, 1000e18, "Debt should decrease by payment amount");
 
         // Move time forward and verify no penalty accrues
         vm.warp(block.timestamp + 10 days);

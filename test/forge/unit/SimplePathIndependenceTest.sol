@@ -113,14 +113,15 @@ contract SimplePathIndependenceTest is BaseTest {
         internal
     {
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = borrower;
-        amounts[0] = amountDue;
+        // Calculate basis points from amountDue and endingBalance
+        repaymentBps[0] = amountDue * 10000 / endingBalance;
         balances[0] = endingBalance;
 
         vm.prank(creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
     }
 }

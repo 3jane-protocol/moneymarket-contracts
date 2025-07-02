@@ -98,15 +98,15 @@ contract RepaymentStatusTest is BaseTest {
         // Create a cycle with obligation
         uint256 cycleEndDate = block.timestamp - CYCLE_DURATION;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // ALICE fully pays the obligation
         deal(address(loanToken), ALICE, 1000e18);
@@ -122,15 +122,15 @@ contract RepaymentStatusTest is BaseTest {
         // Create a cycle ending 2 days ago (within grace period)
         uint256 cycleEndDate = block.timestamp - 2 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // No payment - still within grace period with outstanding debt, should be GracePeriod
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -143,15 +143,15 @@ contract RepaymentStatusTest is BaseTest {
         // Create a cycle ending 4 days ago (past grace, not yet delinquent)
         uint256 cycleEndDate = block.timestamp - 4 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // No payment - should be in Grace Period
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -162,15 +162,15 @@ contract RepaymentStatusTest is BaseTest {
         // Test exactly at grace period boundary
         uint256 cycleEndDate = block.timestamp - GRACE_PERIOD_DURATION;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // No payment - exactly at grace period boundary, should still be in grace
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -183,15 +183,15 @@ contract RepaymentStatusTest is BaseTest {
         // Create a cycle ending 10 days ago (delinquent)
         uint256 cycleEndDate = block.timestamp - 10 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // No payment - should be Delinquent
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -202,15 +202,15 @@ contract RepaymentStatusTest is BaseTest {
         // Test just past delinquency threshold
         uint256 cycleEndDate = block.timestamp - GRACE_PERIOD_DURATION - 1;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // No payment - should be Delinquent (just past grace)
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -223,15 +223,15 @@ contract RepaymentStatusTest is BaseTest {
         // Create a cycle ending 31 days ago (in default)
         uint256 cycleEndDate = block.timestamp - 31 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // No payment
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -242,15 +242,15 @@ contract RepaymentStatusTest is BaseTest {
         // Test exactly at default boundary (30 days)
         uint256 cycleEndDate = block.timestamp - (GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION);
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Should still be Default at exactly 30 days
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -261,15 +261,15 @@ contract RepaymentStatusTest is BaseTest {
         // Test that partial payments are rejected in default status
         uint256 cycleEndDate = block.timestamp - 35 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Verify partial payment is rejected
         deal(address(loanToken), ALICE, 999e18);
@@ -288,15 +288,15 @@ contract RepaymentStatusTest is BaseTest {
         // Create obligation in delinquent period
         uint256 cycleEndDate = block.timestamp - 10 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Verify delinquent
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -316,15 +316,15 @@ contract RepaymentStatusTest is BaseTest {
         // Create obligation just in grace period
         uint256 cycleEndDate = block.timestamp - 4 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Verify Grace Period
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -351,23 +351,27 @@ contract RepaymentStatusTest is BaseTest {
         // Create first cycle - old enough to be delinquent
         uint256 firstCycleEnd = block.timestamp - 10 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, firstCycleEnd, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, firstCycleEnd, borrowers, repaymentBps, balances
+        );
 
         // Create second cycle - recent (would be Current)
         uint256 secondCycleEnd = block.timestamp - 1 days;
-        amounts[0] = 500e18;
+        repaymentBps[0] = 500; // 5%
         balances[0] = 9500e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, secondCycleEnd, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, secondCycleEnd, borrowers, repaymentBps, balances
+        );
 
         // Status should be based on oldest unpaid cycle (Delinquent)
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -378,30 +382,32 @@ contract RepaymentStatusTest is BaseTest {
         // Create cycle with 1000e18 obligation
         uint256 cycleEndDate = block.timestamp - 10 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Warp forward to create second cycle (but not so far that first cycle goes to default)
         vm.warp(block.timestamp + 15 days);
 
         // Add another cycle with 500e18 obligation
         uint256 secondCycleEnd = block.timestamp - 1 days;
-        amounts[0] = 500e18;
+        repaymentBps[0] = 500; // 5%
         balances[0] = 9500e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, secondCycleEnd, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, secondCycleEnd, borrowers, repaymentBps, balances
+        );
 
-        // Total obligation is overwritten to 500e18 (not accumulated)
+        // Total obligation is overwritten to 475e18 (not accumulated)
         (, uint128 totalDue,) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
-        assertEq(totalDue, 500e18);
+        assertEq(totalDue, 475e18); // 5% of 9500e18
 
         // Must pay full amount - verify partial payment is rejected
         deal(address(loanToken), ALICE, 400e18);
@@ -413,10 +419,10 @@ contract RepaymentStatusTest is BaseTest {
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
 
-        // Pay full amount (500e18)
-        deal(address(loanToken), ALICE, 500e18);
+        // Pay full amount (475e18)
+        deal(address(loanToken), ALICE, 475e18);
         vm.prank(ALICE);
-        morpho.repay(marketParams, 500e18, 0, ALICE, "");
+        morpho.repay(marketParams, 475e18, 0, ALICE, "");
 
         // Should now be Current
         status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -429,15 +435,15 @@ contract RepaymentStatusTest is BaseTest {
         // Create cycle with zero obligation
         uint256 cycleEndDate = block.timestamp - 10 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 0;
+        repaymentBps[0] = 0; // 0%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Should be Current (no payment due)
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -448,15 +454,15 @@ contract RepaymentStatusTest is BaseTest {
         // Create obligation
         uint256 cycleEndDate = block.timestamp - 1 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Overpay
         deal(address(loanToken), ALICE, 2000e18);

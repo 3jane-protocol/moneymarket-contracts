@@ -26,7 +26,7 @@ contract PenaltyRateVerificationTest is BaseTest {
     // Test constants for precise calculations
     uint256 internal constant ENDING_BALANCE = 10000e18;
     uint256 internal constant INITIAL_BORROW = 10000e18;
-    uint256 internal constant OBLIGATION_AMOUNT = 1000e18;
+    uint256 internal constant OBLIGATION_BPS = 1000; // 10%
 
     // Tolerance for assertions (0.1%)
     uint256 internal constant TOLERANCE_BPS = 10; // 0.1% = 10 basis points
@@ -92,15 +92,15 @@ contract PenaltyRateVerificationTest is BaseTest {
         uint256 cycleEndDate = block.timestamp - GRACE_PERIOD_DURATION;
 
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = OBLIGATION_AMOUNT;
+        repaymentBps[0] = OBLIGATION_BPS;
         balances[0] = ENDING_BALANCE;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Verify we're still in grace period
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -185,15 +185,15 @@ contract PenaltyRateVerificationTest is BaseTest {
         uint256 cycleEndDate = block.timestamp - GRACE_PERIOD_DURATION - 3 days;
 
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = OBLIGATION_AMOUNT;
+        repaymentBps[0] = OBLIGATION_BPS;
         balances[0] = ENDING_BALANCE;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Verify we're delinquent
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -294,22 +294,22 @@ contract PenaltyRateVerificationTest is BaseTest {
         uint256 cycleEndDate = block.timestamp - GRACE_PERIOD_DURATION - 1 days;
 
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         // Path A obligation
         borrowers[0] = ALICE_PATH_A;
-        amounts[0] = OBLIGATION_AMOUNT;
+        repaymentBps[0] = OBLIGATION_BPS;
         balances[0] = ENDING_BALANCE;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Path B obligation - use addObligationsToLatestCycle to avoid duplicate cycle
         borrowers[0] = ALICE_PATH_B;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).addObligationsToLatestCycle(id, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).addObligationsToLatestCycle(id, borrowers, repaymentBps, balances);
 
         // Initial accrual for both to capture the initial penalty
         IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE_PATH_A);

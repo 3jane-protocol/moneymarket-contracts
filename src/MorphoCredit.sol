@@ -168,7 +168,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             elapsed = MAX_ELAPSED_TIME;
         }
 
-        // Calculate base premium
         uint256 totalPremiumRate = premium.rate;
 
         // Add penalty rate if already in penalty period (after grace period)
@@ -400,7 +399,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @param endDate Cycle end date
     /// @param borrowers Array of borrower addresses
-    /// @param amounts Array of amounts due
+    /// @param repaymentBps Array of repayment basis points (e.g., 500 = 5%)
     /// @param endingBalances Array of ending balances for penalty calculations
     /// @dev The ending balance is crucial for penalty calculations - it represents
     /// the borrower's debt at cycle end and is used to calculate penalty interest
@@ -409,11 +408,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         Id id,
         uint256 endDate,
         address[] calldata borrowers,
-        uint256[] calldata amounts,
+        uint256[] calldata repaymentBps,
         uint256[] calldata endingBalances
     ) external onlyCreditLine(id) {
         require(
-            borrowers.length == amounts.length && amounts.length == endingBalances.length, ErrorsLib.INCONSISTENT_INPUT
+            borrowers.length == repaymentBps.length && repaymentBps.length == endingBalances.length,
+            ErrorsLib.INCONSISTENT_INPUT
         );
         require(endDate <= block.timestamp, ErrorsLib.CANNOT_CLOSE_FUTURE_CYCLE);
 
@@ -435,7 +435,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Post obligations for this cycle
         for (uint256 i = 0; i < borrowers.length; i++) {
-            _postRepaymentObligation(id, borrowers[i], amounts[i], cycleId, endingBalances[i]);
+            _postRepaymentObligation(id, borrowers[i], repaymentBps[i], cycleId, endingBalances[i]);
         }
 
         emit EventsLib.PaymentCycleCreated(id, cycleId, startDate, endDate);
@@ -444,36 +444,46 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Add more obligations to the most recently closed cycle
     /// @param id Market ID
     /// @param borrowers Array of borrower addresses
-    /// @param amounts Array of amounts due
+    /// @param repaymentBps Array of repayment basis points (e.g., 500 = 5%)
     /// @param endingBalances Array of ending balances
     function addObligationsToLatestCycle(
         Id id,
         address[] calldata borrowers,
-        uint256[] calldata amounts,
+        uint256[] calldata repaymentBps,
         uint256[] calldata endingBalances
     ) external onlyCreditLine(id) {
         require(
-            borrowers.length == amounts.length && amounts.length == endingBalances.length, ErrorsLib.INCONSISTENT_INPUT
+            borrowers.length == repaymentBps.length && repaymentBps.length == endingBalances.length,
+            ErrorsLib.INCONSISTENT_INPUT
         );
         require(paymentCycle[id].length > 0, ErrorsLib.NO_CYCLES_EXIST);
 
         uint256 latestCycleId = paymentCycle[id].length - 1;
 
         for (uint256 i = 0; i < borrowers.length; i++) {
-            _postRepaymentObligation(id, borrowers[i], amounts[i], latestCycleId, endingBalances[i]);
+            _postRepaymentObligation(id, borrowers[i], repaymentBps[i], latestCycleId, endingBalances[i]);
         }
     }
 
     /// @notice Internal function to post individual obligation
     /// @param id Market ID
     /// @param borrower Borrower address
-    /// @param amount Amount due
+    /// @param repaymentBps Repayment percentage in basis points (e.g., 500 = 5%)
     /// @param cycleId Payment cycle ID
     /// @param endingBalance Balance at cycle end for penalty calculations
-    function _postRepaymentObligation(Id id, address borrower, uint256 amount, uint256 cycleId, uint256 endingBalance)
-        internal
-    {
+    function _postRepaymentObligation(
+        Id id,
+        address borrower,
+        uint256 repaymentBps,
+        uint256 cycleId,
+        uint256 endingBalance
+    ) internal {
+        require(repaymentBps <= 10000, "Repayment cannot exceed 100%");
+
         RepaymentObligation storage obligation = repaymentObligation[id][borrower];
+
+        // Calculate actual amount from basis points
+        uint256 amount = endingBalance * repaymentBps / 10000;
 
         // Only set cycleId and endingBalance for new obligations
         if (obligation.amountDue == 0) {

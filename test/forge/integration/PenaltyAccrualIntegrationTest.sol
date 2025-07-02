@@ -101,21 +101,21 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         // Create delinquent obligations for all
         uint256 cycleEndDate = block.timestamp - 10 days;
         address[] memory borrowers = new address[](3);
-        uint256[] memory amounts = new uint256[](3);
+        uint256[] memory repaymentBps = new uint256[](3);
         uint256[] memory balances = new uint256[](3);
 
         borrowers[0] = ALICE;
         borrowers[1] = BOB;
         borrowers[2] = CHARLIE;
-        amounts[0] = 1000e18;
-        amounts[1] = 2000e18;
-        amounts[2] = 1500e18;
+        repaymentBps[0] = 1000; // 10%
+        repaymentBps[1] = 1000; // 10%
+        repaymentBps[2] = 1000; // 10%
         balances[0] = 10000e18;
         balances[1] = 20000e18;
         balances[2] = 15000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Record initial states
         uint256 aliceAssetsBefore = morpho.expectedBorrowAssets(marketParams, ALICE);
@@ -175,15 +175,15 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         // Create delinquent obligation
         uint256 cycleEndDate = block.timestamp - 8 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = assetsAfterNormalAccrual;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Advance time and trigger penalty accrual
         vm.warp(block.timestamp + 3 days);
@@ -209,15 +209,15 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
 
         uint256 cycleEndDate = block.timestamp - 10 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Record supplier's position
         uint256 supplierSharesBefore = morpho.position(id, SUPPLIER).supplyShares;
@@ -251,15 +251,15 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
 
         uint256 cycleEndDate = block.timestamp - 10 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Advance time
         vm.warp(block.timestamp + 5 days);
@@ -314,15 +314,15 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         // Create obligation that's already old
         uint256 cycleEndDate = block.timestamp - 60 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = BOB;
-        amounts[0] = 2000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 20000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Bob is in default
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, BOB);
@@ -378,15 +378,15 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         // Create delinquent obligation only in first market
         uint256 cycleEndDate = block.timestamp - 10 days;
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 1000e18;
+        repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Record states
         uint256 market1AssetsBefore = morpho.expectedBorrowAssets(marketParams, ALICE);
@@ -443,18 +443,20 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
 
         // Create obligations for all in one transaction
         uint256 cycleEndDate = block.timestamp - 10 days;
-        uint256[] memory amounts = new uint256[](10);
+        uint256[] memory repaymentBps = new uint256[](10);
         uint256[] memory balances = new uint256[](10);
 
         for (uint256 i = 0; i < 10; i++) {
-            amounts[i] = 500e18;
+            repaymentBps[i] = 1000; // 10%
             balances[i] = 5000e18;
         }
 
         uint256 gasBefore = gasleft();
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, allBorrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, cycleEndDate, allBorrowers, repaymentBps, balances
+        );
 
         uint256 gasUsed = gasBefore - gasleft();
 
@@ -485,15 +487,17 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         // Step 2: Create Cycle 1 obligation that will make Alice delinquent
         uint256 cycle1EndDate = block.timestamp - 15 days; // Well past grace period
         address[] memory borrowers = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
 
         borrowers[0] = ALICE;
-        amounts[0] = 2000e18; // Cycle 1 obligation
+        repaymentBps[0] = 1000; // 10% // Cycle 1 obligation
         balances[0] = 20000e18; // Cycle 1 ending balance
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycle1EndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, cycle1EndDate, borrowers, repaymentBps, balances
+        );
 
         // Verify Alice is delinquent
         RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
@@ -509,11 +513,13 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         vm.warp(block.timestamp + 30 days); // New monthly cycle
         uint256 cycle2EndDate = block.timestamp - 2 days; // Recent cycle
 
-        amounts[0] = 2500e18; // Higher obligation for Cycle 2
+        repaymentBps[0] = 1000; // 10% - Higher obligation for Cycle 2
         balances[0] = 25000e18; // Higher ending balance for Cycle 2
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycle2EndDate, borrowers, amounts, balances);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, cycle2EndDate, borrowers, repaymentBps, balances
+        );
 
         // Verify the critical behavior: cycleId and endingBalance should NOT change
         // because Alice already had an outstanding obligation

@@ -424,25 +424,25 @@ interface IMorphoCredit {
     /// @param id Market ID
     /// @param endDate Cycle end date
     /// @param borrowers Array of borrower addresses
-    /// @param amounts Array of amounts due
+    /// @param repaymentBps Array of repayment basis points (e.g., 500 = 5%)
     /// @param endingBalances Array of ending balances for penalty calculations
     function closeCycleAndPostObligations(
         Id id,
         uint256 endDate,
         address[] calldata borrowers,
-        uint256[] calldata amounts,
+        uint256[] calldata repaymentBps,
         uint256[] calldata endingBalances
     ) external;
 
     /// @notice Add obligations to the latest payment cycle
     /// @param id Market ID
     /// @param borrowers Array of borrower addresses
-    /// @param amounts Array of amounts due
+    /// @param repaymentBps Array of repayment basis points (e.g., 500 = 5%)
     /// @param endingBalances Array of ending balances
     function addObligationsToLatestCycle(
         Id id,
         address[] calldata borrowers,
-        uint256[] calldata amounts,
+        uint256[] calldata repaymentBps,
         uint256[] calldata endingBalances
     ) external;
 
