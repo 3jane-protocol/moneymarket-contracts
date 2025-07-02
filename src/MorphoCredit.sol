@@ -152,9 +152,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         premiumAmount = totalGrowthAmount > baseGrowthActual ? totalGrowthAmount - baseGrowthActual : 0;
     }
 
-    /// @dev Calculate and apply premium with penalty rate if applicable
-    /// @return premiumAmount The calculated premium amount
-    function _calculatePremiumAmount(
+    /// @dev Calculate ongoing premium and penalty rate if already past grace period
+    /// @return premiumAmount The calculated premium amount (including penalty if applicable)
+    function _calculateOngoingPremiumAndPenalty(
         Id id,
         address borrower,
         BorrowerPremium memory premium,
@@ -187,7 +187,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         );
     }
 
-    /// @dev Calculate penalty if transitioning into penalty period
+    /// @dev Calculate initial penalty when first transitioning into penalty period
     /// @param id Market ID
     /// @param borrower Borrower address
     /// @param status Current repayment status
@@ -196,11 +196,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @return penaltyAmount The calculated penalty amount
     /// @dev Penalty calculation logic:
     /// 1. Only applies if status is Delinquent or Default
-    /// 2. Only for first accrual after grace period ends (lastAccrualTime <= cycleEndDate)
+    /// 2. Only for first accrual after grace period ends (lastAccrualTime <= cycleEndDate + gracePeriod)
     /// 3. Uses ending balance from obligation as the principal
     /// 4. Calculates penalty from cycle end date to now
     /// 5. Adds basePremiumAmount to current assets for accurate compounding
-    function _calculatePenaltyAmountIfNeeded(
+    function _calculateInitialPenalty(
         Id id,
         address borrower,
         RepaymentStatus status,
@@ -285,11 +285,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         );
 
         // Calculate premium and penalty accruals
-        uint256 premiumAmount = _calculatePremiumAmount(id, borrower, premium, status, borrowAssetsCurrent);
+        uint256 premiumAmount = _calculateOngoingPremiumAndPenalty(id, borrower, premium, status, borrowAssetsCurrent);
 
         // Calculate penalty if needed (handles first penalty accrual)
-        uint256 penaltyAmount =
-            _calculatePenaltyAmountIfNeeded(id, borrower, status, borrowAssetsCurrent, premiumAmount);
+        uint256 penaltyAmount = _calculateInitialPenalty(id, borrower, status, borrowAssetsCurrent, premiumAmount);
 
         uint256 totalPremium = premiumAmount + penaltyAmount;
 
@@ -486,9 +485,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // Update amount due
         obligation.amountDue = uint128(amount);
 
-        emit EventsLib.RepaymentObligationPosted(
-            id, borrower, obligation.amountDue, obligation.paymentCycleId, obligation.endingBalance
-        );
+        // Emit input parameters to reflect poster's intent
+        emit EventsLib.RepaymentObligationPosted(id, borrower, amount, cycleId, endingBalance);
     }
 
     /// @notice Get repayment status for a borrower
@@ -545,7 +543,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Accrue premium (including penalty if past grace period)
         _accrueBorrowerPremium(id, onBehalf);
-        
+
         // Track payment against obligation
         _trackObligationPayment(id, onBehalf, obligation, assets);
     }
