@@ -96,9 +96,6 @@ library ErrorsLib {
     /// @notice Thrown when the borrower has outstanding repayment obligations.
     string internal constant OUTSTANDING_REPAYMENT = "outstanding repayment";
 
-    /// @notice Thrown when trying to accrue during grace period.
-    string internal constant CANNOT_ACCRUE_GRACE_PERIOD = "cannot accrue during grace period";
-
     /// @notice Thrown when trying to close a future cycle.
     string internal constant CANNOT_CLOSE_FUTURE_CYCLE = "Cannot close future cycle";
 
