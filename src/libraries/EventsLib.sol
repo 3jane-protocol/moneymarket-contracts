@@ -172,11 +172,6 @@ library EventsLib {
         Id indexed id, address indexed borrower, uint256 amount, uint256 cycleId, uint256 endingBalance
     );
 
-    /// @notice Emitted when a repayment is paid against an obligation.
-    /// @param id Market id.
-    /// @param borrower Borrower address.
-    event RepaymentObligationPaid(Id indexed id, address indexed borrower, uint256 cycleId);
-
     /// @notice Emitted when a repayment is tracked against an obligation.
     /// @param id Market id.
     /// @param borrower Borrower address.
