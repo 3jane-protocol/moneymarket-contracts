@@ -538,14 +538,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// accrue (no penalty), allowing borrowers to clear obligations without penalty.
     /// During delinquent/default, penalty also accrues before payment is tracked.
     function _beforeRepay(MarketParams memory, Id id, address onBehalf, uint256 assets, uint256) internal override {
-        // Get current obligation
-        RepaymentObligation memory obligation = repaymentObligation[id][onBehalf];
-
         // Accrue premium (including penalty if past grace period)
         _accrueBorrowerPremium(id, onBehalf);
 
         // Track payment against obligation
-        _trackObligationPayment(id, onBehalf, obligation, assets);
+        _trackObligationPayment(id, onBehalf, assets);
     }
 
     /// @inheritdoc Morpho
@@ -571,19 +568,20 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @dev Track obligation payment and update state
     /// @param id Market ID
     /// @param borrower Borrower address
-    /// @param obligation Current repayment obligation
     /// @param payment Payment amount being made
     /// @dev Enforces minimum payment requirement - must pay full obligation
     /// This prevents partial payments that would leave borrowers in limbo
-    function _trackObligationPayment(Id id, address borrower, RepaymentObligation memory obligation, uint256 payment)
-        internal
-    {
-        require(payment >= obligation.amountDue, ErrorsLib.MUST_PAY_FULL_OBLIGATION);
+    function _trackObligationPayment(Id id, address borrower, uint256 payment) internal {
+        uint256 amountDue = repaymentObligation[id][borrower].amountDue;
 
-        obligation.amountDue = 0;
-        repaymentObligation[id][borrower] = obligation;
+        if (amountDue == 0) return;
 
-        emit EventsLib.RepaymentObligationPaid(id, borrower, obligation.paymentCycleId);
+        require(payment >= amountDue, ErrorsLib.MUST_PAY_FULL_OBLIGATION);
+
+        // Clear the obligation
+        repaymentObligation[id][borrower].amountDue = 0;
+
+        emit EventsLib.RepaymentTracked(id, borrower, payment, 0);
     }
 
     /* EXTERNAL VIEW FUNCTIONS */
