@@ -92,4 +92,25 @@ library ErrorsLib {
 
     /// @notice Thrown when the premium rate exceeds the maximum allowed.
     string internal constant PREMIUM_RATE_TOO_HIGH = "premium rate too high";
+
+    /// @notice Thrown when the borrower has outstanding repayment obligations.
+    string internal constant OUTSTANDING_REPAYMENT = "outstanding repayment";
+
+    /// @notice Thrown when trying to close a future cycle.
+    string internal constant CANNOT_CLOSE_FUTURE_CYCLE = "Cannot close future cycle";
+
+    /// @notice Thrown when cycle duration is invalid.
+    string internal constant INVALID_CYCLE_DURATION = "Invalid cycle duration";
+
+    /// @notice Thrown when no payment cycles exist.
+    string internal constant NO_CYCLES_EXIST = "No cycles exist";
+
+    /// @notice Thrown when cycle ID is invalid.
+    string internal constant INVALID_CYCLE_ID = "Invalid cycle ID";
+
+    /// @notice Thrown when partial payment is attempted but full obligation payment is required.
+    string internal constant MUST_PAY_FULL_OBLIGATION = "Must pay full obligation amount";
+
+    /// @notice Thrown when repayment basis points exceed 100%.
+    string internal constant REPAYMENT_EXCEEDS_HUNDRED_PERCENT = "repayment exceeds 100%";
 }

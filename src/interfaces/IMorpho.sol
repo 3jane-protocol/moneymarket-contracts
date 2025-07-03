@@ -43,6 +43,32 @@ struct BorrowerPremium {
     uint256 borrowAssetsAtLastAccrual;
 }
 
+/// @notice Repayment tracking structures
+enum RepaymentStatus {
+    Current,
+    GracePeriod,
+    Delinquent,
+    Default
+}
+
+struct PaymentCycle {
+    uint256 endDate;
+}
+
+struct RepaymentObligation {
+    uint128 paymentCycleId;
+    uint128 amountDue;
+    uint256 endingBalance;
+}
+
+/// @notice Market-specific credit terms for borrowers
+struct MarketCreditTerms {
+    uint256 gracePeriodDuration; // Duration of grace period after cycle end
+    uint256 delinquencyPeriodDuration; // Duration of delinquency period before default
+    uint256 minOutstanding; // Minimum outstanding loan balance to prevent dust
+    uint256 penaltyRatePerSecond; // Penalty rate per second for delinquent borrowers
+}
+
 struct Authorization {
     address authorizer;
     address authorized;
@@ -393,4 +419,76 @@ interface IMorphoCredit {
     /// @param borrowers Array of borrower addresses
     /// @dev Gas usage scales linearly with array size. Callers should manage batch sizes based on block gas limits.
     function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) external;
+
+    /// @notice Close a payment cycle and post obligations for multiple borrowers
+    /// @param id Market ID
+    /// @param endDate Cycle end date
+    /// @param borrowers Array of borrower addresses
+    /// @param repaymentBps Array of repayment basis points (e.g., 500 = 5%)
+    /// @param endingBalances Array of ending balances for penalty calculations
+    function closeCycleAndPostObligations(
+        Id id,
+        uint256 endDate,
+        address[] calldata borrowers,
+        uint256[] calldata repaymentBps,
+        uint256[] calldata endingBalances
+    ) external;
+
+    /// @notice Add obligations to the latest payment cycle
+    /// @param id Market ID
+    /// @param borrowers Array of borrower addresses
+    /// @param repaymentBps Array of repayment basis points (e.g., 500 = 5%)
+    /// @param endingBalances Array of ending balances
+    function addObligationsToLatestCycle(
+        Id id,
+        address[] calldata borrowers,
+        uint256[] calldata repaymentBps,
+        uint256[] calldata endingBalances
+    ) external;
+
+    /// @notice Get repayment status for a borrower
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @return status The borrower's current repayment status
+    function getRepaymentStatus(Id id, address borrower) external view returns (RepaymentStatus status);
+
+    /// @notice Check if borrower can borrow
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @return Whether the borrower can take new loans
+    function canBorrow(Id id, address borrower) external view returns (bool);
+
+    /// @notice Get the ID of the latest payment cycle
+    /// @param id Market ID
+    /// @return The latest cycle ID
+    function getLatestCycleId(Id id) external view returns (uint256);
+
+    /// @notice Get both start and end dates for a given cycle
+    /// @param id Market ID
+    /// @param cycleId Cycle ID
+    /// @return startDate The cycle start date
+    /// @return endDate The cycle end date
+    function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate);
+
+    /// @notice Get market-specific credit terms
+    /// @param id Market ID
+    /// @return terms The credit terms for the market
+    function getMarketCreditTerms(Id id) external pure returns (MarketCreditTerms memory terms);
+
+    /// @notice Get repayment obligation for a borrower
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @return cycleId The payment cycle ID
+    /// @return amountDue The amount due
+    /// @return endingBalance The ending balance for penalty calculations
+    function repaymentObligation(Id id, address borrower)
+        external
+        view
+        returns (uint128 cycleId, uint128 amountDue, uint256 endingBalance);
+
+    /// @notice Get payment cycle end date
+    /// @param id Market ID
+    /// @param cycleId Cycle ID
+    /// @return endDate The cycle end date
+    function paymentCycle(Id id, uint256 cycleId) external view returns (uint256 endDate);
 }

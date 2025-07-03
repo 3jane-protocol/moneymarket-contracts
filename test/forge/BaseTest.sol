@@ -40,6 +40,16 @@ contract BaseTest is Test {
     uint256 internal constant MAX_COLLATERAL_PRICE = 1e40;
     uint256 internal constant MAX_COLLATERAL_ASSETS = type(uint128).max;
 
+    // Repayment tracking constants
+    uint256 internal constant GRACE_PERIOD_DURATION = 7 days;
+    uint256 internal constant DELINQUENCY_PERIOD_DURATION = 23 days;
+    uint256 internal constant CYCLE_DURATION = 30 days;
+
+    // Rate constants (per second)
+    uint256 internal constant BASE_RATE_PER_SECOND = 3170979198; // ~10% APR
+    uint256 internal constant PENALTY_RATE_PER_SECOND = 3170979198; // ~10% APR
+    uint256 internal constant PREMIUM_RATE_PER_SECOND = 634195840; // ~2% APR
+
     address internal SUPPLIER;
     address internal BORROWER;
     address internal REPAYER;
@@ -401,5 +411,124 @@ contract BaseTest is Test {
         users = users.removeAll(address(0));
 
         return _randomCandidate(users, seed);
+    }
+
+    // ============ Repayment Testing Helpers ============
+
+    function _createRepaymentObligation(
+        Id _id,
+        address borrower,
+        uint256 amountDue,
+        uint256 endingBalance,
+        uint256 daysAgo
+    ) internal {
+        uint256 cycleEndDate = block.timestamp - (daysAgo * 1 days);
+        address[] memory borrowers = new address[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
+        uint256[] memory balances = new uint256[](1);
+
+        borrowers[0] = borrower;
+        // Calculate basis points from amountDue and endingBalance
+        repaymentBps[0] = amountDue * 10000 / endingBalance;
+        balances[0] = endingBalance;
+
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            _id, cycleEndDate, borrowers, repaymentBps, balances
+        );
+    }
+
+    // Overloaded version that accepts repaymentBps directly
+    function _createRepaymentObligationBps(
+        Id _id,
+        address borrower,
+        uint256 repaymentBps,
+        uint256 endingBalance,
+        uint256 daysAgo
+    ) internal {
+        uint256 cycleEndDate = block.timestamp - (daysAgo * 1 days);
+        address[] memory borrowers = new address[](1);
+        uint256[] memory repaymentBpsArray = new uint256[](1);
+        uint256[] memory balances = new uint256[](1);
+
+        borrowers[0] = borrower;
+        repaymentBpsArray[0] = repaymentBps;
+        balances[0] = endingBalance;
+
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            _id, cycleEndDate, borrowers, repaymentBpsArray, balances
+        );
+    }
+
+    function _createMultipleObligations(
+        Id _id,
+        address[] memory borrowers,
+        uint256[] memory repaymentBps,
+        uint256[] memory balances,
+        uint256 daysAgo
+    ) internal {
+        uint256 cycleEndDate = block.timestamp - (daysAgo * 1 days);
+
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            _id, cycleEndDate, borrowers, repaymentBps, balances
+        );
+    }
+
+    function _makePayment(address borrower, uint256 amount) internal {
+        deal(address(loanToken), borrower, amount);
+        vm.prank(borrower);
+        morpho.repay(marketParams, amount, 0, borrower, "");
+    }
+
+    function _triggerAccrual() internal {
+        // Supply 1 wei to trigger accrual without significantly changing the market
+        deal(address(loanToken), address(this), 1);
+        loanToken.approve(address(morpho), 1);
+        morpho.supply(marketParams, 1, 0, address(this), "");
+    }
+
+    function _triggerBorrowerAccrual(address borrower) internal {
+        // Trigger borrower-specific accrual using the public accrueBorrowerPremium function
+        // This works even for borrowers with outstanding repayments
+        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, borrower);
+    }
+
+    function _getRepaymentDetails(Id _id, address borrower)
+        internal
+        view
+        returns (uint128 cycleId, uint128 amountDue, uint256 endingBalance, RepaymentStatus status)
+    {
+        (cycleId, amountDue, endingBalance) = IMorphoCredit(address(morpho)).repaymentObligation(_id, borrower);
+        status = IMorphoCredit(address(morpho)).getRepaymentStatus(_id, borrower);
+    }
+
+    function _calculatePenaltyInterest(uint256 endingBalance, uint256 penaltyDuration, uint256 penaltyRate)
+        internal
+        pure
+        returns (uint256)
+    {
+        return endingBalance.wMulDown(penaltyRate.wTaylorCompounded(penaltyDuration));
+    }
+
+    function _assertRepaymentStatus(Id _id, address borrower, RepaymentStatus expectedStatus) internal {
+        RepaymentStatus actualStatus = IMorphoCredit(address(morpho)).getRepaymentStatus(_id, borrower);
+        assertEq(uint256(actualStatus), uint256(expectedStatus), "Unexpected repayment status");
+    }
+
+    function _setupBorrowerWithLoan(address borrower, uint256 creditLimit, uint128 premiumRate, uint256 borrowAmount)
+        internal
+    {
+        // Setup credit line
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, borrower, creditLimit, premiumRate);
+
+        // Execute borrow
+        if (borrowAmount > 0) {
+            deal(address(loanToken), borrower, borrowAmount);
+            vm.prank(borrower);
+            morpho.borrow(marketParams, borrowAmount, 0, borrower, borrower);
+        }
     }
 }
