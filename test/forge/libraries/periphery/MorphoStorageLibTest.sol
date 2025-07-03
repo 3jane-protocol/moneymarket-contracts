@@ -5,6 +5,7 @@ import {MorphoStorageLib} from "../../../../src/libraries/periphery/MorphoStorag
 import {SigUtils} from "../../helpers/SigUtils.sol";
 
 import "../../BaseTest.sol";
+import {IMorphoCredit} from "../../../../src/interfaces/IMorpho.sol";
 
 contract MorphoStorageLibTest is BaseTest {
     using MathLib for uint256;
@@ -31,15 +32,13 @@ contract MorphoStorageLibTest is BaseTest {
             BORROWER, amountBorrowed.wDivUp(marketParams.lltv).mulDivUp(ORACLE_PRICE_SCALE, collateralPrice)
         );
 
-        vm.startPrank(BORROWER);
-        morpho.supplyCollateral(
-            marketParams,
-            amountBorrowed.wDivUp(marketParams.lltv).mulDivUp(ORACLE_PRICE_SCALE, collateralPrice),
-            BORROWER,
-            hex""
-        );
+        // Credit line setup needed for BORROWER
+        uint256 creditAmount = amountBorrowed.wDivUp(marketParams.lltv).mulDivUp(ORACLE_PRICE_SCALE, collateralPrice);
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, creditAmount, 0);
+
+        vm.prank(BORROWER);
         morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
-        vm.stopPrank();
 
         uint256 privateKey = 1;
         address authorizer = vm.addr(privateKey);

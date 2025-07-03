@@ -93,23 +93,6 @@ library EventsLib {
     /// @param shares The amount of shares burned.
     event Repay(Id indexed id, address indexed caller, address indexed onBehalf, uint256 assets, uint256 shares);
 
-    /// @notice Emitted on supply of collateral.
-    /// @param id The market id.
-    /// @param caller The caller.
-    /// @param onBehalf The owner of the modified position.
-    /// @param assets The amount of collateral supplied.
-    event SupplyCollateral(Id indexed id, address indexed caller, address indexed onBehalf, uint256 assets);
-
-    /// @notice Emitted on withdrawal of collateral.
-    /// @param id The market id.
-    /// @param caller The caller.
-    /// @param onBehalf The owner of the modified position.
-    /// @param receiver The address that received the withdrawn collateral.
-    /// @param assets The amount of collateral withdrawn.
-    event WithdrawCollateral(
-        Id indexed id, address caller, address indexed onBehalf, address indexed receiver, uint256 assets
-    );
-
     /// @notice Emitted on liquidation of a position.
     /// @param id The market id.
     /// @param caller The caller.

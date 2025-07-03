@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
+import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 
 contract WithdrawIntegrationTest is BaseTest {
     using MathLib for uint256;
@@ -59,19 +60,21 @@ contract WithdrawIntegrationTest is BaseTest {
     }
 
     function testWithdrawInsufficientLiquidity(uint256 amountSupplied, uint256 amountBorrowed) public {
-        uint256 amountCollateral;
-        (amountCollateral, amountBorrowed,) = _boundHealthyPosition(0, amountBorrowed, oracle.price());
+        // For credit-based lending: test withdrawal when there's insufficient liquidity
+        amountBorrowed = bound(amountBorrowed, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
         amountSupplied = bound(amountSupplied, amountBorrowed + 1, MAX_TEST_AMOUNT + 1);
+        uint256 creditLimit = bound(amountBorrowed, amountBorrowed, MAX_TEST_AMOUNT);
 
         loanToken.setBalance(SUPPLIER, amountSupplied);
 
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, amountSupplied, 0, SUPPLIER, hex"");
 
-        collateralToken.setBalance(BORROWER, amountCollateral);
+        // Set up credit line for BORROWER
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, creditLimit, 0);
 
         vm.startPrank(BORROWER);
-        morpho.supplyCollateral(marketParams, amountCollateral, BORROWER, hex"");
         morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, RECEIVER);
         vm.stopPrank();
 
@@ -81,20 +84,25 @@ contract WithdrawIntegrationTest is BaseTest {
     }
 
     function testWithdrawAssets(uint256 amountSupplied, uint256 amountBorrowed, uint256 amountWithdrawn) public {
-        uint256 amountCollateral;
-        (amountCollateral, amountBorrowed,) = _boundHealthyPosition(0, amountBorrowed, oracle.price());
-        vm.assume(amountBorrowed < MAX_TEST_AMOUNT);
+        // For credit-based lending: test withdrawal with active borrowing
+        amountBorrowed = bound(amountBorrowed, 0, MAX_TEST_AMOUNT - 1);
         amountSupplied = bound(amountSupplied, amountBorrowed + 1, MAX_TEST_AMOUNT);
         amountWithdrawn = bound(amountWithdrawn, 1, amountSupplied - amountBorrowed);
 
+        uint256 creditLimit = bound(amountBorrowed, amountBorrowed, MAX_TEST_AMOUNT);
+
         loanToken.setBalance(address(this), amountSupplied);
-        collateralToken.setBalance(BORROWER, amountCollateral);
         morpho.supply(marketParams, amountSupplied, 0, address(this), hex"");
 
-        vm.startPrank(BORROWER);
-        morpho.supplyCollateral(marketParams, amountCollateral, BORROWER, hex"");
-        morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
-        vm.stopPrank();
+        if (amountBorrowed > 0) {
+            // Set up credit line for BORROWER
+            vm.prank(marketParams.creditLine);
+            IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, creditLimit, 0);
+
+            vm.startPrank(BORROWER);
+            morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
+            vm.stopPrank();
+        }
 
         uint256 expectedSupplyShares = amountSupplied.toSharesDown(0, 0);
         uint256 expectedWithdrawnShares = amountWithdrawn.toSharesUp(amountSupplied, expectedSupplyShares);
@@ -119,9 +127,11 @@ contract WithdrawIntegrationTest is BaseTest {
     }
 
     function testWithdrawShares(uint256 amountSupplied, uint256 amountBorrowed, uint256 sharesWithdrawn) public {
-        uint256 amountCollateral;
-        (amountCollateral, amountBorrowed,) = _boundHealthyPosition(0, amountBorrowed, oracle.price());
+        // For credit-based lending: test share-based withdrawal
+        amountBorrowed = bound(amountBorrowed, 0, MAX_TEST_AMOUNT / 2);
         amountSupplied = bound(amountSupplied, amountBorrowed, MAX_TEST_AMOUNT);
+
+        uint256 creditLimit = bound(amountBorrowed, amountBorrowed, MAX_TEST_AMOUNT);
 
         uint256 expectedSupplyShares = amountSupplied.toSharesDown(0, 0);
         uint256 availableLiquidity = amountSupplied - amountBorrowed;
@@ -132,13 +142,17 @@ contract WithdrawIntegrationTest is BaseTest {
         uint256 expectedAmountWithdrawn = sharesWithdrawn.toAssetsDown(amountSupplied, expectedSupplyShares);
 
         loanToken.setBalance(address(this), amountSupplied);
-        collateralToken.setBalance(BORROWER, amountCollateral);
         morpho.supply(marketParams, amountSupplied, 0, address(this), hex"");
 
-        vm.startPrank(BORROWER);
-        morpho.supplyCollateral(marketParams, amountCollateral, BORROWER, hex"");
-        morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
-        vm.stopPrank();
+        if (amountBorrowed > 0) {
+            // Set up credit line for BORROWER
+            vm.prank(marketParams.creditLine);
+            IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, creditLimit, 0);
+
+            vm.startPrank(BORROWER);
+            morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
+            vm.stopPrank();
+        }
 
         vm.expectEmit(true, true, true, true, address(morpho));
         emit EventsLib.Withdraw(id, address(this), address(this), RECEIVER, expectedAmountWithdrawn, sharesWithdrawn);
@@ -163,19 +177,27 @@ contract WithdrawIntegrationTest is BaseTest {
     function testWithdrawAssetsOnBehalf(uint256 amountSupplied, uint256 amountBorrowed, uint256 amountWithdrawn)
         public
     {
-        uint256 amountCollateral;
-        (amountCollateral, amountBorrowed,) = _boundHealthyPosition(0, amountBorrowed, oracle.price());
-        vm.assume(amountBorrowed < MAX_TEST_AMOUNT);
+        // For credit-based lending: test on-behalf withdrawal
+        amountBorrowed = bound(amountBorrowed, 0, MAX_TEST_AMOUNT - 1);
         amountSupplied = bound(amountSupplied, amountBorrowed + 1, MAX_TEST_AMOUNT);
         amountWithdrawn = bound(amountWithdrawn, 1, amountSupplied - amountBorrowed);
 
+        uint256 creditLimit = bound(amountBorrowed, amountBorrowed, MAX_TEST_AMOUNT);
+
         loanToken.setBalance(ONBEHALF, amountSupplied);
-        collateralToken.setBalance(ONBEHALF, amountCollateral);
 
         vm.startPrank(ONBEHALF);
-        morpho.supplyCollateral(marketParams, amountCollateral, ONBEHALF, hex"");
         morpho.supply(marketParams, amountSupplied, 0, ONBEHALF, hex"");
-        morpho.borrow(marketParams, amountBorrowed, 0, ONBEHALF, ONBEHALF);
+
+        if (amountBorrowed > 0) {
+            // Set up credit line for ONBEHALF
+            vm.stopPrank();
+            vm.prank(marketParams.creditLine);
+            IMorphoCredit(address(morpho)).setCreditLine(id, ONBEHALF, creditLimit, 0);
+            vm.startPrank(ONBEHALF);
+
+            morpho.borrow(marketParams, amountBorrowed, 0, ONBEHALF, ONBEHALF);
+        }
         vm.stopPrank();
 
         uint256 expectedSupplyShares = amountSupplied.toSharesDown(0, 0);
@@ -206,9 +228,11 @@ contract WithdrawIntegrationTest is BaseTest {
     function testWithdrawSharesOnBehalf(uint256 amountSupplied, uint256 amountBorrowed, uint256 sharesWithdrawn)
         public
     {
-        uint256 amountCollateral;
-        (amountCollateral, amountBorrowed,) = _boundHealthyPosition(0, amountBorrowed, oracle.price());
+        // For credit-based lending: test share-based on-behalf withdrawal
+        amountBorrowed = bound(amountBorrowed, 0, MAX_TEST_AMOUNT / 2);
         amountSupplied = bound(amountSupplied, amountBorrowed, MAX_TEST_AMOUNT);
+
+        uint256 creditLimit = bound(amountBorrowed, amountBorrowed, MAX_TEST_AMOUNT);
 
         uint256 expectedSupplyShares = amountSupplied.toSharesDown(0, 0);
         uint256 availableLiquidity = amountSupplied - amountBorrowed;
@@ -219,12 +243,19 @@ contract WithdrawIntegrationTest is BaseTest {
         uint256 expectedAmountWithdrawn = sharesWithdrawn.toAssetsDown(amountSupplied, expectedSupplyShares);
 
         loanToken.setBalance(ONBEHALF, amountSupplied);
-        collateralToken.setBalance(ONBEHALF, amountCollateral);
 
         vm.startPrank(ONBEHALF);
-        morpho.supplyCollateral(marketParams, amountCollateral, ONBEHALF, hex"");
         morpho.supply(marketParams, amountSupplied, 0, ONBEHALF, hex"");
-        morpho.borrow(marketParams, amountBorrowed, 0, ONBEHALF, ONBEHALF);
+
+        if (amountBorrowed > 0) {
+            // Set up credit line for ONBEHALF
+            vm.stopPrank();
+            vm.prank(marketParams.creditLine);
+            IMorphoCredit(address(morpho)).setCreditLine(id, ONBEHALF, creditLimit, 0);
+            vm.startPrank(ONBEHALF);
+
+            morpho.borrow(marketParams, amountBorrowed, 0, ONBEHALF, ONBEHALF);
+        }
         vm.stopPrank();
 
         uint256 receiverBalanceBefore = loanToken.balanceOf(RECEIVER);

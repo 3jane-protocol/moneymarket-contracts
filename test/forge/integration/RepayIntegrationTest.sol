@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
+import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 
 contract RepayIntegrationTest is BaseTest {
     using MathLib for uint256;
@@ -34,30 +35,27 @@ contract RepayIntegrationTest is BaseTest {
         morpho.repay(marketParams, isAmount ? input : 0, isAmount ? 0 : input, address(0), hex"");
     }
 
-    function testRepayAssets(
-        uint256 amountSupplied,
-        uint256 amountCollateral,
-        uint256 amountBorrowed,
-        uint256 amountRepaid,
-        uint256 priceCollateral
-    ) public {
-        (amountCollateral, amountBorrowed, priceCollateral) =
-            _boundHealthyPosition(amountCollateral, amountBorrowed, priceCollateral);
-
+    function testRepayAssets(uint256 amountSupplied, uint256 creditLimit, uint256 amountBorrowed, uint256 amountRepaid)
+        public
+    {
+        // For credit-based lending: set up credit limit for borrowing
+        amountBorrowed = bound(amountBorrowed, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
+        creditLimit = bound(creditLimit, amountBorrowed, MAX_TEST_AMOUNT);
         amountSupplied = bound(amountSupplied, amountBorrowed, MAX_TEST_AMOUNT);
-        _supply(amountSupplied);
 
-        oracle.setPrice(priceCollateral);
+        _supply(amountSupplied);
 
         amountRepaid = bound(amountRepaid, 1, amountBorrowed);
         uint256 expectedBorrowShares = amountBorrowed.toSharesUp(0, 0);
         uint256 expectedRepaidShares = amountRepaid.toSharesDown(amountBorrowed, expectedBorrowShares);
 
-        collateralToken.setBalance(ONBEHALF, amountCollateral);
         loanToken.setBalance(REPAYER, amountRepaid);
 
+        // Set up credit line for ONBEHALF
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, ONBEHALF, creditLimit, 0);
+
         vm.startPrank(ONBEHALF);
-        morpho.supplyCollateral(marketParams, amountCollateral, ONBEHALF, hex"");
         morpho.borrow(marketParams, amountBorrowed, 0, ONBEHALF, RECEIVER);
         vm.stopPrank();
 
@@ -77,30 +75,27 @@ contract RepayIntegrationTest is BaseTest {
         assertEq(loanToken.balanceOf(address(morpho)), amountSupplied - amountBorrowed + amountRepaid, "morpho balance");
     }
 
-    function testRepayShares(
-        uint256 amountSupplied,
-        uint256 amountCollateral,
-        uint256 amountBorrowed,
-        uint256 sharesRepaid,
-        uint256 priceCollateral
-    ) public {
-        (amountCollateral, amountBorrowed, priceCollateral) =
-            _boundHealthyPosition(amountCollateral, amountBorrowed, priceCollateral);
-
+    function testRepayShares(uint256 amountSupplied, uint256 creditLimit, uint256 amountBorrowed, uint256 sharesRepaid)
+        public
+    {
+        // For credit-based lending: set up credit limit for borrowing
+        amountBorrowed = bound(amountBorrowed, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
+        creditLimit = bound(creditLimit, amountBorrowed, MAX_TEST_AMOUNT);
         amountSupplied = bound(amountSupplied, amountBorrowed, MAX_TEST_AMOUNT);
-        _supply(amountSupplied);
 
-        oracle.setPrice(priceCollateral);
+        _supply(amountSupplied);
 
         uint256 expectedBorrowShares = amountBorrowed.toSharesUp(0, 0);
         sharesRepaid = bound(sharesRepaid, 1, expectedBorrowShares);
         uint256 expectedAmountRepaid = sharesRepaid.toAssetsUp(amountBorrowed, expectedBorrowShares);
 
-        collateralToken.setBalance(ONBEHALF, amountCollateral);
         loanToken.setBalance(REPAYER, expectedAmountRepaid);
 
+        // Set up credit line for ONBEHALF
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, ONBEHALF, creditLimit, 0);
+
         vm.startPrank(ONBEHALF);
-        morpho.supplyCollateral(marketParams, amountCollateral, ONBEHALF, hex"");
         morpho.borrow(marketParams, amountBorrowed, 0, ONBEHALF, RECEIVER);
         vm.stopPrank();
 
@@ -134,9 +129,9 @@ contract RepayIntegrationTest is BaseTest {
 
         morpho.supply(marketParams, 0, shares, SUPPLIER, hex"");
 
-        collateralToken.setBalance(address(this), HIGH_COLLATERAL_AMOUNT);
-
-        morpho.supplyCollateral(marketParams, HIGH_COLLATERAL_AMOUNT, BORROWER, hex"");
+        // Set up credit line for BORROWER
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, assets, 0);
 
         vm.prank(BORROWER);
         morpho.borrow(marketParams, 0, shares, BORROWER, RECEIVER);

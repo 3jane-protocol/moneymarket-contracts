@@ -227,27 +227,6 @@ interface IMorphoBase {
         bytes memory data
     ) external returns (uint256 assetsRepaid, uint256 sharesRepaid);
 
-    /// @notice Supplies `assets` of collateral on behalf of `onBehalf`, optionally calling back the caller's
-    /// `onMorphoSupplyCollateral` function with the given `data`.
-    /// @dev Interest are not accrued since it's not required and it saves gas.
-    /// @dev Supplying a large amount can revert for overflow.
-    /// @param marketParams The market to supply collateral to.
-    /// @param assets The amount of collateral to supply.
-    /// @param onBehalf The address that will own the increased collateral position.
-    /// @param data Arbitrary data to pass to the `onMorphoSupplyCollateral` callback. Pass empty data if not needed.
-    function supplyCollateral(MarketParams memory marketParams, uint256 assets, address onBehalf, bytes memory data)
-        external;
-
-    /// @notice Withdraws `assets` of collateral on behalf of `onBehalf` and sends the assets to `receiver`.
-    /// @dev `msg.sender` must be authorized to manage `onBehalf`'s positions.
-    /// @dev Withdrawing an amount corresponding to more collateral than supplied will revert for underflow.
-    /// @param marketParams The market to withdraw collateral from.
-    /// @param assets The amount of collateral to withdraw.
-    /// @param onBehalf The address of the owner of the collateral position.
-    /// @param receiver The address that will receive the collateral assets.
-    function withdrawCollateral(MarketParams memory marketParams, uint256 assets, address onBehalf, address receiver)
-        external;
-
     /// @notice Liquidates the given `repaidShares` of debt asset or seize the given `seizedAssets` of collateral on the
     /// given market `marketParams` of the given `borrower`'s position, optionally calling back the caller's
     /// `onMorphoLiquidate` function with the given `data`.

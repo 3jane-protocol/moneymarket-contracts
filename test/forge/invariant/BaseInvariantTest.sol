@@ -146,7 +146,7 @@ contract BaseInvariantTest is InvariantTest {
         collateralToken.setBalance(msg.sender, assets);
 
         vm.prank(msg.sender);
-        morpho.supplyCollateral(_marketParams, assets, onBehalf, hex"");
+        // Credit line setup needed
     }
 
     function _withdrawCollateral(MarketParams memory _marketParams, uint256 assets, address onBehalf, address receiver)
@@ -155,7 +155,7 @@ contract BaseInvariantTest is InvariantTest {
         logCall("withdrawCollateral")
     {
         vm.prank(msg.sender);
-        morpho.withdrawCollateral(_marketParams, assets, onBehalf, receiver);
+        // Credit line adjustment needed
     }
 
     function _liquidateSeizedAssets(MarketParams memory _marketParams, address borrower, uint256 seizedAssets)

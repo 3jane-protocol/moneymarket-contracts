@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
+import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 
 contract BorrowIntegrationTest is BaseTest {
     using MathLib for uint256;
@@ -45,86 +46,70 @@ contract BorrowIntegrationTest is BaseTest {
 
     function testBorrowUnauthorized(address supplier, address attacker, uint256 amount) public {
         vm.assume(supplier != attacker && supplier != address(0));
-        (uint256 amountCollateral, uint256 amountBorrowed,) = _boundHealthyPosition(amount, amount, ORACLE_PRICE_SCALE);
+        amount = bound(amount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
 
-        _supply(amountBorrowed);
+        _supply(amount);
 
-        collateralToken.setBalance(supplier, amountCollateral);
-
-        vm.startPrank(supplier);
-        collateralToken.approve(address(morpho), amountCollateral);
-        morpho.supplyCollateral(marketParams, amountCollateral, supplier, hex"");
+        // Set up credit line for supplier
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, supplier, amount, 0);
 
         vm.startPrank(attacker);
         vm.expectRevert(bytes(ErrorsLib.UNAUTHORIZED));
-        morpho.borrow(marketParams, amountBorrowed, 0, supplier, RECEIVER);
+        morpho.borrow(marketParams, amount, 0, supplier, RECEIVER);
     }
 
-    function testBorrowUnhealthyPosition(
-        uint256 amountCollateral,
-        uint256 amountSupplied,
-        uint256 amountBorrowed,
-        uint256 priceCollateral
-    ) public {
-        (amountCollateral, amountBorrowed, priceCollateral) =
-            _boundUnhealthyPosition(amountCollateral, amountBorrowed, priceCollateral);
-
+    function testBorrowUnhealthyPosition(uint256 creditLimit, uint256 amountSupplied, uint256 amountBorrowed) public {
+        // For credit-based lending: unhealthy = trying to borrow more than credit limit
+        creditLimit = bound(creditLimit, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT / 2);
+        amountBorrowed = bound(amountBorrowed, creditLimit + 1, MAX_TEST_AMOUNT);
         amountSupplied = bound(amountSupplied, amountBorrowed, MAX_TEST_AMOUNT);
+
         _supply(amountSupplied);
 
-        oracle.setPrice(priceCollateral);
+        // Set up credit line for borrower
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, creditLimit, 0);
 
-        collateralToken.setBalance(BORROWER, amountCollateral);
-
-        vm.startPrank(BORROWER);
-        morpho.supplyCollateral(marketParams, amountCollateral, BORROWER, hex"");
+        vm.prank(BORROWER);
         vm.expectRevert(bytes(ErrorsLib.INSUFFICIENT_COLLATERAL));
         morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
         vm.stopPrank();
     }
 
-    function testBorrowUnsufficientLiquidity(
-        uint256 amountCollateral,
-        uint256 amountSupplied,
-        uint256 amountBorrowed,
-        uint256 priceCollateral
-    ) public {
-        (amountCollateral, amountBorrowed, priceCollateral) =
-            _boundHealthyPosition(amountCollateral, amountBorrowed, priceCollateral);
-        vm.assume(amountBorrowed >= 2);
+    function testBorrowUnsufficientLiquidity(uint256 creditLimit, uint256 amountSupplied, uint256 amountBorrowed)
+        public
+    {
+        // For credit-based lending: ensure credit is sufficient but liquidity is not
+        amountBorrowed = bound(amountBorrowed, 2, MAX_TEST_AMOUNT);
+        creditLimit = bound(creditLimit, amountBorrowed, MAX_TEST_AMOUNT);
         amountSupplied = bound(amountSupplied, 1, amountBorrowed - 1);
+
         _supply(amountSupplied);
 
-        oracle.setPrice(priceCollateral);
+        // Set up credit line for borrower
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, creditLimit, 0);
 
-        collateralToken.setBalance(BORROWER, amountCollateral);
-
-        vm.startPrank(BORROWER);
-        morpho.supplyCollateral(marketParams, amountCollateral, BORROWER, hex"");
+        vm.prank(BORROWER);
         vm.expectRevert(bytes(ErrorsLib.INSUFFICIENT_LIQUIDITY));
         morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
         vm.stopPrank();
     }
 
-    function testBorrowAssets(
-        uint256 amountCollateral,
-        uint256 amountSupplied,
-        uint256 amountBorrowed,
-        uint256 priceCollateral
-    ) public {
-        (amountCollateral, amountBorrowed, priceCollateral) =
-            _boundHealthyPosition(amountCollateral, amountBorrowed, priceCollateral);
-
+    function testBorrowAssets(uint256 creditLimit, uint256 amountSupplied, uint256 amountBorrowed) public {
+        // For credit-based lending: healthy position = borrowing within credit limit
+        amountBorrowed = bound(amountBorrowed, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
+        creditLimit = bound(creditLimit, amountBorrowed, MAX_TEST_AMOUNT);
         amountSupplied = bound(amountSupplied, amountBorrowed, MAX_TEST_AMOUNT);
+
         _supply(amountSupplied);
 
-        oracle.setPrice(priceCollateral);
-
-        collateralToken.setBalance(BORROWER, amountCollateral);
+        // Set up credit line for borrower
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, creditLimit, 0);
 
         vm.startPrank(BORROWER);
-        morpho.supplyCollateral(marketParams, amountCollateral, BORROWER, hex"");
-
         uint256 expectedBorrowShares = amountBorrowed.toSharesUp(0, 0);
 
         vm.expectEmit(true, true, true, true, address(morpho));
@@ -142,34 +127,23 @@ contract BorrowIntegrationTest is BaseTest {
         assertEq(loanToken.balanceOf(address(morpho)), amountSupplied - amountBorrowed, "morpho balance");
     }
 
-    function testBorrowShares(
-        uint256 amountCollateral,
-        uint256 amountSupplied,
-        uint256 sharesBorrowed,
-        uint256 priceCollateral
-    ) public {
-        priceCollateral = bound(priceCollateral, MIN_COLLATERAL_PRICE, MAX_COLLATERAL_PRICE);
+    function testBorrowShares(uint256 creditLimit, uint256 amountSupplied, uint256 sharesBorrowed) public {
         sharesBorrowed = bound(sharesBorrowed, MIN_TEST_SHARES, MAX_TEST_SHARES);
         uint256 expectedAmountBorrowed = sharesBorrowed.toAssetsDown(0, 0);
-        uint256 expectedBorrowedValue = sharesBorrowed.toAssetsUp(expectedAmountBorrowed, sharesBorrowed);
-        uint256 minCollateral =
-            expectedBorrowedValue.wDivUp(marketParams.lltv).mulDivUp(ORACLE_PRICE_SCALE, priceCollateral);
-        vm.assume(minCollateral <= MAX_COLLATERAL_ASSETS);
-        amountCollateral = bound(amountCollateral, minCollateral, MAX_COLLATERAL_ASSETS);
-        vm.assume(amountCollateral <= type(uint256).max / priceCollateral);
 
-        amountSupplied = bound(amountSupplied, expectedAmountBorrowed, MAX_TEST_AMOUNT);
+        // For credit-based lending: ensure credit limit covers the expected borrow amount
+        // Use toAssetsUp to ensure we have enough credit for potential rounding
+        uint256 maxPossibleAmount = sharesBorrowed.toAssetsUp(0, 0);
+        creditLimit = bound(creditLimit, maxPossibleAmount, MAX_TEST_AMOUNT);
+        amountSupplied = bound(amountSupplied, maxPossibleAmount, MAX_TEST_AMOUNT);
+
         _supply(amountSupplied);
 
-        oracle.setPrice(priceCollateral);
-
-        collateralToken.setBalance(BORROWER, amountCollateral);
+        // Set up credit line for borrower
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, creditLimit, 0);
 
         vm.startPrank(BORROWER);
-        morpho.supplyCollateral(marketParams, amountCollateral, BORROWER, hex"");
-
-        vm.expectEmit(true, true, true, true, address(morpho));
-        emit EventsLib.Borrow(id, BORROWER, BORROWER, RECEIVER, expectedAmountBorrowed, sharesBorrowed);
         (uint256 returnAssets, uint256 returnShares) =
             morpho.borrow(marketParams, 0, sharesBorrowed, BORROWER, RECEIVER);
         vm.stopPrank();
@@ -183,27 +157,18 @@ contract BorrowIntegrationTest is BaseTest {
         assertEq(loanToken.balanceOf(address(morpho)), amountSupplied - expectedAmountBorrowed, "morpho balance");
     }
 
-    function testBorrowAssetsOnBehalf(
-        uint256 amountCollateral,
-        uint256 amountSupplied,
-        uint256 amountBorrowed,
-        uint256 priceCollateral
-    ) public {
-        (amountCollateral, amountBorrowed, priceCollateral) =
-            _boundHealthyPosition(amountCollateral, amountBorrowed, priceCollateral);
-
+    function testBorrowAssetsOnBehalf(uint256 creditLimit, uint256 amountSupplied, uint256 amountBorrowed) public {
+        // For credit-based lending: healthy position = borrowing within credit limit
+        amountBorrowed = bound(amountBorrowed, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
+        creditLimit = bound(creditLimit, amountBorrowed, MAX_TEST_AMOUNT);
         amountSupplied = bound(amountSupplied, amountBorrowed, MAX_TEST_AMOUNT);
+
         _supply(amountSupplied);
 
-        oracle.setPrice(priceCollateral);
-
-        collateralToken.setBalance(ONBEHALF, amountCollateral);
-
-        vm.startPrank(ONBEHALF);
-        collateralToken.approve(address(morpho), amountCollateral);
-        morpho.supplyCollateral(marketParams, amountCollateral, ONBEHALF, hex"");
+        // Set up credit line for ONBEHALF
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, ONBEHALF, creditLimit, 0);
         // BORROWER is already authorized.
-        vm.stopPrank();
 
         uint256 expectedBorrowShares = amountBorrowed.toSharesUp(0, 0);
 
@@ -222,38 +187,24 @@ contract BorrowIntegrationTest is BaseTest {
         assertEq(loanToken.balanceOf(address(morpho)), amountSupplied - amountBorrowed, "morpho balance");
     }
 
-    function testBorrowSharesOnBehalf(
-        uint256 amountCollateral,
-        uint256 amountSupplied,
-        uint256 sharesBorrowed,
-        uint256 priceCollateral
-    ) public {
-        priceCollateral = bound(priceCollateral, MIN_COLLATERAL_PRICE, MAX_COLLATERAL_PRICE);
+    function testBorrowSharesOnBehalf(uint256 creditLimit, uint256 amountSupplied, uint256 sharesBorrowed) public {
         sharesBorrowed = bound(sharesBorrowed, MIN_TEST_SHARES, MAX_TEST_SHARES);
         uint256 expectedAmountBorrowed = sharesBorrowed.toAssetsDown(0, 0);
-        uint256 expectedBorrowedValue = sharesBorrowed.toAssetsUp(expectedAmountBorrowed, sharesBorrowed);
-        uint256 minCollateral =
-            expectedBorrowedValue.wDivUp(marketParams.lltv).mulDivUp(ORACLE_PRICE_SCALE, priceCollateral);
-        vm.assume(minCollateral <= MAX_COLLATERAL_ASSETS);
-        amountCollateral = bound(amountCollateral, minCollateral, MAX_COLLATERAL_ASSETS);
-        vm.assume(amountCollateral <= type(uint256).max / priceCollateral);
 
-        amountSupplied = bound(amountSupplied, expectedAmountBorrowed, MAX_TEST_AMOUNT);
+        // For credit-based lending: ensure credit limit covers the expected borrow amount
+        // Use toAssetsUp to ensure we have enough credit for potential rounding
+        uint256 maxPossibleAmount = sharesBorrowed.toAssetsUp(0, 0);
+        creditLimit = bound(creditLimit, maxPossibleAmount, MAX_TEST_AMOUNT);
+        amountSupplied = bound(amountSupplied, maxPossibleAmount, MAX_TEST_AMOUNT);
+
         _supply(amountSupplied);
 
-        oracle.setPrice(priceCollateral);
-
-        collateralToken.setBalance(ONBEHALF, amountCollateral);
-
-        vm.startPrank(ONBEHALF);
-        collateralToken.approve(address(morpho), amountCollateral);
-        morpho.supplyCollateral(marketParams, amountCollateral, ONBEHALF, hex"");
+        // Set up credit line for ONBEHALF
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, ONBEHALF, creditLimit, 0);
         // BORROWER is already authorized.
-        vm.stopPrank();
 
         vm.prank(BORROWER);
-        vm.expectEmit(true, true, true, true, address(morpho));
-        emit EventsLib.Borrow(id, BORROWER, ONBEHALF, RECEIVER, expectedAmountBorrowed, sharesBorrowed);
         (uint256 returnAssets, uint256 returnShares) =
             morpho.borrow(marketParams, 0, sharesBorrowed, ONBEHALF, RECEIVER);
 

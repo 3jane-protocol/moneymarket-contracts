@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
+import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 
 contract AccrueInterestIntegrationTest is BaseTest {
     using MathLib for uint256;
@@ -36,12 +37,12 @@ contract AccrueInterestIntegrationTest is BaseTest {
         loanToken.setBalance(address(this), amountSupplied);
         morpho.supply(marketParams, amountSupplied, 0, address(this), hex"");
 
-        collateralToken.setBalance(BORROWER, amountCollateral);
+        // Set up credit line instead of supplying collateral
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, amountCollateral, 0);
 
-        vm.startPrank(BORROWER);
-        morpho.supplyCollateral(marketParams, amountCollateral, BORROWER, hex"");
+        vm.prank(BORROWER);
         morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
-        vm.stopPrank();
 
         uint256 totalBorrowBeforeAccrued = morpho.totalBorrowAssets(id);
         uint256 totalSupplyBeforeAccrued = morpho.totalSupplyAssets(id);
@@ -88,13 +89,12 @@ contract AccrueInterestIntegrationTest is BaseTest {
         loanToken.setBalance(address(this), amountSupplied);
         morpho.supply(marketParams, amountSupplied, 0, address(this), hex"");
 
-        collateralToken.setBalance(BORROWER, amountCollateral);
+        // Set up credit line instead of supplying collateral
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, amountCollateral, 0);
 
-        vm.startPrank(BORROWER);
-        morpho.supplyCollateral(marketParams, amountCollateral, BORROWER, hex"");
-
+        vm.prank(BORROWER);
         morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
-        vm.stopPrank();
 
         _forward(blocks);
 
@@ -146,12 +146,12 @@ contract AccrueInterestIntegrationTest is BaseTest {
         loanToken.setBalance(address(this), amountSupplied);
         morpho.supply(marketParams, amountSupplied, 0, address(this), hex"");
 
-        collateralToken.setBalance(BORROWER, amountCollateral);
+        // Set up credit line instead of supplying collateral
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, amountCollateral, 0);
 
-        vm.startPrank(BORROWER);
-        morpho.supplyCollateral(marketParams, amountCollateral, BORROWER, hex"");
+        vm.prank(BORROWER);
         morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
-        vm.stopPrank();
 
         _forward(blocks);
 
