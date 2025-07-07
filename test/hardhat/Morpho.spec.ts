@@ -195,6 +195,8 @@ describe("Morpho", () => {
     }
   });
 
+  // Commenting out liquidation test as it doesn't apply to credit-based model
+  /*
   it("should simulate gas cost [liquidations]", async () => {
     for (let i = 0; i < suppliers.length; ++i) {
       logProgress("liquidations", i, suppliers.length);
@@ -239,6 +241,7 @@ describe("Morpho", () => {
       await oracle.setPrice(oraclePriceScale);
     }
   });
+  */
 
   it("should simuate gas cost [flashLoans]", async () => {
     const user = borrowers[0];
