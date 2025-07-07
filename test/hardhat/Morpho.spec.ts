@@ -151,7 +151,7 @@ describe("Morpho", () => {
 
       await randomForwardTimestamp();
 
-      await creditLine.setCreditLine(borrower.address, assets * 2n, 0);
+      await creditLine.setCreditLine(id, borrower.address, assets * 2n, 0);
 
       await randomForwardTimestamp();
 
@@ -216,12 +216,12 @@ describe("Morpho", () => {
       // We use 2 different users to borrow from a marketParams so that liquidations do not put the borrow storage back to 0 on that marketParams.
       await morpho.connect(user).supply(marketParams, assets, 0, user.address, "0x");
       // Set credit line for user
-      await creditLine.setCreditLine(user.address, assets * 2n, 0);
+      await creditLine.setCreditLine(id, user.address, assets * 2n, 0);
       await morpho.connect(user).borrow(marketParams, borrowedAmount, 0, user.address, user.address);
 
       await morpho.connect(borrower).supply(marketParams, assets, 0, borrower.address, "0x");
       // Set credit line for borrower
-      await creditLine.setCreditLine(borrower.address, assets * 2n, 0);
+      await creditLine.setCreditLine(id, borrower.address, assets * 2n, 0);
       await morpho.connect(borrower).borrow(marketParams, borrowedAmount, 0, borrower.address, user.address);
 
       await oracle.setPrice(oraclePriceScale / 1000n);
