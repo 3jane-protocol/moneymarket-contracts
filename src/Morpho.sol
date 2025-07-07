@@ -12,7 +12,6 @@ import {
     Signature
 } from "./interfaces/IMorpho.sol";
 import {
-    IMorphoLiquidateCallback,
     IMorphoRepayCallback,
     IMorphoSupplyCallback,
     IMorphoFlashLoanCallback
@@ -303,83 +302,11 @@ contract Morpho is IMorphoStaticTyping {
         return (assets, shares);
     }
 
-    /* LIQUIDATION */
+    /* LIQUIDATION - REMOVED */
 
-    /// @inheritdoc IMorphoBase
-    function liquidate(
-        MarketParams memory marketParams,
-        address borrower,
-        uint256 seizedAssets,
-        uint256 repaidShares,
-        bytes calldata data
-    ) external returns (uint256, uint256) {
-        Id id = marketParams.id();
-        require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
-        require(UtilsLib.exactlyOneZero(seizedAssets, repaidShares), ErrorsLib.INCONSISTENT_INPUT);
-
-        _accrueInterest(marketParams, id);
-        _beforeLiquidate(marketParams, id, borrower, seizedAssets, repaidShares);
-
-        {
-            uint256 collateralPrice = IOracle(marketParams.oracle).price();
-
-            require(!_isHealthy(marketParams, id, borrower, collateralPrice), ErrorsLib.HEALTHY_POSITION);
-
-            // The liquidation incentive factor is min(maxLiquidationIncentiveFactor, 1/(1 - cursor*(1 - lltv))).
-            uint256 liquidationIncentiveFactor = UtilsLib.min(
-                MAX_LIQUIDATION_INCENTIVE_FACTOR,
-                WAD.wDivDown(WAD - LIQUIDATION_CURSOR.wMulDown(WAD - marketParams.lltv))
-            );
-
-            if (seizedAssets > 0) {
-                uint256 seizedAssetsQuoted = seizedAssets.mulDivUp(collateralPrice, ORACLE_PRICE_SCALE);
-
-                repaidShares = seizedAssetsQuoted.wDivUp(liquidationIncentiveFactor).toSharesUp(
-                    market[id].totalBorrowAssets, market[id].totalBorrowShares
-                );
-            } else {
-                seizedAssets = repaidShares.toAssetsDown(market[id].totalBorrowAssets, market[id].totalBorrowShares)
-                    .wMulDown(liquidationIncentiveFactor).mulDivDown(ORACLE_PRICE_SCALE, collateralPrice);
-            }
-        }
-        uint256 repaidAssets = repaidShares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
-
-        position[id][borrower].borrowShares -= repaidShares.toUint128();
-        market[id].totalBorrowShares -= repaidShares.toUint128();
-        market[id].totalBorrowAssets = UtilsLib.zeroFloorSub(market[id].totalBorrowAssets, repaidAssets).toUint128();
-
-        position[id][borrower].collateral -= seizedAssets.toUint128();
-
-        uint256 badDebtShares;
-        uint256 badDebtAssets;
-        if (position[id][borrower].collateral == 0) {
-            badDebtShares = position[id][borrower].borrowShares;
-            badDebtAssets = UtilsLib.min(
-                market[id].totalBorrowAssets,
-                badDebtShares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares)
-            );
-
-            market[id].totalBorrowAssets -= badDebtAssets.toUint128();
-            market[id].totalSupplyAssets -= badDebtAssets.toUint128();
-            market[id].totalBorrowShares -= badDebtShares.toUint128();
-            position[id][borrower].borrowShares = 0;
-        }
-
-        // `repaidAssets` may be greater than `totalBorrowAssets` by 1.
-        emit EventsLib.Liquidate(
-            id, msg.sender, borrower, repaidAssets, repaidShares, seizedAssets, badDebtAssets, badDebtShares
-        );
-
-        _afterLiquidate(marketParams, id, borrower);
-
-        IERC20(marketParams.collateralToken).safeTransfer(msg.sender, seizedAssets);
-
-        if (data.length > 0) IMorphoLiquidateCallback(msg.sender).onMorphoLiquidate(repaidAssets, data);
-
-        IERC20(marketParams.loanToken).safeTransferFrom(msg.sender, address(this), repaidAssets);
-
-        return (seizedAssets, repaidAssets);
-    }
+    // Liquidation logic has been removed in favor of the markdown system.
+    // The markdown system replaces traditional liquidations with dynamic debt write-offs
+    // managed by an external markdown manager contract.
 
     /* FLASH LOANS */
 

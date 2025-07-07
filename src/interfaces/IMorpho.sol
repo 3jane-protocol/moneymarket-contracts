@@ -262,18 +262,17 @@ interface IMorphoBase {
     /// @dev An attacker can front-run a liquidation with a small repay making the transaction revert for underflow.
     /// @param marketParams The market of the position.
     /// @param borrower The owner of the position.
-    /// @param seizedAssets The amount of collateral to seize.
-    /// @param repaidShares The amount of shares to repay.
-    /// @param data Arbitrary data to pass to the `onMorphoLiquidate` callback. Pass empty data if not needed.
-    /// @return The amount of assets seized.
-    /// @return The amount of assets repaid.
-    function liquidate(
-        MarketParams memory marketParams,
-        address borrower,
-        uint256 seizedAssets,
-        uint256 repaidShares,
-        bytes memory data
-    ) external returns (uint256, uint256);
+    // Liquidation function removed - replaced by markdown system
+    // The markdown system handles debt write-offs through an external manager contract
+    // instead of traditional liquidations.
+    //
+    // function liquidate(
+    //     MarketParams memory marketParams,
+    //     address borrower,
+    //     uint256 seizedAssets,
+    //     uint256 repaidShares,
+    //     bytes memory data
+    // ) external returns (uint256, uint256);
 
     /// @notice Executes a flash loan.
     /// @dev Flash loans have access to the whole balance of the contract (the liquidity and deposited collateral of all

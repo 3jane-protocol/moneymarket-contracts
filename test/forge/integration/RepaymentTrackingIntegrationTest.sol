@@ -342,10 +342,11 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         // Advance time to accrue penalties
         vm.warp(block.timestamp + 5 days);
 
-        // Liquidator repays part of the debt
-        deal(address(loanToken), LIQUIDATOR, 5000e18);
-        vm.prank(LIQUIDATOR);
-        morpho.liquidate(marketParams, ALICE, 0, 5000e18, "");
+        // TODO: Replace with markdown manager test
+        // Liquidation has been removed - this would now be handled by markdown manager
+        // deal(address(loanToken), LIQUIDATOR, 5000e18);
+        // vm.prank(LIQUIDATOR);
+        // morpho.liquidate(marketParams, ALICE, 0, 5000e18, "");
 
         // Check paid amount was updated
         (, uint256 paidAmount) = IMorphoCredit(address(morpho)).totalPaidAmount(id, ALICE);

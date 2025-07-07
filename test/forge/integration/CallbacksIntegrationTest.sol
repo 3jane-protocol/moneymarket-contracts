@@ -6,7 +6,7 @@ import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 
 contract CallbacksIntegrationTest is
     BaseTest,
-    IMorphoLiquidateCallback,
+    // IMorphoLiquidateCallback, // Removed - liquidation replaced by markdown
     IMorphoRepayCallback,
     IMorphoSupplyCallback,
     IMorphoFlashLoanCallback
@@ -38,14 +38,15 @@ contract CallbacksIntegrationTest is
         }
     }
 
-    function onMorphoLiquidate(uint256 repaid, bytes memory data) external {
-        require(msg.sender == address(morpho));
-        bytes4 selector;
-        (selector, data) = abi.decode(data, (bytes4, bytes));
-        if (selector == this.testLiquidateCallback.selector) {
-            loanToken.approve(address(morpho), repaid);
-        }
-    }
+    // Liquidation callback removed - replaced by markdown system
+    // function onMorphoLiquidate(uint256 repaid, bytes memory data) external {
+    //     require(msg.sender == address(morpho));
+    //     bytes4 selector;
+    //     (selector, data) = abi.decode(data, (bytes4, bytes));
+    //     if (selector == this.testLiquidateCallback.selector) {
+    //         loanToken.approve(address(morpho), repaid);
+    //     }
+    // }
 
     function onMorphoFlashLoan(uint256 amount, bytes memory data) external {
         require(msg.sender == address(morpho));

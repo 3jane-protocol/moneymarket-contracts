@@ -173,7 +173,8 @@ contract BaseInvariantTest is InvariantTest {
         loanToken.setBalance(msg.sender, repaidAssets);
 
         vm.prank(msg.sender);
-        morpho.liquidate(_marketParams, borrower, seizedAssets, 0, hex"");
+        // TODO: Replace with markdown manager call
+        // morpho.liquidate(_marketParams, borrower, seizedAssets, 0, hex"");
     }
 
     function _liquidateRepaidShares(MarketParams memory _marketParams, address borrower, uint256 repaidShares)
@@ -185,7 +186,8 @@ contract BaseInvariantTest is InvariantTest {
         loanToken.setBalance(msg.sender, repaidShares.toAssetsUp(totalBorrowAssets, totalBorrowShares));
 
         vm.prank(msg.sender);
-        morpho.liquidate(_marketParams, borrower, 0, repaidShares, hex"");
+        // TODO: Replace with markdown manager call
+        // morpho.liquidate(_marketParams, borrower, 0, repaidShares, hex"");
     }
 
     /* HANDLERS */

@@ -100,9 +100,10 @@ contract HalmosTest is SymTest, Test {
         } else if (false) {
             // withdrawCollateral removed in 3Jane
             args = abi.encode(marketParams, assets, onBehalf, receiver);
-        } else if (selector == morpho.liquidate.selector) {
-            address borrower = svm.createAddress("borrower");
-            args = abi.encode(marketParams, borrower, assets, shares, emptyData);
+        } else if (false) {
+            // liquidate removed in 3Jane - replaced by markdown system
+            // address borrower = svm.createAddress("borrower");
+            // args = abi.encode(marketParams, borrower, assets, shares, emptyData);
         } else if (selector == morpho.flashLoan.selector) {
             address token = svm.createAddress("token");
             bytes memory _data = svm.createBytes(1024, "_data");
