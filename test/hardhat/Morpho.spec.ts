@@ -162,7 +162,6 @@ describe("Morpho", () => {
       await morpho.connect(borrower).repay(marketParams, assets / 4n, 0, borrower.address, "0x");
 
       await randomForwardTimestamp();
-
     }
   });
 
