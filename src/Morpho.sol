@@ -34,8 +34,7 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
 /// @notice The Morpho contract.
-/* abstract */
-contract Morpho is IMorphoStaticTyping {
+abstract contract Morpho is IMorphoStaticTyping {
     using MathLib for uint128;
     using MathLib for uint256;
     using UtilsLib for uint256;
