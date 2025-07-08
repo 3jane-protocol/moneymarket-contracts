@@ -1,16 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0;
 
-/// @title IMorphoLiquidateCallback
-/// @notice Interface that liquidators willing to use `liquidate`'s callback must implement.
-interface IMorphoLiquidateCallback {
-    /// @notice Callback called when a liquidation occurs.
-    /// @dev The callback is called only if data is not empty.
-    /// @param repaidAssets The amount of repaid assets.
-    /// @param data Arbitrary data passed to the `liquidate` function.
-    function onMorphoLiquidate(uint256 repaidAssets, bytes calldata data) external;
-}
-
 /// @title IMorphoRepayCallback
 /// @notice Interface that users willing to use `repay`'s callback must implement.
 interface IMorphoRepayCallback {

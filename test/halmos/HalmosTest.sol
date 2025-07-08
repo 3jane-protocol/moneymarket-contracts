@@ -94,16 +94,6 @@ contract HalmosTest is SymTest, Test {
             args = abi.encode(marketParams, assets, shares, onBehalf, emptyData);
         } else if (selector == morpho.withdraw.selector || selector == morpho.borrow.selector) {
             args = abi.encode(marketParams, assets, shares, onBehalf, receiver);
-        } else if (false) {
-            // supplyCollateral removed in 3Jane
-            args = abi.encode(marketParams, assets, onBehalf, emptyData);
-        } else if (false) {
-            // withdrawCollateral removed in 3Jane
-            args = abi.encode(marketParams, assets, onBehalf, receiver);
-        } else if (false) {
-            // liquidate removed in 3Jane - replaced by markdown system
-            // address borrower = svm.createAddress("borrower");
-            // args = abi.encode(marketParams, borrower, assets, shares, emptyData);
         } else if (selector == morpho.flashLoan.selector) {
             address token = svm.createAddress("token");
             bytes memory _data = svm.createBytes(1024, "_data");

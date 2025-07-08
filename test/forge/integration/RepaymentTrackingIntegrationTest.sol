@@ -310,58 +310,6 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         assertEq(uint256(status), uint256(RepaymentStatus.Current));
     }
 
-    // ============ Liquidation Integration Tests ============
-
-    // TODO: Liquidation tests will be updated when liquidation logic changes
-    /*
-    function testLiquidation_WithRepaymentTracking() public {
-        // Alice borrows
-        deal(address(loanToken), ALICE, 10000e18);
-        vm.prank(ALICE);
-        morpho.borrow(marketParams, 10000e18, 0, ALICE, ALICE);
-
-        // Create delinquent obligation
-        uint256 cycleEndDate = block.timestamp - 10 days;
-        address[] memory borrowers = new address[](1);
-        uint256[] memory repaymentBps = new uint256[](1);
-        uint256[] memory balances = new uint256[](1);
-
-        borrowers[0] = ALICE;
-        repaymentBps[0] = 1000; // 10%
-        balances[0] = 10000e18;
-
-        vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id,
-            cycleEndDate,
-            borrowers,
-            amounts,
-            balances
-        );
-
-        // Advance time to accrue penalties
-        vm.warp(block.timestamp + 5 days);
-
-        // TODO: Replace with markdown manager test
-        // Liquidation has been removed - this would now be handled by markdown manager
-        // deal(address(loanToken), LIQUIDATOR, 5000e18);
-        // vm.prank(LIQUIDATOR);
-        // morpho.liquidate(marketParams, ALICE, 0, 5000e18, "");
-
-        // Check paid amount was updated
-        (, uint256 paidAmount) = IMorphoCredit(address(morpho)).totalPaidAmount(id, ALICE);
-        
-        // Payment should be applied to obligation first
-        uint256 expectedPaid = 5000e18 > amounts[0] ? amounts[0] : 5000e18;
-        assertEq(paidAmount, expectedPaid);
-
-        // If liquidation covered obligation, status should improve
-        if (paidAmount >= amounts[0]) {
-            RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
-            assertEq(uint256(status), uint256(RepaymentStatus.Current));
-        }
-    }
-    */
 
     // ============ Edge Case Tests ============
 

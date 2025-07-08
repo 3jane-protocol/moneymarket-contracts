@@ -158,37 +158,6 @@ contract BaseInvariantTest is InvariantTest {
         // Credit line adjustment needed
     }
 
-    function _liquidateSeizedAssets(MarketParams memory _marketParams, address borrower, uint256 seizedAssets)
-        internal
-        logCall("liquidateSeizedAssets")
-    {
-        uint256 collateralPrice = oracle.price();
-        uint256 liquidationIncentiveFactor = _liquidationIncentiveFactor(_marketParams.lltv);
-        (,, uint256 totalBorrowAssets, uint256 totalBorrowShares) = morpho.expectedMarketBalances(_marketParams);
-        uint256 seizedAssetsQuoted = seizedAssets.mulDivUp(collateralPrice, ORACLE_PRICE_SCALE);
-        uint256 repaidShares =
-            seizedAssetsQuoted.wDivUp(liquidationIncentiveFactor).toSharesUp(totalBorrowAssets, totalBorrowShares);
-        uint256 repaidAssets = repaidShares.toAssetsUp(totalBorrowAssets, totalBorrowShares);
-
-        loanToken.setBalance(msg.sender, repaidAssets);
-
-        vm.prank(msg.sender);
-        // TODO: Replace with markdown manager call
-        // morpho.liquidate(_marketParams, borrower, seizedAssets, 0, hex"");
-    }
-
-    function _liquidateRepaidShares(MarketParams memory _marketParams, address borrower, uint256 repaidShares)
-        internal
-        logCall("liquidateRepaidShares")
-    {
-        (,, uint256 totalBorrowAssets, uint256 totalBorrowShares) = morpho.expectedMarketBalances(_marketParams);
-
-        loanToken.setBalance(msg.sender, repaidShares.toAssetsUp(totalBorrowAssets, totalBorrowShares));
-
-        vm.prank(msg.sender);
-        // TODO: Replace with markdown manager call
-        // morpho.liquidate(_marketParams, borrower, 0, repaidShares, hex"");
-    }
 
     /* HANDLERS */
 
@@ -311,27 +280,4 @@ contract BaseInvariantTest is InvariantTest {
         _withdrawCollateral(_marketParams, assets, onBehalf, receiver);
     }
 
-    function liquidateSeizedAssetsNoRevert(uint256 marketSeed, uint256 seizedAssets, uint256 borrowerSeed) external {
-        MarketParams memory _marketParams = _randomMarket(marketSeed);
-
-        address borrower = _randomUnhealthyBorrower(targetSenders(), _marketParams, borrowerSeed);
-        if (borrower == address(0)) return;
-
-        seizedAssets = _boundLiquidateSeizedAssets(_marketParams, borrower, seizedAssets);
-        if (seizedAssets == 0) return;
-
-        _liquidateSeizedAssets(_marketParams, borrower, seizedAssets);
-    }
-
-    function liquidateRepaidSharesNoRevert(uint256 marketSeed, uint256 repaidShares, uint256 borrowerSeed) external {
-        MarketParams memory _marketParams = _randomMarket(marketSeed);
-
-        address borrower = _randomUnhealthyBorrower(targetSenders(), _marketParams, borrowerSeed);
-        if (borrower == address(0)) return;
-
-        repaidShares = _boundLiquidateRepaidShares(_marketParams, borrower, repaidShares);
-        if (repaidShares == 0) return;
-
-        _liquidateRepaidShares(_marketParams, borrower, repaidShares);
-    }
 }

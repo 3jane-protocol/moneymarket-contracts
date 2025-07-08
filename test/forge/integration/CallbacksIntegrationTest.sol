@@ -6,7 +6,6 @@ import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 
 contract CallbacksIntegrationTest is
     BaseTest,
-    // IMorphoLiquidateCallback, // Removed - liquidation replaced by markdown
     IMorphoRepayCallback,
     IMorphoSupplyCallback,
     IMorphoFlashLoanCallback
@@ -37,16 +36,6 @@ contract CallbacksIntegrationTest is
             // This callback path is no longer used
         }
     }
-
-    // Liquidation callback removed - replaced by markdown system
-    // function onMorphoLiquidate(uint256 repaid, bytes memory data) external {
-    //     require(msg.sender == address(morpho));
-    //     bytes4 selector;
-    //     (selector, data) = abi.decode(data, (bytes4, bytes));
-    //     if (selector == this.testLiquidateCallback.selector) {
-    //         loanToken.approve(address(morpho), repaid);
-    //     }
-    // }
 
     function onMorphoFlashLoan(uint256 amount, bytes memory data) external {
         require(msg.sender == address(morpho));
@@ -126,12 +115,6 @@ contract CallbacksIntegrationTest is
         vm.expectRevert();
         morpho.repay(marketParams, loanAmount, 0, address(this), hex"");
         morpho.repay(marketParams, loanAmount, 0, address(this), abi.encode(this.testRepayCallback.selector, hex""));
-    }
-
-    function testLiquidateCallback(uint256 loanAmount) public {
-        // Skip liquidation callback test for credit-based model
-        // In 3Jane's credit-based model, liquidation works differently
-        // and doesn't involve seizing collateral
     }
 
     function testFlashActions(uint256 loanAmount) public {

@@ -337,42 +337,7 @@ contract BaseTest is Test {
         return bound(shares, 0, borrowShares);
     }
 
-    function _boundLiquidateSeizedAssets(MarketParams memory _marketParams, address borrower, uint256 seizedAssets)
-        internal
-        view
-        returns (uint256)
-    {
-        Id _id = _marketParams.id();
 
-        uint256 collateralPrice = IOracle(_marketParams.oracle).price();
-        uint256 borrowShares = morpho.borrowShares(_id, borrower);
-        (,, uint256 totalBorrowAssets, uint256 totalBorrowShares) = morpho.expectedMarketBalances(_marketParams);
-        uint256 maxRepaidAssets = borrowShares.toAssetsDown(totalBorrowAssets, totalBorrowShares);
-        uint256 maxSeizedAssets = maxRepaidAssets.wMulDown(_liquidationIncentiveFactor(_marketParams.lltv)).mulDivDown(
-            ORACLE_PRICE_SCALE, collateralPrice
-        );
-
-        uint256 collateral = morpho.collateral(_id, borrower);
-        return bound(seizedAssets, 0, Math.min(collateral, maxSeizedAssets));
-    }
-
-    function _boundLiquidateRepaidShares(MarketParams memory _marketParams, address borrower, uint256 repaidShares)
-        internal
-        view
-        returns (uint256)
-    {
-        Id _id = _marketParams.id();
-
-        uint256 collateralPrice = IOracle(_marketParams.oracle).price();
-        uint256 maxRepaidAssets = morpho.collateral(_id, borrower).mulDivDown(collateralPrice, ORACLE_PRICE_SCALE)
-            .wDivDown(_liquidationIncentiveFactor(_marketParams.lltv));
-
-        (,, uint256 totalBorrowAssets, uint256 totalBorrowShares) = morpho.expectedMarketBalances(_marketParams);
-        uint256 maxRepaidShares = maxRepaidAssets.toSharesDown(totalBorrowAssets, totalBorrowShares);
-
-        uint256 borrowShares = morpho.borrowShares(_id, borrower);
-        return bound(repaidShares, 0, Math.min(borrowShares, maxRepaidShares));
-    }
 
     function _maxBorrow(MarketParams memory _marketParams, address user) internal view returns (uint256) {
         Id _id = _marketParams.id();
@@ -389,9 +354,6 @@ contract BaseTest is Test {
         return maxBorrow >= borrowed;
     }
 
-    function _liquidationIncentiveFactor(uint256 lltv) internal pure returns (uint256) {
-        return Math.min(MAX_LIQUIDATION_INCENTIVE_FACTOR, WAD.wDivDown(WAD - LIQUIDATION_CURSOR.wMulDown(WAD - lltv)));
-    }
 
     function _boundValidLltv(uint256 lltv) internal pure returns (uint256) {
         return bound(lltv, 0, WAD - 1);
