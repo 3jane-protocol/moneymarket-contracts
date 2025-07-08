@@ -3,7 +3,7 @@ import { setNextBlockTimestamp } from "@nomicfoundation/hardhat-network-helpers/
 import { expect } from "chai";
 import { AbiCoder, MaxUint256, ZeroAddress, keccak256, toBigInt } from "ethers";
 import hre from "hardhat";
-import { Morpho, OracleMock, ERC20Mock, IrmMock } from "types";
+import { Morpho, MorphoCredit, OracleMock, ERC20Mock, IrmMock } from "types";
 import { MarketParamsStruct } from "types/src/Morpho";
 import { CreditLineMock } from "types/src/mocks/CreditLineMock";
 import { FlashBorrowerMock } from "types/src/mocks/FlashBorrowerMock";
@@ -82,9 +82,9 @@ describe("Morpho", () => {
 
     await oracle.setPrice(oraclePriceScale);
 
-    const MorphoFactory = await hre.ethers.getContractFactory("Morpho", admin);
+    const MorphoCreditFactory = await hre.ethers.getContractFactory("MorphoCredit", admin);
 
-    morpho = await MorphoFactory.deploy(admin.address);
+    morpho = await MorphoCreditFactory.deploy(admin.address);
 
     const IrmMockFactory = await hre.ethers.getContractFactory("IrmMock", admin);
 
@@ -151,7 +151,7 @@ describe("Morpho", () => {
 
       await randomForwardTimestamp();
 
-      await morpho.connect(borrower).supplyCollateral(marketParams, assets, borrower.address, "0x");
+      await creditLine.setCreditLine(id, borrower.address, assets * 2n, 0);
 
       await randomForwardTimestamp();
 
@@ -162,8 +162,6 @@ describe("Morpho", () => {
       await morpho.connect(borrower).repay(marketParams, assets / 4n, 0, borrower.address, "0x");
 
       await randomForwardTimestamp();
-
-      await morpho.connect(borrower).withdrawCollateral(marketParams, assets / 8n, borrower.address, borrower.address);
     }
   });
 
@@ -197,6 +195,8 @@ describe("Morpho", () => {
     }
   });
 
+  // Commenting out liquidation test as it doesn't apply to credit-based model
+  /*
   it("should simulate gas cost [liquidations]", async () => {
     for (let i = 0; i < suppliers.length; ++i) {
       logProgress("liquidations", i, suppliers.length);
@@ -217,11 +217,13 @@ describe("Morpho", () => {
 
       // We use 2 different users to borrow from a marketParams so that liquidations do not put the borrow storage back to 0 on that marketParams.
       await morpho.connect(user).supply(marketParams, assets, 0, user.address, "0x");
-      await morpho.connect(user).supplyCollateral(marketParams, assets, user.address, "0x");
+      // Set credit line for user
+      await creditLine.setCreditLine(id, user.address, assets * 2n, 0);
       await morpho.connect(user).borrow(marketParams, borrowedAmount, 0, user.address, user.address);
 
       await morpho.connect(borrower).supply(marketParams, assets, 0, borrower.address, "0x");
-      await morpho.connect(borrower).supplyCollateral(marketParams, assets, borrower.address, "0x");
+      // Set credit line for borrower
+      await creditLine.setCreditLine(id, borrower.address, assets * 2n, 0);
       await morpho.connect(borrower).borrow(marketParams, borrowedAmount, 0, borrower.address, user.address);
 
       await oracle.setPrice(oraclePriceScale / 1000n);
@@ -239,6 +241,7 @@ describe("Morpho", () => {
       await oracle.setPrice(oraclePriceScale);
     }
   });
+  */
 
   it("should simuate gas cost [flashLoans]", async () => {
     const user = borrowers[0];
