@@ -12,9 +12,7 @@ import {
     Signature
 } from "./interfaces/IMorpho.sol";
 import {
-    IMorphoRepayCallback,
-    IMorphoSupplyCallback,
-    IMorphoFlashLoanCallback
+    IMorphoRepayCallback, IMorphoSupplyCallback, IMorphoFlashLoanCallback
 } from "./interfaces/IMorphoCallbacks.sol";
 import {IIrm} from "./interfaces/IIrm.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
@@ -33,8 +31,7 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
 /// @notice The Morpho contract.
-/* abstract */
-contract Morpho is IMorphoStaticTyping {
+abstract contract Morpho is IMorphoStaticTyping {
     using MathLib for uint128;
     using MathLib for uint256;
     using UtilsLib for uint256;

@@ -3,7 +3,7 @@ import { setNextBlockTimestamp } from "@nomicfoundation/hardhat-network-helpers/
 import { expect } from "chai";
 import { AbiCoder, MaxUint256, ZeroAddress, keccak256, toBigInt } from "ethers";
 import hre from "hardhat";
-import { Morpho, OracleMock, ERC20Mock, IrmMock } from "types";
+import { Morpho, MorphoCredit, OracleMock, ERC20Mock, IrmMock } from "types";
 import { MarketParamsStruct } from "types/src/Morpho";
 import { CreditLineMock } from "types/src/mocks/CreditLineMock";
 import { FlashBorrowerMock } from "types/src/mocks/FlashBorrowerMock";
@@ -82,9 +82,9 @@ describe("Morpho", () => {
 
     await oracle.setPrice(oraclePriceScale);
 
-    const MorphoFactory = await hre.ethers.getContractFactory("Morpho", admin);
+    const MorphoCreditFactory = await hre.ethers.getContractFactory("MorphoCredit", admin);
 
-    morpho = await MorphoFactory.deploy(admin.address);
+    morpho = await MorphoCreditFactory.deploy(admin.address);
 
     const IrmMockFactory = await hre.ethers.getContractFactory("IrmMock", admin);
 
@@ -151,7 +151,7 @@ describe("Morpho", () => {
 
       await randomForwardTimestamp();
 
-      await morpho.connect(borrower).supplyCollateral(marketParams, assets, borrower.address, "0x");
+      await creditLine.setCreditLine(id, borrower.address, assets * 2n, 0);
 
       await randomForwardTimestamp();
 
@@ -162,8 +162,6 @@ describe("Morpho", () => {
       await morpho.connect(borrower).repay(marketParams, assets / 4n, 0, borrower.address, "0x");
 
       await randomForwardTimestamp();
-
-      await morpho.connect(borrower).withdrawCollateral(marketParams, assets / 8n, borrower.address, borrower.address);
     }
   });
 

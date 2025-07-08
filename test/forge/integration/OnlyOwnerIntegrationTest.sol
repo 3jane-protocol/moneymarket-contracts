@@ -9,13 +9,13 @@ contract OnlyOwnerIntegrationTest is BaseTest {
 
     function testDeployWithAddressZero() public {
         vm.expectRevert(bytes(ErrorsLib.ZERO_ADDRESS));
-        new Morpho(address(0));
+        new MorphoCredit(address(0));
     }
 
     function testDeployEmitOwner() public {
         vm.expectEmit();
         emit EventsLib.SetOwner(OWNER);
-        new Morpho(OWNER);
+        new MorphoCredit(OWNER);
     }
 
     function testSetOwnerWhenNotOwner(address addressFuzz) public {

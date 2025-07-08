@@ -12,6 +12,7 @@ import {CreditLineMock} from "../../src/mocks/CreditLineMock.sol";
 import {FlashBorrowerMock} from "../../src/mocks/FlashBorrowerMock.sol";
 
 import "../../src/Morpho.sol";
+import "../../src/MorphoCredit.sol";
 import "../../src/libraries/ConstantsLib.sol";
 import {MorphoLib} from "../../src/libraries/periphery/MorphoLib.sol";
 
@@ -37,7 +38,7 @@ contract HalmosTest is SymTest, Test {
 
     function setUp() public virtual {
         owner = svm.createAddress("owner");
-        morpho = IMorpho(address(new Morpho(owner)));
+        morpho = IMorpho(address(new MorphoCredit(owner)));
 
         loanToken = new ERC20Mock();
         collateralToken = new ERC20Mock();
