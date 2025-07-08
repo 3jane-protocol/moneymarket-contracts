@@ -113,4 +113,10 @@ library ErrorsLib {
 
     /// @notice Thrown when repayment basis points exceed 100%.
     string internal constant REPAYMENT_EXCEEDS_HUNDRED_PERCENT = "repayment exceeds 100%";
+
+    /// @notice Thrown when an invalid markdown manager is set.
+    string internal constant INVALID_MARKDOWN_MANAGER = "invalid markdown manager";
+
+    /// @notice Thrown when trying to settle non-existent debt.
+    string internal constant NO_DEBT_TO_SETTLE = "no debt to settle";
 }

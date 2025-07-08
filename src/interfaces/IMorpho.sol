@@ -24,6 +24,7 @@ struct Position {
 /// @dev Warning: `totalBorrowAssets` does not contain the accrued interest since the last interest accrual.
 /// @dev Warning: `totalSupplyShares` does not contain the additional shares accrued by `feeRecipient` since the last
 /// interest accrual.
+/// @dev Warning: `totalMarkdownAmount` may be stale as markdowns are only updated when borrowers are touched.
 struct Market {
     uint128 totalSupplyAssets;
     uint128 totalSupplyShares;
@@ -31,6 +32,7 @@ struct Market {
     uint128 totalBorrowShares;
     uint128 lastUpdate;
     uint128 fee;
+    uint128 totalMarkdownAmount; // Running tally of all borrower markdowns
 }
 
 /// @notice Per-borrower premium tracking
@@ -67,6 +69,14 @@ struct MarketCreditTerms {
     uint256 delinquencyPeriodDuration; // Duration of delinquency period before default
     uint256 minOutstanding; // Minimum outstanding loan balance to prevent dust
     uint256 penaltyRatePerSecond; // Penalty rate per second for delinquent borrowers
+}
+
+/// @notice Markdown state for tracking defaulted debt value reduction
+/// @param lastCalculatedMarkdown Last calculated markdown amount
+/// @param defaultStartTime When borrower entered default (0 if not defaulted)
+struct MarkdownState {
+    uint128 lastCalculatedMarkdown;
+    uint128 defaultStartTime;
 }
 
 struct Authorization {
@@ -331,7 +341,8 @@ interface IMorphoStaticTyping is IMorphoBase {
             uint128 totalBorrowAssets,
             uint128 totalBorrowShares,
             uint128 lastUpdate,
-            uint128 fee
+            uint128 fee,
+            uint128 totalMarkdownAmount
         );
 
     /// @notice The market params corresponding to `id`.
@@ -490,4 +501,56 @@ interface IMorphoCredit {
     /// @param cycleId Cycle ID
     /// @return endDate The cycle end date
     function paymentCycle(Id id, uint256 cycleId) external view returns (uint256 endDate);
+
+    /// @notice Set the markdown manager for a market
+    /// @param id Market ID
+    /// @param manager Address of the markdown manager contract
+    function setMarkdownManager(Id id, address manager) external;
+
+    /// @notice Settle a borrower's debt position with partial payment
+    /// @dev Only callable by credit line contract
+    /// @param marketParams The market parameters
+    /// @param borrower The borrower whose debt to settle
+    /// @param repayAmount Amount being repaid (can be less than full debt)
+    /// @param data Callback data for repayment
+    /// @return repaidShares Shares actually repaid
+    /// @return writtenOffShares Shares written off (forgiven)
+    function settleDebt(MarketParams memory marketParams, address borrower, uint256 repayAmount, bytes calldata data)
+        external
+        returns (uint256 repaidShares, uint256 writtenOffShares);
+
+    /// @notice Get markdown information for a borrower
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @return currentMarkdown Current markdown amount
+    /// @return defaultStartTime When the borrower entered default (0 if not defaulted)
+    /// @return borrowAssets Current borrow amount
+    function getBorrowerMarkdownInfo(Id id, address borrower)
+        external
+        view
+        returns (uint256 currentMarkdown, uint256 defaultStartTime, uint256 borrowAssets);
+
+    /// @notice Get total market markdown
+    /// @param id Market ID
+    /// @return totalMarkdown Current total markdown across all borrowers (may be stale)
+    /// @return effectiveSupplyAssets Supply assets after markdown
+    function getMarketMarkdownInfo(Id id)
+        external
+        view
+        returns (uint256 totalMarkdown, uint256 effectiveSupplyAssets);
+
+    /// @notice Get the markdown manager for a market
+    /// @param id Market ID
+    /// @return manager Address of the markdown manager (0 if not set)
+    function getMarkdownManager(Id id) external view returns (address manager);
+
+    /// @notice Get markdown state for a borrower
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @return lastCalculatedMarkdown Last calculated markdown amount
+    /// @return defaultStartTime When borrower entered default (0 if not defaulted)
+    function markdownState(Id id, address borrower)
+        external
+        view
+        returns (uint128 lastCalculatedMarkdown, uint128 defaultStartTime);
 }

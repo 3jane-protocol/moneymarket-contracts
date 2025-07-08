@@ -178,4 +178,46 @@ library EventsLib {
     /// @param payment Payment amount made.
     /// @param remainingDue Remaining amount due after payment.
     event RepaymentTracked(Id indexed id, address indexed borrower, uint256 payment, uint256 remainingDue);
+
+    /// @notice Emitted when a borrower's markdown is updated.
+    /// @param id Market id.
+    /// @param borrower Borrower address.
+    /// @param oldMarkdown Previous markdown amount.
+    /// @param newMarkdown New markdown amount.
+    event BorrowerMarkdownUpdated(Id indexed id, address indexed borrower, uint256 oldMarkdown, uint256 newMarkdown);
+
+    /// @notice Emitted when a borrower enters default status.
+    /// @param id Market id.
+    /// @param borrower Borrower address.
+    /// @param timestamp Timestamp when default started.
+    event DefaultStarted(Id indexed id, address indexed borrower, uint256 timestamp);
+
+    /// @notice Emitted when a borrower clears default status.
+    /// @param id Market id.
+    /// @param borrower Borrower address.
+    event DefaultCleared(Id indexed id, address indexed borrower);
+
+    /// @notice Emitted when a markdown manager is set for a market.
+    /// @param id Market id.
+    /// @param oldManager Previous markdown manager.
+    /// @param newManager New markdown manager.
+    event MarkdownManagerSet(Id indexed id, address oldManager, address newManager);
+
+    /// @notice Emitted when debt is settled through partial payment and write-off.
+    /// @param id Market id.
+    /// @param borrower Borrower whose debt is settled.
+    /// @param settler Address that initiated the settlement.
+    /// @param repaidAmount Amount actually repaid.
+    /// @param writtenOffAmount Amount written off (forgiven).
+    /// @param repaidShares Shares actually repaid.
+    /// @param writtenOffShares Shares written off.
+    event DebtSettled(
+        Id indexed id,
+        address indexed borrower,
+        address indexed settler,
+        uint256 repaidAmount,
+        uint256 writtenOffAmount,
+        uint256 repaidShares,
+        uint256 writtenOffShares
+    );
 }

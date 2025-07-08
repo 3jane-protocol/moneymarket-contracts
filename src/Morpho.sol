@@ -199,7 +199,7 @@ abstract contract Morpho is IMorphoStaticTyping {
         uint256 shares,
         address onBehalf,
         address receiver
-    ) external returns (uint256, uint256) {
+    ) external virtual returns (uint256, uint256) {
         Id id = marketParams.id();
         require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
         require(UtilsLib.exactlyOneZero(assets, shares), ErrorsLib.INCONSISTENT_INPUT);
