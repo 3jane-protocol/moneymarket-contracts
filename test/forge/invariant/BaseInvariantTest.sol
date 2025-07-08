@@ -158,7 +158,6 @@ contract BaseInvariantTest is InvariantTest {
         // Credit line adjustment needed
     }
 
-
     /* HANDLERS */
 
     function setFeeNoRevert(uint256 marketSeed, uint256 newFee) external {
@@ -279,5 +278,4 @@ contract BaseInvariantTest is InvariantTest {
 
         _withdrawCollateral(_marketParams, assets, onBehalf, receiver);
     }
-
 }

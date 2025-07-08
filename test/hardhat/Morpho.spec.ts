@@ -195,7 +195,6 @@ describe("Morpho", () => {
     }
   });
 
-
   it("should simuate gas cost [flashLoans]", async () => {
     const user = borrowers[0];
     const assets = BigInt.WAD;

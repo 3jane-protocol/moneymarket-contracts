@@ -337,8 +337,6 @@ contract BaseTest is Test {
         return bound(shares, 0, borrowShares);
     }
 
-
-
     function _maxBorrow(MarketParams memory _marketParams, address user) internal view returns (uint256) {
         Id _id = _marketParams.id();
 
@@ -353,7 +351,6 @@ contract BaseTest is Test {
 
         return maxBorrow >= borrowed;
     }
-
 
     function _boundValidLltv(uint256 lltv) internal pure returns (uint256) {
         return bound(lltv, 0, WAD - 1);

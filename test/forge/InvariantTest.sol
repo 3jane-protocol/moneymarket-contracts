@@ -113,5 +113,4 @@ contract InvariantTest is BaseTest {
 
         return _randomNonZero(candidates, seed);
     }
-
 }

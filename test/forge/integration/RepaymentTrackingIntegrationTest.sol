@@ -310,7 +310,6 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         assertEq(uint256(status), uint256(RepaymentStatus.Current));
     }
 
-
     // ============ Edge Case Tests ============
 
     function testRepaymentTracking_ZeroAmountOperations() public {

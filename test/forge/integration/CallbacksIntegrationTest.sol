@@ -4,12 +4,7 @@ pragma solidity ^0.8.0;
 import "../BaseTest.sol";
 import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 
-contract CallbacksIntegrationTest is
-    BaseTest,
-    IMorphoRepayCallback,
-    IMorphoSupplyCallback,
-    IMorphoFlashLoanCallback
-{
+contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupplyCallback, IMorphoFlashLoanCallback {
     using MathLib for uint256;
     using MorphoLib for IMorpho;
     using MarketParamsLib for MarketParams;
