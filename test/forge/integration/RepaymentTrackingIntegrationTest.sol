@@ -107,7 +107,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // 4. Verify borrowing is blocked
-        vm.expectRevert(bytes(ErrorsLib.OUTSTANDING_REPAYMENT));
+        vm.expectRevert(ErrorsLib.OutstandingRepayment.selector);
         vm.prank(ALICE);
         morpho.borrow(marketParams, 1000e18, 0, ALICE, ALICE);
 
@@ -163,11 +163,11 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // 4. Verify all borrowers are blocked from borrowing
-        vm.expectRevert(bytes(ErrorsLib.OUTSTANDING_REPAYMENT));
+        vm.expectRevert(ErrorsLib.OutstandingRepayment.selector);
         vm.prank(ALICE);
         morpho.borrow(marketParams, 100e18, 0, ALICE, ALICE);
 
-        vm.expectRevert(bytes(ErrorsLib.OUTSTANDING_REPAYMENT));
+        vm.expectRevert(ErrorsLib.OutstandingRepayment.selector);
         vm.prank(BOB);
         morpho.borrow(marketParams, 100e18, 0, BOB, BOB);
 
@@ -179,7 +179,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         // Bob's partial payment is rejected
         deal(address(loanToken), BOB, 1000e18);
         vm.prank(BOB);
-        vm.expectRevert("Must pay full obligation amount");
+        vm.expectRevert(ErrorsLib.MustPayFullObligation.selector);
         morpho.repay(marketParams, 1000e18, 0, BOB, "");
 
         // 6. Alice can borrow, Bob cannot
@@ -187,7 +187,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         vm.prank(ALICE);
         morpho.borrow(marketParams, 500e18, 0, ALICE, ALICE); // Should succeed
 
-        vm.expectRevert(bytes(ErrorsLib.OUTSTANDING_REPAYMENT));
+        vm.expectRevert(ErrorsLib.OutstandingRepayment.selector);
         vm.prank(BOB);
         morpho.borrow(marketParams, 500e18, 0, BOB, BOB); // Should fail
     }
@@ -232,7 +232,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         // 7. Verify partial payment is rejected
         deal(address(loanToken), ALICE, 500e18);
         vm.prank(ALICE);
-        vm.expectRevert("Must pay full obligation amount");
+        vm.expectRevert(ErrorsLib.MustPayFullObligation.selector);
         morpho.repay(marketParams, 500e18, 0, ALICE, "");
 
         // 8. Status should still be delinquent
@@ -297,7 +297,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         // Verify partial payment is rejected
         deal(address(loanToken), ALICE, 500e18);
         vm.prank(ALICE);
-        vm.expectRevert("Must pay full obligation amount");
+        vm.expectRevert(ErrorsLib.MustPayFullObligation.selector);
         morpho.repay(marketParams, 500e18, 0, ALICE, "");
 
         // Pay full obligation
@@ -389,7 +389,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         // Verify tiny repayment is rejected
         deal(address(loanToken), ALICE, 1);
         vm.prank(ALICE);
-        vm.expectRevert("Must pay full obligation amount");
+        vm.expectRevert(ErrorsLib.MustPayFullObligation.selector);
         morpho.repay(marketParams, 1, 0, ALICE, "");
 
         // Can trigger accrual through accrueBorrowerPremium (since we're past grace period)
@@ -503,7 +503,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         assertEq(amountDueBefore, 5000e18, "Should have 5000e18 obligation");
 
         // Verify Alice cannot borrow while delinquent
-        vm.expectRevert(bytes(ErrorsLib.OUTSTANDING_REPAYMENT));
+        vm.expectRevert(ErrorsLib.OutstandingRepayment.selector);
         vm.prank(ALICE);
         morpho.borrow(marketParams, 1000e18, 0, ALICE, ALICE);
 

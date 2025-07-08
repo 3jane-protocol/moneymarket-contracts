@@ -414,7 +414,7 @@ contract PenaltyInterestTest is BaseTest {
         // Verify partial payment is rejected
         deal(address(loanToken), ALICE, 400e18);
         vm.prank(ALICE);
-        vm.expectRevert("Must pay full obligation amount");
+        vm.expectRevert(ErrorsLib.MustPayFullObligation.selector);
         morpho.repay(marketParams, 400e18, 0, ALICE, "");
 
         uint256 borrowAssetsBefore = morpho.expectedBorrowAssets(marketParams, ALICE);

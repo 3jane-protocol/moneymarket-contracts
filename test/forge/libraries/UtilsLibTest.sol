@@ -25,7 +25,7 @@ contract UtilsLibTest is Test {
     /// forge-config: default.allow_internal_expect_revert = true
     function testToUint128Revert(uint256 x) public {
         vm.assume(x > type(uint128).max);
-        vm.expectRevert(bytes(ErrorsLib.MAX_UINT128_EXCEEDED));
+        vm.expectRevert(ErrorsLib.MaxUint128Exceeded.selector);
         x.toUint128();
     }
 

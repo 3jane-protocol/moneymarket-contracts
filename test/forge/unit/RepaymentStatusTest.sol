@@ -234,7 +234,7 @@ contract RepaymentStatusTest is BaseTest {
         // Verify partial payment is rejected
         deal(address(loanToken), ALICE, 999e18);
         vm.prank(ALICE);
-        vm.expectRevert("Must pay full obligation amount");
+        vm.expectRevert(ErrorsLib.MustPayFullObligation.selector);
         morpho.repay(marketParams, 999e18, 0, ALICE, "");
 
         // Status remains Default
@@ -372,7 +372,7 @@ contract RepaymentStatusTest is BaseTest {
         // Must pay full amount - verify partial payment is rejected
         deal(address(loanToken), ALICE, 400e18);
         vm.prank(ALICE);
-        vm.expectRevert("Must pay full obligation amount");
+        vm.expectRevert(ErrorsLib.MustPayFullObligation.selector);
         morpho.repay(marketParams, 400e18, 0, ALICE, "");
 
         // Status remains Delinquent

@@ -4,113 +4,113 @@ pragma solidity ^0.8.0;
 /// @title ErrorsLib
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
-/// @notice Library exposing error messages.
+/// @notice Library exposing custom errors.
 library ErrorsLib {
     /// @notice Thrown when the caller is not the owner.
-    string internal constant NOT_OWNER = "not owner";
+    error NotOwner();
 
     /// @notice Thrown when the caller is not the market's credit line.
-    string internal constant NOT_CREDIT_LINE = "not credit line";
+    error NotCreditLine();
 
     /// @notice Thrown when the caller is not the market's helper.
-    string internal constant NOT_HELPER = "not helper";
+    error NotHelper();
 
     /// @notice Thrown when the caller is not the owner or ozd.
-    string internal constant NOT_OWNER_OR_OZD = "not owner or ozd";
+    error NotOwnerOrOzd();
 
     /// @notice Thrown when the TVV to enable exceeds the maximum TVV.
-    string internal constant UNSAFE_TVV = "max tvv exceeded";
+    error UnsafeTvv();
 
     /// @notice Thrown when the LLTV to enable exceeds the maximum LLTV.
-    string internal constant MAX_LLTV_EXCEEDED = "max LLTV exceeded";
+    error MaxLltvExceeded();
 
     /// @notice Thrown when the fee to set exceeds the maximum fee.
-    string internal constant MAX_FEE_EXCEEDED = "max fee exceeded";
+    error MaxFeeExceeded();
 
     /// @notice Thrown when the value is already set.
-    string internal constant ALREADY_SET = "already set";
+    error AlreadySet();
 
     /// @notice Thrown when the IRM is not enabled at market creation.
-    string internal constant IRM_NOT_ENABLED = "IRM not enabled";
+    error IrmNotEnabled();
 
     /// @notice Thrown when the LLTV is not enabled at market creation.
-    string internal constant LLTV_NOT_ENABLED = "LLTV not enabled";
+    error LltvNotEnabled();
 
     /// @notice Thrown when the market is already created.
-    string internal constant MARKET_ALREADY_CREATED = "market already created";
+    error MarketAlreadyCreated();
 
     /// @notice Thrown when a token to transfer doesn't have code.
-    string internal constant NO_CODE = "no code";
+    error NoCode();
 
     /// @notice Thrown when the market is not created.
-    string internal constant MARKET_NOT_CREATED = "market not created";
+    error MarketNotCreated();
 
     /// @notice Thrown when not exactly one of the input amount is zero.
-    string internal constant INCONSISTENT_INPUT = "inconsistent input";
+    error InconsistentInput();
 
     /// @notice Thrown when zero assets is passed as input.
-    string internal constant ZERO_ASSETS = "zero assets";
+    error ZeroAssets();
 
     /// @notice Thrown when a zero address is passed as input.
-    string internal constant ZERO_ADDRESS = "zero address";
+    error ZeroAddress();
 
     /// @notice Thrown when the caller is not authorized to conduct an action.
-    string internal constant UNAUTHORIZED = "unauthorized";
+    error Unauthorized();
 
     /// @notice Thrown when the collateral is insufficient to `borrow` or `withdrawCollateral`.
-    string internal constant INSUFFICIENT_COLLATERAL = "insufficient collateral";
+    error InsufficientCollateral();
 
     /// @notice Thrown when the liquidity is insufficient to `withdraw` or `borrow`.
-    string internal constant INSUFFICIENT_LIQUIDITY = "insufficient liquidity";
+    error InsufficientLiquidity();
 
     /// @notice Thrown when the position to liquidate is healthy.
-    string internal constant HEALTHY_POSITION = "position is healthy";
+    error HealthyPosition();
 
     /// @notice Thrown when the authorization signature is invalid.
-    string internal constant INVALID_SIGNATURE = "invalid signature";
+    error InvalidSignature();
 
     /// @notice Thrown when the authorization signature is expired.
-    string internal constant SIGNATURE_EXPIRED = "signature expired";
+    error SignatureExpired();
 
     /// @notice Thrown when the nonce is invalid.
-    string internal constant INVALID_NONCE = "invalid nonce";
+    error InvalidNonce();
 
     /// @notice Thrown when a token transfer reverted.
-    string internal constant TRANSFER_REVERTED = "transfer reverted";
+    error TransferReverted();
 
     /// @notice Thrown when a token transfer returned false.
-    string internal constant TRANSFER_RETURNED_FALSE = "transfer returned false";
+    error TransferReturnedFalse();
 
     /// @notice Thrown when a token transferFrom reverted.
-    string internal constant TRANSFER_FROM_REVERTED = "transferFrom reverted";
+    error TransferFromReverted();
 
     /// @notice Thrown when a token transferFrom returned false
-    string internal constant TRANSFER_FROM_RETURNED_FALSE = "transferFrom returned false";
+    error TransferFromReturnedFalse();
 
     /// @notice Thrown when the maximum uint128 is exceeded.
-    string internal constant MAX_UINT128_EXCEEDED = "max uint128 exceeded";
+    error MaxUint128Exceeded();
 
     /// @notice Thrown when the premium rate exceeds the maximum allowed.
-    string internal constant PREMIUM_RATE_TOO_HIGH = "premium rate too high";
+    error PremiumRateTooHigh();
 
     /// @notice Thrown when the borrower has outstanding repayment obligations.
-    string internal constant OUTSTANDING_REPAYMENT = "outstanding repayment";
+    error OutstandingRepayment();
 
     /// @notice Thrown when trying to close a future cycle.
-    string internal constant CANNOT_CLOSE_FUTURE_CYCLE = "Cannot close future cycle";
+    error CannotCloseFutureCycle();
 
     /// @notice Thrown when cycle duration is invalid.
-    string internal constant INVALID_CYCLE_DURATION = "Invalid cycle duration";
+    error InvalidCycleDuration();
 
     /// @notice Thrown when no payment cycles exist.
-    string internal constant NO_CYCLES_EXIST = "No cycles exist";
+    error NoCyclesExist();
 
     /// @notice Thrown when cycle ID is invalid.
-    string internal constant INVALID_CYCLE_ID = "Invalid cycle ID";
+    error InvalidCycleId();
 
     /// @notice Thrown when partial payment is attempted but full obligation payment is required.
-    string internal constant MUST_PAY_FULL_OBLIGATION = "Must pay full obligation amount";
+    error MustPayFullObligation();
 
     /// @notice Thrown when repayment basis points exceed 100%.
-    string internal constant REPAYMENT_EXCEEDS_HUNDRED_PERCENT = "repayment exceeds 100%";
+    error RepaymentExceedsHundredPercent();
 }

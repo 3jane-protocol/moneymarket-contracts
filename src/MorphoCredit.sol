@@ -82,7 +82,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @inheritdoc IMorphoCredit
     function setHelper(address newHelper) external onlyOwner {
-        require(newHelper != helper, ErrorsLib.ALREADY_SET);
+        if (newHelper == helper) revert ErrorsLib.AlreadySet();
 
         helper = newHelper;
 
@@ -91,8 +91,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @inheritdoc IMorphoCredit
     function setAuthorizationV2(address authorizee, bool newIsAuthorized) external {
-        require(msg.sender == helper, ErrorsLib.NOT_HELPER);
-        require(newIsAuthorized != isAuthorized[authorizee][helper], ErrorsLib.ALREADY_SET);
+        if (msg.sender != helper) revert ErrorsLib.NotHelper();
+        if (newIsAuthorized == isAuthorized[authorizee][helper]) revert ErrorsLib.AlreadySet();
 
         isAuthorized[authorizee][helper] = newIsAuthorized;
 
@@ -342,8 +342,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @notice Modifier to restrict access to the market's CreditLine contract
     modifier onlyCreditLine(Id id) {
-        require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
-        require(msg.sender == idToMarketParams[id].creditLine, ErrorsLib.NOT_CREDIT_LINE);
+        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
+        if (msg.sender != idToMarketParams[id].creditLine) revert ErrorsLib.NotCreditLine();
         _;
     }
 
@@ -351,9 +351,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @inheritdoc IMorphoCredit
     function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external {
-        require(borrower != address(0), ErrorsLib.ZERO_ADDRESS);
-        require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
-        require(idToMarketParams[id].creditLine == msg.sender, ErrorsLib.NOT_CREDIT_LINE);
+        if (borrower == address(0)) revert ErrorsLib.ZeroAddress();
+        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
+        if (idToMarketParams[id].creditLine != msg.sender) revert ErrorsLib.NotCreditLine();
 
         position[id][borrower].collateral = credit.toUint128();
 
@@ -414,11 +414,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256[] calldata repaymentBps,
         uint256[] calldata endingBalances
     ) external onlyCreditLine(id) {
-        require(
-            borrowers.length == repaymentBps.length && repaymentBps.length == endingBalances.length,
-            ErrorsLib.INCONSISTENT_INPUT
-        );
-        require(endDate <= block.timestamp, ErrorsLib.CANNOT_CLOSE_FUTURE_CYCLE);
+        if (borrowers.length != repaymentBps.length || repaymentBps.length != endingBalances.length) {
+            revert ErrorsLib.InconsistentInput();
+        }
+        if (endDate > block.timestamp) revert ErrorsLib.CannotCloseFutureCycle();
 
         uint256 cycleLength = paymentCycle[id].length;
         uint256 startDate;
@@ -427,7 +426,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             // Validate cycle comes after previous one
             PaymentCycle storage prevCycle = paymentCycle[id][cycleLength - 1];
             startDate = prevCycle.endDate + 1 days;
-            require(startDate < endDate, ErrorsLib.INVALID_CYCLE_DURATION);
+            if (startDate >= endDate) revert ErrorsLib.InvalidCycleDuration();
         }
         // else startDate remains 0 for the first cycle
 
@@ -455,11 +454,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256[] calldata repaymentBps,
         uint256[] calldata endingBalances
     ) external onlyCreditLine(id) {
-        require(
-            borrowers.length == repaymentBps.length && repaymentBps.length == endingBalances.length,
-            ErrorsLib.INCONSISTENT_INPUT
-        );
-        require(paymentCycle[id].length > 0, ErrorsLib.NO_CYCLES_EXIST);
+        if (borrowers.length != repaymentBps.length || repaymentBps.length != endingBalances.length) {
+            revert ErrorsLib.InconsistentInput();
+        }
+        if (paymentCycle[id].length == 0) revert ErrorsLib.NoCyclesExist();
 
         uint256 latestCycleId = paymentCycle[id].length - 1;
 
@@ -481,7 +479,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 cycleId,
         uint256 endingBalance
     ) internal {
-        require(repaymentBps <= MAX_BPS, ErrorsLib.REPAYMENT_EXCEEDS_HUNDRED_PERCENT);
+        if (repaymentBps > MAX_BPS) revert ErrorsLib.RepaymentExceedsHundredPercent();
 
         RepaymentObligation storage obligation = repaymentObligation[id][borrower];
 
@@ -521,7 +519,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (obligation.amountDue == 0) return RepaymentStatus.Current;
 
         // Validate cycleId is within bounds
-        require(obligation.paymentCycleId < paymentCycle[id].length, ErrorsLib.INVALID_CYCLE_ID);
+        if (obligation.paymentCycleId >= paymentCycle[id].length) revert ErrorsLib.InvalidCycleId();
 
         uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
 
@@ -541,7 +539,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc Morpho
     function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
         // Check if borrower can borrow
-        require(getRepaymentStatus(id, onBehalf) == RepaymentStatus.Current, ErrorsLib.OUTSTANDING_REPAYMENT);
+        if (getRepaymentStatus(id, onBehalf) != RepaymentStatus.Current) revert ErrorsLib.OutstandingRepayment();
         _accrueBorrowerPremium(id, onBehalf);
     }
 
@@ -588,7 +586,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         if (amountDue == 0) return;
 
-        require(payment >= amountDue, ErrorsLib.MUST_PAY_FULL_OBLIGATION);
+        if (payment < amountDue) revert ErrorsLib.MustPayFullObligation();
 
         // Clear the obligation
         repaymentObligation[id][borrower].amountDue = 0;
@@ -610,7 +608,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @return The latest cycle ID
     function getLatestCycleId(Id id) external view returns (uint256) {
-        require(paymentCycle[id].length > 0, ErrorsLib.NO_CYCLES_EXIST);
+        if (paymentCycle[id].length == 0) revert ErrorsLib.NoCyclesExist();
         return paymentCycle[id].length - 1;
     }
 
@@ -620,7 +618,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @return startDate The cycle start date
     /// @return endDate The cycle end date
     function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate) {
-        require(cycleId < paymentCycle[id].length, ErrorsLib.INVALID_CYCLE_ID);
+        if (cycleId >= paymentCycle[id].length) revert ErrorsLib.InvalidCycleId();
 
         PaymentCycle storage cycle = paymentCycle[id][cycleId];
         endDate = cycle.endDate;
