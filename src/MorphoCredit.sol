@@ -726,62 +726,62 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         address manager = markdownManager[id];
         if (manager == address(0)) return; // No markdown manager set
 
-        MarkdownState memory state = markdownState[id][borrower];
-        (RepaymentStatus status, uint256 defaultStart) =
+        uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
+        (RepaymentStatus status, uint256 statusStartTime) =
             _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
-        uint256 lastMarkdown = state.lastCalculatedMarkdown;
 
-        // Detect status transitions by checking if we're entering/exiting default
-        // We consider a borrower was in default if they had markdown calculated
-        bool wasInDefault = lastMarkdown > 0;
-        bool isInDefault = status == RepaymentStatus.Default && defaultStart > 0;
-
-        if (isInDefault != wasInDefault) {
+        // Check if in default and emit status change events
+        bool isInDefault = status == RepaymentStatus.Default && statusStartTime > 0;
+        if (isInDefault != (lastMarkdown > 0)) {
             if (isInDefault) {
-                // Entered default status
-                emit EventsLib.DefaultStarted(id, borrower, defaultStart);
+                emit EventsLib.DefaultStarted(id, borrower, statusStartTime);
             } else {
-                // Cleared default status
                 emit EventsLib.DefaultCleared(id, borrower);
             }
         }
 
-        // Calculate new markdown amount
-        uint256 borrowAssets = _getBorrowerAssets(id, borrower);
+        // Calculate new markdown
         uint256 newMarkdown = 0;
-
         if (isInDefault) {
-            newMarkdown = IMarkdownManager(manager).calculateMarkdown(borrowAssets, defaultStart, block.timestamp);
+            newMarkdown = IMarkdownManager(manager).calculateMarkdown(
+                _getBorrowerAssets(id, borrower), statusStartTime, block.timestamp
+            );
         }
 
         if (newMarkdown != lastMarkdown) {
             // Update borrower state
             markdownState[id][borrower].lastCalculatedMarkdown = uint128(newMarkdown);
 
-            // Calculate the change in markdown
-            int256 markdownDelta = int256(newMarkdown) - int256(lastMarkdown);
-
-            // Update market totals
-            Market memory m = market[id];
-
-            // Track total markdowns for reporting/reversibility
-            m.totalMarkdownAmount = uint256(int256(uint256(m.totalMarkdownAmount)) + markdownDelta).toUint128();
-
-            // Directly adjust supply assets
-            if (markdownDelta > 0) {
-                // Markdown increased - reduce supply
-                m.totalSupplyAssets = m.totalSupplyAssets > uint256(markdownDelta)
-                    ? (m.totalSupplyAssets - uint256(markdownDelta)).toUint128()
-                    : 0;
-            } else if (markdownDelta < 0) {
-                // Markdown decreased (borrower recovering) - restore supply
-                m.totalSupplyAssets = (m.totalSupplyAssets + uint256(-markdownDelta)).toUint128();
-            }
-
-            market[id] = m;
+            // Update market totals - use a separate function to avoid stack issues
+            _updateMarketMarkdown(id, int256(newMarkdown) - int256(lastMarkdown));
 
             emit EventsLib.BorrowerMarkdownUpdated(id, borrower, lastMarkdown, newMarkdown);
         }
+    }
+
+    /// @notice Update market totals for markdown changes
+    /// @param id Market ID
+    /// @param markdownDelta Change in markdown (positive = increase, negative = decrease)
+    function _updateMarketMarkdown(Id id, int256 markdownDelta) internal {
+        if (markdownDelta == 0) return;
+
+        Market memory m = market[id];
+
+        // Track total markdowns for reporting/reversibility
+        m.totalMarkdownAmount = uint256(int256(uint256(m.totalMarkdownAmount)) + markdownDelta).toUint128();
+
+        // Directly adjust supply assets
+        if (markdownDelta > 0) {
+            // Markdown increased - reduce supply
+            m.totalSupplyAssets = m.totalSupplyAssets > uint256(markdownDelta)
+                ? (m.totalSupplyAssets - uint256(markdownDelta)).toUint128()
+                : 0;
+        } else {
+            // Markdown decreased (borrower recovering) - restore supply
+            m.totalSupplyAssets = (m.totalSupplyAssets + uint256(-markdownDelta)).toUint128();
+        }
+
+        market[id] = m;
     }
 
     /// @notice Get borrower's current borrow assets
@@ -811,55 +811,24 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         _accrueInterest(marketParams, id);
         _accrueBorrowerPremium(id, borrower);
-        _updateBorrowerMarkdown(id, borrower);
 
-        // Get current position
+        // Get position and calculate settlement
         uint256 borrowShares = position[id][borrower].borrowShares;
         require(borrowShares > 0, ErrorsLib.NO_DEBT_TO_SETTLE);
 
-        // Calculate how many shares the repayment covers
-        Market memory m = market[id];
+        (repaidShares, writtenOffShares, repayAmount) = _calculateSettlement(id, borrowShares, repayAmount);
 
-        // Convert repay amount to shares
-        repaidShares = repayAmount.toSharesDown(m.totalBorrowAssets, m.totalBorrowShares);
-
-        // Ensure we don't repay more than owed
-        if (repaidShares > borrowShares) {
-            repaidShares = borrowShares;
-            repayAmount = repaidShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
-        }
-
-        // Calculate written off shares
-        writtenOffShares = borrowShares - repaidShares;
-        uint256 writtenOffAssets = writtenOffShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
-
-        // Update borrower position - clear entirely
-        position[id][borrower].borrowShares = 0;
-
-        // Update market totals
-        market[id].totalBorrowShares = (m.totalBorrowShares - borrowShares).toUint128();
-        market[id].totalBorrowAssets = (m.totalBorrowAssets - repayAmount - writtenOffAssets).toUint128();
-
-        // Reduce supply by written off amount (socialize the loss)
-        market[id].totalSupplyAssets =
-            (m.totalSupplyAssets > writtenOffAssets) ? (m.totalSupplyAssets - writtenOffAssets).toUint128() : 0;
-
-        // Clear borrower's markdown state and update market total
-        {
-            uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
-            delete markdownState[id][borrower];
-
-            if (lastMarkdown > 0) {
-                market[id].totalMarkdownAmount =
-                    (m.totalMarkdownAmount > lastMarkdown) ? (m.totalMarkdownAmount - lastMarkdown).toUint128() : 0;
-            }
-        }
-
-        // Clear any outstanding obligations
-        delete repaymentObligation[id][borrower];
+        // Clear position and apply supply adjustment
+        _applySettlement(id, borrower, borrowShares, repaidShares, writtenOffShares, repayAmount);
 
         emit EventsLib.DebtSettled(
-            id, borrower, msg.sender, repayAmount, writtenOffAssets, repaidShares, writtenOffShares
+            id,
+            borrower,
+            msg.sender,
+            repayAmount,
+            writtenOffShares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares),
+            repaidShares,
+            writtenOffShares
         );
 
         // Handle repayment callback if needed
@@ -869,6 +838,67 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Transfer the repay amount
         IERC20(marketParams.loanToken).safeTransferFrom(msg.sender, address(this), repayAmount);
+    }
+
+    /// @notice Calculate settlement amounts
+    function _calculateSettlement(Id id, uint256 borrowShares, uint256 repayAmount)
+        internal
+        view
+        returns (uint256 repaidShares, uint256 writtenOffShares, uint256 adjustedRepayAmount)
+    {
+        Market memory m = market[id];
+
+        // Convert repay amount to shares
+        repaidShares = repayAmount.toSharesDown(m.totalBorrowAssets, m.totalBorrowShares);
+
+        // Ensure we don't repay more than owed
+        if (repaidShares > borrowShares) {
+            repaidShares = borrowShares;
+            adjustedRepayAmount = repaidShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+        } else {
+            adjustedRepayAmount = repayAmount;
+        }
+
+        // Calculate written off shares
+        writtenOffShares = borrowShares - repaidShares;
+    }
+
+    /// @notice Apply settlement to storage
+    function _applySettlement(
+        Id id,
+        address borrower,
+        uint256 borrowShares,
+        uint256 repaidShares,
+        uint256 writtenOffShares,
+        uint256 repayAmount
+    ) internal {
+        Market memory m = market[id];
+        uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
+        uint256 writtenOffAssets = writtenOffShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+
+        // Clear position
+        position[id][borrower].borrowShares = 0;
+        delete markdownState[id][borrower];
+        delete repaymentObligation[id][borrower];
+
+        // Update market totals
+        market[id].totalBorrowShares = (m.totalBorrowShares - borrowShares).toUint128();
+        market[id].totalBorrowAssets = (m.totalBorrowAssets - repayAmount - writtenOffAssets).toUint128();
+
+        // Apply net supply adjustment
+        int256 netAdjustment = int256(lastMarkdown) - int256(writtenOffAssets);
+        if (netAdjustment > 0) {
+            market[id].totalSupplyAssets = (m.totalSupplyAssets + uint256(netAdjustment)).toUint128();
+        } else if (netAdjustment < 0) {
+            uint256 loss = uint256(-netAdjustment);
+            market[id].totalSupplyAssets = m.totalSupplyAssets > loss ? (m.totalSupplyAssets - loss).toUint128() : 0;
+        }
+
+        // Update markdown total
+        if (lastMarkdown > 0) {
+            market[id].totalMarkdownAmount =
+                m.totalMarkdownAmount > lastMarkdown ? (m.totalMarkdownAmount - lastMarkdown).toUint128() : 0;
+        }
     }
 
     /* VIEW FUNCTIONS - MARKDOWN */
@@ -886,11 +916,19 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     {
         borrowAssets = _getBorrowerAssets(id, borrower);
 
-        // Calculate default start time based on current status
+        // Calculate status and status start time
         RepaymentStatus status;
-        (status, defaultStartTime) = _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
+        uint256 statusStartTime;
+        (status, statusStartTime) = _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
 
-        // Get fresh markdown calculation if manager is set
+        // Only set defaultStartTime if actually in default status
+        if (status == RepaymentStatus.Default) {
+            defaultStartTime = statusStartTime;
+        } else {
+            defaultStartTime = 0;
+        }
+
+        // Get fresh markdown calculation if manager is set and in default
         address manager = markdownManager[id];
         if (manager != address(0) && status == RepaymentStatus.Default && defaultStartTime > 0 && borrowAssets > 0) {
             currentMarkdown =
