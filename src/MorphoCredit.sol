@@ -573,10 +573,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         _trackObligationPayment(id, onBehalf, assets);
     }
 
-    /// @inheritdoc Morpho
-    function _beforeLiquidate(MarketParams memory, Id id, address borrower, uint256, uint256) internal override {
-        _accrueBorrowerPremium(id, borrower);
-    }
 
     /// @inheritdoc Morpho
     function _afterBorrow(MarketParams memory, Id id, address onBehalf) internal override {
@@ -589,10 +585,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         _updateBorrowerMarkdown(id, onBehalf);
     }
 
-    /// @inheritdoc Morpho
-    function _afterLiquidate(MarketParams memory, Id id, address borrower) internal override {
-        _snapshotBorrowerPosition(id, borrower);
-    }
 
     /// @dev Track obligation payment and update state
     /// @param id Market ID

@@ -457,20 +457,6 @@ abstract contract Morpho is IMorphoStaticTyping {
         virtual
     {}
 
-    /// @dev Hook called before liquidate operations to allow for premium accrual or other pre-processing.
-    /// @param marketParams The market parameters.
-    /// @param id The market id.
-    /// @param borrower The address being liquidated.
-    /// @param seizedAssets The amount of collateral to seize.
-    /// @param repaidShares The amount of debt shares to repay.
-    function _beforeLiquidate(
-        MarketParams memory marketParams,
-        Id id,
-        address borrower,
-        uint256 seizedAssets,
-        uint256 repaidShares
-    ) internal virtual {}
-
     /// @dev Hook called after borrow operations to allow for post-processing.
     /// @param marketParams The market parameters.
     /// @param id The market id.
@@ -484,11 +470,6 @@ abstract contract Morpho is IMorphoStaticTyping {
     /// @param assets The amount of assets repaid.
     function _afterRepay(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets) internal virtual {}
 
-    /// @dev Hook called after liquidate operations to allow for post-processing.
-    /// @param marketParams The market parameters.
-    /// @param id The market id.
-    /// @param borrower The address that was liquidated.
-    function _afterLiquidate(MarketParams memory marketParams, Id id, address borrower) internal virtual {}
 
     /* STORAGE VIEW */
 
