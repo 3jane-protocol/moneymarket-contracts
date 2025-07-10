@@ -25,7 +25,7 @@ library UtilsLib {
 
     /// @dev Returns `x` safely cast to uint128.
     function toUint128(uint256 x) internal pure returns (uint128) {
-        require(x <= type(uint128).max, ErrorsLib.MAX_UINT128_EXCEEDED);
+        if (x > type(uint128).max) revert ErrorsLib.MaxUint128Exceeded();
         return uint128(x);
     }
 

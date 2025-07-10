@@ -31,8 +31,8 @@ contract CreditLine is ICreditLine {
     /* CONSTRUCTOR */
 
     constructor(address newMorpho, address newOwner, address newOzd, address newProver) {
-        require(newMorpho != address(0), ErrorsLib.ZERO_ADDRESS);
-        require(newOwner != address(0), ErrorsLib.ZERO_ADDRESS);
+        if (newMorpho == address(0)) revert ErrorsLib.ZeroAddress();
+        if (newOwner == address(0)) revert ErrorsLib.ZeroAddress();
         morpho = newMorpho;
         owner = newOwner;
         ozd = newOzd;
@@ -42,14 +42,14 @@ contract CreditLine is ICreditLine {
 
     /// @dev Reverts if the caller is not the owner.
     modifier onlyOwner() {
-        require(msg.sender == owner, ErrorsLib.NOT_OWNER);
+        if (msg.sender != owner) revert ErrorsLib.NotOwner();
         _;
     }
 
     /* ONLY OWNER FUNCTIONS */
     /// @inheritdoc ICreditLine
     function setOwner(address newOwner) external onlyOwner {
-        require(newOwner != owner, ErrorsLib.ALREADY_SET);
+        if (newOwner == owner) revert ErrorsLib.AlreadySet();
 
         owner = newOwner;
 
@@ -58,23 +58,23 @@ contract CreditLine is ICreditLine {
 
     /// @inheritdoc ICreditLine
     function setOzd(address newOzd) external onlyOwner {
-        require(newOzd != ozd, ErrorsLib.ALREADY_SET);
+        if (newOzd == ozd) revert ErrorsLib.AlreadySet();
 
         ozd = newOzd;
     }
 
     /// @inheritdoc ICreditLine
     function setProver(address newProver) external onlyOwner {
-        require(newProver != prover, ErrorsLib.ALREADY_SET);
+        if (newProver == prover) revert ErrorsLib.AlreadySet();
 
         prover = newProver;
     }
 
     /// @inheritdoc ICreditLine
     function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external {
-        require(msg.sender == owner || msg.sender == ozd, ErrorsLib.NOT_OWNER_OR_OZD);
-        require(prover == address(0) || IProver(prover).isSafeTVV(borrower, credit), ErrorsLib.UNSAFE_TVV);
-        require(premiumRate <= MAX_PREMIUM_RATE, ErrorsLib.PREMIUM_RATE_TOO_HIGH);
+        if (msg.sender != owner && msg.sender != ozd) revert ErrorsLib.NotOwnerOrOzd();
+        if (prover != address(0) && !IProver(prover).isSafeTVV(borrower, credit)) revert ErrorsLib.UnsafeTvv();
+        if (premiumRate > MAX_PREMIUM_RATE) revert ErrorsLib.PremiumRateTooHigh();
         IMorphoCredit(morpho).setCreditLine(id, borrower, credit, premiumRate);
     }
 }

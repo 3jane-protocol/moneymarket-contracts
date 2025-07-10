@@ -10,7 +10,7 @@ contract AuthorizationIntegrationTest is BaseTest {
         vm.prank(OWNER);
         IMorphoCredit(morphoAddress).setHelper(helper);
 
-        vm.expectRevert(bytes(ErrorsLib.NOT_HELPER));
+        vm.expectRevert(ErrorsLib.NotHelper.selector);
         IMorphoCredit(morphoAddress).setAuthorizationV2(address(2), true);
     }
 
@@ -45,12 +45,12 @@ contract AuthorizationIntegrationTest is BaseTest {
     }
 
     function testAlreadySet(address addressFuzz) public {
-        vm.expectRevert(bytes(ErrorsLib.ALREADY_SET));
+        vm.expectRevert(ErrorsLib.AlreadySet.selector);
         morpho.setAuthorization(addressFuzz, false);
 
         morpho.setAuthorization(addressFuzz, true);
 
-        vm.expectRevert(bytes(ErrorsLib.ALREADY_SET));
+        vm.expectRevert(ErrorsLib.AlreadySet.selector);
         morpho.setAuthorization(addressFuzz, true);
     }
 
@@ -74,7 +74,7 @@ contract AuthorizationIntegrationTest is BaseTest {
 
         _forward(blocks);
 
-        vm.expectRevert(bytes(ErrorsLib.SIGNATURE_EXPIRED));
+        vm.expectRevert(ErrorsLib.SignatureExpired.selector);
         morpho.setAuthorizationWithSig(authorization, sig);
     }
 
@@ -90,7 +90,7 @@ contract AuthorizationIntegrationTest is BaseTest {
         bytes32 digest = SigUtils.getTypedDataHash(morpho.DOMAIN_SEPARATOR(), authorization);
         (sig.v, sig.r, sig.s) = vm.sign(privateKey, digest);
 
-        vm.expectRevert(bytes(ErrorsLib.INVALID_SIGNATURE));
+        vm.expectRevert(ErrorsLib.InvalidSignature.selector);
         morpho.setAuthorizationWithSig(authorization, sig);
     }
 
@@ -107,7 +107,7 @@ contract AuthorizationIntegrationTest is BaseTest {
         bytes32 digest = SigUtils.getTypedDataHash(morpho.DOMAIN_SEPARATOR(), authorization);
         (sig.v, sig.r, sig.s) = vm.sign(privateKey, digest);
 
-        vm.expectRevert(bytes(ErrorsLib.INVALID_NONCE));
+        vm.expectRevert(ErrorsLib.InvalidNonce.selector);
         morpho.setAuthorizationWithSig(authorization, sig);
     }
 
@@ -146,7 +146,7 @@ contract AuthorizationIntegrationTest is BaseTest {
         morpho.setAuthorizationWithSig(authorization, sig);
 
         authorization.isAuthorized = false;
-        vm.expectRevert(bytes(ErrorsLib.INVALID_NONCE));
+        vm.expectRevert(ErrorsLib.InvalidNonce.selector);
         morpho.setAuthorizationWithSig(authorization, sig);
     }
 }

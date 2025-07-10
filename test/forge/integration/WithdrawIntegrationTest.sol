@@ -12,7 +12,7 @@ contract WithdrawIntegrationTest is BaseTest {
     function testWithdrawMarketNotCreated(MarketParams memory marketParamsParamsFuzz) public {
         vm.assume(neq(marketParamsParamsFuzz, marketParams));
 
-        vm.expectRevert(bytes(ErrorsLib.MARKET_NOT_CREATED));
+        vm.expectRevert(ErrorsLib.MarketNotCreated.selector);
         morpho.withdraw(marketParamsParamsFuzz, 1, 0, address(this), address(this));
     }
 
@@ -22,7 +22,7 @@ contract WithdrawIntegrationTest is BaseTest {
         loanToken.setBalance(address(this), amount);
         morpho.supply(marketParams, amount, 0, address(this), hex"");
 
-        vm.expectRevert(bytes(ErrorsLib.INCONSISTENT_INPUT));
+        vm.expectRevert(ErrorsLib.InconsistentInput.selector);
         morpho.withdraw(marketParams, 0, 0, address(this), address(this));
     }
 
@@ -33,7 +33,7 @@ contract WithdrawIntegrationTest is BaseTest {
         loanToken.setBalance(address(this), amount);
         morpho.supply(marketParams, amount, 0, address(this), hex"");
 
-        vm.expectRevert(bytes(ErrorsLib.INCONSISTENT_INPUT));
+        vm.expectRevert(ErrorsLib.InconsistentInput.selector);
         morpho.withdraw(marketParams, amount, shares, address(this), address(this));
     }
 
@@ -43,7 +43,7 @@ contract WithdrawIntegrationTest is BaseTest {
         loanToken.setBalance(address(this), amount);
         morpho.supply(marketParams, amount, 0, address(this), hex"");
 
-        vm.expectRevert(bytes(ErrorsLib.ZERO_ADDRESS));
+        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
         morpho.withdraw(marketParams, amount, 0, address(this), address(0));
     }
 
@@ -55,7 +55,7 @@ contract WithdrawIntegrationTest is BaseTest {
         morpho.supply(marketParams, amount, 0, address(this), hex"");
 
         vm.prank(attacker);
-        vm.expectRevert(bytes(ErrorsLib.UNAUTHORIZED));
+        vm.expectRevert(ErrorsLib.Unauthorized.selector);
         morpho.withdraw(marketParams, amount, 0, address(this), address(this));
     }
 
@@ -79,7 +79,7 @@ contract WithdrawIntegrationTest is BaseTest {
         vm.stopPrank();
 
         vm.prank(SUPPLIER);
-        vm.expectRevert(bytes(ErrorsLib.INSUFFICIENT_LIQUIDITY));
+        vm.expectRevert(ErrorsLib.InsufficientLiquidity.selector);
         morpho.withdraw(marketParams, amountSupplied, 0, SUPPLIER, RECEIVER);
     }
 

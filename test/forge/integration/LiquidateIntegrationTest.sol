@@ -13,7 +13,7 @@ contract LiquidateIntegrationTest is BaseTest {
         _setLltv(_boundTestLltv(lltv));
         vm.assume(neq(marketParamsFuzz, marketParams));
 
-        vm.expectRevert(bytes(ErrorsLib.MARKET_NOT_CREATED));
+        vm.expectRevert(ErrorsLib.MarketNotCreated.selector);
         morpho.liquidate(marketParamsFuzz, address(this), 1, 0, hex"");
     }
 
@@ -21,7 +21,7 @@ contract LiquidateIntegrationTest is BaseTest {
         _setLltv(_boundTestLltv(lltv));
         vm.prank(BORROWER);
 
-        vm.expectRevert(bytes(ErrorsLib.INCONSISTENT_INPUT));
+        vm.expectRevert(ErrorsLib.InconsistentInput.selector);
         morpho.liquidate(marketParams, address(this), 0, 0, hex"");
     }
 
@@ -31,7 +31,7 @@ contract LiquidateIntegrationTest is BaseTest {
 
         vm.prank(BORROWER);
 
-        vm.expectRevert(bytes(ErrorsLib.INCONSISTENT_INPUT));
+        vm.expectRevert(ErrorsLib.InconsistentInput.selector);
         morpho.liquidate(marketParams, address(this), seized, sharesRepaid, hex"");
     }
 

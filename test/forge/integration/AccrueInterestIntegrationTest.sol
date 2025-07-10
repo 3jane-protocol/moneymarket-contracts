@@ -12,7 +12,7 @@ contract AccrueInterestIntegrationTest is BaseTest {
     function testAccrueInterestMarketNotCreated(MarketParams memory marketParamsFuzz) public {
         vm.assume(neq(marketParamsFuzz, marketParams));
 
-        vm.expectRevert(bytes(ErrorsLib.MARKET_NOT_CREATED));
+        vm.expectRevert(ErrorsLib.MarketNotCreated.selector);
         morpho.accrueInterest(marketParamsFuzz);
     }
 

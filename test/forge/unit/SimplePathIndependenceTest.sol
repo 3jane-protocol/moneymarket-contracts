@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {BaseTest} from "../BaseTest.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
+import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 import {
     Id,
     MarketParams,
@@ -92,7 +93,7 @@ contract SimplePathIndependenceTest is BaseTest {
         vm.startPrank(BORROWER);
         loanToken.approve(address(morpho), 3000e18);
 
-        vm.expectRevert(bytes("Must pay full obligation amount"));
+        vm.expectRevert(ErrorsLib.MustPayFullObligation.selector);
         morpho.repay(marketParams, 3000e18, 0, BORROWER, new bytes(0));
 
         // Full payment should succeed

@@ -105,7 +105,7 @@ contract MorphoCreditRepaymentTest is BaseTest {
         repaymentBps[0] = 1000; // 10%
         endingBalances[0] = 10000e18;
 
-        vm.expectRevert(bytes(ErrorsLib.NOT_CREDIT_LINE));
+        vm.expectRevert(ErrorsLib.NotCreditLine.selector);
         vm.prank(ALICE); // Not the credit line
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
             id, endDate, borrowers, repaymentBps, endingBalances
@@ -122,7 +122,7 @@ contract MorphoCreditRepaymentTest is BaseTest {
         repaymentBps[0] = 1000; // 10%
         endingBalances[0] = 10000e18;
 
-        vm.expectRevert("Cannot close future cycle");
+        vm.expectRevert(ErrorsLib.CannotCloseFutureCycle.selector);
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
             id, endDate, borrowers, repaymentBps, endingBalances
@@ -144,7 +144,7 @@ contract MorphoCreditRepaymentTest is BaseTest {
         // Try to create second cycle that overlaps
         uint256 secondEndDate = firstEndDate + 12 hours; // Less than 1 day after first
 
-        vm.expectRevert("Invalid cycle duration");
+        vm.expectRevert(ErrorsLib.InvalidCycleDuration.selector);
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
             id, secondEndDate, borrowers, repaymentBps, endingBalances
@@ -163,7 +163,7 @@ contract MorphoCreditRepaymentTest is BaseTest {
         endingBalances[0] = 10000e18;
         endingBalances[1] = 20000e18;
 
-        vm.expectRevert(bytes(ErrorsLib.INCONSISTENT_INPUT));
+        vm.expectRevert(ErrorsLib.InconsistentInput.selector);
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
             id, endDate, borrowers, repaymentBps, endingBalances
@@ -218,7 +218,7 @@ contract MorphoCreditRepaymentTest is BaseTest {
         repaymentBps[0] = 1000; // 10%
         balances[0] = 10000e18;
 
-        vm.expectRevert("No cycles exist");
+        vm.expectRevert(ErrorsLib.NoCyclesExist.selector);
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).addObligationsToLatestCycle(id, borrowers, repaymentBps, balances);
     }
@@ -299,7 +299,7 @@ contract MorphoCreditRepaymentTest is BaseTest {
     }
 
     function testGetLatestCycleId_NoCycles() public {
-        vm.expectRevert("No cycles exist");
+        vm.expectRevert(ErrorsLib.NoCyclesExist.selector);
         IMorphoCredit(address(morpho)).getLatestCycleId(id);
     }
 
@@ -342,7 +342,7 @@ contract MorphoCreditRepaymentTest is BaseTest {
     }
 
     function testGetCycleDates_InvalidCycleId() public {
-        vm.expectRevert("Invalid cycle ID");
+        vm.expectRevert(ErrorsLib.InvalidCycleId.selector);
         IMorphoCredit(address(morpho)).getCycleDates(id, 0);
     }
 }
