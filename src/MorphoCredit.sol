@@ -819,7 +819,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         (repaidShares, writtenOffShares, repayAmount) = _calculateSettlement(id, borrowShares, repayAmount);
 
         // Clear position and apply supply adjustment
-        _applySettlement(id, borrower, borrowShares, repaidShares, writtenOffShares, repayAmount);
+        _applySettlement(id, borrower, borrowShares, writtenOffShares, repayAmount);
 
         emit EventsLib.DebtSettled(
             id,
@@ -868,36 +868,40 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         Id id,
         address borrower,
         uint256 borrowShares,
-        uint256 repaidShares,
         uint256 writtenOffShares,
         uint256 repayAmount
     ) internal {
-        Market memory m = market[id];
         uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
-        uint256 writtenOffAssets = writtenOffShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+
+        // Calculate written off assets using current market state
+        uint128 totalBorrowAssets = market[id].totalBorrowAssets;
+        uint128 totalBorrowShares = market[id].totalBorrowShares;
+        uint256 writtenOffAssets = writtenOffShares.toAssetsUp(totalBorrowAssets, totalBorrowShares);
 
         // Clear position
         position[id][borrower].borrowShares = 0;
         delete markdownState[id][borrower];
         delete repaymentObligation[id][borrower];
 
-        // Update market totals
-        market[id].totalBorrowShares = (m.totalBorrowShares - borrowShares).toUint128();
-        market[id].totalBorrowAssets = (m.totalBorrowAssets - repayAmount - writtenOffAssets).toUint128();
+        // Update borrow totals
+        market[id].totalBorrowShares = (totalBorrowShares - borrowShares).toUint128();
+        market[id].totalBorrowAssets = (totalBorrowAssets - repayAmount - writtenOffAssets).toUint128();
 
         // Apply net supply adjustment
+        uint128 totalSupplyAssets = market[id].totalSupplyAssets;
         int256 netAdjustment = int256(lastMarkdown) - int256(writtenOffAssets);
         if (netAdjustment > 0) {
-            market[id].totalSupplyAssets = (m.totalSupplyAssets + uint256(netAdjustment)).toUint128();
+            market[id].totalSupplyAssets = (totalSupplyAssets + uint256(netAdjustment)).toUint128();
         } else if (netAdjustment < 0) {
             uint256 loss = uint256(-netAdjustment);
-            market[id].totalSupplyAssets = m.totalSupplyAssets > loss ? (m.totalSupplyAssets - loss).toUint128() : 0;
+            market[id].totalSupplyAssets = totalSupplyAssets > loss ? (totalSupplyAssets - loss).toUint128() : 0;
         }
 
         // Update markdown total
         if (lastMarkdown > 0) {
+            uint128 totalMarkdownAmount = market[id].totalMarkdownAmount;
             market[id].totalMarkdownAmount =
-                m.totalMarkdownAmount > lastMarkdown ? (m.totalMarkdownAmount - lastMarkdown).toUint128() : 0;
+                totalMarkdownAmount > lastMarkdown ? (totalMarkdownAmount - lastMarkdown).toUint128() : 0;
         }
     }
 
