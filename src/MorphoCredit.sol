@@ -385,7 +385,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         MarketParams memory marketParams = idToMarketParams[id];
         _accrueInterest(marketParams, id);
 
-        BorrowerPremium storage premium = borrowerPremium[id][borrower];
+        BorrowerPremium memory premium = borrowerPremium[id][borrower];
         uint128 oldRate = premium.rate;
 
         // If there's an existing position with borrow shares
@@ -401,6 +401,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (premium.lastAccrualTime == 0) {
             premium.lastAccrualTime = uint128(block.timestamp);
         }
+
+        borrowerPremium[id][borrower] = premium;
 
         // Take snapshot after setting the new rate if there are borrow shares
         if (borrowShares > 0 && newRate > 0) {
@@ -497,7 +499,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     ) internal {
         require(repaymentBps <= MAX_BPS, ErrorsLib.REPAYMENT_EXCEEDS_HUNDRED_PERCENT);
 
-        RepaymentObligation storage obligation = repaymentObligation[id][borrower];
+        RepaymentObligation memory obligation = repaymentObligation[id][borrower];
 
         // Calculate actual amount from basis points
         uint256 amount = endingBalance * repaymentBps / MAX_BPS;
@@ -510,6 +512,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Update amount due
         obligation.amountDue = uint128(amount);
+
+        repaymentObligation[id][borrower] = obligation;
 
         // Emit input parameters to reflect poster's intent
         emit EventsLib.RepaymentObligationPosted(id, borrower, amount, cycleId, endingBalance);
@@ -634,8 +638,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate) {
         require(cycleId < paymentCycle[id].length, ErrorsLib.INVALID_CYCLE_ID);
 
-        PaymentCycle storage cycle = paymentCycle[id][cycleId];
-        endDate = cycle.endDate;
+        endDate = paymentCycle[id][cycleId].endDate;
 
         if (cycleId != 0) {
             startDate = paymentCycle[id][cycleId - 1].endDate + 1 days;
