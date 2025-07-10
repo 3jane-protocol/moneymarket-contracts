@@ -574,7 +574,7 @@ contract PenaltyInterestTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Status should be Delinquent
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
 
         // Forward to default period
@@ -584,7 +584,7 @@ contract PenaltyInterestTest is BaseTest {
         _triggerBorrowerAccrual(ALICE);
 
         // Status should now be Default
-        status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Default));
 
         // Penalty should still accrue in default status

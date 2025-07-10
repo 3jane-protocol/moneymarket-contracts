@@ -73,10 +73,8 @@ struct MarketCreditTerms {
 
 /// @notice Markdown state for tracking defaulted debt value reduction
 /// @param lastCalculatedMarkdown Last calculated markdown amount
-/// @param defaultStartTime When borrower entered default (0 if not defaulted)
 struct MarkdownState {
     uint128 lastCalculatedMarkdown;
-    uint128 defaultStartTime;
 }
 
 struct Authorization {
@@ -460,7 +458,11 @@ interface IMorphoCredit {
     /// @param id Market ID
     /// @param borrower Borrower address
     /// @return status The borrower's current repayment status
-    function getRepaymentStatus(Id id, address borrower) external view returns (RepaymentStatus status);
+    /// @return statusStartTime The timestamp when the current status began
+    function getRepaymentStatus(Id id, address borrower)
+        external
+        view
+        returns (RepaymentStatus status, uint256 statusStartTime);
 
     /// @notice Check if borrower can borrow
     /// @param id Market ID
@@ -533,11 +535,7 @@ interface IMorphoCredit {
     /// @notice Get total market markdown
     /// @param id Market ID
     /// @return totalMarkdown Current total markdown across all borrowers (may be stale)
-    /// @return effectiveSupplyAssets Supply assets after markdown
-    function getMarketMarkdownInfo(Id id)
-        external
-        view
-        returns (uint256 totalMarkdown, uint256 effectiveSupplyAssets);
+    function getMarketMarkdownInfo(Id id) external view returns (uint256 totalMarkdown);
 
     /// @notice Get the markdown manager for a market
     /// @param id Market ID
@@ -548,9 +546,5 @@ interface IMorphoCredit {
     /// @param id Market ID
     /// @param borrower Borrower address
     /// @return lastCalculatedMarkdown Last calculated markdown amount
-    /// @return defaultStartTime When borrower entered default (0 if not defaulted)
-    function markdownState(Id id, address borrower)
-        external
-        view
-        returns (uint128 lastCalculatedMarkdown, uint128 defaultStartTime);
+    function markdownState(Id id, address borrower) external view returns (uint128 lastCalculatedMarkdown);
 }

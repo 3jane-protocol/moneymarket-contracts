@@ -323,7 +323,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Bob is in default
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, BOB);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, BOB);
         assertEq(uint256(status), uint256(RepaymentStatus.Default));
 
         uint256 assetsBefore = morpho.expectedBorrowAssets(marketParams, BOB);
@@ -463,7 +463,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
 
         // Verify all have delinquent status
         for (uint256 i = 0; i < 10; i++) {
-            RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, allBorrowers[i]);
+            (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, allBorrowers[i]);
             assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
         }
     }
@@ -498,7 +498,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         );
 
         // Verify Alice is delinquent
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "Should be delinquent from Cycle 1");
 
         // Record the cycle ID and ending balance that were set

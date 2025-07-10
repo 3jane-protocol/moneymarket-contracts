@@ -65,7 +65,7 @@ contract SimplePathIndependenceTest is BaseTest {
         _createRepaymentObligation(id, BORROWER, 5000e18, 10_000e18, 1);
 
         // Check status - should be in grace period
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, BORROWER);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod), "Should be in grace period");
 
         // Get initial borrow shares

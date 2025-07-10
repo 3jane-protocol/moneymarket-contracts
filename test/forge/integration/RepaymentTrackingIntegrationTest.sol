@@ -117,7 +117,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         morpho.repay(marketParams, 1000e18, 0, ALICE, "");
 
         // 6. Verify status is current
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Current));
 
         // 7. Verify borrowing is allowed again
@@ -214,7 +214,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // 3. Verify status is delinquent
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
 
         // 4. Record borrow assets before penalty accrual
@@ -236,7 +236,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         morpho.repay(marketParams, 500e18, 0, ALICE, "");
 
         // 8. Status should still be delinquent
-        status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
 
         // 9. Pay full obligation amount
@@ -245,7 +245,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         morpho.repay(marketParams, 1000e18, 0, ALICE, "");
 
         // 10. Status should be current
-        status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Current));
     }
 
@@ -291,7 +291,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         assertEq(totalDue, 1100e18); // Only the latest amount
 
         // Status should be based on oldest cycle (now in default)
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Default));
 
         // Verify partial payment is rejected
@@ -306,7 +306,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         morpho.repay(marketParams, 1100e18, 0, ALICE, "");
 
         // Should be current now
-        status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Current));
     }
 
@@ -376,7 +376,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         assertEq(amountDue, 0);
 
         // Status should be current
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Current));
 
         // Actual debt should be reduced by full 2000
@@ -444,7 +444,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         );
 
         // Verify Alice is delinquent with a non-zero obligation
-        RepaymentStatus statusBefore = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus statusBefore,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(statusBefore), uint256(RepaymentStatus.Delinquent), "Should be delinquent");
 
         (, uint128 amountDueBefore,) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
@@ -471,7 +471,7 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         (, uint128 amountDueAfter,) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
         assertEq(amountDueAfter, 0, "Obligation should be cleared to zero");
 
-        RepaymentStatus statusAfter = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus statusAfter,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(statusAfter), uint256(RepaymentStatus.Current), "Should be current after zero obligation");
 
         // Step 5: Verify Alice can now borrow again (without paying the original 5000e18!)

@@ -460,7 +460,7 @@ contract BaseTest is Test {
         returns (uint128 cycleId, uint128 amountDue, uint256 endingBalance, RepaymentStatus status)
     {
         (cycleId, amountDue, endingBalance) = IMorphoCredit(address(morpho)).repaymentObligation(_id, borrower);
-        status = IMorphoCredit(address(morpho)).getRepaymentStatus(_id, borrower);
+        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(_id, borrower);
     }
 
     function _calculatePenaltyInterest(uint256 endingBalance, uint256 penaltyDuration, uint256 penaltyRate)
@@ -472,7 +472,7 @@ contract BaseTest is Test {
     }
 
     function _assertRepaymentStatus(Id _id, address borrower, RepaymentStatus expectedStatus) internal {
-        RepaymentStatus actualStatus = IMorphoCredit(address(morpho)).getRepaymentStatus(_id, borrower);
+        (RepaymentStatus actualStatus,) = IMorphoCredit(address(morpho)).getRepaymentStatus(_id, borrower);
         assertEq(uint256(actualStatus), uint256(expectedStatus), "Unexpected repayment status");
     }
 

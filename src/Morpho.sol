@@ -470,7 +470,6 @@ abstract contract Morpho is IMorphoStaticTyping {
     /// @param assets The amount of assets repaid.
     function _afterRepay(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets) internal virtual {}
 
-
     /* STORAGE VIEW */
 
     /// @inheritdoc IMorphoBase
