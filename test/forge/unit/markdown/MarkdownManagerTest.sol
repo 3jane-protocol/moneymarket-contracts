@@ -1,0 +1,301 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.0;
+
+import "../../BaseTest.sol";
+import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
+import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
+import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {IMarkdownManager} from "../../../../src/interfaces/IMarkdownManager.sol";
+import {Market} from "../../../../src/interfaces/IMorpho.sol";
+
+/// @title MarkdownManagerTest
+/// @notice Tests for markdown manager integration including validation, external calls, and error handling
+contract MarkdownManagerTest is BaseTest {
+    using MarketParamsLib for MarketParams;
+
+    MarkdownManagerMock markdownManager;
+    CreditLineMock creditLine;
+    IMorphoCredit morphoCredit;
+
+    event MarkdownManagerSet(Id indexed id, address oldManager, address newManager);
+
+    function setUp() public override {
+        super.setUp();
+
+        // Deploy credit line
+        creditLine = new CreditLineMock(morphoAddress);
+        morphoCredit = IMorphoCredit(morphoAddress);
+
+        // Create market with credit line
+        marketParams = MarketParams(
+            address(loanToken),
+            address(collateralToken),
+            address(oracle),
+            address(irm),
+            DEFAULT_TEST_LLTV,
+            address(creditLine)
+        );
+        id = marketParams.id();
+
+        vm.startPrank(OWNER);
+        morpho.createMarket(marketParams);
+        vm.stopPrank();
+
+        // Setup initial supply
+        loanToken.setBalance(SUPPLIER, 100_000e18);
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 100_000e18, 0, SUPPLIER, hex"");
+    }
+
+    /// @notice Test setting and updating markdown manager
+    function testSetMarkdownManager() public {
+        // Deploy markdown manager
+        markdownManager = new MarkdownManagerMock();
+
+        // Test setting manager as owner
+        vm.expectEmit(true, false, false, true);
+        emit MarkdownManagerSet(id, address(0), address(markdownManager));
+
+        vm.prank(OWNER);
+        morphoCredit.setMarkdownManager(id, address(markdownManager));
+
+        assertEq(morphoCredit.getMarkdownManager(id), address(markdownManager), "Manager should be set");
+    }
+
+    /// @notice Test that only owner can set markdown manager
+    function testOnlyOwnerCanSetMarkdownManager() public {
+        markdownManager = new MarkdownManagerMock();
+
+        // Try as non-owner
+        vm.prank(BORROWER);
+        vm.expectRevert(bytes(ErrorsLib.NOT_OWNER));
+        morphoCredit.setMarkdownManager(id, address(markdownManager));
+
+        // Verify not set
+        assertEq(morphoCredit.getMarkdownManager(id), address(0), "Manager should not be set");
+    }
+
+    /// @notice Test manager validation when setting
+    function testMarkdownManagerValidation() public {
+        // Create a manager that reports invalid for our market
+        InvalidMarkdownManager invalidManager = new InvalidMarkdownManager();
+
+        vm.prank(OWNER);
+        vm.expectRevert(bytes(ErrorsLib.INVALID_MARKDOWN_MANAGER));
+        morphoCredit.setMarkdownManager(id, address(invalidManager));
+
+        // Verify not set
+        assertEq(morphoCredit.getMarkdownManager(id), address(0), "Invalid manager should not be set");
+    }
+
+    /// @notice Test setting manager to zero address (disabling markdowns)
+    function testSetMarkdownManagerToZero() public {
+        // First set a manager
+        markdownManager = new MarkdownManagerMock();
+        vm.prank(OWNER);
+        morphoCredit.setMarkdownManager(id, address(markdownManager));
+
+        // Then set to zero
+        vm.expectEmit(true, false, false, true);
+        emit MarkdownManagerSet(id, address(markdownManager), address(0));
+
+        vm.prank(OWNER);
+        morphoCredit.setMarkdownManager(id, address(0));
+
+        assertEq(morphoCredit.getMarkdownManager(id), address(0), "Manager should be cleared");
+    }
+
+    /// @notice Test correct parameters passed to markdown manager
+    function testMarkdownManagerParameterPassing() public {
+        markdownManager = new MarkdownManagerMock();
+        vm.prank(OWNER);
+        morphoCredit.setMarkdownManager(id, address(markdownManager));
+
+        // Setup borrower in default
+        _setupBorrowerWithLoan(BORROWER, 10_000e18);
+        _createPastObligation(BORROWER, 500, 10_000e18);
+
+        // Get cycle end date for proper timing calculation
+        (uint128 cycleId,,) = morphoCredit.repaymentObligation(id, BORROWER);
+        uint256 cycleEndDate = morphoCredit.paymentCycle(id, cycleId);
+
+        // Fast forward to default
+        uint256 expectedDefaultTime = cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION;
+        vm.warp(expectedDefaultTime + 1);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        // Forward more time
+        uint256 timeInDefault = 5 days;
+        vm.warp(expectedDefaultTime + timeInDefault);
+
+        // Get markdown info - this calls the manager
+        (uint256 markdown, uint256 defaultStartTime, uint256 borrowAssets) =
+            morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+
+        // Verify parameters were correct
+        assertEq(defaultStartTime, expectedDefaultTime, "Default start time should match");
+        assertTrue(borrowAssets >= 10_000e18, "Borrow assets should be at least initial amount");
+
+        // Calculate expected markdown (1% per day for 5 days = 5%)
+        uint256 expectedMarkdown = borrowAssets * 5 / 100;
+        assertEq(markdown, expectedMarkdown, "Markdown calculation should be correct");
+    }
+
+    /// @notice Test markdown updates when manager is not set
+    function testNoMarkdownWithoutManager() public {
+        // Setup borrower in default but no manager set
+        _setupBorrowerWithLoan(BORROWER, 10_000e18);
+        _createPastObligation(BORROWER, 500, 10_000e18);
+
+        // Get cycle info for timing
+        (uint128 cycleId,,) = morphoCredit.repaymentObligation(id, BORROWER);
+        uint256 cycleEndDate = morphoCredit.paymentCycle(id, cycleId);
+        uint256 expectedDefaultTime = cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION;
+
+        // Fast forward to default
+        vm.warp(expectedDefaultTime + 1);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        // Check markdown info
+        (uint256 markdown, uint256 defaultStartTime,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+
+        // Without a manager, borrower should still be in default status with proper timestamp
+        assertEq(defaultStartTime, expectedDefaultTime, "Should track default time based on repayment status");
+        assertEq(markdown, 0, "Should have no markdown without manager");
+
+        // Verify market total is also zero
+        uint256 totalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        assertEq(totalMarkdown, 0, "Market total should be zero without manager");
+    }
+
+    /// @notice Test gas consumption of external markdown calls
+    function testMarkdownGasConsumption() public {
+        markdownManager = new MarkdownManagerMock();
+        vm.prank(OWNER);
+        morphoCredit.setMarkdownManager(id, address(markdownManager));
+
+        // Setup borrower in default
+        _setupBorrowerWithLoan(BORROWER, 10_000e18);
+        _createPastObligation(BORROWER, 500, 10_000e18);
+
+        // Fast forward to default
+        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+
+        // Measure gas for markdown update
+        uint256 gasBefore = gasleft();
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        uint256 gasUsed = gasBefore - gasleft();
+
+        // Log gas usage (typical should be < 100k for external call + storage updates)
+        emit log_named_uint("Gas used for markdown update", gasUsed);
+        assertTrue(gasUsed < 200_000, "Gas usage should be reasonable");
+    }
+
+    /// @notice Test markdown manager that reverts
+    function testMarkdownManagerRevert() public {
+        RevertingMarkdownManager revertingManager = new RevertingMarkdownManager();
+        vm.prank(OWNER);
+        morphoCredit.setMarkdownManager(id, address(revertingManager));
+
+        // Setup borrower
+        _setupBorrowerWithLoan(BORROWER, 10_000e18);
+        _createPastObligation(BORROWER, 500, 10_000e18);
+
+        // Fast forward to default
+        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+
+        // Should revert when trying to update markdown
+        vm.expectRevert("Markdown calculation failed");
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+    }
+
+    /// @notice Test updating manager while borrowers have markdown
+    function testUpdateManagerWithExistingMarkdowns() public {
+        // Set initial manager
+        markdownManager = new MarkdownManagerMock();
+        vm.prank(OWNER);
+        morphoCredit.setMarkdownManager(id, address(markdownManager));
+
+        // Setup borrower in default with markdown
+        _setupBorrowerWithLoan(BORROWER, 10_000e18);
+        _createPastObligation(BORROWER, 500, 10_000e18);
+        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        // Get initial markdown
+        (uint256 markdownBefore,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        assertTrue(markdownBefore > 0, "Should have initial markdown");
+
+        // Create new manager with different rate (2% daily instead of 1%)
+        MarkdownManagerMock newManager = new MarkdownManagerMock();
+        newManager.setDailyMarkdownRate(200); // 2% daily (200 bps)
+
+        // Update manager
+        vm.prank(OWNER);
+        morphoCredit.setMarkdownManager(id, address(newManager));
+
+        // Forward time and update
+        vm.warp(block.timestamp + 1 days);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        // Markdown should increase with new rate
+        (uint256 markdownAfter,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        assertTrue(markdownAfter > markdownBefore, "Markdown should increase with new manager");
+    }
+
+    // Helper functions
+    function _setupBorrowerWithLoan(address borrower, uint256 amount) internal {
+        vm.prank(address(creditLine));
+        morphoCredit.setCreditLine(id, borrower, amount * 2, 0);
+
+        vm.prank(borrower);
+        morpho.borrow(marketParams, amount, 0, borrower, borrower);
+    }
+
+    function _createPastObligation(address borrower, uint256 repaymentBps, uint256 endingBalance) internal {
+        vm.warp(block.timestamp + 2 days);
+        uint256 cycleEndDate = block.timestamp - 1 days;
+
+        address[] memory borrowers = new address[](1);
+        borrowers[0] = borrower;
+
+        uint256[] memory bpsList = new uint256[](1);
+        bpsList[0] = repaymentBps;
+
+        uint256[] memory balances = new uint256[](1);
+        balances[0] = endingBalance;
+
+        vm.prank(address(creditLine));
+        morphoCredit.closeCycleAndPostObligations(id, cycleEndDate, borrowers, bpsList, balances);
+    }
+}
+
+/// @notice Mock markdown manager that always returns false for isValidForMarket
+contract InvalidMarkdownManager is IMarkdownManager {
+    function calculateMarkdown(uint256, uint256, uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function getMarkdownMultiplier(uint256, uint256) external pure returns (uint256) {
+        return 1e18;
+    }
+
+    function isValidForMarket(Id) external pure returns (bool) {
+        return false;
+    }
+}
+
+/// @notice Mock markdown manager that always reverts
+contract RevertingMarkdownManager is IMarkdownManager {
+    function calculateMarkdown(uint256, uint256, uint256) external pure returns (uint256) {
+        revert("Markdown calculation failed");
+    }
+
+    function getMarkdownMultiplier(uint256, uint256) external pure returns (uint256) {
+        revert("Markdown calculation failed");
+    }
+
+    function isValidForMarket(Id) external pure returns (bool) {
+        return true;
+    }
+}
