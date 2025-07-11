@@ -118,5 +118,5 @@ library ErrorsLib {
     error InvalidMarkdownManager();
 
     /// @notice Thrown when trying to settle non-existent debt.
-    error NoDebtToSettle();
+    error NoAccountToSettle();
 }

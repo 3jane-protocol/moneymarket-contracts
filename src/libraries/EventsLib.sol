@@ -183,20 +183,16 @@ library EventsLib {
     /// @param newManager New markdown manager.
     event MarkdownManagerSet(Id indexed id, address oldManager, address newManager);
 
-    /// @notice Emitted when debt is settled through partial payment and write-off.
+    /// @notice Emitted when an account is settled with all remaining debt written off.
     /// @param id Market id.
     /// @param settler Address that initiated the settlement.
-    /// @param borrower Borrower whose debt is settled.
-    /// @param repaidAmount Amount actually repaid.
-    /// @param repaidShares Shares actually repaid.
+    /// @param borrower Borrower whose account is settled.
     /// @param writtenOffAmount Amount written off (forgiven).
     /// @param writtenOffShares Shares written off.
-    event DebtSettled(
+    event AccountSettled(
         Id indexed id,
         address indexed settler,
         address indexed borrower,
-        uint256 repaidAmount,
-        uint256 repaidShares,
         uint256 writtenOffAmount,
         uint256 writtenOffShares
     );

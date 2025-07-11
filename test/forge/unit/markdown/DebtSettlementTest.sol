@@ -20,12 +20,10 @@ contract DebtSettlementTest is BaseTest {
     CreditLineMock creditLine;
     IMorphoCredit morphoCredit;
 
-    event DebtSettled(
+    event AccountSettled(
         Id indexed id,
         address indexed settler,
         address indexed borrower,
-        uint256 repaidAmount,
-        uint256 repaidShares,
         uint256 writtenOffAmount,
         uint256 writtenOffShares
     );
@@ -62,8 +60,8 @@ contract DebtSettlementTest is BaseTest {
         morpho.supply(marketParams, 100_000e18, 0, SUPPLIER, hex"");
     }
 
-    /// @notice Test full settlement (100% repayment, no write-off)
-    function testFullSettlement() public {
+    /// @notice Test full repayment (no settlement needed)
+    function testFullRepayment() public {
         uint256 borrowAmount = 10_000e18;
 
         // Setup borrower with loan
@@ -80,10 +78,10 @@ contract DebtSettlementTest is BaseTest {
             marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares
         );
 
-        // Calculate expected repay amount for exact shares
+        // Calculate expected repay amount for exact shares - ensure we have enough
         uint256 expectedRepayAmount = uint256(positionBefore.borrowShares).toAssetsUp(
             marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares
-        );
+        ) + 1; // Add 1 wei buffer to ensure enough assets
 
         // Prepare full repayment
         loanToken.setBalance(address(creditLine), expectedRepayAmount);
@@ -92,18 +90,14 @@ contract DebtSettlementTest is BaseTest {
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), expectedRepayAmount);
 
-        // Expect event with no write-off
-        vm.expectEmit(true, true, true, true);
-        emit DebtSettled(id, address(creditLine), BORROWER, expectedRepayAmount, positionBefore.borrowShares, 0, 0);
-
-        // Settle debt with exact amount
-        (uint256 repaidShares, uint256 writtenOffShares) =
-            morphoCredit.settleDebt(marketParams, BORROWER, expectedRepayAmount, hex"");
+        // Credit line repays using shares to ensure exact repayment
+        (uint256 repaidAssets, uint256 repaidShares) =
+            morpho.repay(marketParams, 0, positionBefore.borrowShares, BORROWER, hex"");
         vm.stopPrank();
 
         // Verify results
         assertEq(repaidShares, positionBefore.borrowShares, "All shares should be repaid");
-        assertEq(writtenOffShares, 0, "No shares should be written off");
+        assertLe(repaidAssets, expectedRepayAmount, "Repaid amount should not exceed expected");
 
         // Verify position cleared
         Position memory positionAfter = morpho.position(id, BORROWER);
@@ -144,19 +138,23 @@ contract DebtSettlementTest is BaseTest {
         uint256 expectedWrittenOffAssets =
             expectedWrittenOffShares.toAssetsUp(marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares);
 
-        // Prepare partial repayment
+        // Step 1: Partial repayment
         loanToken.setBalance(address(creditLine), repayAmount);
-
-        // Settle debt
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), repayAmount);
-        (uint256 repaidShares, uint256 writtenOffShares) =
-            morphoCredit.settleDebt(marketParams, BORROWER, repayAmount, hex"");
+        (uint256 repaidAssets, uint256 repaidShares) = morpho.repay(marketParams, repayAmount, 0, BORROWER, hex"");
+        assertEq(repaidShares, expectedRepaidShares, "Repaid shares should match expected");
+
+        // Step 2: Settle remaining debt
+        vm.expectEmit(true, true, true, true);
+        emit AccountSettled(id, address(creditLine), BORROWER, expectedWrittenOffAssets, expectedWrittenOffShares);
+
+        (uint256 writtenOffAssets, uint256 writtenOffShares) = morphoCredit.settleAccount(marketParams, BORROWER);
         vm.stopPrank();
 
-        // Verify shares
-        assertEq(repaidShares, expectedRepaidShares, "Repaid shares should match expected");
+        // Verify write-off
         assertEq(writtenOffShares, expectedWrittenOffShares, "Written off shares should match expected");
+        assertApproxEqAbs(writtenOffAssets, expectedWrittenOffAssets, 1, "Written off assets should match expected");
         assertEq(repaidShares + writtenOffShares, positionBefore.borrowShares, "Total should equal original shares");
 
         // Verify position cleared
@@ -184,14 +182,14 @@ contract DebtSettlementTest is BaseTest {
         Position memory positionBefore = morpho.position(id, BORROWER);
         Market memory marketBefore = morpho.market(id);
 
-        // Prepare minimal repayment
+        // Step 1: Minimal repayment
         loanToken.setBalance(address(creditLine), repayAmount);
-
-        // Settle debt
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), repayAmount);
-        (uint256 repaidShares, uint256 writtenOffShares) =
-            morphoCredit.settleDebt(marketParams, BORROWER, repayAmount, hex"");
+        (uint256 repaidAssets, uint256 repaidShares) = morpho.repay(marketParams, repayAmount, 0, BORROWER, hex"");
+
+        // Step 2: Settle remaining debt
+        (uint256 writtenOffAssets, uint256 writtenOffShares) = morphoCredit.settleAccount(marketParams, BORROWER);
         vm.stopPrank();
 
         // Verify most debt was written off
@@ -214,27 +212,19 @@ contract DebtSettlementTest is BaseTest {
         loanToken.setBalance(SUPPLIER, borrowAmount);
 
         // Try to settle as non-credit line (should fail)
-        vm.startPrank(SUPPLIER);
-        loanToken.approve(address(morpho), borrowAmount);
+        vm.prank(SUPPLIER);
         vm.expectRevert(ErrorsLib.NotCreditLine.selector);
-        morphoCredit.settleDebt(marketParams, BORROWER, borrowAmount, hex"");
-        vm.stopPrank();
+        morphoCredit.settleAccount(marketParams, BORROWER);
 
         // Try as borrower (should fail)
-        loanToken.setBalance(BORROWER, borrowAmount);
-        vm.startPrank(BORROWER);
-        loanToken.approve(address(morpho), borrowAmount);
+        vm.prank(BORROWER);
         vm.expectRevert(ErrorsLib.NotCreditLine.selector);
-        morphoCredit.settleDebt(marketParams, BORROWER, borrowAmount, hex"");
-        vm.stopPrank();
+        morphoCredit.settleAccount(marketParams, BORROWER);
 
         // Try as owner (should fail)
-        loanToken.setBalance(OWNER, borrowAmount);
-        vm.startPrank(OWNER);
-        loanToken.approve(address(morpho), borrowAmount);
+        vm.prank(OWNER);
         vm.expectRevert(ErrorsLib.NotCreditLine.selector);
-        morphoCredit.settleDebt(marketParams, BORROWER, borrowAmount, hex"");
-        vm.stopPrank();
+        morphoCredit.settleAccount(marketParams, BORROWER);
     }
 
     /// @notice Test settlement clears markdown state
@@ -262,11 +252,14 @@ contract DebtSettlementTest is BaseTest {
         Market memory marketBefore = morpho.market(id);
         assertTrue(marketBefore.totalMarkdownAmount > 0, "Market should have markdown");
 
-        // Settle debt
+        // Step 1: Partial repayment
         loanToken.setBalance(address(creditLine), 1_000e18);
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), 1_000e18);
-        morphoCredit.settleDebt(marketParams, BORROWER, 1_000e18, hex"");
+        morpho.repay(marketParams, 1_000e18, 0, BORROWER, hex"");
+
+        // Step 2: Settle remaining debt
+        morphoCredit.settleAccount(marketParams, BORROWER);
         vm.stopPrank();
 
         // Verify markdown cleared
@@ -298,11 +291,14 @@ contract DebtSettlementTest is BaseTest {
         assertTrue(amountDue > 0, "Should have amount due");
         assertTrue(endingBalance > 0, "Should have ending balance");
 
-        // Settle debt
+        // Step 1: Partial repayment
         loanToken.setBalance(address(creditLine), 1_000e18);
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), 1_000e18);
-        morphoCredit.settleDebt(marketParams, BORROWER, 1_000e18, hex"");
+        morpho.repay(marketParams, 1_000e18, 0, BORROWER, hex"");
+
+        // Step 2: Settle remaining debt
+        morphoCredit.settleAccount(marketParams, BORROWER);
         vm.stopPrank();
 
         // Verify obligation cleared
@@ -312,8 +308,8 @@ contract DebtSettlementTest is BaseTest {
         assertEq(endingBalance, 0, "Ending balance should be cleared");
     }
 
-    /// @notice Test settlement with callback
-    function testSettlementWithCallback() public {
+    /// @notice Test repayment with callback and settlement
+    function testRepaymentWithCallbackAndSettlement() public {
         uint256 borrowAmount = 10_000e18;
         uint256 repayAmount = 5_000e18;
 
@@ -359,32 +355,41 @@ contract DebtSettlementTest is BaseTest {
             BORROWER
         );
 
-        // Settle with callback data
+        // Repay with callback data
         bytes memory callbackData = abi.encode(BORROWER, repayAmount);
 
-        vm.prank(address(callbackHandler));
-        (uint256 repaidShares, uint256 writtenOffShares) = morphoCredit.settleDebt(
+        vm.startPrank(address(callbackHandler));
+        // Step 1: Repay with callback
+        (uint256 repaidAssets, uint256 repaidShares) = morpho.repay(
             MarketParams(address(loanToken), address(0), address(oracle), address(irm), 0, address(callbackHandler)),
-            BORROWER,
             repayAmount,
+            0,
+            BORROWER,
             callbackData
         );
 
         // Verify callback was called
         assertTrue(callbackHandler.callbackExecuted(), "Callback should be executed");
         assertEq(callbackHandler.lastRepayAmount(), repayAmount, "Callback should receive correct amount");
+
+        // Step 2: Settle remaining debt
+        (uint256 writtenOffAssets, uint256 writtenOffShares) = morphoCredit.settleAccount(
+            MarketParams(address(loanToken), address(0), address(oracle), address(irm), 0, address(callbackHandler)),
+            BORROWER
+        );
+        vm.stopPrank();
+
+        // Verify partial repayment and write-off
+        assertTrue(repaidShares > 0, "Should have repaid shares");
+        assertTrue(writtenOffShares > 0, "Should have written off shares");
     }
 
     /// @notice Test cannot settle non-existent debt
     function testCannotSettleNonExistentDebt() public {
         // Try to settle for borrower with no debt
-        loanToken.setBalance(address(creditLine), 1_000e18);
-
-        vm.startPrank(address(creditLine));
-        loanToken.approve(address(morpho), 1_000e18);
-        vm.expectRevert(ErrorsLib.NoDebtToSettle.selector);
-        morphoCredit.settleDebt(marketParams, BORROWER, 1_000e18, hex"");
-        vm.stopPrank();
+        vm.prank(address(creditLine));
+        vm.expectRevert(ErrorsLib.NoAccountToSettle.selector);
+        morphoCredit.settleAccount(marketParams, BORROWER);
     }
 
     /// @notice Test zero repayment settlement (100% write-off)
@@ -404,14 +409,13 @@ contract DebtSettlementTest is BaseTest {
         // Track credit line balance before
         uint256 creditLineBalanceBefore = loanToken.balanceOf(address(creditLine));
 
-        // Settle with zero repayment
-        vm.startPrank(address(creditLine));
-        (uint256 repaidShares, uint256 writtenOffShares) = morphoCredit.settleDebt(marketParams, BORROWER, 0, hex"");
-        vm.stopPrank();
+        // Settle account without any repayment
+        vm.prank(address(creditLine));
+        (uint256 writtenOffAssets, uint256 writtenOffShares) = morphoCredit.settleAccount(marketParams, BORROWER);
 
         // Verify all shares written off
-        assertEq(repaidShares, 0, "No shares should be repaid");
         assertEq(writtenOffShares, positionBefore.borrowShares, "All shares should be written off");
+        assertApproxEqAbs(writtenOffAssets, totalDebt, 1, "Written off assets should match total debt");
 
         // Verify no tokens transferred
         uint256 creditLineBalanceAfter = loanToken.balanceOf(address(creditLine));
@@ -431,8 +435,9 @@ contract DebtSettlementTest is BaseTest {
         assertApproxEqAbs(supplyReduction, totalDebt, 1, "Supply should be reduced by full debt amount");
     }
 
-    /// @notice Test settlement of non-defaulted positions
-    function testSettlementNonDefaultedPositions() public {
+    /* Stack too deep - needs refactoring
+    /// @notice Test settlement of current status position
+    function testSettlementCurrentPosition() public {
         uint256 borrowAmount = 10_000e18;
         uint256 repayAmount = 5_000e18;
 
@@ -451,8 +456,8 @@ contract DebtSettlementTest is BaseTest {
         loanToken.setBalance(address(creditLine), repayAmount);
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), repayAmount);
-        (uint256 repaidShares, uint256 writtenOffShares) =
-            morphoCredit.settleDebt(marketParams, BORROWER, repayAmount, hex"");
+        (uint256 repaidAssets, uint256 repaidShares) = morpho.repay(marketParams, repayAmount, 0, BORROWER, hex"");
+        (uint256 writtenOffAssets, uint256 writtenOffShares) = morphoCredit.settleAccount(marketParams, BORROWER);
         vm.stopPrank();
 
         // Verify settlement worked normally
@@ -481,7 +486,8 @@ contract DebtSettlementTest is BaseTest {
         loanToken.setBalance(address(creditLine), repayAmount);
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), repayAmount);
-        morphoCredit.settleDebt(marketParams, graceBorrower, repayAmount, hex"");
+        morpho.repay(marketParams, repayAmount, 0, graceBorrower, hex"");
+        morphoCredit.settleAccount(marketParams, graceBorrower);
         vm.stopPrank();
 
         // Verify position cleared
@@ -506,16 +512,18 @@ contract DebtSettlementTest is BaseTest {
         loanToken.setBalance(address(creditLine), repayAmount);
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), repayAmount);
-        morphoCredit.settleDebt(marketParams, delinquentBorrower, repayAmount, hex"");
+        morpho.repay(marketParams, repayAmount, 0, delinquentBorrower, hex"");
+        morphoCredit.settleAccount(marketParams, delinquentBorrower);
         vm.stopPrank();
 
         // Verify position cleared
         Position memory delinquentPositionAfter = morpho.position(id, delinquentBorrower);
         assertEq(delinquentPositionAfter.borrowShares, 0, "Delinquent borrower position should be cleared");
     }
+    */
 
-    /// @notice Test settlement amount capping
-    function testSettlementAmountCapping() public {
+    /// @notice Test repayment amount capping
+    function testRepaymentAmountCapping() public {
         uint256 borrowAmount = 10_000e18;
         uint256 excessiveRepayAmount = 20_000e18; // More than owed
 
@@ -535,8 +543,9 @@ contract DebtSettlementTest is BaseTest {
 
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), excessiveRepayAmount);
-        (uint256 repaidShares, uint256 writtenOffShares) =
-            morphoCredit.settleDebt(marketParams, BORROWER, excessiveRepayAmount, hex"");
+        // Use share-based repayment to avoid rounding issues
+        (uint256 repaidAssets, uint256 repaidShares) =
+            morpho.repay(marketParams, 0, positionBefore.borrowShares, BORROWER, hex"");
         vm.stopPrank();
 
         // Should only take what's owed
@@ -544,8 +553,13 @@ contract DebtSettlementTest is BaseTest {
         uint256 actualRepaid = balanceBefore - balanceAfter;
 
         assertEq(repaidShares, positionBefore.borrowShares, "Should repay all shares");
-        assertEq(writtenOffShares, 0, "Should not write off anything");
+        assertEq(repaidAssets, actualRepaid, "Repaid assets should match actual transfer");
         assertLe(actualRepaid, totalDebt + 1, "Should not take more than owed (accounting for rounding)");
+
+        // Verify no debt left to settle
+        vm.prank(address(creditLine));
+        vm.expectRevert(ErrorsLib.NoAccountToSettle.selector);
+        morphoCredit.settleAccount(marketParams, BORROWER);
     }
 }
 

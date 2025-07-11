@@ -780,80 +780,41 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         assets = uint256(position[id][borrower].borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
     }
 
-    /// @notice Settle a borrower's debt position with partial payment
+    /// @notice Settle a borrower's account by writing off all remaining debt
     /// @dev Only callable by credit line contract
+    /// @dev Should be called after any partial repayments have been made
     /// @param marketParams The market parameters
-    /// @param borrower The borrower whose debt to settle
-    /// @param repayAmount Amount being repaid (can be less than full debt)
-    /// @param data Callback data for repayment
-    /// @return repaidShares Shares actually repaid
-    /// @return writtenOffShares Shares written off (forgiven)
-    function settleDebt(MarketParams memory marketParams, address borrower, uint256 repayAmount, bytes calldata data)
+    /// @param borrower The borrower whose account to settle
+    /// @return writtenOffAssets Amount of assets written off
+    /// @return writtenOffShares Amount of shares written off
+    function settleAccount(MarketParams memory marketParams, address borrower)
         external
         onlyCreditLine(marketParams.id())
-        returns (uint256 repaidShares, uint256 writtenOffShares)
+        returns (uint256 writtenOffAssets, uint256 writtenOffShares)
     {
         Id id = marketParams.id();
 
         _accrueInterest(marketParams, id);
         _accrueBorrowerPremium(id, borrower);
 
-        // Get position and calculate settlement
-        uint256 borrowShares = position[id][borrower].borrowShares;
-        if (borrowShares == 0) revert ErrorsLib.NoDebtToSettle();
+        // Get position
+        writtenOffShares = position[id][borrower].borrowShares;
+        if (writtenOffShares == 0) revert ErrorsLib.NoAccountToSettle();
 
         Market memory m = market[id];
 
-        // Convert repay amount to shares
-        repaidShares = repayAmount.toSharesDown(m.totalBorrowAssets, m.totalBorrowShares);
-
-        // Ensure we don't repay more than owed
-        if (repaidShares > borrowShares) {
-            repaidShares = borrowShares;
-        }
-
-        // Always recalculate repayAmount based on final shares for consistency
-        repayAmount = repaidShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
-
-        // Calculate written off shares
-        writtenOffShares = borrowShares - repaidShares;
+        // Calculate written off assets
+        writtenOffAssets = writtenOffShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
 
         // Clear position and apply supply adjustment
-        _applySettlement(id, borrower, borrowShares, writtenOffShares, repayAmount);
+        _applySettlement(id, borrower, writtenOffShares, writtenOffAssets);
 
-        emit EventsLib.DebtSettled(
-            id,
-            msg.sender,
-            borrower,
-            repayAmount,
-            repaidShares,
-            writtenOffShares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares),
-            writtenOffShares
-        );
-
-        // Handle repayment callback if needed
-        if (data.length > 0) {
-            IMorphoRepayCallback(msg.sender).onMorphoRepay(repayAmount, data);
-        }
-
-        // Transfer the repay amount
-        IERC20(marketParams.loanToken).safeTransferFrom(msg.sender, address(this), repayAmount);
+        emit EventsLib.AccountSettled(id, msg.sender, borrower, writtenOffAssets, writtenOffShares);
     }
 
     /// @notice Apply settlement to storage
-    function _applySettlement(
-        Id id,
-        address borrower,
-        uint256 borrowShares,
-        uint256 writtenOffShares,
-        uint256 repayAmount
-    ) internal {
+    function _applySettlement(Id id, address borrower, uint256 writtenOffShares, uint256 writtenOffAssets) internal {
         uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
-
-        // Calculate written off assets using current market state
-        uint128 totalBorrowAssets = market[id].totalBorrowAssets;
-        uint128 totalBorrowShares = market[id].totalBorrowShares;
-        uint256 writtenOffAssets = writtenOffShares.toAssetsUp(totalBorrowAssets, totalBorrowShares);
 
         // Clear position
         position[id][borrower].borrowShares = 0;
@@ -861,8 +822,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         delete repaymentObligation[id][borrower];
 
         // Update borrow totals
-        market[id].totalBorrowShares = (totalBorrowShares - borrowShares).toUint128();
-        market[id].totalBorrowAssets = (totalBorrowAssets - repayAmount - writtenOffAssets).toUint128();
+        market[id].totalBorrowShares = (market[id].totalBorrowShares - writtenOffShares).toUint128();
+        market[id].totalBorrowAssets = (market[id].totalBorrowAssets - writtenOffAssets).toUint128();
 
         // Apply net supply adjustment
         uint128 totalSupplyAssets = market[id].totalSupplyAssets;

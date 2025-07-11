@@ -296,7 +296,8 @@ contract BorrowerJourneyTest is BaseTest {
         loanToken.setBalance(address(creditLine), 10_000e18);
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), 10_000e18);
-        morphoCredit.settleDebt(marketParams, borrower1, 10_000e18, hex"");
+        morpho.repay(marketParams, 10_000e18, 0, borrower1, hex"");
+        morphoCredit.settleAccount(marketParams, borrower1);
         vm.stopPrank();
 
         Position memory pos1 = morpho.position(id, borrower1);
@@ -313,7 +314,8 @@ contract BorrowerJourneyTest is BaseTest {
         loanToken.setBalance(address(creditLine), 20_000e18);
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), 20_000e18);
-        morphoCredit.settleDebt(marketParams, borrower2, 20_000e18, hex"");
+        morpho.repay(marketParams, 20_000e18, 0, borrower2, hex"");
+        morphoCredit.settleAccount(marketParams, borrower2);
         vm.stopPrank();
 
         // Test 3: Settlement during default (with markdown)
@@ -338,8 +340,8 @@ contract BorrowerJourneyTest is BaseTest {
         loanToken.setBalance(address(creditLine), 5_000e18);
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), 5_000e18);
-        (uint256 repaidShares, uint256 writtenOffShares) =
-            morphoCredit.settleDebt(marketParams, borrower3, 5_000e18, hex"");
+        (uint256 repaidAssets, uint256 repaidShares) = morpho.repay(marketParams, 5_000e18, 0, borrower3, hex"");
+        (uint256 writtenOffAssets, uint256 writtenOffShares) = morphoCredit.settleAccount(marketParams, borrower3);
         vm.stopPrank();
 
         assertTrue(writtenOffShares > repaidShares, "Most debt should be written off");

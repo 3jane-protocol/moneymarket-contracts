@@ -503,17 +503,16 @@ interface IMorphoCredit {
     /// @param manager Address of the markdown manager contract
     function setMarkdownManager(Id id, address manager) external;
 
-    /// @notice Settle a borrower's debt position with partial payment
+    /// @notice Settle a borrower's account by writing off all remaining debt
     /// @dev Only callable by credit line contract
+    /// @dev Should be called after any partial repayments have been made
     /// @param marketParams The market parameters
-    /// @param borrower The borrower whose debt to settle
-    /// @param repayAmount Amount being repaid (can be less than full debt)
-    /// @param data Callback data for repayment
-    /// @return repaidShares Shares actually repaid
-    /// @return writtenOffShares Shares written off (forgiven)
-    function settleDebt(MarketParams memory marketParams, address borrower, uint256 repayAmount, bytes calldata data)
+    /// @param borrower The borrower whose account to settle
+    /// @return writtenOffAssets Amount of assets written off
+    /// @return writtenOffShares Amount of shares written off
+    function settleAccount(MarketParams memory marketParams, address borrower)
         external
-        returns (uint256 repaidShares, uint256 writtenOffShares);
+        returns (uint256 writtenOffAssets, uint256 writtenOffShares);
 
     /// @notice Get markdown state for a borrower
     /// @param id Market ID

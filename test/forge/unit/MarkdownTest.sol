@@ -128,8 +128,8 @@ contract MarkdownTest is BaseTest {
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), repayAmount);
 
-        (uint256 repaidShares, uint256 writtenOffShares) =
-            morphoCredit.settleDebt(marketParams, BORROWER, repayAmount, hex"");
+        (uint256 repaidAssets, uint256 repaidShares) = morpho.repay(marketParams, repayAmount, 0, BORROWER, hex"");
+        (uint256 writtenOffAssets, uint256 writtenOffShares) = morphoCredit.settleAccount(marketParams, BORROWER);
         vm.stopPrank();
 
         // Check results
