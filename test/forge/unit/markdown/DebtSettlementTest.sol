@@ -435,13 +435,12 @@ contract DebtSettlementTest is BaseTest {
         assertApproxEqAbs(supplyReduction, totalDebt, 1, "Supply should be reduced by full debt amount");
     }
 
-    /* Stack too deep - needs refactoring
-    /// @notice Test settlement of current status position
-    function testSettlementCurrentPosition() public {
+    /// @notice Test settlement of current status borrower
+    function testSettlementCurrentStatusBorrower() public {
         uint256 borrowAmount = 10_000e18;
         uint256 repayAmount = 5_000e18;
 
-        // Test 1: Current status borrower
+        // Setup borrower with loan
         _setupBorrowerWithLoan(BORROWER, borrowAmount);
 
         // Verify borrower is Current
@@ -467,8 +466,14 @@ contract DebtSettlementTest is BaseTest {
 
         // Verify no markdown applied (borrower was Current)
         assertEq(marketBefore.totalMarkdownAmount, 0, "Should have no markdown for Current borrower");
+    }
 
-        // Test 2: Grace period borrower
+    /// @notice Test settlement of grace period borrower
+    function testSettlementGracePeriodBorrower() public {
+        uint256 borrowAmount = 10_000e18;
+        uint256 repayAmount = 5_000e18;
+
+        // Setup grace period borrower
         address graceBorrower = makeAddr("GraceBorrower");
         _setupBorrowerWithLoan(graceBorrower, borrowAmount);
         _createPastObligation(graceBorrower, 500, borrowAmount);
@@ -479,7 +484,7 @@ contract DebtSettlementTest is BaseTest {
         vm.warp(cycleEnd + 1); // Just past cycle end, in grace period
 
         // Verify status
-        (status,) = morphoCredit.getRepaymentStatus(id, graceBorrower);
+        (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, graceBorrower);
         assertEq(uint8(status), uint8(RepaymentStatus.GracePeriod), "Should be in GracePeriod");
 
         // Settle during grace period
@@ -493,19 +498,25 @@ contract DebtSettlementTest is BaseTest {
         // Verify position cleared
         Position memory gracePositionAfter = morpho.position(id, graceBorrower);
         assertEq(gracePositionAfter.borrowShares, 0, "Grace borrower position should be cleared");
+    }
 
-        // Test 3: Delinquent borrower
+    /// @notice Test settlement of delinquent borrower
+    function testSettlementDelinquentBorrower() public {
+        uint256 borrowAmount = 10_000e18;
+        uint256 repayAmount = 5_000e18;
+
+        // Setup delinquent borrower
         address delinquentBorrower = makeAddr("DelinquentBorrower");
         _setupBorrowerWithLoan(delinquentBorrower, borrowAmount);
         _createPastObligation(delinquentBorrower, 500, borrowAmount);
 
         // Move to delinquent period
-        (cycleId,,) = morphoCredit.repaymentObligation(id, delinquentBorrower);
-        cycleEnd = morphoCredit.paymentCycle(id, cycleId);
+        (uint128 cycleId,,) = morphoCredit.repaymentObligation(id, delinquentBorrower);
+        uint256 cycleEnd = morphoCredit.paymentCycle(id, cycleId);
         vm.warp(cycleEnd + GRACE_PERIOD_DURATION + 1); // Past grace, in delinquency
 
         // Verify status
-        (status,) = morphoCredit.getRepaymentStatus(id, delinquentBorrower);
+        (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, delinquentBorrower);
         assertEq(uint8(status), uint8(RepaymentStatus.Delinquent), "Should be Delinquent");
 
         // Settle during delinquency
@@ -520,7 +531,6 @@ contract DebtSettlementTest is BaseTest {
         Position memory delinquentPositionAfter = morpho.position(id, delinquentBorrower);
         assertEq(delinquentPositionAfter.borrowShares, 0, "Delinquent borrower position should be cleared");
     }
-    */
 
     /// @notice Test repayment amount capping
     function testRepaymentAmountCapping() public {
