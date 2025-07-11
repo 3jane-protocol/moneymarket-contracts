@@ -68,7 +68,7 @@ contract MarkdownManagerTest is BaseTest {
 
         // Try as non-owner
         vm.prank(BORROWER);
-        vm.expectRevert(bytes(ErrorsLib.NOT_OWNER));
+        vm.expectRevert(ErrorsLib.NotOwner.selector);
         morphoCredit.setMarkdownManager(id, address(markdownManager));
 
         // Verify not set
@@ -81,7 +81,7 @@ contract MarkdownManagerTest is BaseTest {
         InvalidMarkdownManager invalidManager = new InvalidMarkdownManager();
 
         vm.prank(OWNER);
-        vm.expectRevert(bytes(ErrorsLib.INVALID_MARKDOWN_MANAGER));
+        vm.expectRevert(ErrorsLib.InvalidMarkdownManager.selector);
         morphoCredit.setMarkdownManager(id, address(invalidManager));
 
         // Verify not set

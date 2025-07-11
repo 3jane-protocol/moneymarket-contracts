@@ -15,13 +15,13 @@ contract BorrowIntegrationTest is BaseTest {
         vm.assume(neq(marketParamsFuzz, marketParams));
 
         vm.prank(borrowerFuzz);
-        vm.expectRevert(bytes(ErrorsLib.MARKET_NOT_CREATED));
+        vm.expectRevert(ErrorsLib.MarketNotCreated.selector);
         morpho.borrow(marketParamsFuzz, amount, 0, borrowerFuzz, RECEIVER);
     }
 
     function testBorrowZeroAmount(address borrowerFuzz) public {
         vm.prank(borrowerFuzz);
-        vm.expectRevert(bytes(ErrorsLib.INCONSISTENT_INPUT));
+        vm.expectRevert(ErrorsLib.InconsistentInput.selector);
         morpho.borrow(marketParams, 0, 0, borrowerFuzz, RECEIVER);
     }
 
@@ -30,7 +30,7 @@ contract BorrowIntegrationTest is BaseTest {
         shares = bound(shares, 1, MAX_TEST_SHARES);
 
         vm.prank(borrowerFuzz);
-        vm.expectRevert(bytes(ErrorsLib.INCONSISTENT_INPUT));
+        vm.expectRevert(ErrorsLib.InconsistentInput.selector);
         morpho.borrow(marketParams, amount, shares, borrowerFuzz, RECEIVER);
     }
 
@@ -40,7 +40,7 @@ contract BorrowIntegrationTest is BaseTest {
         _supply(amount);
 
         vm.prank(borrowerFuzz);
-        vm.expectRevert(bytes(ErrorsLib.ZERO_ADDRESS));
+        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
         morpho.borrow(marketParams, amount, 0, borrowerFuzz, address(0));
     }
 
@@ -55,7 +55,7 @@ contract BorrowIntegrationTest is BaseTest {
         IMorphoCredit(address(morpho)).setCreditLine(id, supplier, amount, 0);
 
         vm.startPrank(attacker);
-        vm.expectRevert(bytes(ErrorsLib.UNAUTHORIZED));
+        vm.expectRevert(ErrorsLib.Unauthorized.selector);
         morpho.borrow(marketParams, amount, 0, supplier, RECEIVER);
     }
 
@@ -72,7 +72,7 @@ contract BorrowIntegrationTest is BaseTest {
         IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, creditLimit, 0);
 
         vm.prank(BORROWER);
-        vm.expectRevert(bytes(ErrorsLib.INSUFFICIENT_COLLATERAL));
+        vm.expectRevert(ErrorsLib.InsufficientCollateral.selector);
         morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
         vm.stopPrank();
     }
@@ -92,7 +92,7 @@ contract BorrowIntegrationTest is BaseTest {
         IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, creditLimit, 0);
 
         vm.prank(BORROWER);
-        vm.expectRevert(bytes(ErrorsLib.INSUFFICIENT_LIQUIDITY));
+        vm.expectRevert(ErrorsLib.InsufficientLiquidity.selector);
         morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
         vm.stopPrank();
     }

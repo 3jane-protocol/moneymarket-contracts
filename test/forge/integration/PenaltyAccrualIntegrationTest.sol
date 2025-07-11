@@ -267,7 +267,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         // Verify partial payment is rejected
         deal(address(loanToken), ALICE, 500e18);
         vm.prank(ALICE);
-        vm.expectRevert("Must pay full obligation amount");
+        vm.expectRevert(ErrorsLib.MustPayFullObligation.selector);
         morpho.repay(marketParams, 500e18, 0, ALICE, "");
 
         // Advance more time

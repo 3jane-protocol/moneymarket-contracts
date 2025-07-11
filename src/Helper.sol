@@ -28,8 +28,8 @@ contract Helper is IHelper {
     /* CONSTRUCTOR */
 
     constructor(address newMorpho, address newAaveMarket) {
-        require(newMorpho != address(0), ErrorsLib.ZERO_ADDRESS);
-        require(newAaveMarket != address(0), ErrorsLib.ZERO_ADDRESS);
+        if (newMorpho == address(0)) revert ErrorsLib.ZeroAddress();
+        if (newAaveMarket == address(0)) revert ErrorsLib.ZeroAddress();
         morpho = newMorpho;
         aaveMarket = newAaveMarket;
     }
@@ -75,7 +75,7 @@ contract Helper is IHelper {
     ) external returns (uint256, uint256) {
         IMorpho _morpho = IMorpho(morpho);
 
-        require(msg.sender == onBehalf || _morpho.isAuthorized(onBehalf, msg.sender), ErrorsLib.UNAUTHORIZED);
+        if (msg.sender != onBehalf && !_morpho.isAuthorized(onBehalf, msg.sender)) revert ErrorsLib.Unauthorized();
 
         if (!_morpho.isAuthorized(onBehalf, address(this))) IMorphoCredit(morpho).setAuthorizationV2(onBehalf, true);
 

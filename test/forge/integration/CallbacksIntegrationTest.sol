@@ -56,7 +56,7 @@ contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupp
     }
 
     function testFlashLoanZero() public {
-        vm.expectRevert(bytes(ErrorsLib.ZERO_ASSETS));
+        vm.expectRevert(ErrorsLib.ZeroAssets.selector);
         morpho.flashLoan(address(loanToken), 0, abi.encode(this.testFlashLoan.selector, hex""));
     }
 
@@ -68,7 +68,7 @@ contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupp
 
         loanToken.approve(address(morpho), 0);
 
-        vm.expectRevert(bytes(ErrorsLib.TRANSFER_FROM_REVERTED));
+        vm.expectRevert(ErrorsLib.TransferFromReverted.selector);
         morpho.flashLoan(
             address(loanToken), amount, abi.encode(this.testFlashLoanShouldRevertIfNotReimbursed.selector, hex"")
         );

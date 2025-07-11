@@ -214,7 +214,7 @@ contract DebtSettlementTest is BaseTest {
         // Try to settle as non-credit line (should fail)
         vm.startPrank(SUPPLIER);
         loanToken.approve(address(morpho), borrowAmount);
-        vm.expectRevert(bytes(ErrorsLib.NOT_CREDIT_LINE));
+        vm.expectRevert(ErrorsLib.NotCreditLine.selector);
         morphoCredit.settleDebt(marketParams, BORROWER, borrowAmount, hex"");
         vm.stopPrank();
 
@@ -222,7 +222,7 @@ contract DebtSettlementTest is BaseTest {
         loanToken.setBalance(BORROWER, borrowAmount);
         vm.startPrank(BORROWER);
         loanToken.approve(address(morpho), borrowAmount);
-        vm.expectRevert(bytes(ErrorsLib.NOT_CREDIT_LINE));
+        vm.expectRevert(ErrorsLib.NotCreditLine.selector);
         morphoCredit.settleDebt(marketParams, BORROWER, borrowAmount, hex"");
         vm.stopPrank();
 
@@ -230,7 +230,7 @@ contract DebtSettlementTest is BaseTest {
         loanToken.setBalance(OWNER, borrowAmount);
         vm.startPrank(OWNER);
         loanToken.approve(address(morpho), borrowAmount);
-        vm.expectRevert(bytes(ErrorsLib.NOT_CREDIT_LINE));
+        vm.expectRevert(ErrorsLib.NotCreditLine.selector);
         morphoCredit.settleDebt(marketParams, BORROWER, borrowAmount, hex"");
         vm.stopPrank();
     }
@@ -372,7 +372,7 @@ contract DebtSettlementTest is BaseTest {
 
         vm.startPrank(address(creditLine));
         loanToken.approve(address(morpho), 1_000e18);
-        vm.expectRevert(bytes(ErrorsLib.NO_DEBT_TO_SETTLE));
+        vm.expectRevert(ErrorsLib.NoDebtToSettle.selector);
         morphoCredit.settleDebt(marketParams, BORROWER, 1_000e18, hex"");
         vm.stopPrank();
     }

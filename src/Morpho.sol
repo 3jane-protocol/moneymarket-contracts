@@ -69,7 +69,7 @@ abstract contract Morpho is IMorphoStaticTyping {
 
     /// @param newOwner The new owner of the contract.
     constructor(address newOwner) {
-        require(newOwner != address(0), ErrorsLib.ZERO_ADDRESS);
+        if (newOwner == address(0)) revert ErrorsLib.ZeroAddress();
 
         DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, block.chainid, address(this)));
         owner = newOwner;
@@ -81,7 +81,7 @@ abstract contract Morpho is IMorphoStaticTyping {
 
     /// @dev Reverts if the caller is not the owner.
     modifier onlyOwner() {
-        require(msg.sender == owner, ErrorsLib.NOT_OWNER);
+        if (msg.sender != owner) revert ErrorsLib.NotOwner();
         _;
     }
 
@@ -89,7 +89,7 @@ abstract contract Morpho is IMorphoStaticTyping {
 
     /// @inheritdoc IMorphoBase
     function setOwner(address newOwner) external onlyOwner {
-        require(newOwner != owner, ErrorsLib.ALREADY_SET);
+        if (newOwner == owner) revert ErrorsLib.AlreadySet();
 
         owner = newOwner;
 
@@ -98,7 +98,7 @@ abstract contract Morpho is IMorphoStaticTyping {
 
     /// @inheritdoc IMorphoBase
     function enableIrm(address irm) external onlyOwner {
-        require(!isIrmEnabled[irm], ErrorsLib.ALREADY_SET);
+        if (isIrmEnabled[irm]) revert ErrorsLib.AlreadySet();
 
         isIrmEnabled[irm] = true;
 
@@ -107,8 +107,8 @@ abstract contract Morpho is IMorphoStaticTyping {
 
     /// @inheritdoc IMorphoBase
     function enableLltv(uint256 lltv) external onlyOwner {
-        require(!isLltvEnabled[lltv], ErrorsLib.ALREADY_SET);
-        require(lltv < WAD, ErrorsLib.MAX_LLTV_EXCEEDED);
+        if (isLltvEnabled[lltv]) revert ErrorsLib.AlreadySet();
+        if (lltv >= WAD) revert ErrorsLib.MaxLltvExceeded();
 
         isLltvEnabled[lltv] = true;
 
@@ -118,9 +118,9 @@ abstract contract Morpho is IMorphoStaticTyping {
     /// @inheritdoc IMorphoBase
     function setFee(MarketParams memory marketParams, uint256 newFee) external onlyOwner {
         Id id = marketParams.id();
-        require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
-        require(newFee != market[id].fee, ErrorsLib.ALREADY_SET);
-        require(newFee <= MAX_FEE, ErrorsLib.MAX_FEE_EXCEEDED);
+        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
+        if (newFee == market[id].fee) revert ErrorsLib.AlreadySet();
+        if (newFee > MAX_FEE) revert ErrorsLib.MaxFeeExceeded();
 
         // Accrue interest using the previous fee set before changing it.
         _accrueInterest(marketParams, id);
@@ -133,7 +133,7 @@ abstract contract Morpho is IMorphoStaticTyping {
 
     /// @inheritdoc IMorphoBase
     function setFeeRecipient(address newFeeRecipient) external onlyOwner {
-        require(newFeeRecipient != feeRecipient, ErrorsLib.ALREADY_SET);
+        if (newFeeRecipient == feeRecipient) revert ErrorsLib.AlreadySet();
 
         feeRecipient = newFeeRecipient;
 
@@ -145,9 +145,9 @@ abstract contract Morpho is IMorphoStaticTyping {
     /// @inheritdoc IMorphoBase
     function createMarket(MarketParams memory marketParams) external {
         Id id = marketParams.id();
-        require(isIrmEnabled[marketParams.irm], ErrorsLib.IRM_NOT_ENABLED);
-        require(isLltvEnabled[marketParams.lltv], ErrorsLib.LLTV_NOT_ENABLED);
-        require(market[id].lastUpdate == 0, ErrorsLib.MARKET_ALREADY_CREATED);
+        if (!isIrmEnabled[marketParams.irm]) revert ErrorsLib.IrmNotEnabled();
+        if (!isLltvEnabled[marketParams.lltv]) revert ErrorsLib.LltvNotEnabled();
+        if (market[id].lastUpdate != 0) revert ErrorsLib.MarketAlreadyCreated();
 
         // Safe "unchecked" cast.
         market[id].lastUpdate = uint128(block.timestamp);
@@ -170,9 +170,9 @@ abstract contract Morpho is IMorphoStaticTyping {
         bytes calldata data
     ) external returns (uint256, uint256) {
         Id id = marketParams.id();
-        require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
-        require(UtilsLib.exactlyOneZero(assets, shares), ErrorsLib.INCONSISTENT_INPUT);
-        require(onBehalf != address(0), ErrorsLib.ZERO_ADDRESS);
+        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
+        if (!UtilsLib.exactlyOneZero(assets, shares)) revert ErrorsLib.InconsistentInput();
+        if (onBehalf == address(0)) revert ErrorsLib.ZeroAddress();
 
         _accrueInterest(marketParams, id);
 
@@ -201,11 +201,11 @@ abstract contract Morpho is IMorphoStaticTyping {
         address receiver
     ) external virtual returns (uint256, uint256) {
         Id id = marketParams.id();
-        require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
-        require(UtilsLib.exactlyOneZero(assets, shares), ErrorsLib.INCONSISTENT_INPUT);
-        require(receiver != address(0), ErrorsLib.ZERO_ADDRESS);
+        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
+        if (!UtilsLib.exactlyOneZero(assets, shares)) revert ErrorsLib.InconsistentInput();
+        if (receiver == address(0)) revert ErrorsLib.ZeroAddress();
         // No need to verify that onBehalf != address(0) thanks to the following authorization check.
-        require(_isSenderAuthorized(onBehalf), ErrorsLib.UNAUTHORIZED);
+        if (!_isSenderAuthorized(onBehalf)) revert ErrorsLib.Unauthorized();
 
         _accrueInterest(marketParams, id);
 
@@ -216,7 +216,7 @@ abstract contract Morpho is IMorphoStaticTyping {
         market[id].totalSupplyShares -= shares.toUint128();
         market[id].totalSupplyAssets -= assets.toUint128();
 
-        require(market[id].totalBorrowAssets <= market[id].totalSupplyAssets, ErrorsLib.INSUFFICIENT_LIQUIDITY);
+        if (market[id].totalBorrowAssets > market[id].totalSupplyAssets) revert ErrorsLib.InsufficientLiquidity();
 
         emit EventsLib.Withdraw(id, msg.sender, onBehalf, receiver, assets, shares);
 
@@ -236,11 +236,11 @@ abstract contract Morpho is IMorphoStaticTyping {
         address receiver
     ) external returns (uint256, uint256) {
         Id id = marketParams.id();
-        require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
-        require(UtilsLib.exactlyOneZero(assets, shares), ErrorsLib.INCONSISTENT_INPUT);
-        require(receiver != address(0), ErrorsLib.ZERO_ADDRESS);
+        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
+        if (!UtilsLib.exactlyOneZero(assets, shares)) revert ErrorsLib.InconsistentInput();
+        if (receiver == address(0)) revert ErrorsLib.ZeroAddress();
         // No need to verify that onBehalf != address(0) thanks to the following authorization check.
-        require(_isSenderAuthorized(onBehalf), ErrorsLib.UNAUTHORIZED);
+        if (!_isSenderAuthorized(onBehalf)) revert ErrorsLib.Unauthorized();
 
         _accrueInterest(marketParams, id);
         _beforeBorrow(marketParams, id, onBehalf, assets, shares);
@@ -252,8 +252,8 @@ abstract contract Morpho is IMorphoStaticTyping {
         market[id].totalBorrowShares += shares.toUint128();
         market[id].totalBorrowAssets += assets.toUint128();
 
-        require(_isHealthy(marketParams, id, onBehalf), ErrorsLib.INSUFFICIENT_COLLATERAL);
-        require(market[id].totalBorrowAssets <= market[id].totalSupplyAssets, ErrorsLib.INSUFFICIENT_LIQUIDITY);
+        if (!_isHealthy(marketParams, id, onBehalf)) revert ErrorsLib.InsufficientCollateral();
+        if (market[id].totalBorrowAssets > market[id].totalSupplyAssets) revert ErrorsLib.InsufficientLiquidity();
 
         emit EventsLib.Borrow(id, msg.sender, onBehalf, receiver, assets, shares);
 
@@ -273,9 +273,9 @@ abstract contract Morpho is IMorphoStaticTyping {
         bytes calldata data
     ) external returns (uint256, uint256) {
         Id id = marketParams.id();
-        require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
-        require(UtilsLib.exactlyOneZero(assets, shares), ErrorsLib.INCONSISTENT_INPUT);
-        require(onBehalf != address(0), ErrorsLib.ZERO_ADDRESS);
+        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
+        if (!UtilsLib.exactlyOneZero(assets, shares)) revert ErrorsLib.InconsistentInput();
+        if (onBehalf == address(0)) revert ErrorsLib.ZeroAddress();
 
         _accrueInterest(marketParams, id);
         _beforeRepay(marketParams, id, onBehalf, assets, shares);
@@ -309,7 +309,7 @@ abstract contract Morpho is IMorphoStaticTyping {
 
     /// @inheritdoc IMorphoBase
     function flashLoan(address token, uint256 assets, bytes calldata data) external {
-        require(assets != 0, ErrorsLib.ZERO_ASSETS);
+        if (assets == 0) revert ErrorsLib.ZeroAssets();
 
         emit EventsLib.FlashLoan(msg.sender, token, assets);
 
@@ -324,7 +324,7 @@ abstract contract Morpho is IMorphoStaticTyping {
 
     /// @inheritdoc IMorphoBase
     function setAuthorization(address authorized, bool newIsAuthorized) external {
-        require(newIsAuthorized != isAuthorized[msg.sender][authorized], ErrorsLib.ALREADY_SET);
+        if (newIsAuthorized == isAuthorized[msg.sender][authorized]) revert ErrorsLib.AlreadySet();
 
         isAuthorized[msg.sender][authorized] = newIsAuthorized;
 
@@ -334,14 +334,14 @@ abstract contract Morpho is IMorphoStaticTyping {
     /// @inheritdoc IMorphoBase
     function setAuthorizationWithSig(Authorization memory authorization, Signature calldata signature) external {
         /// Do not check whether authorization is already set because the nonce increment is a desired side effect.
-        require(block.timestamp <= authorization.deadline, ErrorsLib.SIGNATURE_EXPIRED);
-        require(authorization.nonce == nonce[authorization.authorizer]++, ErrorsLib.INVALID_NONCE);
+        if (block.timestamp > authorization.deadline) revert ErrorsLib.SignatureExpired();
+        if (authorization.nonce != nonce[authorization.authorizer]++) revert ErrorsLib.InvalidNonce();
 
         bytes32 hashStruct = keccak256(abi.encode(AUTHORIZATION_TYPEHASH, authorization));
         bytes32 digest = keccak256(bytes.concat("\x19\x01", DOMAIN_SEPARATOR, hashStruct));
         address signatory = ecrecover(digest, signature.v, signature.r, signature.s);
 
-        require(signatory != address(0) && authorization.authorizer == signatory, ErrorsLib.INVALID_SIGNATURE);
+        if (signatory == address(0) || authorization.authorizer != signatory) revert ErrorsLib.InvalidSignature();
 
         emit EventsLib.IncrementNonce(msg.sender, authorization.authorizer, authorization.nonce);
 
@@ -362,7 +362,7 @@ abstract contract Morpho is IMorphoStaticTyping {
     /// @inheritdoc IMorphoBase
     function accrueInterest(MarketParams memory marketParams) external {
         Id id = marketParams.id();
-        require(market[id].lastUpdate != 0, ErrorsLib.MARKET_NOT_CREATED);
+        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
 
         _accrueInterest(marketParams, id);
     }

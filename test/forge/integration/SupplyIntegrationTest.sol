@@ -12,7 +12,7 @@ contract SupplyIntegrationTest is BaseTest {
         vm.assume(neq(marketParamsFuzz, marketParams));
 
         vm.prank(SUPPLIER);
-        vm.expectRevert(bytes(ErrorsLib.MARKET_NOT_CREATED));
+        vm.expectRevert(ErrorsLib.MarketNotCreated.selector);
         morpho.supply(marketParamsFuzz, amount, 0, SUPPLIER, hex"");
     }
 
@@ -20,7 +20,7 @@ contract SupplyIntegrationTest is BaseTest {
         vm.assume(SUPPLIER != address(0));
 
         vm.prank(SUPPLIER);
-        vm.expectRevert(bytes(ErrorsLib.INCONSISTENT_INPUT));
+        vm.expectRevert(ErrorsLib.InconsistentInput.selector);
         morpho.supply(marketParams, 0, 0, SUPPLIER, hex"");
     }
 
@@ -28,7 +28,7 @@ contract SupplyIntegrationTest is BaseTest {
         amount = bound(amount, 1, MAX_TEST_AMOUNT);
 
         vm.prank(SUPPLIER);
-        vm.expectRevert(bytes(ErrorsLib.ZERO_ADDRESS));
+        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
         morpho.supply(marketParams, amount, 0, address(0), hex"");
     }
 
@@ -37,7 +37,7 @@ contract SupplyIntegrationTest is BaseTest {
         shares = bound(shares, 1, MAX_TEST_SHARES);
 
         vm.prank(SUPPLIER);
-        vm.expectRevert(bytes(ErrorsLib.INCONSISTENT_INPUT));
+        vm.expectRevert(ErrorsLib.InconsistentInput.selector);
         morpho.supply(marketParams, amount, shares, address(0), hex"");
     }
 
@@ -49,7 +49,7 @@ contract SupplyIntegrationTest is BaseTest {
         marketParams.loanToken = token;
         morpho.createMarket(marketParams);
 
-        vm.expectRevert(bytes(ErrorsLib.NO_CODE));
+        vm.expectRevert(ErrorsLib.NoCode.selector);
         morpho.supply(marketParams, amount, 0, ONBEHALF, hex"");
     }
 

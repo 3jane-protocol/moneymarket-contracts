@@ -121,7 +121,7 @@ contract MorphoCreditTest is Test {
     }
 
     function testSetCreditLineNotCreditLine() public {
-        vm.expectRevert(bytes(ErrorsLib.NOT_CREDIT_LINE));
+        vm.expectRevert(ErrorsLib.NotCreditLine.selector);
         vm.prank(borrower);
         MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, 1_000e18, uint128(uint256(0.05e18) / 365 days));
     }

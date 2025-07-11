@@ -214,7 +214,7 @@ contract PremiumIntegrationTest is BaseTest {
         // Try to borrow a small amount - should fail because the accrued premium
         // will push the total debt over the credit limit
         vm.prank(BORROWER);
-        vm.expectRevert(bytes(ErrorsLib.INSUFFICIENT_COLLATERAL));
+        vm.expectRevert(ErrorsLib.InsufficientCollateral.selector);
         morpho.borrow(marketParams, 10e18, 0, BORROWER, BORROWER);
     }
 
@@ -521,7 +521,7 @@ contract PremiumIntegrationTest is BaseTest {
         // Try to borrow additional amount - should fail because accumulated premium
         // has pushed the debt close to or over the credit limit
         vm.prank(BORROWER);
-        vm.expectRevert(bytes(ErrorsLib.INSUFFICIENT_COLLATERAL));
+        vm.expectRevert(ErrorsLib.InsufficientCollateral.selector);
         morpho.borrow(marketParams, 50e18, 0, BORROWER, BORROWER);
     }
 

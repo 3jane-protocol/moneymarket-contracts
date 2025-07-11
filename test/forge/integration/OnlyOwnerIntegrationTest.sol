@@ -8,7 +8,7 @@ contract OnlyOwnerIntegrationTest is BaseTest {
     using MorphoLib for IMorpho;
 
     function testDeployWithAddressZero() public {
-        vm.expectRevert(bytes(ErrorsLib.ZERO_ADDRESS));
+        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
         new MorphoCredit(address(0));
     }
 
@@ -22,13 +22,13 @@ contract OnlyOwnerIntegrationTest is BaseTest {
         vm.assume(addressFuzz != OWNER);
 
         vm.prank(addressFuzz);
-        vm.expectRevert(bytes(ErrorsLib.NOT_OWNER));
+        vm.expectRevert(ErrorsLib.NotOwner.selector);
         morpho.setOwner(addressFuzz);
     }
 
     function testSetOwnerAlreadySet() public {
         vm.prank(OWNER);
-        vm.expectRevert(bytes(ErrorsLib.ALREADY_SET));
+        vm.expectRevert(ErrorsLib.AlreadySet.selector);
         morpho.setOwner(OWNER);
     }
 
@@ -48,13 +48,13 @@ contract OnlyOwnerIntegrationTest is BaseTest {
         vm.assume(irmFuzz != address(irm));
 
         vm.prank(addressFuzz);
-        vm.expectRevert(bytes(ErrorsLib.NOT_OWNER));
+        vm.expectRevert(ErrorsLib.NotOwner.selector);
         morpho.enableIrm(irmFuzz);
     }
 
     function testEnableIrmAlreadySet() public {
         vm.prank(OWNER);
-        vm.expectRevert(bytes(ErrorsLib.ALREADY_SET));
+        vm.expectRevert(ErrorsLib.AlreadySet.selector);
         morpho.enableIrm(address(irm));
     }
 
@@ -74,13 +74,13 @@ contract OnlyOwnerIntegrationTest is BaseTest {
         vm.assume(lltvFuzz != marketParams.lltv);
 
         vm.prank(addressFuzz);
-        vm.expectRevert(bytes(ErrorsLib.NOT_OWNER));
+        vm.expectRevert(ErrorsLib.NotOwner.selector);
         morpho.enableLltv(lltvFuzz);
     }
 
     function testEnableLltvAlreadySet() public {
         vm.prank(OWNER);
-        vm.expectRevert(bytes(ErrorsLib.ALREADY_SET));
+        vm.expectRevert(ErrorsLib.AlreadySet.selector);
         morpho.enableLltv(marketParams.lltv);
     }
 
@@ -88,7 +88,7 @@ contract OnlyOwnerIntegrationTest is BaseTest {
         lltv = bound(lltv, WAD, type(uint256).max);
 
         vm.prank(OWNER);
-        vm.expectRevert(bytes(ErrorsLib.MAX_LLTV_EXCEEDED));
+        vm.expectRevert(ErrorsLib.MaxLltvExceeded.selector);
         morpho.enableLltv(lltv);
     }
 
@@ -109,7 +109,7 @@ contract OnlyOwnerIntegrationTest is BaseTest {
         vm.assume(addressFuzz != OWNER);
 
         vm.prank(addressFuzz);
-        vm.expectRevert(bytes(ErrorsLib.NOT_OWNER));
+        vm.expectRevert(ErrorsLib.NotOwner.selector);
         morpho.setFee(marketParams, feeFuzz);
     }
 
@@ -117,7 +117,7 @@ contract OnlyOwnerIntegrationTest is BaseTest {
         vm.assume(neq(marketParamsFuzz, marketParams));
 
         vm.prank(OWNER);
-        vm.expectRevert(bytes(ErrorsLib.MARKET_NOT_CREATED));
+        vm.expectRevert(ErrorsLib.MarketNotCreated.selector);
         morpho.setFee(marketParamsFuzz, feeFuzz);
     }
 
@@ -125,7 +125,7 @@ contract OnlyOwnerIntegrationTest is BaseTest {
         feeFuzz = bound(feeFuzz, MAX_FEE + 1, type(uint256).max);
 
         vm.prank(OWNER);
-        vm.expectRevert(bytes(ErrorsLib.MAX_FEE_EXCEEDED));
+        vm.expectRevert(ErrorsLib.MaxFeeExceeded.selector);
         morpho.setFee(marketParams, feeFuzz);
     }
 
@@ -144,7 +144,7 @@ contract OnlyOwnerIntegrationTest is BaseTest {
         vm.assume(addressFuzz != OWNER);
 
         vm.prank(addressFuzz);
-        vm.expectRevert(bytes(ErrorsLib.NOT_OWNER));
+        vm.expectRevert(ErrorsLib.NotOwner.selector);
         morpho.setFeeRecipient(addressFuzz);
     }
 

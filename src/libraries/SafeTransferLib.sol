@@ -17,20 +17,20 @@ interface IERC20Internal {
 /// returning a boolean.
 library SafeTransferLib {
     function safeTransfer(IERC20 token, address to, uint256 value) internal {
-        require(address(token).code.length > 0, ErrorsLib.NO_CODE);
+        if (address(token).code.length == 0) revert ErrorsLib.NoCode();
 
         (bool success, bytes memory returndata) =
             address(token).call(abi.encodeCall(IERC20Internal.transfer, (to, value)));
-        require(success, ErrorsLib.TRANSFER_REVERTED);
-        require(returndata.length == 0 || abi.decode(returndata, (bool)), ErrorsLib.TRANSFER_RETURNED_FALSE);
+        if (!success) revert ErrorsLib.TransferReverted();
+        if (returndata.length != 0 && !abi.decode(returndata, (bool))) revert ErrorsLib.TransferReturnedFalse();
     }
 
     function safeTransferFrom(IERC20 token, address from, address to, uint256 value) internal {
-        require(address(token).code.length > 0, ErrorsLib.NO_CODE);
+        if (address(token).code.length == 0) revert ErrorsLib.NoCode();
 
         (bool success, bytes memory returndata) =
             address(token).call(abi.encodeCall(IERC20Internal.transferFrom, (from, to, value)));
-        require(success, ErrorsLib.TRANSFER_FROM_REVERTED);
-        require(returndata.length == 0 || abi.decode(returndata, (bool)), ErrorsLib.TRANSFER_FROM_RETURNED_FALSE);
+        if (!success) revert ErrorsLib.TransferFromReverted();
+        if (returndata.length != 0 && !abi.decode(returndata, (bool))) revert ErrorsLib.TransferFromReturnedFalse();
     }
 }

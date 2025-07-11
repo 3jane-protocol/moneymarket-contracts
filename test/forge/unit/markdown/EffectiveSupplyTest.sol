@@ -215,7 +215,7 @@ contract EffectiveSupplyTest is BaseTest {
         if (market.totalBorrowAssets > market.totalSupplyAssets) {
             // Try to withdraw - should revert
             vm.prank(SUPPLIER);
-            vm.expectRevert(bytes(ErrorsLib.INSUFFICIENT_LIQUIDITY));
+            vm.expectRevert(ErrorsLib.InsufficientLiquidity.selector);
             morpho.withdraw(marketParams, 100e18, 0, SUPPLIER, SUPPLIER);
         } else {
             // Normal withdrawal should work

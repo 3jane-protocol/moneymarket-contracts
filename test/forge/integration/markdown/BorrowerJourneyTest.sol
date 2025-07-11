@@ -224,7 +224,7 @@ contract BorrowerJourneyTest is BaseTest {
         loanToken.setBalance(BORROWER, partialPayment);
         vm.startPrank(BORROWER);
         loanToken.approve(address(morpho), partialPayment);
-        vm.expectRevert(bytes(ErrorsLib.MUST_PAY_FULL_OBLIGATION));
+        vm.expectRevert(ErrorsLib.MustPayFullObligation.selector);
         morpho.repay(marketParams, partialPayment, 0, BORROWER, hex"");
         vm.stopPrank();
 
@@ -332,7 +332,7 @@ contract BorrowerJourneyTest is BaseTest {
 
         // Verify borrow is blocked for defaulted borrower
         vm.prank(borrowers[1]);
-        vm.expectRevert(bytes(ErrorsLib.OUTSTANDING_REPAYMENT));
+        vm.expectRevert(ErrorsLib.OutstandingRepayment.selector);
         morpho.borrow(marketParams, 1000e18, 0, borrowers[1], borrowers[1]);
 
         // Borrower 2 markdown updates via repay (must pay full obligation)

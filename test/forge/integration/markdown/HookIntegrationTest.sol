@@ -183,7 +183,7 @@ contract HookIntegrationTest is BaseTest {
         uint256 partialPayment1 = amountDue1 / 2; // Pay half to stay in default
         loanToken.setBalance(borrower1, partialPayment1);
         vm.prank(borrower1);
-        vm.expectRevert(bytes(ErrorsLib.MUST_PAY_FULL_OBLIGATION));
+        vm.expectRevert(ErrorsLib.MustPayFullObligation.selector);
         morpho.repay(marketParams, partialPayment1, 0, borrower1, hex"");
 
         // Since partial payment is not allowed, pay full amount to clear obligation
