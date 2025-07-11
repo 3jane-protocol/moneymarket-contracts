@@ -387,6 +387,133 @@ contract DebtSettlementTest is BaseTest {
         vm.stopPrank();
     }
 
+    /// @notice Test zero repayment settlement (100% write-off)
+    function testZeroRepaymentSettlement() public {
+        uint256 borrowAmount = 10_000e18;
+
+        // Setup borrower with loan
+        _setupBorrowerWithLoan(BORROWER, borrowAmount);
+
+        // Get position and market before
+        Position memory positionBefore = morpho.position(id, BORROWER);
+        Market memory marketBefore = morpho.market(id);
+        uint256 totalDebt = uint256(positionBefore.borrowShares).toAssetsUp(
+            marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares
+        );
+
+        // Track credit line balance before
+        uint256 creditLineBalanceBefore = loanToken.balanceOf(address(creditLine));
+
+        // Settle with zero repayment
+        vm.startPrank(address(creditLine));
+        (uint256 repaidShares, uint256 writtenOffShares) = morphoCredit.settleDebt(marketParams, BORROWER, 0, hex"");
+        vm.stopPrank();
+
+        // Verify all shares written off
+        assertEq(repaidShares, 0, "No shares should be repaid");
+        assertEq(writtenOffShares, positionBefore.borrowShares, "All shares should be written off");
+
+        // Verify no tokens transferred
+        uint256 creditLineBalanceAfter = loanToken.balanceOf(address(creditLine));
+        assertEq(creditLineBalanceAfter, creditLineBalanceBefore, "No tokens should be transferred");
+
+        // Verify position cleared
+        Position memory positionAfter = morpho.position(id, BORROWER);
+        assertEq(positionAfter.borrowShares, 0, "Borrower position should be cleared");
+
+        // Verify market totals
+        Market memory marketAfter = morpho.market(id);
+        assertEq(marketAfter.totalBorrowAssets, 0, "Total borrow should be zero");
+        assertEq(marketAfter.totalBorrowShares, 0, "Total borrow shares should be zero");
+
+        // Verify supply reduced by full debt
+        uint256 supplyReduction = marketBefore.totalSupplyAssets - marketAfter.totalSupplyAssets;
+        assertApproxEqAbs(supplyReduction, totalDebt, 1, "Supply should be reduced by full debt amount");
+    }
+
+    /// @notice Test settlement of non-defaulted positions
+    function testSettlementNonDefaultedPositions() public {
+        uint256 borrowAmount = 10_000e18;
+        uint256 repayAmount = 5_000e18;
+
+        // Test 1: Current status borrower
+        _setupBorrowerWithLoan(BORROWER, borrowAmount);
+
+        // Verify borrower is Current
+        (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        assertEq(uint8(status), uint8(RepaymentStatus.Current), "Should be Current");
+
+        // Get position before
+        Position memory positionBefore = morpho.position(id, BORROWER);
+        Market memory marketBefore = morpho.market(id);
+
+        // Settle while Current
+        loanToken.setBalance(address(creditLine), repayAmount);
+        vm.startPrank(address(creditLine));
+        loanToken.approve(address(morpho), repayAmount);
+        (uint256 repaidShares, uint256 writtenOffShares) =
+            morphoCredit.settleDebt(marketParams, BORROWER, repayAmount, hex"");
+        vm.stopPrank();
+
+        // Verify settlement worked normally
+        assertTrue(repaidShares > 0, "Should have repaid shares");
+        assertTrue(writtenOffShares > 0, "Should have written off shares");
+        assertEq(repaidShares + writtenOffShares, positionBefore.borrowShares, "Total should match");
+
+        // Verify no markdown applied (borrower was Current)
+        assertEq(marketBefore.totalMarkdownAmount, 0, "Should have no markdown for Current borrower");
+
+        // Test 2: Grace period borrower
+        address graceBorrower = makeAddr("GraceBorrower");
+        _setupBorrowerWithLoan(graceBorrower, borrowAmount);
+        _createPastObligation(graceBorrower, 500, borrowAmount);
+
+        // Move to grace period
+        (uint128 cycleId,,) = morphoCredit.repaymentObligation(id, graceBorrower);
+        uint256 cycleEnd = morphoCredit.paymentCycle(id, cycleId);
+        vm.warp(cycleEnd + 1); // Just past cycle end, in grace period
+
+        // Verify status
+        (status,) = morphoCredit.getRepaymentStatus(id, graceBorrower);
+        assertEq(uint8(status), uint8(RepaymentStatus.GracePeriod), "Should be in GracePeriod");
+
+        // Settle during grace period
+        loanToken.setBalance(address(creditLine), repayAmount);
+        vm.startPrank(address(creditLine));
+        loanToken.approve(address(morpho), repayAmount);
+        morphoCredit.settleDebt(marketParams, graceBorrower, repayAmount, hex"");
+        vm.stopPrank();
+
+        // Verify position cleared
+        Position memory gracePositionAfter = morpho.position(id, graceBorrower);
+        assertEq(gracePositionAfter.borrowShares, 0, "Grace borrower position should be cleared");
+
+        // Test 3: Delinquent borrower
+        address delinquentBorrower = makeAddr("DelinquentBorrower");
+        _setupBorrowerWithLoan(delinquentBorrower, borrowAmount);
+        _createPastObligation(delinquentBorrower, 500, borrowAmount);
+
+        // Move to delinquent period
+        (cycleId,,) = morphoCredit.repaymentObligation(id, delinquentBorrower);
+        cycleEnd = morphoCredit.paymentCycle(id, cycleId);
+        vm.warp(cycleEnd + GRACE_PERIOD_DURATION + 1); // Past grace, in delinquency
+
+        // Verify status
+        (status,) = morphoCredit.getRepaymentStatus(id, delinquentBorrower);
+        assertEq(uint8(status), uint8(RepaymentStatus.Delinquent), "Should be Delinquent");
+
+        // Settle during delinquency
+        loanToken.setBalance(address(creditLine), repayAmount);
+        vm.startPrank(address(creditLine));
+        loanToken.approve(address(morpho), repayAmount);
+        morphoCredit.settleDebt(marketParams, delinquentBorrower, repayAmount, hex"");
+        vm.stopPrank();
+
+        // Verify position cleared
+        Position memory delinquentPositionAfter = morpho.position(id, delinquentBorrower);
+        assertEq(delinquentPositionAfter.borrowShares, 0, "Delinquent borrower position should be cleared");
+    }
+
     /// @notice Test settlement amount capping
     function testSettlementAmountCapping() public {
         uint256 borrowAmount = 10_000e18;

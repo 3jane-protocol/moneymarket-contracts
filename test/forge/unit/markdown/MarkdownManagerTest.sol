@@ -224,6 +224,63 @@ contract MarkdownManagerTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
     }
 
+    /// @notice Test re-enabling markdown manager after borrower defaults without one
+    function testReenablingMarkdownManager() public {
+        // Setup borrower without markdown manager
+        _setupBorrowerWithLoan(BORROWER, 10_000e18);
+        _createPastObligation(BORROWER, 500, 10_000e18);
+
+        // Get cycle info for timing
+        (uint128 cycleId,,) = morphoCredit.repaymentObligation(id, BORROWER);
+        uint256 cycleEndDate = morphoCredit.paymentCycle(id, cycleId);
+        uint256 expectedDefaultTime = cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION;
+
+        // Fast forward to default (no manager set)
+        vm.warp(expectedDefaultTime + 5 days); // 5 days into default
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        // Verify borrower is in default with no markdown
+        (RepaymentStatus status, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default");
+        assertEq(defaultStartTime, expectedDefaultTime, "Should track default start time");
+
+        // Verify no markdown since no manager
+        uint256 markdownBefore = morphoCredit.markdownState(id, BORROWER);
+        assertEq(markdownBefore, 0, "Should have no markdown without manager");
+
+        // Now set a markdown manager after borrower already defaulted
+        markdownManager = new MarkdownManagerMock();
+        vm.prank(OWNER);
+        morphoCredit.setMarkdownManager(id, address(markdownManager));
+
+        // Move forward more time
+        vm.warp(block.timestamp + 2 days); // Now 7 days total in default
+
+        // Trigger markdown update
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        // Verify markdown is now calculated from original default time
+        uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        uint256 timeInDefault = block.timestamp - defaultStartTime;
+        uint256 expectedMarkdown = markdownManager.calculateMarkdown(borrowAssets, defaultStartTime, block.timestamp);
+
+        // Check state was updated
+        uint256 markdownAfter = morphoCredit.markdownState(id, BORROWER);
+        assertEq(markdownAfter, expectedMarkdown, "Markdown should be calculated from original default time");
+
+        // Verify markdown uses full 7 days in default, not just 2 days since manager was set
+        uint256 daysInDefault = timeInDefault / 1 days;
+        assertEq(daysInDefault, 7, "Should use full time in default");
+
+        // With 1% daily rate, 7 days = 7% markdown
+        uint256 expectedMarkdownAmount = borrowAssets * 7 / 100;
+        assertApproxEqAbs(markdownAfter, expectedMarkdownAmount, 1e18, "Markdown should be ~7% of debt");
+
+        // Verify market total updated
+        Market memory market = morpho.market(id);
+        assertEq(market.totalMarkdownAmount, markdownAfter, "Market total should match borrower markdown");
+    }
+
     /// @notice Test updating manager while borrowers have markdown
     function testUpdateManagerWithExistingMarkdowns() public {
         // Set initial manager
