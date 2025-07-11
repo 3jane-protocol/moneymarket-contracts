@@ -165,7 +165,8 @@ contract EffectiveSupplyTest is BaseTest {
             (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
             uint256 markdown = 0;
             if (status == RepaymentStatus.Default && defaultTime > 0) {
-                markdown = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+                uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
+                markdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
             }
             calculatedTotalMarkdown += markdown;
         }

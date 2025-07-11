@@ -75,7 +75,8 @@ contract MarkdownReversalTest is BaseTest {
         (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 markdownApplied = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
-            markdownApplied = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+            uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
+            markdownApplied = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
         }
         assertTrue(markdownApplied > 0, "Markdown should be applied");
         assertTrue(defaultTime > 0, "Default time should be set");
@@ -99,7 +100,8 @@ contract MarkdownReversalTest is BaseTest {
         (RepaymentStatus statusAfter, uint256 defaultTimeAfter) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 markdownAfter = 0;
         if (statusAfter == RepaymentStatus.Default && defaultTimeAfter > 0) {
-            markdownAfter = markdownManager.calculateMarkdown(borrowAssets, defaultTimeAfter, block.timestamp);
+            uint256 timeInDefault = block.timestamp > defaultTimeAfter ? block.timestamp - defaultTimeAfter : 0;
+            markdownAfter = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
         }
         assertEq(markdownAfter, 0, "Markdown should be cleared");
         assertEq(defaultTimeAfter, 0, "Default time should be cleared");
@@ -130,7 +132,8 @@ contract MarkdownReversalTest is BaseTest {
         (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 markdown1 = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
-            markdown1 = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+            uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
+            markdown1 = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
         }
         assertTrue(markdown1 > 0, "Should have initial markdown");
 
@@ -143,7 +146,8 @@ contract MarkdownReversalTest is BaseTest {
         (status, defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 markdown2 = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
-            markdown2 = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+            uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
+            markdown2 = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
         }
         assertTrue(markdown2 > markdown1, "Markdown should increase over time");
 
@@ -156,7 +160,8 @@ contract MarkdownReversalTest is BaseTest {
         (status, defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 markdown3 = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
-            markdown3 = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+            uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
+            markdown3 = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
         }
         assertTrue(markdown3 > markdown2, "Markdown should continue increasing");
 

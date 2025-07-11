@@ -142,7 +142,8 @@ contract MarkdownManagerTest is BaseTest {
         // Calculate markdown using the manager
         uint256 markdown = 0;
         if (status == RepaymentStatus.Default && defaultStartTime > 0) {
-            markdown = markdownManager.calculateMarkdown(borrowAssets, defaultStartTime, block.timestamp);
+            uint256 actualTimeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
+            markdown = markdownManager.calculateMarkdown(borrowAssets, actualTimeInDefault);
         }
 
         // Verify parameters were correct
@@ -261,8 +262,8 @@ contract MarkdownManagerTest is BaseTest {
 
         // Verify markdown is now calculated from original default time
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        uint256 timeInDefault = block.timestamp - defaultStartTime;
-        uint256 expectedMarkdown = markdownManager.calculateMarkdown(borrowAssets, defaultStartTime, block.timestamp);
+        uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
+        uint256 expectedMarkdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
 
         // Check state was updated
         uint256 markdownAfter = morphoCredit.markdownState(id, BORROWER);
@@ -299,7 +300,8 @@ contract MarkdownManagerTest is BaseTest {
         (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 markdownBefore = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
-            markdownBefore = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+            uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
+            markdownBefore = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
         }
         assertTrue(markdownBefore > 0, "Should have initial markdown");
 
@@ -320,7 +322,8 @@ contract MarkdownManagerTest is BaseTest {
         (status, defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 markdownAfter = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
-            markdownAfter = newManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+            uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
+            markdownAfter = newManager.calculateMarkdown(borrowAssets, timeInDefault);
         }
         assertTrue(markdownAfter > markdownBefore, "Markdown should increase with new manager");
     }
@@ -328,11 +331,11 @@ contract MarkdownManagerTest is BaseTest {
 
 /// @notice Mock markdown manager that always returns false for isValidForMarket
 contract InvalidMarkdownManager is IMarkdownManager {
-    function calculateMarkdown(uint256, uint256, uint256) external pure returns (uint256) {
+    function calculateMarkdown(uint256, uint256) external pure returns (uint256) {
         return 0;
     }
 
-    function getMarkdownMultiplier(uint256, uint256) external pure returns (uint256) {
+    function getMarkdownMultiplier(uint256) external pure returns (uint256) {
         return 1e18;
     }
 
@@ -343,11 +346,11 @@ contract InvalidMarkdownManager is IMarkdownManager {
 
 /// @notice Mock markdown manager that always reverts
 contract RevertingMarkdownManager is IMarkdownManager {
-    function calculateMarkdown(uint256, uint256, uint256) external pure returns (uint256) {
+    function calculateMarkdown(uint256, uint256) external pure returns (uint256) {
         revert("Markdown calculation failed");
     }
 
-    function getMarkdownMultiplier(uint256, uint256) external pure returns (uint256) {
+    function getMarkdownMultiplier(uint256) external pure returns (uint256) {
         revert("Markdown calculation failed");
     }
 

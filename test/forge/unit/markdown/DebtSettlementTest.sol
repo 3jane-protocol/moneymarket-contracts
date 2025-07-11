@@ -244,7 +244,8 @@ contract DebtSettlementTest is BaseTest {
         (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 markdownBefore = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
-            markdownBefore = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+            uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
+            markdownBefore = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
         }
         assertTrue(markdownBefore > 0, "Should have markdown before settlement");
 

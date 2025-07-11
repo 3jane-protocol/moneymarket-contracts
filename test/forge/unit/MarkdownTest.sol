@@ -56,7 +56,8 @@ contract MarkdownTest is BaseTest {
         vm.warp(block.timestamp + 10 days);
 
         // Calculate markdown (10 days * 1% per day = 10%)
-        uint256 markdown = markdownManager.calculateMarkdown(borrowAmount, defaultStartTime, block.timestamp);
+        uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
+        uint256 markdown = markdownManager.calculateMarkdown(borrowAmount, timeInDefault);
 
         assertEq(markdown, 100e18); // 10% of 1000 = 100
     }
@@ -91,7 +92,8 @@ contract MarkdownTest is BaseTest {
         (RepaymentStatus status, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 currentMarkdown = 0;
         if (status == RepaymentStatus.Default && defaultStartTime > 0) {
-            currentMarkdown = markdownManager.calculateMarkdown(borrowAssets, defaultStartTime, block.timestamp);
+            uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
+            currentMarkdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
         }
 
         assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default");

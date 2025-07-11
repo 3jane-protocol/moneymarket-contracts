@@ -82,7 +82,8 @@ contract HookIntegrationTest is BaseTest {
         (, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 markdownBefore = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
-            markdownBefore = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+            uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
+            markdownBefore = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
         }
         assertTrue(markdownBefore > 0, "Should have markdown after 5 days in default");
 
@@ -290,7 +291,8 @@ contract HookIntegrationTest is BaseTest {
         (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 markdownInDefault = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
-            markdownInDefault = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+            uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
+            markdownInDefault = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
         }
         assertTrue(markdownInDefault > 0, "Should have markdown in default");
 
@@ -346,7 +348,8 @@ contract HookIntegrationTest is BaseTest {
             (RepaymentStatus status1, uint256 defaultTime1) = morphoCredit.getRepaymentStatus(id, borrower1);
             uint256 markdown1 = 0;
             if (status1 == RepaymentStatus.Default && defaultTime1 > 0) {
-                markdown1 = markdownManager.calculateMarkdown(borrowAssets1, defaultTime1, block.timestamp);
+                uint256 timeInDefault = block.timestamp > defaultTime1 ? block.timestamp - defaultTime1 : 0;
+                markdown1 = markdownManager.calculateMarkdown(borrowAssets1, timeInDefault);
             }
             assertTrue(markdown1 > 0, "Borrower1 should have markdown");
         }

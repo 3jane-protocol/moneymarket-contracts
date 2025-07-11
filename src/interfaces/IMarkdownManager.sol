@@ -8,22 +8,17 @@ import {Id} from "./IMorpho.sol";
 interface IMarkdownManager {
     /// @notice Calculate the markdown amount for a borrower's position
     /// @param borrowAmount The current borrow amount in assets
-    /// @param defaultStartTime The timestamp when the borrower entered default
-    /// @param currentTime The current timestamp
+    /// @param timeInDefault The duration in seconds since the borrower entered default
     /// @return markdownAmount The amount to reduce from the face value
-    function calculateMarkdown(uint256 borrowAmount, uint256 defaultStartTime, uint256 currentTime)
+    function calculateMarkdown(uint256 borrowAmount, uint256 timeInDefault)
         external
         view
         returns (uint256 markdownAmount);
 
     /// @notice Get the markdown multiplier for a given time in default
-    /// @param defaultStartTime The timestamp when the borrower entered default
-    /// @param currentTime The current timestamp
+    /// @param timeInDefault The duration in seconds since the borrower entered default
     /// @return multiplier The value multiplier (1e18 = 100% value, 0 = 0% value)
-    function getMarkdownMultiplier(uint256 defaultStartTime, uint256 currentTime)
-        external
-        view
-        returns (uint256 multiplier);
+    function getMarkdownMultiplier(uint256 timeInDefault) external view returns (uint256 multiplier);
 
     /// @notice Check if a markdown manager is valid for a market
     /// @param marketId The market to check

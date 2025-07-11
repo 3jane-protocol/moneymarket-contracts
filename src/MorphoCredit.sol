@@ -730,9 +730,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // Calculate new markdown
         uint256 newMarkdown = 0;
         if (isInDefault) {
-            newMarkdown = IMarkdownManager(manager).calculateMarkdown(
-                _getBorrowerAssets(id, borrower), statusStartTime, block.timestamp
-            );
+            uint256 timeInDefault = block.timestamp > statusStartTime ? block.timestamp - statusStartTime : 0;
+            newMarkdown = IMarkdownManager(manager).calculateMarkdown(_getBorrowerAssets(id, borrower), timeInDefault);
         }
 
         if (newMarkdown != lastMarkdown) {

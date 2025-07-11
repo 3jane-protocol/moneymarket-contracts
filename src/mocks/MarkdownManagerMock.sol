@@ -40,14 +40,13 @@ contract MarkdownManagerMock is IMarkdownManager {
     }
 
     /// @inheritdoc IMarkdownManager
-    function calculateMarkdown(uint256 borrowAmount, uint256 defaultStartTime, uint256 currentTime)
+    function calculateMarkdown(uint256 borrowAmount, uint256 timeInDefault)
         external
         view
         returns (uint256 markdownAmount)
     {
-        if (defaultStartTime == 0 || currentTime <= defaultStartTime) return 0;
+        if (timeInDefault == 0) return 0;
 
-        uint256 timeInDefault = currentTime - defaultStartTime;
         uint256 daysInDefault = timeInDefault / SECONDS_PER_DAY;
 
         // Calculate markdown percentage (capped at max)
@@ -61,16 +60,11 @@ contract MarkdownManagerMock is IMarkdownManager {
     }
 
     /// @inheritdoc IMarkdownManager
-    function getMarkdownMultiplier(uint256 defaultStartTime, uint256 currentTime)
-        external
-        view
-        returns (uint256 multiplier)
-    {
-        if (defaultStartTime == 0 || currentTime <= defaultStartTime) {
+    function getMarkdownMultiplier(uint256 timeInDefault) external view returns (uint256 multiplier) {
+        if (timeInDefault == 0) {
             return WAD; // 100% value
         }
 
-        uint256 timeInDefault = currentTime - defaultStartTime;
         uint256 daysInDefault = timeInDefault / SECONDS_PER_DAY;
 
         // Calculate markdown percentage (capped at max)

@@ -94,7 +94,8 @@ contract MarkdownStateTest is BaseTest {
 
         // Verify markdown is being calculated
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        uint256 markdown = markdownManager.calculateMarkdown(borrowAssets, expectedDefaultTime, block.timestamp);
+        uint256 timeInDefault = block.timestamp > expectedDefaultTime ? block.timestamp - expectedDefaultTime : 0;
+        uint256 markdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
         assertTrue(markdown > 0, "Should have markdown in default");
     }
 
@@ -162,7 +163,8 @@ contract MarkdownStateTest is BaseTest {
         (RepaymentStatus borrowerStatus, uint256 borrowerDefaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 borrowerMarkdown = 0;
         if (borrowerStatus == RepaymentStatus.Default && borrowerDefaultTime > 0) {
-            borrowerMarkdown = markdownManager.calculateMarkdown(borrowAssets, borrowerDefaultTime, block.timestamp);
+            uint256 timeInDefault = block.timestamp > borrowerDefaultTime ? block.timestamp - borrowerDefaultTime : 0;
+            borrowerMarkdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
         }
         assertTrue(borrowerMarkdown > 0, "BORROWER should have markdown");
 
@@ -187,7 +189,8 @@ contract MarkdownStateTest is BaseTest {
         (borrowerStatus, borrowerDefaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 newBorrowerMarkdown = 0;
         if (borrowerStatus == RepaymentStatus.Default && borrowerDefaultTime > 0) {
-            newBorrowerMarkdown = markdownManager.calculateMarkdown(borrowAssets, borrowerDefaultTime, block.timestamp);
+            uint256 timeInDefault = block.timestamp > borrowerDefaultTime ? block.timestamp - borrowerDefaultTime : 0;
+            newBorrowerMarkdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
         }
         assertTrue(newBorrowerMarkdown > oldMarkdown, "Markdown should increase over time");
     }
@@ -228,7 +231,8 @@ contract MarkdownStateTest is BaseTest {
             (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
             uint256 markdown = 0;
             if (status == RepaymentStatus.Default && defaultTime > 0) {
-                markdown = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+                uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
+                markdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
             }
             expectedTotal += markdown;
 
@@ -252,7 +256,8 @@ contract MarkdownStateTest is BaseTest {
             morphoCredit.getRepaymentStatus(id, borrowers[0]);
         uint256 newMarkdown = 0;
         if (borrower0Status == RepaymentStatus.Default && borrower0DefaultTime > 0) {
-            newMarkdown = markdownManager.calculateMarkdown(borrower0Assets, borrower0DefaultTime, block.timestamp);
+            uint256 timeInDefault = block.timestamp > borrower0DefaultTime ? block.timestamp - borrower0DefaultTime : 0;
+            newMarkdown = markdownManager.calculateMarkdown(borrower0Assets, timeInDefault);
         }
         uint256 markdownIncrease = newMarkdown - storedMarkdown;
 
