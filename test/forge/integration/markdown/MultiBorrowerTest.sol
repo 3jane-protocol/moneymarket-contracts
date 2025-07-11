@@ -139,62 +139,68 @@ contract MultiBorrowerTest is BaseTest {
             _setupBorrowerWithLoan(borrowers[i], borrowAmount);
         }
 
-        // Create staggered obligations
-        uint256 baseTime = block.timestamp;
+        // Create all obligations at the same time for simplicity
+        vm.warp(block.timestamp + 2 days);
+        uint256 cycleEndDate = block.timestamp - 1 days;
+
+        address[] memory obligationBorrowers = new address[](NUM_BORROWERS);
+        uint256[] memory bpsList = new uint256[](NUM_BORROWERS);
+        uint256[] memory balances = new uint256[](NUM_BORROWERS);
+
         for (uint256 i = 0; i < NUM_BORROWERS; i++) {
-            vm.warp(baseTime + i * 7 days); // Weekly cycles
-            _createObligation(borrowers[i], 500, borrowAmount);
+            obligationBorrowers[i] = borrowers[i];
+            bpsList[i] = 500; // 5% repayment
+            balances[i] = borrowAmount;
         }
 
-        // Move forward to when first borrower defaults
-        vm.warp(baseTime + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+        vm.prank(address(creditLine));
+        morphoCredit.closeCycleAndPostObligations(id, cycleEndDate, obligationBorrowers, bpsList, balances);
 
-        // Track markdowns as borrowers progressively default
-        uint256[] memory individualMarkdowns = new uint256[](NUM_BORROWERS);
+        // Move to default period
+        vm.warp(cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1 days);
 
-        // Accrue interest before recording initial supply to get accurate baseline
-        morphoCredit.accrueBorrowerPremium(id, borrowers[0]);
+        // First, update half the borrowers to trigger markdown
+        uint256 halfBorrowers = NUM_BORROWERS / 2;
+        uint256[] memory initialMarkdowns = new uint256[](halfBorrowers);
 
-        Market memory initialMarket = morpho.market(id);
-        uint256 initialSupply = initialMarket.totalSupplyAssets;
-        uint256 cumulativeMarkdown = 0;
-
-        for (uint256 week = 0; week < NUM_BORROWERS; week++) {
-            // Update current week's defaulting borrower
-            morphoCredit.accrueBorrowerPremium(id, borrowers[week]);
-
-            // Check status
-            (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, borrowers[week]);
-            if (uint8(status) == uint8(RepaymentStatus.Default)) {
-                (uint256 markdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrowers[week]);
-                individualMarkdowns[week] = markdown;
-                cumulativeMarkdown += markdown;
-            }
-
-            // Skip supply verification during loop - interest accrual makes it complex
-
-            // Move forward a week
-            vm.warp(block.timestamp + 7 days);
-
-            // Update all previously defaulted borrowers (markdown increases)
-            for (uint256 j = 0; j < week; j++) {
-                uint256 oldMarkdown = individualMarkdowns[j];
-                morphoCredit.accrueBorrowerPremium(id, borrowers[j]);
-
-                (uint256 newMarkdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrowers[j]);
-                cumulativeMarkdown = cumulativeMarkdown - oldMarkdown + newMarkdown;
-                individualMarkdowns[j] = newMarkdown;
-            }
+        for (uint256 i = 0; i < halfBorrowers; i++) {
+            morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
+            (uint256 markdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrowers[i]);
+            initialMarkdowns[i] = markdown;
+            assertTrue(markdown > 0, "Should have initial markdown");
         }
 
-        // Final verification
-        uint256 calculatedTotal = 0;
-        for (uint256 i = 0; i < NUM_BORROWERS; i++) {
-            calculatedTotal += individualMarkdowns[i];
+        // Move forward 10 days
+        vm.warp(block.timestamp + 10 days);
+
+        // Update the same borrowers and verify markdown increased
+        uint256 totalIncrease = 0;
+        for (uint256 i = 0; i < halfBorrowers; i++) {
+            morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
+            (uint256 newMarkdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrowers[i]);
+            assertTrue(newMarkdown > initialMarkdowns[i], "Markdown should increase over time");
+            totalIncrease += (newMarkdown - initialMarkdowns[i]);
         }
 
-        // Skip final supply verification - interest accrual over multiple weeks makes exact calculation complex
-        // The test successfully verifies that each borrower has independent markdown amounts
+        // Verify market total markdown
+        uint256 marketTotalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 expectedTotal = 0;
+        for (uint256 i = 0; i < halfBorrowers; i++) {
+            (uint256 markdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrowers[i]);
+            expectedTotal += markdown;
+        }
+        assertEq(marketTotalMarkdown, expectedTotal, "Market total should match sum of individual markdowns");
+
+        // Verify non-touched borrowers still have stale markdown state
+        // They should show markdown when queried but state is not updated in storage
+        for (uint256 i = halfBorrowers; i < NUM_BORROWERS; i++) {
+            uint128 storedMarkdown = morphoCredit.markdownState(id, borrowers[i]);
+            assertEq(storedMarkdown, 0, "Non-touched borrowers should have no stored markdown");
+
+            // But getBorrowerMarkdownInfo will calculate current markdown
+            (uint256 calculatedMarkdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrowers[i]);
+            assertTrue(calculatedMarkdown > 0, "Should calculate markdown for defaulted borrowers");
+        }
     }
 
     /// @notice Test mixed portfolio with various statuses
@@ -307,7 +313,7 @@ contract MultiBorrowerTest is BaseTest {
         // Setup loans and obligations
         for (uint256 i = 0; i < 3; i++) {
             _setupBorrowerWithLoan(borrowers[i], amounts[i]);
-            _createObligation(borrowers[i], repaymentBps[i], amounts[i]);
+            _createPastObligation(borrowers[i], repaymentBps[i], amounts[i]);
         }
 
         // Move all to default and record default start time
@@ -439,30 +445,6 @@ contract MultiBorrowerTest is BaseTest {
     }
 
     // Helper functions
-    function _setupBorrowerWithLoan(address borrower, uint256 amount) internal {
-        vm.prank(address(creditLine));
-        morphoCredit.setCreditLine(id, borrower, amount * 2, 0);
-
-        vm.prank(borrower);
-        morpho.borrow(marketParams, amount, 0, borrower, borrower);
-    }
-
-    function _createObligation(address borrower, uint256 repaymentBps, uint256 endingBalance) internal {
-        vm.warp(block.timestamp + 2 days);
-        uint256 cycleEndDate = block.timestamp - 1 days;
-
-        address[] memory singleBorrower = new address[](1);
-        singleBorrower[0] = borrower;
-
-        uint256[] memory bpsList = new uint256[](1);
-        bpsList[0] = repaymentBps;
-
-        uint256[] memory balances = new uint256[](1);
-        balances[0] = endingBalance;
-
-        vm.prank(address(creditLine));
-        morphoCredit.closeCycleAndPostObligations(id, cycleEndDate, singleBorrower, bpsList, balances);
-    }
 
     function _moveToDefault() internal {
         // Get first borrower's obligation to determine timing

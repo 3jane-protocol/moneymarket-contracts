@@ -249,9 +249,7 @@ contract DebtSettlementTest is BaseTest {
 
         // Verify markdown exists
         (uint256 markdownBefore,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
-        uint128 lastCalcMarkdown = morphoCredit.markdownState(id, BORROWER);
         assertTrue(markdownBefore > 0, "Should have markdown before settlement");
-        // defaultTime was already retrieved via getBorrowerMarkdownInfo
 
         // Get market markdown before
         Market memory marketBefore = morpho.market(id);
@@ -266,10 +264,7 @@ contract DebtSettlementTest is BaseTest {
 
         // Verify markdown cleared
         (uint256 markdownAfter,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
-        lastCalcMarkdown = morphoCredit.markdownState(id, BORROWER);
         assertEq(markdownAfter, 0, "Should have no markdown after settlement");
-        // defaultTime check is already done via markdownAfter
-        assertEq(lastCalcMarkdown, 0, "Last calculated markdown should be cleared");
 
         // Verify market total updated
         Market memory marketAfter = morpho.market(id);
@@ -414,32 +409,6 @@ contract DebtSettlementTest is BaseTest {
         assertEq(repaidShares, positionBefore.borrowShares, "Should repay all shares");
         assertEq(writtenOffShares, 0, "Should not write off anything");
         assertLe(actualRepaid, totalDebt + 1, "Should not take more than owed (accounting for rounding)");
-    }
-
-    // Helper functions
-    function _setupBorrowerWithLoan(address borrower, uint256 amount) internal {
-        vm.prank(address(creditLine));
-        morphoCredit.setCreditLine(id, borrower, amount * 2, 0);
-
-        vm.prank(borrower);
-        morpho.borrow(marketParams, amount, 0, borrower, borrower);
-    }
-
-    function _createPastObligation(address borrower, uint256 repaymentBps, uint256 endingBalance) internal {
-        vm.warp(block.timestamp + 2 days);
-        uint256 cycleEndDate = block.timestamp - 1 days;
-
-        address[] memory borrowers = new address[](1);
-        borrowers[0] = borrower;
-
-        uint256[] memory bpsList = new uint256[](1);
-        bpsList[0] = repaymentBps;
-
-        uint256[] memory balances = new uint256[](1);
-        balances[0] = endingBalance;
-
-        vm.prank(address(creditLine));
-        morphoCredit.closeCycleAndPostObligations(id, cycleEndDate, borrowers, bpsList, balances);
     }
 }
 

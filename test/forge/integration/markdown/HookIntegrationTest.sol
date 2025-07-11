@@ -60,7 +60,7 @@ contract HookIntegrationTest is BaseTest {
 
         // Create obligation and immediately move to a time where borrower is in default
         // The obligation cycle ended 1 day ago, so we need to add grace + delinquency periods
-        _createObligation(BORROWER, 500, borrowAmount);
+        _createPastObligation(BORROWER, 500, borrowAmount);
 
         // Get the actual cycle end to calculate proper timing
         (uint128 cycleId,,) = morphoCredit.repaymentObligation(id, BORROWER);
@@ -104,7 +104,7 @@ contract HookIntegrationTest is BaseTest {
 
         // Setup borrower in default
         _setupBorrowerWithLoan(BORROWER, borrowAmount);
-        _createObligation(BORROWER, 500, borrowAmount);
+        _createPastObligation(BORROWER, 500, borrowAmount);
         _moveToDefault();
 
         // Check if borrower is actually in default
@@ -166,8 +166,8 @@ contract HookIntegrationTest is BaseTest {
         _setupBorrowerWithLoan(borrower2, borrowAmount);
 
         // Put both in default
-        _createObligation(borrower1, 500, borrowAmount);
-        _createObligation(borrower2, 500, borrowAmount);
+        _createPastObligation(borrower1, 500, borrowAmount);
+        _createPastObligation(borrower2, 500, borrowAmount);
         _moveToDefault();
 
         // Let markdown accrue
@@ -234,7 +234,7 @@ contract HookIntegrationTest is BaseTest {
         // Setup defaulted borrower for comparison
         address defaultedBorrower = ONBEHALF;
         _setupBorrowerWithLoan(defaultedBorrower, borrowAmount);
-        _createObligation(defaultedBorrower, 500, borrowAmount);
+        _createPastObligation(defaultedBorrower, 500, borrowAmount);
         _moveToDefault();
         vm.warp(block.timestamp + 10 days);
 
@@ -261,7 +261,7 @@ contract HookIntegrationTest is BaseTest {
 
         // Setup borrower in default
         _setupBorrowerWithLoan(BORROWER, borrowAmount);
-        _createObligation(BORROWER, 500, borrowAmount);
+        _createPastObligation(BORROWER, 500, borrowAmount);
         _moveToDefault();
         vm.warp(block.timestamp + 20 days);
 
@@ -304,7 +304,7 @@ contract HookIntegrationTest is BaseTest {
         _setupBorrowerWithLoan(borrower2, borrowAmount);
 
         // Create obligation for borrower1
-        _createObligation(borrower1, 500, borrowAmount);
+        _createPastObligation(borrower1, 500, borrowAmount);
 
         // Get cycle info and move to default time
         (uint128 cycleId,,) = morphoCredit.repaymentObligation(id, borrower1);
@@ -349,30 +349,6 @@ contract HookIntegrationTest is BaseTest {
     }
 
     // Helper functions
-    function _setupBorrowerWithLoan(address borrower, uint256 amount) internal {
-        vm.prank(address(creditLine));
-        morphoCredit.setCreditLine(id, borrower, amount * 2, 0);
-
-        vm.prank(borrower);
-        morpho.borrow(marketParams, amount, 0, borrower, borrower);
-    }
-
-    function _createObligation(address borrower, uint256 repaymentBps, uint256 endingBalance) internal {
-        vm.warp(block.timestamp + 2 days);
-        uint256 cycleEndDate = block.timestamp - 1 days;
-
-        address[] memory borrowers = new address[](1);
-        borrowers[0] = borrower;
-
-        uint256[] memory bpsList = new uint256[](1);
-        bpsList[0] = repaymentBps;
-
-        uint256[] memory balances = new uint256[](1);
-        balances[0] = endingBalance;
-
-        vm.prank(address(creditLine));
-        morphoCredit.closeCycleAndPostObligations(id, cycleEndDate, borrowers, bpsList, balances);
-    }
 
     function _moveToDefault() internal {
         // Get any borrower's obligation to determine timing

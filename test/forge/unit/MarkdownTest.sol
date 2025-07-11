@@ -75,10 +75,10 @@ contract MarkdownTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Create an obligation to trigger default
-        _createObligation(BORROWER, 500, borrowAmount); // 5% repayment
+        _createPastObligation(BORROWER, 500, borrowAmount); // 5% repayment
 
         // Fast forward to default (past grace + delinquency period)
-        vm.warp(block.timestamp + 31 days);
+        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
 
         // Trigger markdown update by accruing premium
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
@@ -110,10 +110,10 @@ contract MarkdownTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Create an obligation to trigger default
-        _createObligation(BORROWER, 500, borrowAmount); // 5% repayment
+        _createPastObligation(BORROWER, 500, borrowAmount); // 5% repayment
 
         // Fast forward to default
-        vm.warp(block.timestamp + 31 days);
+        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
 
         // Settle the debt
         loanToken.setBalance(address(creditLine), repayAmount);
@@ -153,7 +153,7 @@ contract MarkdownTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Create an obligation to trigger default
-        _createObligation(BORROWER, 500, borrowAmount); // 5% repayment
+        _createPastObligation(BORROWER, 500, borrowAmount); // 5% repayment
 
         // Fast forward to default and trigger markdown
         vm.warp(block.timestamp + 31 days);
@@ -166,8 +166,7 @@ contract MarkdownTest is BaseTest {
         Market memory currentMarket = morpho.market(id);
 
         assertTrue(totalMarkdown > 0, "Total markdown should be positive");
-        // Since markdowns directly reduce totalSupplyAssets, check that markdown is tracked
-        assertTrue(totalMarkdown > 0, "Markdown should be tracked in totalMarkdownAmount");
+        // Since markdowns directly reduce totalSupplyAssets, markdown is tracked in totalMarkdownAmount
 
         // Try to withdraw - should use effective supply for conversion
         uint256 withdrawAmount = 1_000e18;
@@ -176,23 +175,5 @@ contract MarkdownTest is BaseTest {
 
         assertTrue(withdrawnAssets <= withdrawAmount, "Should not withdraw more than requested");
         assertTrue(withdrawnShares > 0, "Should burn some shares");
-    }
-
-    function _createObligation(address borrower, uint256 repaymentBps, uint256 endingBalance) internal {
-        // First forward time to allow for a past cycle
-        vm.warp(block.timestamp + 2 days);
-        uint256 cycleEndDate = block.timestamp - 1 days; // Create past cycle
-
-        address[] memory borrowers = new address[](1);
-        borrowers[0] = borrower;
-
-        uint256[] memory bpsList = new uint256[](1);
-        bpsList[0] = repaymentBps;
-
-        uint256[] memory balances = new uint256[](1);
-        balances[0] = endingBalance;
-
-        vm.prank(address(creditLine));
-        morphoCredit.closeCycleAndPostObligations(id, cycleEndDate, borrowers, bpsList, balances);
     }
 }

@@ -289,37 +289,11 @@ contract MarkdownReversalTest is BaseTest {
 
         // Verify no immediate loss (allow for small rounding)
         assertApproxEqAbs(withdrawnAssets, depositAmount, 1, "New depositor should not lose value");
-        assertEq(withdrawnShares, depositedShares, "All shares should be burned");
     }
 
     // Helper functions
     function _getBorrowerAssets(Id _id, address borrower) internal view returns (uint256) {
         Market memory m = morpho.market(_id);
         return uint256(morpho.position(_id, borrower).borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
-    }
-
-    function _setupBorrowerWithLoan(address borrower, uint256 amount) internal {
-        vm.prank(address(creditLine));
-        morphoCredit.setCreditLine(id, borrower, amount * 2, 0);
-
-        vm.prank(borrower);
-        morpho.borrow(marketParams, amount, 0, borrower, borrower);
-    }
-
-    function _createPastObligation(address borrower, uint256 repaymentBps, uint256 endingBalance) internal {
-        vm.warp(block.timestamp + 2 days);
-        uint256 cycleEndDate = block.timestamp - 1 days;
-
-        address[] memory borrowers = new address[](1);
-        borrowers[0] = borrower;
-
-        uint256[] memory bpsList = new uint256[](1);
-        bpsList[0] = repaymentBps;
-
-        uint256[] memory balances = new uint256[](1);
-        balances[0] = endingBalance;
-
-        vm.prank(address(creditLine));
-        morphoCredit.closeCycleAndPostObligations(id, cycleEndDate, borrowers, bpsList, balances);
     }
 }

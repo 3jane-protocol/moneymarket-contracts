@@ -66,7 +66,7 @@ contract BorrowerJourneyTest is BaseTest {
 
         // Step 2: Create payment obligation (creates past obligation)
         uint256 obligationAmount = borrowAmount * 5 / 100; // 5% monthly payment
-        _createObligation(BORROWER, 500, borrowAmount);
+        _createPastObligation(BORROWER, 500, borrowAmount);
 
         // After creating past obligation, borrower is already in grace period
         (status,) = morphoCredit.getRepaymentStatus(id, BORROWER);
@@ -139,7 +139,7 @@ contract BorrowerJourneyTest is BaseTest {
 
         // Setup borrower in default with markdown
         _setupBorrowerWithLoan(BORROWER, borrowAmount);
-        _createObligation(BORROWER, 500, borrowAmount);
+        _createPastObligation(BORROWER, 500, borrowAmount);
 
         // Fast forward to default
         (uint128 cycleId,,) = morphoCredit.repaymentObligation(id, BORROWER);
@@ -189,7 +189,7 @@ contract BorrowerJourneyTest is BaseTest {
         _setupBorrowerWithLoan(BORROWER, borrowAmount);
 
         // Cycle 1: Default and recover
-        _createObligation(BORROWER, 500, borrowAmount);
+        _createPastObligation(BORROWER, 500, borrowAmount);
         _moveToDefault();
 
         // Wait some time in default to accumulate markdown
@@ -208,7 +208,7 @@ contract BorrowerJourneyTest is BaseTest {
 
         // Cycle 2: Default again with different obligation
         vm.warp(block.timestamp + 30 days);
-        _createObligation(BORROWER, 1000, borrowAmount); // 10% payment this time
+        _createPastObligation(BORROWER, 1000, borrowAmount); // 10% payment this time
         _moveToDefault();
 
         vm.warp(block.timestamp + 20 days); // 20 days in default
@@ -260,7 +260,7 @@ contract BorrowerJourneyTest is BaseTest {
         // Test 2: Settlement during grace period (no markdown)
         address borrower2 = makeAddr("Borrower2");
         _setupBorrowerWithLoan(borrower2, borrowAmount);
-        _createObligation(borrower2, 500, borrowAmount);
+        _createPastObligation(borrower2, 500, borrowAmount);
 
         (uint128 cycleId,,) = morphoCredit.repaymentObligation(id, borrower2);
         vm.warp(morphoCredit.paymentCycle(id, cycleId) + 1); // Grace period
@@ -274,7 +274,7 @@ contract BorrowerJourneyTest is BaseTest {
         // Test 3: Settlement during default (with markdown)
         address borrower3 = makeAddr("Borrower3");
         _setupBorrowerWithLoan(borrower3, borrowAmount);
-        _createObligation(borrower3, 500, borrowAmount);
+        _createPastObligation(borrower3, 500, borrowAmount);
 
         _moveToDefault();
         vm.warp(block.timestamp + 30 days); // 30 days in default
@@ -315,7 +315,7 @@ contract BorrowerJourneyTest is BaseTest {
 
         for (uint256 i = 0; i < borrowers.length; i++) {
             _setupBorrowerWithLoan(borrowers[i], borrowAmount);
-            _createObligation(borrowers[i], 500, borrowAmount);
+            _createPastObligation(borrowers[i], 500, borrowAmount);
         }
 
         _moveToDefault();
@@ -358,30 +358,6 @@ contract BorrowerJourneyTest is BaseTest {
     }
 
     // Helper functions
-    function _setupBorrowerWithLoan(address borrower, uint256 amount) internal {
-        vm.prank(address(creditLine));
-        morphoCredit.setCreditLine(id, borrower, amount * 2, 0);
-
-        vm.prank(borrower);
-        morpho.borrow(marketParams, amount, 0, borrower, borrower);
-    }
-
-    function _createObligation(address borrower, uint256 repaymentBps, uint256 endingBalance) internal {
-        vm.warp(block.timestamp + 2 days);
-        uint256 cycleEndDate = block.timestamp - 1 days;
-
-        address[] memory borrowers = new address[](1);
-        borrowers[0] = borrower;
-
-        uint256[] memory bpsList = new uint256[](1);
-        bpsList[0] = repaymentBps;
-
-        uint256[] memory balances = new uint256[](1);
-        balances[0] = endingBalance;
-
-        vm.prank(address(creditLine));
-        morphoCredit.closeCycleAndPostObligations(id, cycleEndDate, borrowers, bpsList, balances);
-    }
 
     function _moveToDefault() internal {
         // Get the latest cycle to determine timing

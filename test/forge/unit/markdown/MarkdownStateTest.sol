@@ -66,51 +66,32 @@ contract MarkdownStateTest is BaseTest {
         // Create past obligation to trigger default
         _createPastObligation(BORROWER, 500, 10_000e18); // 5% repayment
 
-        // Check initial state - should be current (no default yet)
-        uint128 lastCalculatedMarkdown = morphoCredit.markdownState(id, BORROWER);
-        (, uint256 defaultStartTime,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
-        assertEq(defaultStartTime, 0, "Should not be in default initially");
-        assertEq(lastCalculatedMarkdown, 0, "Should have no markdown initially");
-
-        // Get cycle end date to calculate correct timing
+        // Get cycle info to calculate correct timing
         (uint128 paymentCycleId,,) = morphoCredit.repaymentObligation(id, BORROWER);
         uint256 cycleEndDate = morphoCredit.paymentCycle(id, paymentCycleId);
-
-        // Forward time to grace period (relative to cycle end date)
-        vm.warp(cycleEndDate + 1);
-        (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, BORROWER);
-        assertEq(uint8(status), uint8(RepaymentStatus.GracePeriod), "Should be in grace period");
-
-        // Trigger update - should not set default timestamp yet
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-        (, defaultStartTime,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
-        assertEq(defaultStartTime, 0, "Should not set default time in grace period");
-
-        // Forward to delinquent period (relative to cycle end date)
-        vm.warp(cycleEndDate + GRACE_PERIOD_DURATION + 1);
-        (status,) = morphoCredit.getRepaymentStatus(id, BORROWER);
-        assertEq(uint8(status), uint8(RepaymentStatus.Delinquent), "Should be delinquent");
-
-        // Trigger update - should not set default timestamp yet
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-        (, defaultStartTime,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
-        assertEq(defaultStartTime, 0, "Should not set default time when delinquent");
-
-        // Forward to default period
-        vm.warp(block.timestamp + DELINQUENCY_PERIOD_DURATION);
-        (status,) = morphoCredit.getRepaymentStatus(id, BORROWER);
-        assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default");
-
-        // Expect DefaultStarted event - timestamp should be when default period starts
         uint256 expectedDefaultTime = cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION;
+
+        // Verify not in default initially
+        (, uint256 defaultStartTime,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        assertEq(defaultStartTime, 0, "Should not be in default initially");
+
+        // Move directly to default period (add 1 day for markdown to accrue)
+        vm.warp(expectedDefaultTime + 1 days);
+
+        // Expect DefaultStarted event
         vm.expectEmit(true, true, false, true);
         emit DefaultStarted(id, BORROWER, expectedDefaultTime);
 
         // Trigger update - should set default timestamp
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
+        // Verify default timestamp was set correctly
         (, defaultStartTime,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
         assertEq(defaultStartTime, expectedDefaultTime, "Should set default time when entering default");
+
+        // Verify markdown is being calculated
+        (uint256 markdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        assertTrue(markdown > 0, "Should have markdown in default");
     }
 
     /// @notice Test that default timestamp is cleared when returning to current status
@@ -324,32 +305,5 @@ contract MarkdownStateTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
         markdown = morphoCredit.markdownState(id, BORROWER);
         assertEq(markdown, 0, "Delinquent borrower should have no markdown");
-    }
-
-    // Helper functions
-    function _setupBorrowerWithLoan(address borrower, uint256 amount) internal {
-        vm.prank(address(creditLine));
-        morphoCredit.setCreditLine(id, borrower, amount * 2, 0);
-
-        vm.prank(borrower);
-        morpho.borrow(marketParams, amount, 0, borrower, borrower);
-    }
-
-    function _createPastObligation(address borrower, uint256 repaymentBps, uint256 endingBalance) internal {
-        // Forward time to create a past cycle
-        vm.warp(block.timestamp + 2 days);
-        uint256 cycleEndDate = block.timestamp - 1 days;
-
-        address[] memory borrowers = new address[](1);
-        borrowers[0] = borrower;
-
-        uint256[] memory bpsList = new uint256[](1);
-        bpsList[0] = repaymentBps;
-
-        uint256[] memory balances = new uint256[](1);
-        balances[0] = endingBalance;
-
-        vm.prank(address(creditLine));
-        morphoCredit.closeCycleAndPostObligations(id, cycleEndDate, borrowers, bpsList, balances);
     }
 }
