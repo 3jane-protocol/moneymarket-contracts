@@ -5,12 +5,14 @@ import "../../BaseTest.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
 import {Market, Position, RepaymentStatus} from "../../../../src/interfaces/IMorpho.sol";
 
 /// @title EffectiveSupplyTest
 /// @notice Tests for effective supply calculations accounting for markdowns
 contract EffectiveSupplyTest is BaseTest {
     using MarketParamsLib for MarketParams;
+    using MorphoBalancesLib for IMorpho;
     using SharesMathLib for uint256;
     using MathLib for uint256;
 
@@ -65,7 +67,7 @@ contract EffectiveSupplyTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Get markdown info
-        uint256 totalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
         Market memory market = morpho.market(id);
         assertTrue(totalMarkdown > 0, "Should have markdown");
 
@@ -103,7 +105,7 @@ contract EffectiveSupplyTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Get market state
-        uint256 totalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
         Market memory market = morpho.market(id);
         assertTrue(totalMarkdown > 0, "Should have markdown");
 
@@ -152,14 +154,19 @@ contract EffectiveSupplyTest is BaseTest {
         }
 
         // Get markdown info
-        uint256 totalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
         uint256 effectiveSupplyAssets = morpho.market(id).totalSupplyAssets;
         Market memory market = morpho.market(id);
 
         // Calculate individual markdowns
         uint256 calculatedTotalMarkdown = 0;
         for (uint256 i = 0; i < borrowers.length; i++) {
-            (uint256 markdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrowers[i]);
+            uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
+            (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            uint256 markdown = 0;
+            if (status == RepaymentStatus.Default && defaultTime > 0) {
+                markdown = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+            }
             calculatedTotalMarkdown += markdown;
         }
 
@@ -200,7 +207,7 @@ contract EffectiveSupplyTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Get markdown info
-        uint256 totalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
         Market memory market = morpho.market(id);
 
         // With 70% markdown on 95% utilization, markdown could be very large
@@ -246,7 +253,7 @@ contract EffectiveSupplyTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Get markdown state
-        uint256 totalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
         uint256 effectiveSupplyBefore = morpho.market(id).totalSupplyAssets;
         Market memory marketBefore = morpho.market(id);
 
@@ -316,7 +323,7 @@ contract EffectiveSupplyTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Get effective value change
-        uint256 totalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
         uint256 effectiveSupply = morpho.market(id).totalSupplyAssets;
         Market memory market = morpho.market(id);
 
@@ -342,7 +349,7 @@ contract EffectiveSupplyTest is BaseTest {
 
         // No default, just healthy borrowing
         Market memory market = morpho.market(id);
-        uint256 totalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
         uint256 effectiveSupply = morpho.market(id).totalSupplyAssets;
 
         // Verify no markdown

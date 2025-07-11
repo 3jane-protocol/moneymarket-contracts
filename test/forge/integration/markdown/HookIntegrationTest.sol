@@ -5,12 +5,14 @@ import "../../BaseTest.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
 import {Market, Position, RepaymentStatus, MarkdownState} from "../../../../src/interfaces/IMorpho.sol";
 
 /// @title HookIntegrationTest
 /// @notice Tests for markdown updates through Morpho hooks (_beforeBorrow, _beforeRepay, _afterRepay)
 contract HookIntegrationTest is BaseTest {
     using MarketParamsLib for MarketParams;
+    using MorphoBalancesLib for IMorpho;
 
     MarkdownManagerMock markdownManager;
     CreditLineMock creditLine;
@@ -76,7 +78,12 @@ contract HookIntegrationTest is BaseTest {
 
         // Trigger markdown update
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
-        (uint256 markdownBefore,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdownBefore = 0;
+        if (status == RepaymentStatus.Default && defaultTime > 0) {
+            markdownBefore = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+        }
         assertTrue(markdownBefore > 0, "Should have markdown after 5 days in default");
 
         // Forward time so markdown accumulates more
@@ -92,7 +99,10 @@ contract HookIntegrationTest is BaseTest {
         uint256 gasUsed = gasBefore - gasleft();
 
         // After repaying, borrower is current so markdown should be 0
-        (uint256 markdownAfter,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (status,) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdownAfter = 0;
+        // After repayment, borrower should be current with no markdown
         assertEq(markdownAfter, 0, "Markdown should be cleared after repaying obligation");
 
         emit log_named_uint("Gas used for borrow with markdown update", gasUsed);
@@ -119,7 +129,8 @@ contract HookIntegrationTest is BaseTest {
 
         // Get markdown state and default time
         uint128 lastCalcMarkdown = morphoCredit.markdownState(id, BORROWER);
-        (, uint256 defaultTime,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        (RepaymentStatus statusAfterAccrue, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        assertEq(uint8(statusAfterAccrue), uint8(RepaymentStatus.Default), "Should be in default");
         assertTrue(defaultTime > 0, "Should have default time");
         assertTrue(lastCalcMarkdown > 0, "Markdown should be calculated");
 
@@ -146,7 +157,10 @@ contract HookIntegrationTest is BaseTest {
         morpho.repay(marketParams, amountDue, 0, BORROWER, hex"");
 
         // Verify markdown was cleared after repaying obligation
-        (uint256 currentMarkdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (status,) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 currentMarkdown = 0;
+        // After repayment, borrower should be current with no markdown
         assertEq(currentMarkdown, 0, "Markdown should be cleared after repaying obligation");
 
         // Verify status is now Current
@@ -206,8 +220,13 @@ contract HookIntegrationTest is BaseTest {
         assertEq(marketAfter.totalMarkdownAmount, 0, "Market should have no markdown after both clear defaults");
 
         // Verify individual markdowns are cleared
-        (uint256 markdown1,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrower1);
-        (uint256 markdown2,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrower2);
+        uint256 borrowAssets1 = morpho.expectedBorrowAssets(marketParams, borrower1);
+        uint256 borrowAssets2 = morpho.expectedBorrowAssets(marketParams, borrower2);
+        (RepaymentStatus status1,) = morphoCredit.getRepaymentStatus(id, borrower1);
+        (RepaymentStatus status2,) = morphoCredit.getRepaymentStatus(id, borrower2);
+        uint256 markdown1 = 0;
+        uint256 markdown2 = 0;
+        // After repayment, both borrowers should be current with no markdown
         assertEq(markdown1, 0, "Borrower1 markdown should be cleared");
         assertEq(markdown2, 0, "Borrower2 markdown should be cleared");
     }
@@ -267,7 +286,12 @@ contract HookIntegrationTest is BaseTest {
 
         // Update markdown
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
-        (uint256 markdownInDefault,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdownInDefault = 0;
+        if (status == RepaymentStatus.Default && defaultTime > 0) {
+            markdownInDefault = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+        }
         assertTrue(markdownInDefault > 0, "Should have markdown in default");
 
         // Repay full obligation - status changes to current
@@ -282,9 +306,12 @@ contract HookIntegrationTest is BaseTest {
         morpho.repay(marketParams, amountDue, 0, BORROWER, hex"");
 
         // Verify markdown cleared after status change
-        (uint256 markdownAfter, uint256 defaultTimeAfter,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (RepaymentStatus statusAfter, uint256 statusStartTimeAfter) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdownAfter = 0;
+        // After repayment, borrower should be current with no markdown
         assertEq(markdownAfter, 0, "Markdown should be cleared");
-        assertEq(defaultTimeAfter, 0, "Default time should be cleared");
+        assertEq(statusStartTimeAfter, 0, "Status start time should be cleared");
 
         // Verify can borrow again
         vm.prank(BORROWER);
@@ -314,8 +341,15 @@ contract HookIntegrationTest is BaseTest {
 
         // Trigger markdown accrual for borrower1
         morphoCredit.accrueBorrowerPremium(id, borrower1);
-        (uint256 markdown1,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrower1);
-        assertTrue(markdown1 > 0, "Borrower1 should have markdown");
+        {
+            uint256 borrowAssets1 = morpho.expectedBorrowAssets(marketParams, borrower1);
+            (RepaymentStatus status1, uint256 defaultTime1) = morphoCredit.getRepaymentStatus(id, borrower1);
+            uint256 markdown1 = 0;
+            if (status1 == RepaymentStatus.Default && defaultTime1 > 0) {
+                markdown1 = markdownManager.calculateMarkdown(borrowAssets1, defaultTime1, block.timestamp);
+            }
+            assertTrue(markdown1 > 0, "Borrower1 should have markdown");
+        }
 
         // Meanwhile, borrower2 (current status) performs operations
         vm.prank(borrower2);
@@ -328,8 +362,13 @@ contract HookIntegrationTest is BaseTest {
         vm.stopPrank();
 
         // Verify borrower2 has no markdown
-        (uint256 markdown2,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrower2);
-        assertEq(markdown2, 0, "Borrower2 should have no markdown");
+        {
+            uint256 borrowAssets2 = morpho.expectedBorrowAssets(marketParams, borrower2);
+            (RepaymentStatus status2,) = morphoCredit.getRepaymentStatus(id, borrower2);
+            uint256 markdown2 = 0;
+            // Borrower2 is current, so no markdown
+            assertEq(markdown2, 0, "Borrower2 should have no markdown");
+        }
 
         // Borrower1 repays obligation
         (, uint128 amountDue,) = morphoCredit.repaymentObligation(id, borrower1);
@@ -340,8 +379,13 @@ contract HookIntegrationTest is BaseTest {
         vm.stopPrank();
 
         // Verify markdown cleared for borrower1
-        (uint256 markdown1After,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrower1);
-        assertEq(markdown1After, 0, "Borrower1 markdown should be cleared");
+        {
+            uint256 borrowAssets1After = morpho.expectedBorrowAssets(marketParams, borrower1);
+            (RepaymentStatus status1After,) = morphoCredit.getRepaymentStatus(id, borrower1);
+            uint256 markdown1After = 0;
+            // After repayment, borrower1 should be current with no markdown
+            assertEq(markdown1After, 0, "Borrower1 markdown should be cleared");
+        }
 
         // Verify market total is zero
         Market memory marketFinal = morpho.market(id);

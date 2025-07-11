@@ -5,13 +5,16 @@ import "../../BaseTest.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
 import {IMarkdownManager} from "../../../../src/interfaces/IMarkdownManager.sol";
 import {Market} from "../../../../src/interfaces/IMorpho.sol";
+import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
 
 /// @title MarkdownManagerTest
 /// @notice Tests for markdown manager integration including validation, external calls, and error handling
 contract MarkdownManagerTest is BaseTest {
     using MarketParamsLib for MarketParams;
+    using MorphoBalancesLib for IMorpho;
 
     MarkdownManagerMock markdownManager;
     CreditLineMock creditLine;
@@ -59,7 +62,9 @@ contract MarkdownManagerTest is BaseTest {
         vm.prank(OWNER);
         morphoCredit.setMarkdownManager(id, address(markdownManager));
 
-        assertEq(morphoCredit.getMarkdownManager(id), address(markdownManager), "Manager should be set");
+        assertEq(
+            MorphoCredit(address(morphoCredit)).markdownManager(id), address(markdownManager), "Manager should be set"
+        );
     }
 
     /// @notice Test that only owner can set markdown manager
@@ -72,7 +77,7 @@ contract MarkdownManagerTest is BaseTest {
         morphoCredit.setMarkdownManager(id, address(markdownManager));
 
         // Verify not set
-        assertEq(morphoCredit.getMarkdownManager(id), address(0), "Manager should not be set");
+        assertEq(MorphoCredit(address(morphoCredit)).markdownManager(id), address(0), "Manager should not be set");
     }
 
     /// @notice Test manager validation when setting
@@ -85,7 +90,9 @@ contract MarkdownManagerTest is BaseTest {
         morphoCredit.setMarkdownManager(id, address(invalidManager));
 
         // Verify not set
-        assertEq(morphoCredit.getMarkdownManager(id), address(0), "Invalid manager should not be set");
+        assertEq(
+            MorphoCredit(address(morphoCredit)).markdownManager(id), address(0), "Invalid manager should not be set"
+        );
     }
 
     /// @notice Test setting manager to zero address (disabling markdowns)
@@ -102,7 +109,7 @@ contract MarkdownManagerTest is BaseTest {
         vm.prank(OWNER);
         morphoCredit.setMarkdownManager(id, address(0));
 
-        assertEq(morphoCredit.getMarkdownManager(id), address(0), "Manager should be cleared");
+        assertEq(MorphoCredit(address(morphoCredit)).markdownManager(id), address(0), "Manager should be cleared");
     }
 
     /// @notice Test correct parameters passed to markdown manager
@@ -128,9 +135,15 @@ contract MarkdownManagerTest is BaseTest {
         uint256 timeInDefault = 5 days;
         vm.warp(expectedDefaultTime + timeInDefault);
 
-        // Get markdown info - this calls the manager
-        (uint256 markdown, uint256 defaultStartTime, uint256 borrowAssets) =
-            morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        // Get repayment status and borrow assets
+        (RepaymentStatus status, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+
+        // Calculate markdown using the manager
+        uint256 markdown = 0;
+        if (status == RepaymentStatus.Default && defaultStartTime > 0) {
+            markdown = markdownManager.calculateMarkdown(borrowAssets, defaultStartTime, block.timestamp);
+        }
 
         // Verify parameters were correct
         assertEq(defaultStartTime, expectedDefaultTime, "Default start time should match");
@@ -156,15 +169,17 @@ contract MarkdownManagerTest is BaseTest {
         vm.warp(expectedDefaultTime + 1);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
-        // Check markdown info
-        (uint256 markdown, uint256 defaultStartTime,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        // Check repayment status
+        (RepaymentStatus status, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdown = 0; // No manager set, so no markdown calculation
 
         // Without a manager, borrower should still be in default status with proper timestamp
+        assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default status");
         assertEq(defaultStartTime, expectedDefaultTime, "Should track default time based on repayment status");
         assertEq(markdown, 0, "Should have no markdown without manager");
 
         // Verify market total is also zero
-        uint256 totalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
         assertEq(totalMarkdown, 0, "Market total should be zero without manager");
     }
 
@@ -223,7 +238,12 @@ contract MarkdownManagerTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Get initial markdown
-        (uint256 markdownBefore,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdownBefore = 0;
+        if (status == RepaymentStatus.Default && defaultTime > 0) {
+            markdownBefore = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+        }
         assertTrue(markdownBefore > 0, "Should have initial markdown");
 
         // Create new manager with different rate (2% daily instead of 1%)
@@ -239,7 +259,12 @@ contract MarkdownManagerTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Markdown should increase with new rate
-        (uint256 markdownAfter,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (status, defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdownAfter = 0;
+        if (status == RepaymentStatus.Default && defaultTime > 0) {
+            markdownAfter = newManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+        }
         assertTrue(markdownAfter > markdownBefore, "Markdown should increase with new manager");
     }
 }

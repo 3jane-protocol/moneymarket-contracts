@@ -5,6 +5,7 @@ import "../../BaseTest.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
 import {SharesMathLib} from "../../../../src/libraries/SharesMathLib.sol";
 import {Market, MarkdownState, RepaymentStatus} from "../../../../src/interfaces/IMorpho.sol";
 
@@ -12,6 +13,7 @@ import {Market, MarkdownState, RepaymentStatus} from "../../../../src/interfaces
 /// @notice Tests for markdown reversal scenarios when borrowers cure their defaults
 contract MarkdownReversalTest is BaseTest {
     using MarketParamsLib for MarketParams;
+    using MorphoBalancesLib for IMorpho;
     using SharesMathLib for uint256;
 
     MarkdownManagerMock markdownManager;
@@ -69,13 +71,18 @@ contract MarkdownReversalTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown applied
-        (uint256 markdownApplied, uint256 defaultTime,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdownApplied = 0;
+        if (status == RepaymentStatus.Default && defaultTime > 0) {
+            markdownApplied = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+        }
         assertTrue(markdownApplied > 0, "Markdown should be applied");
         assertTrue(defaultTime > 0, "Default time should be set");
 
         // Verify markdown applied (supply may have increased due to interest, but markdown is tracked)
         Market memory marketDuringDefault = morpho.market(id);
-        uint256 totalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
         assertEq(totalMarkdown, markdownApplied, "Total markdown should match borrower markdown");
 
         // Borrower makes payment to become current
@@ -88,7 +95,12 @@ contract MarkdownReversalTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown reversed
-        (uint256 markdownAfter, uint256 defaultTimeAfter,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (RepaymentStatus statusAfter, uint256 defaultTimeAfter) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdownAfter = 0;
+        if (statusAfter == RepaymentStatus.Default && defaultTimeAfter > 0) {
+            markdownAfter = markdownManager.calculateMarkdown(borrowAssets, defaultTimeAfter, block.timestamp);
+        }
         assertEq(markdownAfter, 0, "Markdown should be cleared");
         assertEq(defaultTimeAfter, 0, "Default time should be cleared");
 
@@ -97,7 +109,7 @@ contract MarkdownReversalTest is BaseTest {
         assertGt(marketAfterCure.totalSupplyAssets, supplyBefore, "Supply should be greater due to interest");
 
         // Verify total markdown cleared
-        uint256 totalMarkdownAfter = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 totalMarkdownAfter = morpho.market(id).totalMarkdownAmount;
         assertEq(totalMarkdownAfter, 0, "Total markdown should be cleared");
     }
 
@@ -114,7 +126,12 @@ contract MarkdownReversalTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Record initial markdown
-        (uint256 markdown1,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdown1 = 0;
+        if (status == RepaymentStatus.Default && defaultTime > 0) {
+            markdown1 = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+        }
         assertTrue(markdown1 > 0, "Should have initial markdown");
 
         // Fast forward more time
@@ -122,7 +139,12 @@ contract MarkdownReversalTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown increased
-        (uint256 markdown2,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (status, defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdown2 = 0;
+        if (status == RepaymentStatus.Default && defaultTime > 0) {
+            markdown2 = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+        }
         assertTrue(markdown2 > markdown1, "Markdown should increase over time");
 
         // Fast forward even more
@@ -130,11 +152,16 @@ contract MarkdownReversalTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown continues to increase
-        (uint256 markdown3,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (status, defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdown3 = 0;
+        if (status == RepaymentStatus.Default && defaultTime > 0) {
+            markdown3 = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+        }
         assertTrue(markdown3 > markdown2, "Markdown should continue increasing");
 
         // Verify market total tracks correctly
-        uint256 totalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
         assertEq(totalMarkdown, markdown3, "Market total should match borrower markdown");
     }
 
@@ -164,7 +191,7 @@ contract MarkdownReversalTest is BaseTest {
         // Verify recovery (supply will be higher due to interest)
         uint256 supplyAfterRecovery1 = morpho.market(id).totalSupplyAssets;
         assertGt(supplyAfterRecovery1, initialSupply, "Supply should be higher due to interest");
-        assertEq(morphoCredit.getMarketMarkdownInfo(id), 0, "Markdown should be cleared");
+        assertEq(morpho.market(id).totalMarkdownAmount, 0, "Markdown should be cleared");
 
         // Cycle 2: Default again
         vm.warp(block.timestamp + 30 days);
@@ -174,7 +201,7 @@ contract MarkdownReversalTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown applied again
-        uint256 markdownDuringDefault2 = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 markdownDuringDefault2 = morpho.market(id).totalMarkdownAmount;
         assertTrue(markdownDuringDefault2 > 0, "Should have markdown in default again");
 
         // Recover again
@@ -185,7 +212,7 @@ contract MarkdownReversalTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify final recovery
-        assertEq(morphoCredit.getMarketMarkdownInfo(id), 0, "Markdown should be cleared again");
+        assertEq(morpho.market(id).totalMarkdownAmount, 0, "Markdown should be cleared again");
     }
 
     /// @notice Test market-wide recovery with multiple borrowers
@@ -212,7 +239,7 @@ contract MarkdownReversalTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, borrower3);
 
         // Verify total markdown
-        uint256 totalMarkdownDuringDefault = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 totalMarkdownDuringDefault = morpho.market(id).totalMarkdownAmount;
         assertTrue(totalMarkdownDuringDefault > 0, "Should have market-wide markdown");
 
         uint256 supplyDuringDefault = morpho.market(id).totalSupplyAssets;
@@ -255,7 +282,7 @@ contract MarkdownReversalTest is BaseTest {
         uint256 finalSupply = morpho.market(id).totalSupplyAssets;
         assertGt(finalSupply, initialSupply, "Supply should be higher due to interest");
 
-        uint256 finalTotalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 finalTotalMarkdown = morpho.market(id).totalMarkdownAmount;
         assertEq(finalTotalMarkdown, 0, "Total markdown should be cleared");
     }
 

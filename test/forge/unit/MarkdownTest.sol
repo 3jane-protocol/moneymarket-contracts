@@ -5,10 +5,13 @@ import "../BaseTest.sol";
 import {MarkdownManagerMock} from "../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
+import {MorphoBalancesLib} from "../../../src/libraries/periphery/MorphoBalancesLib.sol";
 import {Market} from "../../../src/interfaces/IMorpho.sol";
+import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 
 contract MarkdownTest is BaseTest {
     using MarketParamsLib for MarketParams;
+    using MorphoBalancesLib for IMorpho;
 
     MarkdownManagerMock markdownManager;
     CreditLineMock creditLine;
@@ -42,7 +45,7 @@ contract MarkdownTest is BaseTest {
     }
 
     function testMarkdownManagerSet() public {
-        assertEq(morphoCredit.getMarkdownManager(id), address(markdownManager));
+        assertEq(MorphoCredit(address(morphoCredit)).markdownManager(id), address(markdownManager));
     }
 
     function testMarkdownCalculation() public {
@@ -84,9 +87,14 @@ contract MarkdownTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Check markdown info
-        (uint256 currentMarkdown, uint256 defaultStartTime, uint256 borrowAssets) =
-            morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (RepaymentStatus status, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 currentMarkdown = 0;
+        if (status == RepaymentStatus.Default && defaultStartTime > 0) {
+            currentMarkdown = markdownManager.calculateMarkdown(borrowAssets, defaultStartTime, block.timestamp);
+        }
 
+        assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default");
         assertTrue(defaultStartTime > 0, "Default start time should be set");
         assertTrue(currentMarkdown > 0, "Markdown should be calculated");
         assertTrue(borrowAssets >= borrowAmount, "Borrow assets should be at least initial amount");
@@ -160,7 +168,7 @@ contract MarkdownTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Get market markdown info
-        uint256 totalMarkdown = morphoCredit.getMarketMarkdownInfo(id);
+        uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
 
         // Get current market state to compare with effective supply
         Market memory currentMarket = morpho.market(id);

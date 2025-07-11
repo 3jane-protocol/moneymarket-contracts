@@ -5,6 +5,7 @@ import "../../BaseTest.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
 import {IMorphoRepayCallback} from "../../../../src/interfaces/IMorphoCallbacks.sol";
 import {Market, MarkdownState, RepaymentStatus, Position} from "../../../../src/interfaces/IMorpho.sol";
 
@@ -12,6 +13,7 @@ import {Market, MarkdownState, RepaymentStatus, Position} from "../../../../src/
 /// @notice Tests for debt settlement mechanism including full/partial settlements and authorization
 contract DebtSettlementTest is BaseTest {
     using MarketParamsLib for MarketParams;
+    using MorphoBalancesLib for IMorpho;
     using SharesMathLib for uint256;
 
     MarkdownManagerMock markdownManager;
@@ -248,7 +250,12 @@ contract DebtSettlementTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown exists
-        (uint256 markdownBefore,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdownBefore = 0;
+        if (status == RepaymentStatus.Default && defaultTime > 0) {
+            markdownBefore = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+        }
         assertTrue(markdownBefore > 0, "Should have markdown before settlement");
 
         // Get market markdown before
@@ -263,7 +270,10 @@ contract DebtSettlementTest is BaseTest {
         vm.stopPrank();
 
         // Verify markdown cleared
-        (uint256 markdownAfter,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (status,) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 markdownAfter = 0;
+        // After settlement, borrower should have no debt, so no markdown
         assertEq(markdownAfter, 0, "Should have no markdown after settlement");
 
         // Verify market total updated

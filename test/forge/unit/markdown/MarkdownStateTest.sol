@@ -5,6 +5,7 @@ import "../../BaseTest.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
 import {
     Market,
     MarkdownState,
@@ -17,6 +18,7 @@ import {
 /// @notice Tests for markdown state management including default timestamp tracking and state transitions
 contract MarkdownStateTest is BaseTest {
     using MarketParamsLib for MarketParams;
+    using MorphoBalancesLib for IMorpho;
 
     MarkdownManagerMock markdownManager;
     CreditLineMock creditLine;
@@ -72,8 +74,9 @@ contract MarkdownStateTest is BaseTest {
         uint256 expectedDefaultTime = cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION;
 
         // Verify not in default initially
-        (, uint256 defaultStartTime,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
-        assertEq(defaultStartTime, 0, "Should not be in default initially");
+        (RepaymentStatus status, uint256 statusStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        assertTrue(status != RepaymentStatus.Default, "Should not be in default initially");
+        // Note: statusStartTime may not be 0 if borrower is in grace/delinquent status
 
         // Move directly to default period (add 1 day for markdown to accrue)
         vm.warp(expectedDefaultTime + 1 days);
@@ -86,11 +89,12 @@ contract MarkdownStateTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify default timestamp was set correctly
-        (, defaultStartTime,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        (, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
         assertEq(defaultStartTime, expectedDefaultTime, "Should set default time when entering default");
 
         // Verify markdown is being calculated
-        (uint256 markdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        uint256 markdown = markdownManager.calculateMarkdown(borrowAssets, expectedDefaultTime, block.timestamp);
         assertTrue(markdown > 0, "Should have markdown in default");
     }
 
@@ -106,7 +110,8 @@ contract MarkdownStateTest is BaseTest {
 
         // Verify in default with timestamp set
         uint128 lastCalculatedMarkdown = morphoCredit.markdownState(id, BORROWER);
-        (, uint256 defaultStartTime,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        (RepaymentStatus statusBefore, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        assertEq(uint8(statusBefore), uint8(RepaymentStatus.Default), "Should be in default");
         assertTrue(defaultStartTime > 0, "Should have default timestamp");
         assertTrue(lastCalculatedMarkdown > 0, "Should have markdown calculated");
 
@@ -132,8 +137,8 @@ contract MarkdownStateTest is BaseTest {
 
         // Verify default timestamp and markdown cleared
         lastCalculatedMarkdown = morphoCredit.markdownState(id, BORROWER);
-        (, defaultStartTime,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
-        assertEq(defaultStartTime, 0, "Default timestamp should be cleared");
+        (, uint256 statusStartTimeAfter) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        assertEq(statusStartTimeAfter, 0, "Status start time should be cleared");
         assertEq(lastCalculatedMarkdown, 0, "Markdown should be cleared");
     }
 
@@ -153,7 +158,12 @@ contract MarkdownStateTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Check BORROWER has markdown
-        (uint256 borrowerMarkdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (RepaymentStatus borrowerStatus, uint256 borrowerDefaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 borrowerMarkdown = 0;
+        if (borrowerStatus == RepaymentStatus.Default && borrowerDefaultTime > 0) {
+            borrowerMarkdown = markdownManager.calculateMarkdown(borrowAssets, borrowerDefaultTime, block.timestamp);
+        }
         assertTrue(borrowerMarkdown > 0, "BORROWER should have markdown");
 
         // Check ONBEHALF has no markdown (not touched)
@@ -173,7 +183,12 @@ contract MarkdownStateTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown increased
-        (uint256 newBorrowerMarkdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        (borrowerStatus, borrowerDefaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        uint256 newBorrowerMarkdown = 0;
+        if (borrowerStatus == RepaymentStatus.Default && borrowerDefaultTime > 0) {
+            newBorrowerMarkdown = markdownManager.calculateMarkdown(borrowAssets, borrowerDefaultTime, block.timestamp);
+        }
         assertTrue(newBorrowerMarkdown > oldMarkdown, "Markdown should increase over time");
     }
 
@@ -209,7 +224,12 @@ contract MarkdownStateTest is BaseTest {
             morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
 
             // Get individual markdown
-            (uint256 markdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrowers[i]);
+            uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
+            (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            uint256 markdown = 0;
+            if (status == RepaymentStatus.Default && defaultTime > 0) {
+                markdown = markdownManager.calculateMarkdown(borrowAssets, defaultTime, block.timestamp);
+            }
             expectedTotal += markdown;
 
             // Verify market total
@@ -227,7 +247,13 @@ contract MarkdownStateTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, borrowers[0]);
 
         // Get new markdown after update
-        (uint256 newMarkdown,,) = morphoCredit.getBorrowerMarkdownInfo(id, borrowers[0]);
+        uint256 borrower0Assets = morpho.expectedBorrowAssets(marketParams, borrowers[0]);
+        (RepaymentStatus borrower0Status, uint256 borrower0DefaultTime) =
+            morphoCredit.getRepaymentStatus(id, borrowers[0]);
+        uint256 newMarkdown = 0;
+        if (borrower0Status == RepaymentStatus.Default && borrower0DefaultTime > 0) {
+            newMarkdown = markdownManager.calculateMarkdown(borrower0Assets, borrower0DefaultTime, block.timestamp);
+        }
         uint256 markdownIncrease = newMarkdown - storedMarkdown;
 
         // Verify market total increased by the difference
@@ -249,8 +275,9 @@ contract MarkdownStateTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         uint128 markdown1 = morphoCredit.markdownState(id, BORROWER);
-        (, uint256 defaultTime1,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
-        assertTrue(defaultTime1 > 0, "Should be in default");
+        (RepaymentStatus status1, uint256 defaultTime1) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        assertEq(uint8(status1), uint8(RepaymentStatus.Default), "Should be in default");
+        assertTrue(defaultTime1 > 0, "Should have default time");
         assertTrue(markdown1 > 0, "Should have markdown");
 
         // Repay to clear default
@@ -261,8 +288,9 @@ contract MarkdownStateTest is BaseTest {
 
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
         uint128 markdown2 = morphoCredit.markdownState(id, BORROWER);
-        (, uint256 defaultTime2,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
-        assertEq(defaultTime2, 0, "Should not be in default after repay");
+        (RepaymentStatus status2, uint256 statusStartTime2) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        assertEq(uint8(status2), uint8(RepaymentStatus.Current), "Should be current after repay");
+        assertEq(statusStartTime2, 0, "Should have no status start time after repay");
         assertEq(markdown2, 0, "Should have no markdown after repay");
 
         // Cycle 2: Create new obligation and default again
@@ -274,7 +302,8 @@ contract MarkdownStateTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         uint128 markdown3 = morphoCredit.markdownState(id, BORROWER);
-        (, uint256 defaultTime3,) = morphoCredit.getBorrowerMarkdownInfo(id, BORROWER);
+        (RepaymentStatus status3, uint256 defaultTime3) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        assertEq(uint8(status3), uint8(RepaymentStatus.Default), "Should be in default again");
         assertTrue(defaultTime3 > defaultTime1, "New default time should be later");
         assertTrue(markdown3 > 0, "Should have markdown again");
 

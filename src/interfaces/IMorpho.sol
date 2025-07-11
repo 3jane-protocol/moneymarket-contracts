@@ -521,27 +521,6 @@ interface IMorphoCredit {
         external
         returns (uint256 repaidShares, uint256 writtenOffShares);
 
-    /// @notice Get markdown information for a borrower
-    /// @param id Market ID
-    /// @param borrower Borrower address
-    /// @return currentMarkdown Current markdown amount
-    /// @return defaultStartTime When the borrower entered default (0 if not defaulted)
-    /// @return borrowAssets Current borrow amount
-    function getBorrowerMarkdownInfo(Id id, address borrower)
-        external
-        view
-        returns (uint256 currentMarkdown, uint256 defaultStartTime, uint256 borrowAssets);
-
-    /// @notice Get total market markdown
-    /// @param id Market ID
-    /// @return totalMarkdown Current total markdown across all borrowers (may be stale)
-    function getMarketMarkdownInfo(Id id) external view returns (uint256 totalMarkdown);
-
-    /// @notice Get the markdown manager for a market
-    /// @param id Market ID
-    /// @return manager Address of the markdown manager (0 if not set)
-    function getMarkdownManager(Id id) external view returns (address manager);
-
     /// @notice Get markdown state for a borrower
     /// @param id Market ID
     /// @param borrower Borrower address
