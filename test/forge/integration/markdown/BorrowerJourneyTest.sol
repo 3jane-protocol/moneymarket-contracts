@@ -432,7 +432,9 @@ contract BorrowerJourneyTest is BaseTest {
 
     function _moveToDefault() internal {
         // Get the latest cycle to determine timing
-        uint128 cycleId = uint128(morphoCredit.getLatestCycleId(id));
+        uint256 paymentCycleLength = morphoCredit.getPaymentCycleLength(id);
+        require(paymentCycleLength > 0, "No cycles exist");
+        uint128 cycleId = uint128(paymentCycleLength - 1);
         uint256 cycleEndDate = morphoCredit.paymentCycle(id, cycleId);
         uint256 defaultTime = cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1;
         vm.warp(defaultTime);

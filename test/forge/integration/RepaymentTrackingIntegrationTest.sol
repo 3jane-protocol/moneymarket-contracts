@@ -413,8 +413,8 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         assertEq(totalDue, 600e18); // Only the latest amount (5% of 12000e18)
 
         // Latest cycle ID should be 2
-        uint256 latestCycle = IMorphoCredit(address(morpho)).getLatestCycleId(id);
-        assertEq(latestCycle, 2);
+        uint256 paymentCycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
+        assertEq(paymentCycleLength, 3); // 3 cycles created, so latest cycle ID is 2
     }
 
     // ============ Critical Edge Case Tests ============

@@ -364,10 +364,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /* EXTERNAL FUNCTIONS - CREDIT LINE MANAGEMENT */
 
     /// @inheritdoc IMorphoCredit
-    function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external {
+    function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external onlyCreditLine(id) {
         if (borrower == address(0)) revert ErrorsLib.ZeroAddress();
-        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
-        if (idToMarketParams[id].creditLine != msg.sender) revert ErrorsLib.NotCreditLine();
 
         position[id][borrower].collateral = credit.toUint128();
 
@@ -561,7 +559,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc Morpho
     function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
         // Check if borrower can borrow
-        if (!canBorrow(id, onBehalf)) revert ErrorsLib.OutstandingRepayment();
+        (RepaymentStatus status,) = getRepaymentStatus(id, onBehalf);
+        if (status != RepaymentStatus.Current) revert ErrorsLib.OutstandingRepayment();
         _accrueBorrowerPremium(id, onBehalf);
         _updateBorrowerMarkdown(id, onBehalf);
     }
@@ -611,21 +610,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /* EXTERNAL VIEW FUNCTIONS */
 
-    /// @notice Check if borrower can borrow
+    /// @notice Get the total number of payment cycles for a market
     /// @param id Market ID
-    /// @param borrower Borrower address
-    /// @return Whether the borrower can take new loans
-    function canBorrow(Id id, address borrower) public view returns (bool) {
-        (RepaymentStatus status,) = getRepaymentStatus(id, borrower);
-        return status == RepaymentStatus.Current;
-    }
-
-    /// @notice Get the ID of the latest payment cycle
-    /// @param id Market ID
-    /// @return The latest cycle ID
-    function getLatestCycleId(Id id) external view returns (uint256) {
-        if (paymentCycle[id].length == 0) revert ErrorsLib.NoCyclesExist();
-        return paymentCycle[id].length - 1;
+    /// @return The number of payment cycles
+    function getPaymentCycleLength(Id id) external view returns (uint256) {
+        return paymentCycle[id].length;
     }
 
     /// @notice Get both start and end dates for a given cycle
@@ -805,7 +794,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         returns (uint256 repaidShares, uint256 writtenOffShares)
     {
         Id id = marketParams.id();
-        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
 
         _accrueInterest(marketParams, id);
         _accrueBorrowerPremium(id, borrower);
@@ -814,7 +802,21 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 borrowShares = position[id][borrower].borrowShares;
         if (borrowShares == 0) revert ErrorsLib.NoDebtToSettle();
 
-        (repaidShares, writtenOffShares, repayAmount) = _calculateSettlement(id, borrowShares, repayAmount);
+        Market memory m = market[id];
+
+        // Convert repay amount to shares
+        repaidShares = repayAmount.toSharesDown(m.totalBorrowAssets, m.totalBorrowShares);
+
+        // Ensure we don't repay more than owed
+        if (repaidShares > borrowShares) {
+            repaidShares = borrowShares;
+            repayAmount = repaidShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+        } else {
+            repayAmount = repayAmount;
+        }
+
+        // Calculate written off shares
+        writtenOffShares = borrowShares - repaidShares;
 
         // Clear position and apply supply adjustment
         _applySettlement(id, borrower, borrowShares, writtenOffShares, repayAmount);
@@ -836,29 +838,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Transfer the repay amount
         IERC20(marketParams.loanToken).safeTransferFrom(msg.sender, address(this), repayAmount);
-    }
-
-    /// @notice Calculate settlement amounts
-    function _calculateSettlement(Id id, uint256 borrowShares, uint256 repayAmount)
-        internal
-        view
-        returns (uint256 repaidShares, uint256 writtenOffShares, uint256 adjustedRepayAmount)
-    {
-        Market memory m = market[id];
-
-        // Convert repay amount to shares
-        repaidShares = repayAmount.toSharesDown(m.totalBorrowAssets, m.totalBorrowShares);
-
-        // Ensure we don't repay more than owed
-        if (repaidShares > borrowShares) {
-            repaidShares = borrowShares;
-            adjustedRepayAmount = repaidShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
-        } else {
-            adjustedRepayAmount = repayAmount;
-        }
-
-        // Calculate written off shares
-        writtenOffShares = borrowShares - repaidShares;
     }
 
     /// @notice Apply settlement to storage

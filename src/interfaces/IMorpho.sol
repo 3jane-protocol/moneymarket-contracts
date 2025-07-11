@@ -464,16 +464,10 @@ interface IMorphoCredit {
         view
         returns (RepaymentStatus status, uint256 statusStartTime);
 
-    /// @notice Check if borrower can borrow
+    /// @notice Get the total number of payment cycles for a market
     /// @param id Market ID
-    /// @param borrower Borrower address
-    /// @return Whether the borrower can take new loans
-    function canBorrow(Id id, address borrower) external view returns (bool);
-
-    /// @notice Get the ID of the latest payment cycle
-    /// @param id Market ID
-    /// @return The latest cycle ID
-    function getLatestCycleId(Id id) external view returns (uint256);
+    /// @return The number of payment cycles
+    function getPaymentCycleLength(Id id) external view returns (uint256);
 
     /// @notice Get both start and end dates for a given cycle
     /// @param id Market ID
