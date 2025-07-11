@@ -754,7 +754,15 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         Market memory m = market[id];
 
         // Track total markdowns for reporting/reversibility
-        m.totalMarkdownAmount = uint256(int256(uint256(m.totalMarkdownAmount)) + markdownDelta).toUint128();
+        if (markdownDelta > 0) {
+            // Markdown increased - add to total
+            m.totalMarkdownAmount = (m.totalMarkdownAmount + uint256(markdownDelta)).toUint128();
+        } else {
+            // Markdown decreased - subtract from total (with underflow protection)
+            uint256 decrease = uint256(-markdownDelta);
+            m.totalMarkdownAmount =
+                m.totalMarkdownAmount > decrease ? (m.totalMarkdownAmount - decrease).toUint128() : 0;
+        }
 
         // Directly adjust supply assets
         if (markdownDelta > 0) {
@@ -831,7 +839,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             market[id].totalSupplyAssets = (totalSupplyAssets + uint256(netAdjustment)).toUint128();
         } else if (netAdjustment < 0) {
             uint256 loss = uint256(-netAdjustment);
-            market[id].totalSupplyAssets = totalSupplyAssets > loss ? (totalSupplyAssets - loss).toUint128() : 0;
+            if (totalSupplyAssets < loss) revert ErrorsLib.InsufficientLiquidity();
+            market[id].totalSupplyAssets = (totalSupplyAssets - loss).toUint128();
         }
 
         // Update markdown total
