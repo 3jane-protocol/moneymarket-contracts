@@ -22,11 +22,11 @@ contract DebtSettlementTest is BaseTest {
 
     event DebtSettled(
         Id indexed id,
-        address indexed borrower,
         address indexed settler,
+        address indexed borrower,
         uint256 repaidAmount,
-        uint256 writtenOffAmount,
         uint256 repaidShares,
+        uint256 writtenOffAmount,
         uint256 writtenOffShares
     );
 
@@ -94,7 +94,7 @@ contract DebtSettlementTest is BaseTest {
 
         // Expect event with no write-off
         vm.expectEmit(true, true, true, true);
-        emit DebtSettled(id, BORROWER, address(creditLine), expectedRepayAmount, 0, positionBefore.borrowShares, 0);
+        emit DebtSettled(id, address(creditLine), BORROWER, expectedRepayAmount, positionBefore.borrowShares, 0, 0);
 
         // Settle debt with exact amount
         (uint256 repaidShares, uint256 writtenOffShares) =

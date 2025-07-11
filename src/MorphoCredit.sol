@@ -823,11 +823,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         emit EventsLib.DebtSettled(
             id,
-            borrower,
             msg.sender,
+            borrower,
             repayAmount,
-            writtenOffShares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares),
             repaidShares,
+            writtenOffShares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares),
             writtenOffShares
         );
 
