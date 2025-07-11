@@ -562,7 +562,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         (RepaymentStatus status,) = getRepaymentStatus(id, onBehalf);
         if (status != RepaymentStatus.Current) revert ErrorsLib.OutstandingRepayment();
         _accrueBorrowerPremium(id, onBehalf);
-        _updateBorrowerMarkdown(id, onBehalf);
+        // No need to update markdown - borrower must be Current to borrow, so markdown is always 0
     }
 
     /// @inheritdoc Morpho
@@ -572,7 +572,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     function _beforeRepay(MarketParams memory, Id id, address onBehalf, uint256 assets, uint256) internal override {
         // Accrue premium (including penalty if past grace period)
         _accrueBorrowerPremium(id, onBehalf);
-        _updateBorrowerMarkdown(id, onBehalf);
+        _updateBorrowerMarkdown(id, onBehalf); // TODO: decide whether to remove
 
         // Track payment against obligation
         _trackObligationPayment(id, onBehalf, assets);
@@ -719,12 +719,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Check if in default and emit status change events
         bool isInDefault = status == RepaymentStatus.Default && statusStartTime > 0;
-        if (isInDefault != (lastMarkdown > 0)) {
-            if (isInDefault) {
-                emit EventsLib.DefaultStarted(id, borrower, statusStartTime);
-            } else {
-                emit EventsLib.DefaultCleared(id, borrower);
-            }
+        bool wasInDefault = lastMarkdown > 0;
+
+        if (isInDefault && !wasInDefault) {
+            emit EventsLib.DefaultStarted(id, borrower, statusStartTime);
+        } else if (!isInDefault && wasInDefault) {
+            emit EventsLib.DefaultCleared(id, borrower);
         }
 
         // Calculate new markdown
@@ -810,10 +810,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // Ensure we don't repay more than owed
         if (repaidShares > borrowShares) {
             repaidShares = borrowShares;
-            repayAmount = repaidShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
-        } else {
-            repayAmount = repayAmount;
         }
+
+        // Always recalculate repayAmount based on final shares for consistency
+        repayAmount = repaidShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
 
         // Calculate written off shares
         writtenOffShares = borrowShares - repaidShares;

@@ -199,7 +199,7 @@ abstract contract Morpho is IMorphoStaticTyping {
         uint256 shares,
         address onBehalf,
         address receiver
-    ) external virtual returns (uint256, uint256) {
+    ) external returns (uint256, uint256) {
         Id id = marketParams.id();
         if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
         if (!UtilsLib.exactlyOneZero(assets, shares)) revert ErrorsLib.InconsistentInput();
