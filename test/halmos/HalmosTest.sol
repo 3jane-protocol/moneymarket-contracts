@@ -38,7 +38,9 @@ contract HalmosTest is SymTest, Test {
 
     function setUp() public virtual {
         owner = address(0x1234); // Use fixed address instead of symbolic
-        morpho = IMorpho(address(new MorphoCredit(owner)));
+        MorphoCredit morphoImpl = new MorphoCredit();
+        morpho = IMorpho(address(morphoImpl));
+        morphoImpl.initialize(owner);
 
         loanToken = new ERC20Mock();
         collateralToken = new ERC20Mock();

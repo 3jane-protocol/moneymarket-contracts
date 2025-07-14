@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.19;
+pragma solidity 0.8.22;
 
 import {
     Id,
@@ -74,6 +74,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @notice Markdown manager contract address for each market
     mapping(Id => address) public markdownManager;
+    /// @dev Storage gap for future upgrades (14 slots).
+    uint256[14] private __gap;
 
     /* CONSTANTS */
 
@@ -86,9 +88,13 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Maximum basis points (100%)
     uint256 internal constant MAX_BPS = 10000;
 
-    /* CONSTRUCTOR */
+    /* INITIALIZER */
 
-    constructor(address newOwner) Morpho(newOwner) {}
+    /// @dev Initializes the MorphoCredit contract.
+    /// @param newOwner The initial owner of the contract.
+    function initialize(address newOwner) external initializer {
+        __Morpho_init(newOwner);
+    }
 
     /* ADMIN FUNCTIONS */
 
