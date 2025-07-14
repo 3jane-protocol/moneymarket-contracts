@@ -87,17 +87,11 @@ describe("Morpho", () => {
     const morphoImpl = await MorphoCreditFactory.deploy();
 
     // Deploy ProxyAdmin
-    const ProxyAdminFactory = await hre.ethers.getContractFactory(
-      "lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol:ProxyAdmin",
-      admin,
-    );
+    const ProxyAdminFactory = await hre.ethers.getContractFactory("ProxyAdmin", admin);
     const proxyAdmin = await ProxyAdminFactory.deploy(admin.address);
 
     // Deploy TransparentUpgradeableProxy with initialization
-    const TransparentUpgradeableProxyFactory = await hre.ethers.getContractFactory(
-      "lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol:TransparentUpgradeableProxy",
-      admin,
-    );
+    const TransparentUpgradeableProxyFactory = await hre.ethers.getContractFactory("TransparentUpgradeableProxy", admin);
     const initData = MorphoCreditFactory.interface.encodeFunctionData("initialize", [admin.address]);
     const morphoProxy = await TransparentUpgradeableProxyFactory.deploy(
       await morphoImpl.getAddress(),
