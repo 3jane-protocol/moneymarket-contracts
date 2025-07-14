@@ -13,6 +13,7 @@ contract BorrowIntegrationTest is BaseTest {
         public
     {
         vm.assume(neq(marketParamsFuzz, marketParams));
+        vm.assume(!_isProxyRelatedAddress(borrowerFuzz));
 
         vm.prank(borrowerFuzz);
         vm.expectRevert(ErrorsLib.MarketNotCreated.selector);
@@ -20,6 +21,7 @@ contract BorrowIntegrationTest is BaseTest {
     }
 
     function testBorrowZeroAmount(address borrowerFuzz) public {
+        vm.assume(!_isProxyRelatedAddress(borrowerFuzz));
         vm.prank(borrowerFuzz);
         vm.expectRevert(ErrorsLib.InconsistentInput.selector);
         morpho.borrow(marketParams, 0, 0, borrowerFuzz, RECEIVER);
@@ -35,6 +37,7 @@ contract BorrowIntegrationTest is BaseTest {
     }
 
     function testBorrowToZeroAddress(address borrowerFuzz, uint256 amount) public {
+        vm.assume(!_isProxyRelatedAddress(borrowerFuzz));
         amount = bound(amount, 1, MAX_TEST_AMOUNT);
 
         _supply(amount);
@@ -46,6 +49,7 @@ contract BorrowIntegrationTest is BaseTest {
 
     function testBorrowUnauthorized(address supplier, address attacker, uint256 amount) public {
         vm.assume(supplier != attacker && supplier != address(0));
+        vm.assume(!_isProxyRelatedAddress(supplier) && !_isProxyRelatedAddress(attacker));
         amount = bound(amount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
 
         _supply(amount);

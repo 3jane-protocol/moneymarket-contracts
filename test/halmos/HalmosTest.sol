@@ -15,7 +15,8 @@ import "../../src/Morpho.sol";
 import "../../src/MorphoCredit.sol";
 import "../../src/libraries/ConstantsLib.sol";
 import {MorphoLib} from "../../src/libraries/periphery/MorphoLib.sol";
-import {TransparentUpgradeableProxy} from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {TransparentUpgradeableProxy} from
+    "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 /// @custom:halmos --solver-timeout-assertion 0
@@ -40,19 +41,16 @@ contract HalmosTest is SymTest, Test {
 
     function setUp() public virtual {
         owner = address(0x1234); // Use fixed address instead of symbolic
-        
+
         // For Halmos, deploy through proxy like other tests
         MorphoCredit morphoImpl = new MorphoCredit();
-        
+
         // Deploy minimal proxy setup for Halmos
         ProxyAdmin proxyAdmin = new ProxyAdmin(owner);
         bytes memory initData = abi.encodeWithSelector(MorphoCredit.initialize.selector, owner);
-        TransparentUpgradeableProxy morphoProxy = new TransparentUpgradeableProxy(
-            address(morphoImpl), 
-            address(proxyAdmin), 
-            initData
-        );
-        
+        TransparentUpgradeableProxy morphoProxy =
+            new TransparentUpgradeableProxy(address(morphoImpl), address(proxyAdmin), initData);
+
         morpho = IMorpho(address(morphoProxy));
 
         loanToken = new ERC20Mock();

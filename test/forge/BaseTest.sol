@@ -60,6 +60,25 @@ contract BaseTest is Test {
     address internal RECEIVER;
     address internal LIQUIDATOR;
     address internal OWNER;
+
+    // Helper function to check if address should be excluded from fuzzing
+    function _isProxyRelatedAddress(address addr) internal returns (bool) {
+        return addr == OWNER || addr == address(proxyAdmin) || addr == address(morphoProxy)
+            || _wouldCauseProxyDeniedAccess(addr);
+    }
+
+    // Dynamically detect addresses that would cause ProxyDeniedAdminAccess errors
+    function _wouldCauseProxyDeniedAccess(address addr) internal returns (bool) {
+        // Try a view function call that should work for normal addresses
+        // but fail with ProxyDeniedAdminAccess for proxy admins
+        vm.prank(addr);
+        try morpho.owner() returns (address) {
+            return false; // Call succeeded, so it's not a problematic proxy admin
+        } catch (bytes memory) {
+            return true; // Call failed, likely due to ProxyDeniedAdminAccess
+        }
+    }
+
     address internal FEE_RECIPIENT;
 
     address internal morphoAddress;
