@@ -14,6 +14,7 @@ import {ERC20Mock} from "../../../src/mocks/ERC20Mock.sol";
 import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
+import {TransparentUpgradeableProxy} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 contract MorphoCreditTest is Test {
     using MathLib for uint256;
@@ -49,9 +50,14 @@ contract MorphoCreditTest is Test {
         supplier = makeAddr("supplier");
         feeRecipient = makeAddr("feeRecipient");
 
-        // Deploy contracts
-        vm.prank(owner);
-        morpho = IMorpho(address(new MorphoCredit(owner)));
+        // Deploy contracts through proxy
+        MorphoCredit morphoImpl = new MorphoCredit();
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
+            address(morphoImpl),
+            address(this), // Test contract acts as admin
+            abi.encodeWithSelector(MorphoCredit.initialize.selector, owner)
+        );
+        morpho = IMorpho(address(proxy));
 
         // Deploy credit line mock
         creditLine = new CreditLineMock(address(morpho));

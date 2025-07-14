@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.19;
+pragma solidity 0.8.22;
 
 import {
     Id,
@@ -26,23 +26,19 @@ import {MathLib, WAD} from "./libraries/MathLib.sol";
 import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 import {MarketParamsLib} from "./libraries/MarketParamsLib.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
+import {Initializable} from "../lib/openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 /// @title Morpho
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
 /// @notice The Morpho contract.
-abstract contract Morpho is IMorphoStaticTyping {
+abstract contract Morpho is IMorphoStaticTyping, Initializable {
     using MathLib for uint128;
     using MathLib for uint256;
     using UtilsLib for uint256;
     using SharesMathLib for uint256;
     using SafeTransferLib for IERC20;
     using MarketParamsLib for MarketParams;
-
-    /* IMMUTABLES */
-
-    /// @inheritdoc IMorphoBase
-    bytes32 public immutable DOMAIN_SEPARATOR;
 
     /* STORAGE */
 
@@ -64,11 +60,19 @@ abstract contract Morpho is IMorphoStaticTyping {
     mapping(address => uint256) public nonce;
     /// @inheritdoc IMorphoStaticTyping
     mapping(Id => MarketParams) public idToMarketParams;
+    /// @inheritdoc IMorphoBase
+    bytes32 public DOMAIN_SEPARATOR;
+    /// @dev Storage gap for future upgrades (41 slots to keep total under 50).
+    uint256[41] private __gap;
 
-    /* CONSTRUCTOR */
+    /* INITIALIZER */
 
-    /// @param newOwner The new owner of the contract.
-    constructor(address newOwner) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+    /// @param newOwner The initial owner of the contract.
+    function __Morpho_init(address newOwner) internal onlyInitializing {
         if (newOwner == address(0)) revert ErrorsLib.ZeroAddress();
 
         DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, block.chainid, address(this)));
@@ -155,7 +159,6 @@ abstract contract Morpho is IMorphoStaticTyping {
 
         emit EventsLib.CreateMarket(id, marketParams);
 
-        // Call to initialize the IRM in case it is stateful.
         if (marketParams.irm != address(0)) IIrm(marketParams.irm).borrowRate(marketParams, market[id]);
     }
 
