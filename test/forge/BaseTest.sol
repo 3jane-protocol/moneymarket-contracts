@@ -88,8 +88,8 @@ contract BaseTest is Test {
         // Deploy implementation
         MorphoCredit morphoImpl = new MorphoCredit();
 
-        // Deploy proxy admin (owned by this test contract for easier testing)
-        proxyAdmin = new ProxyAdmin(address(this));
+        // Deploy proxy admin (owned by OWNER, not the test contract to avoid conflicts)
+        proxyAdmin = new ProxyAdmin(OWNER);
 
         // Deploy proxy with initialization
         bytes memory initData = abi.encodeWithSelector(MorphoCredit.initialize.selector, OWNER);

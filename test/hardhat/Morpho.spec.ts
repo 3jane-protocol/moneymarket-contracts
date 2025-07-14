@@ -91,7 +91,10 @@ describe("Morpho", () => {
     const proxyAdmin = await ProxyAdminFactory.deploy(admin.address);
 
     // Deploy TransparentUpgradeableProxy with initialization
-    const TransparentUpgradeableProxyFactory = await hre.ethers.getContractFactory("TransparentUpgradeableProxy", admin);
+    const TransparentUpgradeableProxyFactory = await hre.ethers.getContractFactory(
+      "TransparentUpgradeableProxy",
+      admin,
+    );
     const initData = MorphoCreditFactory.interface.encodeFunctionData("initialize", [admin.address]);
     const morphoProxy = await TransparentUpgradeableProxyFactory.deploy(
       await morphoImpl.getAddress(),
