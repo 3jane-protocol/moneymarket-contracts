@@ -82,9 +82,31 @@ describe("Morpho", () => {
 
     await oracle.setPrice(oraclePriceScale);
 
+    // Deploy MorphoCredit implementation
     const MorphoCreditFactory = await hre.ethers.getContractFactory("MorphoCredit", admin);
+    const morphoImpl = await MorphoCreditFactory.deploy();
 
-    morpho = await MorphoCreditFactory.deploy(admin.address);
+    // Deploy ProxyAdmin
+    const ProxyAdminFactory = await hre.ethers.getContractFactory(
+      "lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol:ProxyAdmin",
+      admin,
+    );
+    const proxyAdmin = await ProxyAdminFactory.deploy(admin.address);
+
+    // Deploy TransparentUpgradeableProxy with initialization
+    const TransparentUpgradeableProxyFactory = await hre.ethers.getContractFactory(
+      "lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol:TransparentUpgradeableProxy",
+      admin,
+    );
+    const initData = MorphoCreditFactory.interface.encodeFunctionData("initialize", [admin.address]);
+    const morphoProxy = await TransparentUpgradeableProxyFactory.deploy(
+      await morphoImpl.getAddress(),
+      await proxyAdmin.getAddress(),
+      initData,
+    );
+
+    // Connect to proxy as MorphoCredit interface
+    morpho = MorphoCreditFactory.attach(await morphoProxy.getAddress()) as MorphoCredit;
 
     const IrmMockFactory = await hre.ethers.getContractFactory("IrmMock", admin);
 
