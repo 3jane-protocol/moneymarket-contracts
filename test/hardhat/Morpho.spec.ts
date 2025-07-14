@@ -3,7 +3,7 @@ import { setNextBlockTimestamp } from "@nomicfoundation/hardhat-network-helpers/
 import { expect } from "chai";
 import { AbiCoder, MaxUint256, ZeroAddress, keccak256, toBigInt } from "ethers";
 import hre from "hardhat";
-import { Morpho, MorphoCredit, OracleMock, ERC20Mock, IrmMock } from "types";
+import { Morpho, MorphoCredit, OracleMock, ERC20Mock, IrmMock, ProxyAdmin, TransparentUpgradeableProxy } from "types";
 import { MarketParamsStruct } from "types/src/Morpho";
 import { CreditLineMock } from "types/src/mocks/CreditLineMock";
 import { FlashBorrowerMock } from "types/src/mocks/FlashBorrowerMock";

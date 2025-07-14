@@ -32,7 +32,7 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Build Foundry contracts
-        run: forge build
+        run: forge build --force
         env:
           FOUNDRY_PROFILE: test
 

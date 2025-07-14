@@ -8,12 +8,17 @@ import "ethers-maths";
 import "hardhat-gas-reporter";
 import "hardhat-tracer";
 import { HardhatUserConfig } from "hardhat/config";
-import "solidity-coverage";
 
 dotenv.config();
 
 const config: HardhatUserConfig = {
   defaultNetwork: "hardhat",
+  paths: {
+    sources: "./src",
+    tests: "./test/hardhat",
+    artifacts: "./artifacts",
+    cache: "./cache_hardhat",
+  },
   networks: {
     hardhat: {
       chainId: 1,
@@ -46,10 +51,6 @@ const config: HardhatUserConfig = {
     target: "ethers-v6",
     outDir: "types/",
     externalArtifacts: ["deps/**/*.json"],
-  },
-  tracer: {
-    defaultVerbosity: 1,
-    gasCost: true,
   },
 };
 
