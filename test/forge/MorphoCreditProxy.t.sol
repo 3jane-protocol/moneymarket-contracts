@@ -2,7 +2,10 @@
 pragma solidity ^0.8.0;
 
 import "../../lib/forge-std/src/Test.sol";
-import {TransparentUpgradeableProxy, ITransparentUpgradeableProxy} from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy,
+    ITransparentUpgradeableProxy
+} from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import "../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MorphoCredit} from "../../src/MorphoCredit.sol";
 import {MarketParams, Id} from "../../src/interfaces/IMorpho.sol";
@@ -77,16 +80,10 @@ contract MorphoCreditProxyTest is Test {
     function testProxyInitialization() public view {
         // Check owner is set correctly
         assertEq(morphoCredit.owner(), owner);
-        
+
         // Check DOMAIN_SEPARATOR is set correctly with proxy address
         bytes32 DOMAIN_TYPEHASH = keccak256("EIP712Domain(uint256 chainId,address verifyingContract)");
-        bytes32 expectedDomainSeparator = keccak256(
-            abi.encode(
-                DOMAIN_TYPEHASH,
-                block.chainid,
-                address(proxy)
-            )
-        );
+        bytes32 expectedDomainSeparator = keccak256(abi.encode(DOMAIN_TYPEHASH, block.chainid, address(proxy)));
         assertEq(morphoCredit.DOMAIN_SEPARATOR(), expectedDomainSeparator);
     }
 
@@ -115,12 +112,12 @@ contract MorphoCreditProxyTest is Test {
         // DOMAIN_SEPARATOR is now at slot 9
 
         // Test MorphoCredit storage slots (start after Morpho base + __gap)
-        assertEq(uint256(MorphoCreditStorageLib.helperSlot()), 51);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.BORROWER_PREMIUM_SLOT)), 52);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.PAYMENT_CYCLE_SLOT)), 53);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.REPAYMENT_OBLIGATION_SLOT)), 54);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.MARKDOWN_STATE_SLOT)), 55);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.MARKDOWN_MANAGER_SLOT)), 56);
+        assertEq(uint256(MorphoCreditStorageLib.helperSlot()), 20);
+        assertEq(uint256(bytes32(MorphoCreditStorageLib.BORROWER_PREMIUM_SLOT)), 21);
+        assertEq(uint256(bytes32(MorphoCreditStorageLib.PAYMENT_CYCLE_SLOT)), 22);
+        assertEq(uint256(bytes32(MorphoCreditStorageLib.REPAYMENT_OBLIGATION_SLOT)), 23);
+        assertEq(uint256(bytes32(MorphoCreditStorageLib.MARKDOWN_STATE_SLOT)), 24);
+        assertEq(uint256(bytes32(MorphoCreditStorageLib.MARKDOWN_MANAGER_SLOT)), 25);
     }
 
     function testProxyStatePreservation() public {
@@ -135,7 +132,7 @@ contract MorphoCreditProxyTest is Test {
         loanToken.setBalance(user, 1000e18);
         morphoCredit.supply(marketParams, 1000e18, 0, user, "");
         vm.stopPrank();
-        
+
         // Check state is preserved across multiple calls
         assertEq(morphoCredit.helper(), user);
         assertEq(morphoCredit.owner(), owner);
@@ -146,12 +143,12 @@ contract MorphoCreditProxyTest is Test {
     function testProxyAdminAccess() public {
         // Check that ProxyAdmin is owned by admin
         assertEq(proxyAdmin.owner(), admin);
-        
+
         // Non-admin cannot transfer ProxyAdmin ownership
         vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("OwnableUnauthorizedAccount(address)")), user));
         vm.prank(user);
         proxyAdmin.transferOwnership(user);
-        
+
         // Admin can transfer ProxyAdmin ownership
         vm.prank(admin);
         proxyAdmin.transferOwnership(user);
@@ -162,7 +159,7 @@ contract MorphoCreditProxyTest is Test {
         // Supply tokens
         uint256 supplyAmount = 1000e18;
         loanToken.setBalance(user, supplyAmount);
-        
+
         vm.startPrank(user);
         loanToken.approve(address(morphoCredit), supplyAmount);
         (uint256 assets, uint256 shares) = morphoCredit.supply(marketParams, supplyAmount, 0, user, "");
@@ -176,11 +173,11 @@ contract MorphoCreditProxyTest is Test {
         // Verify storage gaps exist and have correct size
         // This test is mainly for documentation - gaps are private so we can't directly access them
         // But their presence ensures future upgrades won't cause storage collisions
-        
-        // Morpho has 41-slot gap
-        // MorphoCredit has 44-slot gap
+
+        // Morpho has 10-slot gap
+        // MorphoCredit has 14-slot gap
         // Total slots used: 9 (Morpho base) + 1 (DOMAIN_SEPARATOR) + 6 (MorphoCredit) = 16
-        // With gaps: 16 + 41 + 44 = 101 slots reserved
+        // With gaps: 16 + 10 + 14 = 40 slots reserved
         assertTrue(true); // Placeholder assertion
     }
 
@@ -193,10 +190,10 @@ contract MorphoCreditProxyTest is Test {
     function testDirectImplementationCallsRevert() public {
         // Try to call implementation directly - should revert because it's disabled
         MorphoCredit directImpl = new MorphoCredit();
-        
+
         vm.expectRevert(bytes4(0xf92ee8a9)); // Initializable.InvalidInitialization()
         directImpl.initialize(owner);
-        
+
         // View functions on implementation return default values (not revert)
         // This is expected behavior - implementation is locked but readable
         assertEq(directImpl.owner(), address(0));

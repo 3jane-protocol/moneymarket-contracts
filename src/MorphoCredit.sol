@@ -74,8 +74,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @notice Markdown manager contract address for each market
     mapping(Id => address) public markdownManager;
-    /// @dev Storage gap for future upgrades (44 slots, 6 already used).
-    uint256[44] private __gap;
+    /// @dev Storage gap for future upgrades (14 slots).
+    uint256[14] private __gap;
 
     /* CONSTANTS */
 

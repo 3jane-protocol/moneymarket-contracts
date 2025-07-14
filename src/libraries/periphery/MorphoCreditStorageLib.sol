@@ -12,13 +12,13 @@ import {MorphoStorageLib} from "./MorphoStorageLib.sol";
 library MorphoCreditStorageLib {
     /* MORPHO CREDIT STORAGE SLOTS */
 
-    // MorphoCredit storage starts at slot 51 (after Morpho base storage and gap)
-    uint256 internal constant HELPER_SLOT = 51;
-    uint256 internal constant BORROWER_PREMIUM_SLOT = 52;
-    uint256 internal constant PAYMENT_CYCLE_SLOT = 53;
-    uint256 internal constant REPAYMENT_OBLIGATION_SLOT = 54;
-    uint256 internal constant MARKDOWN_STATE_SLOT = 55;
-    uint256 internal constant MARKDOWN_MANAGER_SLOT = 56;
+    // MorphoCredit storage starts at slot 20 (after Morpho base storage and gap)
+    uint256 internal constant HELPER_SLOT = 20;
+    uint256 internal constant BORROWER_PREMIUM_SLOT = 21;
+    uint256 internal constant PAYMENT_CYCLE_SLOT = 22;
+    uint256 internal constant REPAYMENT_OBLIGATION_SLOT = 23;
+    uint256 internal constant MARKDOWN_STATE_SLOT = 24;
+    uint256 internal constant MARKDOWN_MANAGER_SLOT = 25;
 
     /* SLOT OFFSETS */
 

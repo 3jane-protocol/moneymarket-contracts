@@ -62,8 +62,8 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
     mapping(Id => MarketParams) public idToMarketParams;
     /// @inheritdoc IMorphoBase
     bytes32 public DOMAIN_SEPARATOR;
-    /// @dev Storage gap for future upgrades (41 slots to keep total under 50).
-    uint256[41] private __gap;
+    /// @dev Storage gap for future upgrades (10 slots).
+    uint256[10] private __gap;
 
     /* INITIALIZER */
 
@@ -72,6 +72,7 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         _disableInitializers();
     }
     /// @param newOwner The initial owner of the contract.
+
     function __Morpho_init(address newOwner) internal onlyInitializing {
         if (newOwner == address(0)) revert ErrorsLib.ZeroAddress();
 

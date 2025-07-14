@@ -17,7 +17,8 @@ import {SigUtils} from "./helpers/SigUtils.sol";
 import {ArrayLib} from "./helpers/ArrayLib.sol";
 import {MorphoLib} from "../../src/libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "../../src/libraries/periphery/MorphoBalancesLib.sol";
-import {TransparentUpgradeableProxy} from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {TransparentUpgradeableProxy} from
+    "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 contract BaseTest is Test {
@@ -86,18 +87,14 @@ contract BaseTest is Test {
 
         // Deploy implementation
         MorphoCredit morphoImpl = new MorphoCredit();
-        
+
         // Deploy proxy admin (owned by this test contract for easier testing)
         proxyAdmin = new ProxyAdmin(address(this));
-        
+
         // Deploy proxy with initialization
         bytes memory initData = abi.encodeWithSelector(MorphoCredit.initialize.selector, OWNER);
-        morphoProxy = new TransparentUpgradeableProxy(
-            address(morphoImpl),
-            address(proxyAdmin),
-            initData
-        );
-        
+        morphoProxy = new TransparentUpgradeableProxy(address(morphoImpl), address(proxyAdmin), initData);
+
         // Set up contract references
         morphoAddress = address(morphoProxy);
         morpho = IMorpho(morphoAddress);
