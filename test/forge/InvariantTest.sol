@@ -113,22 +113,4 @@ contract InvariantTest is BaseTest {
 
         return _randomNonZero(candidates, seed);
     }
-
-    function _randomUnhealthyBorrower(address[] memory users, MarketParams memory _marketParams, uint256 seed)
-        internal
-        view
-        returns (address randomSenderToLiquidate)
-    {
-        address[] memory candidates = new address[](users.length);
-
-        for (uint256 i; i < users.length; ++i) {
-            address user = users[i];
-
-            if (!_isHealthy(_marketParams, user)) {
-                candidates[i] = user;
-            }
-        }
-
-        return _randomNonZero(candidates, seed);
-    }
 }

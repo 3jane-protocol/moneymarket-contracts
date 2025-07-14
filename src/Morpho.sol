@@ -12,10 +12,7 @@ import {
     Signature
 } from "./interfaces/IMorpho.sol";
 import {
-    IMorphoLiquidateCallback,
-    IMorphoRepayCallback,
-    IMorphoSupplyCallback,
-    IMorphoFlashLoanCallback
+    IMorphoRepayCallback, IMorphoSupplyCallback, IMorphoFlashLoanCallback
 } from "./interfaces/IMorphoCallbacks.sol";
 import {IIrm} from "./interfaces/IIrm.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
@@ -302,83 +299,11 @@ abstract contract Morpho is IMorphoStaticTyping {
         return (assets, shares);
     }
 
-    /* LIQUIDATION */
+    /* LIQUIDATION - REMOVED */
 
-    /// @inheritdoc IMorphoBase
-    function liquidate(
-        MarketParams memory marketParams,
-        address borrower,
-        uint256 seizedAssets,
-        uint256 repaidShares,
-        bytes calldata data
-    ) external returns (uint256, uint256) {
-        Id id = marketParams.id();
-        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
-        if (!UtilsLib.exactlyOneZero(seizedAssets, repaidShares)) revert ErrorsLib.InconsistentInput();
-
-        _accrueInterest(marketParams, id);
-        _beforeLiquidate(marketParams, id, borrower, seizedAssets, repaidShares);
-
-        {
-            uint256 collateralPrice = IOracle(marketParams.oracle).price();
-
-            if (_isHealthy(marketParams, id, borrower, collateralPrice)) revert ErrorsLib.HealthyPosition();
-
-            // The liquidation incentive factor is min(maxLiquidationIncentiveFactor, 1/(1 - cursor*(1 - lltv))).
-            uint256 liquidationIncentiveFactor = UtilsLib.min(
-                MAX_LIQUIDATION_INCENTIVE_FACTOR,
-                WAD.wDivDown(WAD - LIQUIDATION_CURSOR.wMulDown(WAD - marketParams.lltv))
-            );
-
-            if (seizedAssets > 0) {
-                uint256 seizedAssetsQuoted = seizedAssets.mulDivUp(collateralPrice, ORACLE_PRICE_SCALE);
-
-                repaidShares = seizedAssetsQuoted.wDivUp(liquidationIncentiveFactor).toSharesUp(
-                    market[id].totalBorrowAssets, market[id].totalBorrowShares
-                );
-            } else {
-                seizedAssets = repaidShares.toAssetsDown(market[id].totalBorrowAssets, market[id].totalBorrowShares)
-                    .wMulDown(liquidationIncentiveFactor).mulDivDown(ORACLE_PRICE_SCALE, collateralPrice);
-            }
-        }
-        uint256 repaidAssets = repaidShares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
-
-        position[id][borrower].borrowShares -= repaidShares.toUint128();
-        market[id].totalBorrowShares -= repaidShares.toUint128();
-        market[id].totalBorrowAssets = UtilsLib.zeroFloorSub(market[id].totalBorrowAssets, repaidAssets).toUint128();
-
-        position[id][borrower].collateral -= seizedAssets.toUint128();
-
-        uint256 badDebtShares;
-        uint256 badDebtAssets;
-        if (position[id][borrower].collateral == 0) {
-            badDebtShares = position[id][borrower].borrowShares;
-            badDebtAssets = UtilsLib.min(
-                market[id].totalBorrowAssets,
-                badDebtShares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares)
-            );
-
-            market[id].totalBorrowAssets -= badDebtAssets.toUint128();
-            market[id].totalSupplyAssets -= badDebtAssets.toUint128();
-            market[id].totalBorrowShares -= badDebtShares.toUint128();
-            position[id][borrower].borrowShares = 0;
-        }
-
-        // `repaidAssets` may be greater than `totalBorrowAssets` by 1.
-        emit EventsLib.Liquidate(
-            id, msg.sender, borrower, repaidAssets, repaidShares, seizedAssets, badDebtAssets, badDebtShares
-        );
-
-        _afterLiquidate(marketParams, id, borrower);
-
-        IERC20(marketParams.collateralToken).safeTransfer(msg.sender, seizedAssets);
-
-        if (data.length > 0) IMorphoLiquidateCallback(msg.sender).onMorphoLiquidate(repaidAssets, data);
-
-        IERC20(marketParams.loanToken).safeTransferFrom(msg.sender, address(this), repaidAssets);
-
-        return (seizedAssets, repaidAssets);
-    }
+    // Liquidation logic has been removed in favor of the markdown system.
+    // The markdown system replaces traditional liquidations with dynamic debt write-offs
+    // managed by an external markdown manager contract.
 
     /* FLASH LOANS */
 
@@ -532,20 +457,6 @@ abstract contract Morpho is IMorphoStaticTyping {
         virtual
     {}
 
-    /// @dev Hook called before liquidate operations to allow for premium accrual or other pre-processing.
-    /// @param marketParams The market parameters.
-    /// @param id The market id.
-    /// @param borrower The address being liquidated.
-    /// @param seizedAssets The amount of collateral to seize.
-    /// @param repaidShares The amount of debt shares to repay.
-    function _beforeLiquidate(
-        MarketParams memory marketParams,
-        Id id,
-        address borrower,
-        uint256 seizedAssets,
-        uint256 repaidShares
-    ) internal virtual {}
-
     /// @dev Hook called after borrow operations to allow for post-processing.
     /// @param marketParams The market parameters.
     /// @param id The market id.
@@ -558,12 +469,6 @@ abstract contract Morpho is IMorphoStaticTyping {
     /// @param onBehalf The address whose debt was repaid.
     /// @param assets The amount of assets repaid.
     function _afterRepay(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets) internal virtual {}
-
-    /// @dev Hook called after liquidate operations to allow for post-processing.
-    /// @param marketParams The market parameters.
-    /// @param id The market id.
-    /// @param borrower The address that was liquidated.
-    function _afterLiquidate(MarketParams memory marketParams, Id id, address borrower) internal virtual {}
 
     /* STORAGE VIEW */
 

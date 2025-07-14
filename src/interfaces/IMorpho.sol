@@ -24,6 +24,7 @@ struct Position {
 /// @dev Warning: `totalBorrowAssets` does not contain the accrued interest since the last interest accrual.
 /// @dev Warning: `totalSupplyShares` does not contain the additional shares accrued by `feeRecipient` since the last
 /// interest accrual.
+/// @dev Warning: `totalMarkdownAmount` may be stale as markdowns are only updated when borrowers are touched.
 struct Market {
     uint128 totalSupplyAssets;
     uint128 totalSupplyShares;
@@ -31,6 +32,7 @@ struct Market {
     uint128 totalBorrowShares;
     uint128 lastUpdate;
     uint128 fee;
+    uint128 totalMarkdownAmount; // Running tally of all borrower markdowns
 }
 
 /// @notice Per-borrower premium tracking
@@ -67,6 +69,12 @@ struct MarketCreditTerms {
     uint256 delinquencyPeriodDuration; // Duration of delinquency period before default
     uint256 minOutstanding; // Minimum outstanding loan balance to prevent dust
     uint256 penaltyRatePerSecond; // Penalty rate per second for delinquent borrowers
+}
+
+/// @notice Markdown state for tracking defaulted debt value reduction
+/// @param lastCalculatedMarkdown Last calculated markdown amount
+struct MarkdownState {
+    uint128 lastCalculatedMarkdown;
 }
 
 struct Authorization {
@@ -262,18 +270,17 @@ interface IMorphoBase {
     /// @dev An attacker can front-run a liquidation with a small repay making the transaction revert for underflow.
     /// @param marketParams The market of the position.
     /// @param borrower The owner of the position.
-    /// @param seizedAssets The amount of collateral to seize.
-    /// @param repaidShares The amount of shares to repay.
-    /// @param data Arbitrary data to pass to the `onMorphoLiquidate` callback. Pass empty data if not needed.
-    /// @return The amount of assets seized.
-    /// @return The amount of assets repaid.
-    function liquidate(
-        MarketParams memory marketParams,
-        address borrower,
-        uint256 seizedAssets,
-        uint256 repaidShares,
-        bytes memory data
-    ) external returns (uint256, uint256);
+    // Liquidation function removed - replaced by markdown system
+    // The markdown system handles debt write-offs through an external manager contract
+    // instead of traditional liquidations.
+    //
+    // function liquidate(
+    //     MarketParams memory marketParams,
+    //     address borrower,
+    //     uint256 seizedAssets,
+    //     uint256 repaidShares,
+    //     bytes memory data
+    // ) external returns (uint256, uint256);
 
     /// @notice Executes a flash loan.
     /// @dev Flash loans have access to the whole balance of the contract (the liquidity and deposited collateral of all
@@ -332,7 +339,8 @@ interface IMorphoStaticTyping is IMorphoBase {
             uint128 totalBorrowAssets,
             uint128 totalBorrowShares,
             uint128 lastUpdate,
-            uint128 fee
+            uint128 fee,
+            uint128 totalMarkdownAmount
         );
 
     /// @notice The market params corresponding to `id`.
@@ -450,18 +458,16 @@ interface IMorphoCredit {
     /// @param id Market ID
     /// @param borrower Borrower address
     /// @return status The borrower's current repayment status
-    function getRepaymentStatus(Id id, address borrower) external view returns (RepaymentStatus status);
+    /// @return statusStartTime The timestamp when the current status began
+    function getRepaymentStatus(Id id, address borrower)
+        external
+        view
+        returns (RepaymentStatus status, uint256 statusStartTime);
 
-    /// @notice Check if borrower can borrow
+    /// @notice Get the total number of payment cycles for a market
     /// @param id Market ID
-    /// @param borrower Borrower address
-    /// @return Whether the borrower can take new loans
-    function canBorrow(Id id, address borrower) external view returns (bool);
-
-    /// @notice Get the ID of the latest payment cycle
-    /// @param id Market ID
-    /// @return The latest cycle ID
-    function getLatestCycleId(Id id) external view returns (uint256);
+    /// @return The number of payment cycles
+    function getPaymentCycleLength(Id id) external view returns (uint256);
 
     /// @notice Get both start and end dates for a given cycle
     /// @param id Market ID
@@ -491,4 +497,26 @@ interface IMorphoCredit {
     /// @param cycleId Cycle ID
     /// @return endDate The cycle end date
     function paymentCycle(Id id, uint256 cycleId) external view returns (uint256 endDate);
+
+    /// @notice Set the markdown manager for a market
+    /// @param id Market ID
+    /// @param manager Address of the markdown manager contract
+    function setMarkdownManager(Id id, address manager) external;
+
+    /// @notice Settle a borrower's account by writing off all remaining debt
+    /// @dev Only callable by credit line contract
+    /// @dev Should be called after any partial repayments have been made
+    /// @param marketParams The market parameters
+    /// @param borrower The borrower whose account to settle
+    /// @return writtenOffAssets Amount of assets written off
+    /// @return writtenOffShares Amount of shares written off
+    function settleAccount(MarketParams memory marketParams, address borrower)
+        external
+        returns (uint256 writtenOffAssets, uint256 writtenOffShares);
+
+    /// @notice Get markdown state for a borrower
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @return lastCalculatedMarkdown Last calculated markdown amount
+    function markdownState(Id id, address borrower) external view returns (uint128 lastCalculatedMarkdown);
 }

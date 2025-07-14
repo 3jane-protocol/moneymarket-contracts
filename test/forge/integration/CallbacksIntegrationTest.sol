@@ -4,13 +4,7 @@ pragma solidity ^0.8.0;
 import "../BaseTest.sol";
 import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 
-contract CallbacksIntegrationTest is
-    BaseTest,
-    IMorphoLiquidateCallback,
-    IMorphoRepayCallback,
-    IMorphoSupplyCallback,
-    IMorphoFlashLoanCallback
-{
+contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupplyCallback, IMorphoFlashLoanCallback {
     using MathLib for uint256;
     using MorphoLib for IMorpho;
     using MarketParamsLib for MarketParams;
@@ -35,15 +29,6 @@ contract CallbacksIntegrationTest is
         } else if (selector == this.testFlashActions.selector) {
             // In 3Jane, there's no collateral to withdraw
             // This callback path is no longer used
-        }
-    }
-
-    function onMorphoLiquidate(uint256 repaid, bytes memory data) external {
-        require(msg.sender == address(morpho));
-        bytes4 selector;
-        (selector, data) = abi.decode(data, (bytes4, bytes));
-        if (selector == this.testLiquidateCallback.selector) {
-            loanToken.approve(address(morpho), repaid);
         }
     }
 
@@ -125,12 +110,6 @@ contract CallbacksIntegrationTest is
         vm.expectRevert();
         morpho.repay(marketParams, loanAmount, 0, address(this), hex"");
         morpho.repay(marketParams, loanAmount, 0, address(this), abi.encode(this.testRepayCallback.selector, hex""));
-    }
-
-    function testLiquidateCallback(uint256 loanAmount) public {
-        // Skip liquidation callback test for credit-based model
-        // In 3Jane's credit-based model, liquidation works differently
-        // and doesn't involve seizing collateral
     }
 
     function testFlashActions(uint256 loanAmount) public {

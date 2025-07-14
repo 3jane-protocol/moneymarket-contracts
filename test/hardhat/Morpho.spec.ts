@@ -195,54 +195,6 @@ describe("Morpho", () => {
     }
   });
 
-  // Commenting out liquidation test as it doesn't apply to credit-based model
-  /*
-  it("should simulate gas cost [liquidations]", async () => {
-    for (let i = 0; i < suppliers.length; ++i) {
-      logProgress("liquidations", i, suppliers.length);
-
-      const user = suppliers[i];
-      const borrower = borrowers[i];
-
-      const lltv = (BigInt.WAD * toBigInt(i + 1)) / toBigInt(suppliers.length + 1);
-      const assets = BigInt.WAD * toBigInt(1 + Math.floor(random() * 100));
-      const borrowedAmount = assets.wadMulDown(lltv - 1n);
-
-      if (!(await morpho.isLltvEnabled(lltv))) {
-        await morpho.enableLltv(lltv);
-        await morpho.createMarket({ ...marketParams, lltv });
-      }
-
-      updateMarket({ lltv });
-
-      // We use 2 different users to borrow from a marketParams so that liquidations do not put the borrow storage back to 0 on that marketParams.
-      await morpho.connect(user).supply(marketParams, assets, 0, user.address, "0x");
-      // Set credit line for user
-      await creditLine.setCreditLine(id, user.address, assets * 2n, 0);
-      await morpho.connect(user).borrow(marketParams, borrowedAmount, 0, user.address, user.address);
-
-      await morpho.connect(borrower).supply(marketParams, assets, 0, borrower.address, "0x");
-      // Set credit line for borrower
-      await creditLine.setCreditLine(id, borrower.address, assets * 2n, 0);
-      await morpho.connect(borrower).borrow(marketParams, borrowedAmount, 0, borrower.address, user.address);
-
-      await oracle.setPrice(oraclePriceScale / 1000n);
-
-      const seized = closePositions ? assets : assets / 2n;
-
-      await morpho.connect(liquidator).liquidate(marketParams, borrower.address, seized, 0, "0x");
-
-      const remainingCollateral = (await morpho.position(id, borrower.address)).collateral;
-
-      if (closePositions)
-        expect(remainingCollateral === 0n, "did not take the whole collateral when closing the position").to.be.true;
-      else expect(remainingCollateral !== 0n, "unexpectedly closed the position").to.be.true;
-
-      await oracle.setPrice(oraclePriceScale);
-    }
-  });
-  */
-
   it("should simuate gas cost [flashLoans]", async () => {
     const user = borrowers[0];
     const assets = BigInt.WAD;

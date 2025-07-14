@@ -337,43 +337,6 @@ contract BaseTest is Test {
         return bound(shares, 0, borrowShares);
     }
 
-    function _boundLiquidateSeizedAssets(MarketParams memory _marketParams, address borrower, uint256 seizedAssets)
-        internal
-        view
-        returns (uint256)
-    {
-        Id _id = _marketParams.id();
-
-        uint256 collateralPrice = IOracle(_marketParams.oracle).price();
-        uint256 borrowShares = morpho.borrowShares(_id, borrower);
-        (,, uint256 totalBorrowAssets, uint256 totalBorrowShares) = morpho.expectedMarketBalances(_marketParams);
-        uint256 maxRepaidAssets = borrowShares.toAssetsDown(totalBorrowAssets, totalBorrowShares);
-        uint256 maxSeizedAssets = maxRepaidAssets.wMulDown(_liquidationIncentiveFactor(_marketParams.lltv)).mulDivDown(
-            ORACLE_PRICE_SCALE, collateralPrice
-        );
-
-        uint256 collateral = morpho.collateral(_id, borrower);
-        return bound(seizedAssets, 0, Math.min(collateral, maxSeizedAssets));
-    }
-
-    function _boundLiquidateRepaidShares(MarketParams memory _marketParams, address borrower, uint256 repaidShares)
-        internal
-        view
-        returns (uint256)
-    {
-        Id _id = _marketParams.id();
-
-        uint256 collateralPrice = IOracle(_marketParams.oracle).price();
-        uint256 maxRepaidAssets = morpho.collateral(_id, borrower).mulDivDown(collateralPrice, ORACLE_PRICE_SCALE)
-            .wDivDown(_liquidationIncentiveFactor(_marketParams.lltv));
-
-        (,, uint256 totalBorrowAssets, uint256 totalBorrowShares) = morpho.expectedMarketBalances(_marketParams);
-        uint256 maxRepaidShares = maxRepaidAssets.toSharesDown(totalBorrowAssets, totalBorrowShares);
-
-        uint256 borrowShares = morpho.borrowShares(_id, borrower);
-        return bound(repaidShares, 0, Math.min(borrowShares, maxRepaidShares));
-    }
-
     function _maxBorrow(MarketParams memory _marketParams, address user) internal view returns (uint256) {
         Id _id = _marketParams.id();
 
@@ -387,10 +350,6 @@ contract BaseTest is Test {
         uint256 borrowed = morpho.expectedBorrowAssets(_marketParams, user);
 
         return maxBorrow >= borrowed;
-    }
-
-    function _liquidationIncentiveFactor(uint256 lltv) internal pure returns (uint256) {
-        return Math.min(MAX_LIQUIDATION_INCENTIVE_FACTOR, WAD.wDivDown(WAD - LIQUIDATION_CURSOR.wMulDown(WAD - lltv)));
     }
 
     function _boundValidLltv(uint256 lltv) internal pure returns (uint256) {
@@ -501,7 +460,7 @@ contract BaseTest is Test {
         returns (uint128 cycleId, uint128 amountDue, uint256 endingBalance, RepaymentStatus status)
     {
         (cycleId, amountDue, endingBalance) = IMorphoCredit(address(morpho)).repaymentObligation(_id, borrower);
-        status = IMorphoCredit(address(morpho)).getRepaymentStatus(_id, borrower);
+        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(_id, borrower);
     }
 
     function _calculatePenaltyInterest(uint256 endingBalance, uint256 penaltyDuration, uint256 penaltyRate)
@@ -513,7 +472,7 @@ contract BaseTest is Test {
     }
 
     function _assertRepaymentStatus(Id _id, address borrower, RepaymentStatus expectedStatus) internal {
-        RepaymentStatus actualStatus = IMorphoCredit(address(morpho)).getRepaymentStatus(_id, borrower);
+        (RepaymentStatus actualStatus,) = IMorphoCredit(address(morpho)).getRepaymentStatus(_id, borrower);
         assertEq(uint256(actualStatus), uint256(expectedStatus), "Unexpected repayment status");
     }
 
@@ -530,5 +489,33 @@ contract BaseTest is Test {
             vm.prank(borrower);
             morpho.borrow(marketParams, borrowAmount, 0, borrower, borrower);
         }
+    }
+
+    // Simplified overload used by markdown tests
+    function _setupBorrowerWithLoan(address borrower, uint256 amount) internal {
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).setCreditLine(id, borrower, amount * 2, 0);
+
+        vm.prank(borrower);
+        morpho.borrow(marketParams, amount, 0, borrower, borrower);
+    }
+
+    // Helper for creating past obligations (used by markdown tests)
+    function _createPastObligation(address borrower, uint256 repaymentBps, uint256 endingBalance) internal {
+        // First forward time to allow for a past cycle
+        vm.warp(block.timestamp + 2 days);
+        uint256 cycleEndDate = block.timestamp - 1 days;
+
+        address[] memory borrowers = new address[](1);
+        borrowers[0] = borrower;
+
+        uint256[] memory bpsList = new uint256[](1);
+        bpsList[0] = repaymentBps;
+
+        uint256[] memory balances = new uint256[](1);
+        balances[0] = endingBalance;
+
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, bpsList, balances);
     }
 }

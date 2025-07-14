@@ -103,7 +103,7 @@ contract PenaltyRateVerificationTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Verify we're still in grace period
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod), "Should be in grace period");
 
         // Step 3: Record state before crossing into delinquency
@@ -114,7 +114,7 @@ contract PenaltyRateVerificationTest is BaseTest {
         vm.warp(block.timestamp + 1);
 
         // Now we should be delinquent
-        status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "Should be delinquent");
 
         // Step 5: Trigger accrual
@@ -196,7 +196,7 @@ contract PenaltyRateVerificationTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Verify we're delinquent
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "Should be delinquent");
 
         // Step 2: First accrual to capture initial penalty

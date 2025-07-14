@@ -113,4 +113,10 @@ library ErrorsLib {
 
     /// @notice Thrown when repayment basis points exceed 100%.
     error RepaymentExceedsHundredPercent();
+
+    /// @notice Thrown when an invalid markdown manager is set.
+    error InvalidMarkdownManager();
+
+    /// @notice Thrown when trying to settle non-existent debt.
+    error NoAccountToSettle();
 }

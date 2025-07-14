@@ -102,7 +102,7 @@ contract GracePeriodAccrualTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Verify we're in grace period
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod), "Should be in grace period");
 
         // Step 3: Record state before accrual
@@ -210,11 +210,10 @@ contract GracePeriodAccrualTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Should still be in grace period
-        assertEq(
-            uint256(IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE)),
-            uint256(RepaymentStatus.GracePeriod),
-            "Should be in grace period"
-        );
+        {
+            (RepaymentStatus _status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+            assertEq(uint256(_status), uint256(RepaymentStatus.GracePeriod), "Should be in grace period");
+        }
 
         uint256 borrowAssetsBefore = morpho.expectedBorrowAssets(marketParams, ALICE);
 
@@ -222,11 +221,10 @@ contract GracePeriodAccrualTest is BaseTest {
         vm.warp(block.timestamp + 1);
 
         // Now should be delinquent
-        assertEq(
-            uint256(IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE)),
-            uint256(RepaymentStatus.Delinquent),
-            "Should be delinquent"
-        );
+        {
+            (RepaymentStatus _status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+            assertEq(uint256(_status), uint256(RepaymentStatus.Delinquent), "Should be delinquent");
+        }
 
         // Accrue - this should include penalty
         IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
@@ -288,11 +286,10 @@ contract GracePeriodAccrualTest is BaseTest {
         assertEq(amountDue, 0, "Obligation should be cleared");
 
         // Verify status is now Current
-        assertEq(
-            uint256(IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE)),
-            uint256(RepaymentStatus.Current),
-            "Should be current after payment"
-        );
+        {
+            (RepaymentStatus _status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+            assertEq(uint256(_status), uint256(RepaymentStatus.Current), "Should be current after payment");
+        }
 
         // The debt should have decreased by exactly the payment amount
         uint256 debtAfter = morpho.expectedBorrowAssets(marketParams, ALICE);

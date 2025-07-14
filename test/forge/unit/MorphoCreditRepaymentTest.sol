@@ -85,7 +85,8 @@ contract MorphoCreditRepaymentTest is BaseTest {
         );
 
         // Verify cycle was created
-        assertEq(IMorphoCredit(address(morpho)).getLatestCycleId(id), 0);
+        uint256 paymentCycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
+        assertEq(paymentCycleLength, 1); // First cycle created, so length is 1
 
         // Verify obligations were posted (10% of ending balance)
         (uint128 cycleId, uint128 amountDue, uint256 balance) =
@@ -285,7 +286,8 @@ contract MorphoCreditRepaymentTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, endDate, borrowers, repaymentBps, balances);
 
-        assertEq(IMorphoCredit(address(morpho)).getLatestCycleId(id), 0);
+        uint256 paymentCycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
+        assertEq(paymentCycleLength, 1); // First cycle created, so length is 1
 
         // Create another cycle
         vm.warp(block.timestamp + 31 days); // Move time forward
@@ -295,12 +297,15 @@ contract MorphoCreditRepaymentTest is BaseTest {
             id, secondEndDate, borrowers, repaymentBps, balances
         );
 
-        assertEq(IMorphoCredit(address(morpho)).getLatestCycleId(id), 1);
+        paymentCycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
+        assertEq(paymentCycleLength, 2); // Second cycle created
     }
 
     function testGetLatestCycleId_NoCycles() public {
-        vm.expectRevert(ErrorsLib.NoCyclesExist.selector);
-        IMorphoCredit(address(morpho)).getLatestCycleId(id);
+        // Test removed as getLatestCycleId function was removed
+        // Users should check paymentCycleLength == 0 instead
+        uint256 paymentCycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
+        assertEq(paymentCycleLength, 0);
     }
 
     function testGetCycleDates_FirstCycle() public {

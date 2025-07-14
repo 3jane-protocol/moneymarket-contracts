@@ -93,26 +93,6 @@ library EventsLib {
     /// @param shares The amount of shares burned.
     event Repay(Id indexed id, address indexed caller, address indexed onBehalf, uint256 assets, uint256 shares);
 
-    /// @notice Emitted on liquidation of a position.
-    /// @param id The market id.
-    /// @param caller The caller.
-    /// @param borrower The borrower of the position.
-    /// @param repaidAssets The amount of assets repaid. May be 1 over the corresponding market's `totalBorrowAssets`.
-    /// @param repaidShares The amount of shares burned.
-    /// @param seizedAssets The amount of collateral seized.
-    /// @param badDebtAssets The amount of assets of bad debt realized.
-    /// @param badDebtShares The amount of borrow shares of bad debt realized.
-    event Liquidate(
-        Id indexed id,
-        address indexed caller,
-        address indexed borrower,
-        uint256 repaidAssets,
-        uint256 repaidShares,
-        uint256 seizedAssets,
-        uint256 badDebtAssets,
-        uint256 badDebtShares
-    );
-
     /// @notice Emitted on flash loan.
     /// @param caller The caller.
     /// @param token The token that was flash loaned.
@@ -178,4 +158,42 @@ library EventsLib {
     /// @param payment Payment amount made.
     /// @param remainingDue Remaining amount due after payment.
     event RepaymentTracked(Id indexed id, address indexed borrower, uint256 payment, uint256 remainingDue);
+
+    /// @notice Emitted when a borrower's markdown is updated.
+    /// @param id Market id.
+    /// @param borrower Borrower address.
+    /// @param oldMarkdown Previous markdown amount.
+    /// @param newMarkdown New markdown amount.
+    event BorrowerMarkdownUpdated(Id indexed id, address indexed borrower, uint256 oldMarkdown, uint256 newMarkdown);
+
+    /// @notice Emitted when a borrower enters default status.
+    /// @param id Market id.
+    /// @param borrower Borrower address.
+    /// @param timestamp Timestamp when default started.
+    event DefaultStarted(Id indexed id, address indexed borrower, uint256 timestamp);
+
+    /// @notice Emitted when a borrower clears default status.
+    /// @param id Market id.
+    /// @param borrower Borrower address.
+    event DefaultCleared(Id indexed id, address indexed borrower);
+
+    /// @notice Emitted when a markdown manager is set for a market.
+    /// @param id Market id.
+    /// @param oldManager Previous markdown manager.
+    /// @param newManager New markdown manager.
+    event MarkdownManagerSet(Id indexed id, address oldManager, address newManager);
+
+    /// @notice Emitted when an account is settled with all remaining debt written off.
+    /// @param id Market id.
+    /// @param settler Address that initiated the settlement.
+    /// @param borrower Borrower whose account is settled.
+    /// @param writtenOffAmount Amount written off (forgiven).
+    /// @param writtenOffShares Shares written off.
+    event AccountSettled(
+        Id indexed id,
+        address indexed settler,
+        address indexed borrower,
+        uint256 writtenOffAmount,
+        uint256 writtenOffShares
+    );
 }

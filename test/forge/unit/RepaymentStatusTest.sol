@@ -90,7 +90,7 @@ contract RepaymentStatusTest is BaseTest {
         // User with no obligations should be Current
         address CHARLIE = makeAddr("Charlie");
 
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, CHARLIE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, CHARLIE);
         assertEq(uint256(status), uint256(RepaymentStatus.Current));
     }
 
@@ -104,7 +104,7 @@ contract RepaymentStatusTest is BaseTest {
         morpho.repay(marketParams, 1000e18, 0, ALICE, "");
 
         // Status should be Current
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Current));
     }
 
@@ -113,7 +113,7 @@ contract RepaymentStatusTest is BaseTest {
         _createRepaymentObligationBps(id, ALICE, 1000, 10000e18, 2);
 
         // No payment - still within grace period with outstanding debt, should be GracePeriod
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod));
     }
 
@@ -124,7 +124,7 @@ contract RepaymentStatusTest is BaseTest {
         _createRepaymentObligationBps(id, ALICE, 1000, 10000e18, 4);
 
         // No payment - should be in Grace Period
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod));
     }
 
@@ -143,7 +143,7 @@ contract RepaymentStatusTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // No payment - exactly at grace period boundary, should still be in grace
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod));
     }
 
@@ -154,7 +154,7 @@ contract RepaymentStatusTest is BaseTest {
         _createRepaymentObligationBps(id, ALICE, 1000, 10000e18, 10);
 
         // No payment - should be Delinquent
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
     }
 
@@ -173,7 +173,7 @@ contract RepaymentStatusTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // No payment - should be Delinquent (just past grace)
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
     }
 
@@ -194,7 +194,7 @@ contract RepaymentStatusTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // No payment
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Default));
     }
 
@@ -213,7 +213,7 @@ contract RepaymentStatusTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Should still be Default at exactly 30 days
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Default));
     }
 
@@ -238,7 +238,7 @@ contract RepaymentStatusTest is BaseTest {
         morpho.repay(marketParams, 999e18, 0, ALICE, "");
 
         // Status remains Default
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Default));
     }
 
@@ -259,7 +259,7 @@ contract RepaymentStatusTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Verify delinquent
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
 
         // Full payment
@@ -268,7 +268,7 @@ contract RepaymentStatusTest is BaseTest {
         morpho.repay(marketParams, 1000e18, 0, ALICE, "");
 
         // Should transition to Current
-        status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Current));
     }
 
@@ -287,21 +287,21 @@ contract RepaymentStatusTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Verify Grace Period
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod));
 
         // Fast forward to delinquent period
         vm.warp(block.timestamp + 4 days);
 
         // Should now be Delinquent
-        status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
 
         // Fast forward to default period
         vm.warp(block.timestamp + 25 days);
 
         // Should now be Default
-        status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Default));
     }
 
@@ -334,7 +334,7 @@ contract RepaymentStatusTest is BaseTest {
         );
 
         // Status should be based on oldest unpaid cycle (Delinquent)
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
     }
 
@@ -376,7 +376,7 @@ contract RepaymentStatusTest is BaseTest {
         morpho.repay(marketParams, 400e18, 0, ALICE, "");
 
         // Status remains Delinquent
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
 
         // Pay full amount (475e18)
@@ -385,7 +385,7 @@ contract RepaymentStatusTest is BaseTest {
         morpho.repay(marketParams, 475e18, 0, ALICE, "");
 
         // Should now be Current
-        status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Current));
     }
 
@@ -406,7 +406,7 @@ contract RepaymentStatusTest is BaseTest {
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, cycleEndDate, borrowers, repaymentBps, balances);
 
         // Should be Current (no payment due)
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Current));
     }
 
@@ -430,7 +430,7 @@ contract RepaymentStatusTest is BaseTest {
         morpho.repay(marketParams, 2000e18, 0, ALICE, "");
 
         // Should be Current
-        RepaymentStatus status = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Current));
 
         // Obligation should be fully paid
