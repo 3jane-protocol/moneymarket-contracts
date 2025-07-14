@@ -59,11 +59,12 @@ contract BaseTest is Test {
     address internal ONBEHALF;
     address internal RECEIVER;
     address internal LIQUIDATOR;
-    address internal OWNER;
+    address internal OWNER; // Morpho protocol owner
+    address internal PROXY_ADMIN_OWNER; // ProxyAdmin owner
 
     // Helper function to check if address should be excluded from fuzzing
     function _isProxyRelatedAddress(address addr) internal returns (bool) {
-        return addr == OWNER || addr == address(proxyAdmin) || addr == address(morphoProxy)
+        return addr == OWNER || addr == PROXY_ADMIN_OWNER || addr == address(proxyAdmin) || addr == address(morphoProxy)
             || _wouldCauseProxyDeniedAccess(addr);
     }
 
@@ -102,13 +103,14 @@ contract BaseTest is Test {
         RECEIVER = makeAddr("Receiver");
         LIQUIDATOR = makeAddr("Liquidator");
         OWNER = makeAddr("Owner");
+        PROXY_ADMIN_OWNER = makeAddr("ProxyAdminOwner");
         FEE_RECIPIENT = makeAddr("FeeRecipient");
 
         // Deploy implementation
         MorphoCredit morphoImpl = new MorphoCredit();
 
-        // Deploy proxy admin (owned by OWNER, not the test contract to avoid conflicts)
-        proxyAdmin = new ProxyAdmin(OWNER);
+        // Deploy proxy admin (owned by PROXY_ADMIN_OWNER, separate from Morpho owner)
+        proxyAdmin = new ProxyAdmin(PROXY_ADMIN_OWNER);
 
         // Deploy proxy with initialization
         bytes memory initData = abi.encodeWithSelector(MorphoCredit.initialize.selector, OWNER);
