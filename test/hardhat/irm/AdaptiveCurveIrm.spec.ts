@@ -61,6 +61,7 @@ describe("irm", () => {
       oracle: irmAddress,
       irm: irmAddress,
       lltv: 0,
+      creditLine: irmAddress, // Add creditLine field for 3Jane
     };
 
     hre.tracer.nameTags[irmAddress] = "IRM";
@@ -83,6 +84,7 @@ describe("irm", () => {
         // Non-zero shares to include calldata gas cost.
         totalSupplyShares: 1000000000000n,
         totalBorrowShares: 1000000000000n,
+        totalMarkdownAmount: 0n, // Add totalMarkdownAmount for 3Jane
       });
     }
   });

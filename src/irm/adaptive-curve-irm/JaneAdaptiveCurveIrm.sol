@@ -7,8 +7,8 @@ import {AdaptiveCurveIrm} from "./AdaptiveCurveIrm.sol";
 
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {ConstantsLib} from "./libraries/ConstantsLib.sol";
-import {MarketParamsLib} from "../../../lib/morpho-blue/src/libraries/MarketParamsLib.sol";
-import {Id, Market, MarketParams, IMorpho} from "../../../lib/morpho-blue/src/interfaces/IMorpho.sol";
+import {MarketParamsLib} from "../../libraries/MarketParamsLib.sol";
+import {Id, Market, MarketParams, IMorpho} from "../../interfaces/IMorpho.sol";
 
 /// @title JaneAdaptiveCurveIrm
 /// @author Morpho Labs
