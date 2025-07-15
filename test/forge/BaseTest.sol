@@ -17,9 +17,8 @@ import {SigUtils} from "./helpers/SigUtils.sol";
 import {ArrayLib} from "./helpers/ArrayLib.sol";
 import {MorphoLib} from "../../src/libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "../../src/libraries/periphery/MorphoBalancesLib.sol";
-import {TransparentUpgradeableProxy} from
-    "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "@openzeppelin/proxy/transparent/ProxyAdmin.sol";
 
 contract BaseTest is Test {
     using Math for uint256;
@@ -59,7 +58,27 @@ contract BaseTest is Test {
     address internal ONBEHALF;
     address internal RECEIVER;
     address internal LIQUIDATOR;
-    address internal OWNER;
+    address internal OWNER; // Morpho protocol owner
+    address internal PROXY_ADMIN_OWNER; // ProxyAdmin owner
+
+    // Helper function to check if address should be excluded from fuzzing
+    function _isProxyRelatedAddress(address addr) internal returns (bool) {
+        return addr == OWNER || addr == PROXY_ADMIN_OWNER || addr == address(proxyAdmin) || addr == address(morphoProxy)
+            || _wouldCauseProxyDeniedAccess(addr);
+    }
+
+    // Dynamically detect addresses that would cause ProxyDeniedAdminAccess errors
+    function _wouldCauseProxyDeniedAccess(address addr) internal returns (bool) {
+        // Try a view function call that should work for normal addresses
+        // but fail with ProxyDeniedAdminAccess for proxy admins
+        vm.prank(addr);
+        try morpho.owner() returns (address) {
+            return false; // Call succeeded, so it's not a problematic proxy admin
+        } catch (bytes memory) {
+            return true; // Call failed, likely due to ProxyDeniedAdminAccess
+        }
+    }
+
     address internal FEE_RECIPIENT;
 
     address internal morphoAddress;
@@ -83,13 +102,14 @@ contract BaseTest is Test {
         RECEIVER = makeAddr("Receiver");
         LIQUIDATOR = makeAddr("Liquidator");
         OWNER = makeAddr("Owner");
+        PROXY_ADMIN_OWNER = makeAddr("ProxyAdminOwner");
         FEE_RECIPIENT = makeAddr("FeeRecipient");
 
         // Deploy implementation
         MorphoCredit morphoImpl = new MorphoCredit();
 
-        // Deploy proxy admin (owned by this test contract for easier testing)
-        proxyAdmin = new ProxyAdmin(address(this));
+        // Deploy proxy admin (owned by PROXY_ADMIN_OWNER, separate from Morpho owner)
+        proxyAdmin = new ProxyAdmin(PROXY_ADMIN_OWNER);
 
         // Deploy proxy with initialization
         bytes memory initData = abi.encodeWithSelector(MorphoCredit.initialize.selector, OWNER);

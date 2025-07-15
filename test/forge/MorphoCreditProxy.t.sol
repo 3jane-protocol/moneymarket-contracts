@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
-import "../../lib/forge-std/src/Test.sol";
+import "forge-std/Test.sol";
 import {
     TransparentUpgradeableProxy,
     ITransparentUpgradeableProxy
-} from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import "../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+} from "@openzeppelin/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "@openzeppelin/proxy/transparent/ProxyAdmin.sol";
 import {MorphoCredit} from "../../src/MorphoCredit.sol";
 import {MarketParams, Id} from "../../src/interfaces/IMorpho.sol";
 import {MorphoStorageLib} from "../../src/libraries/periphery/MorphoStorageLib.sol";

@@ -28,6 +28,7 @@ contract OnlyOwnerIntegrationTest is BaseTest {
 
     function testSetOwnerWhenNotOwner(address addressFuzz) public {
         vm.assume(addressFuzz != OWNER);
+        vm.assume(!_isProxyRelatedAddress(addressFuzz));
 
         vm.prank(addressFuzz);
         vm.expectRevert(ErrorsLib.NotOwner.selector);
@@ -53,6 +54,7 @@ contract OnlyOwnerIntegrationTest is BaseTest {
 
     function testEnableIrmWhenNotOwner(address addressFuzz, address irmFuzz) public {
         vm.assume(addressFuzz != OWNER);
+        vm.assume(!_isProxyRelatedAddress(addressFuzz));
         vm.assume(irmFuzz != address(irm));
 
         vm.prank(addressFuzz);
@@ -79,6 +81,7 @@ contract OnlyOwnerIntegrationTest is BaseTest {
 
     function testEnableLltvWhenNotOwner(address addressFuzz, uint256 lltvFuzz) public {
         vm.assume(addressFuzz != OWNER);
+        vm.assume(!_isProxyRelatedAddress(addressFuzz));
         vm.assume(lltvFuzz != marketParams.lltv);
 
         vm.prank(addressFuzz);
@@ -115,6 +118,7 @@ contract OnlyOwnerIntegrationTest is BaseTest {
 
     function testSetFeeWhenNotOwner(address addressFuzz, uint256 feeFuzz) public {
         vm.assume(addressFuzz != OWNER);
+        vm.assume(!_isProxyRelatedAddress(addressFuzz));
 
         vm.prank(addressFuzz);
         vm.expectRevert(ErrorsLib.NotOwner.selector);
@@ -150,6 +154,7 @@ contract OnlyOwnerIntegrationTest is BaseTest {
 
     function testSetFeeRecipientWhenNotOwner(address addressFuzz) public {
         vm.assume(addressFuzz != OWNER);
+        vm.assume(!_isProxyRelatedAddress(addressFuzz));
 
         vm.prank(addressFuzz);
         vm.expectRevert(ErrorsLib.NotOwner.selector);

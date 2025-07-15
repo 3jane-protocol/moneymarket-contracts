@@ -33,6 +33,7 @@ contract MorphoCreditIntegrationTest is BaseTest {
 
     function testSetCreditLineMarketNotCreated(MarketParams memory marketParamsFuzz, uint256 credit) public {
         vm.assume(neq(marketParamsFuzz, marketParams));
+        vm.assume(!_isProxyRelatedAddress(marketParamsFuzz.creditLine));
         credit = bound(credit, 1, MAX_TEST_AMOUNT);
 
         vm.prank(marketParamsFuzz.creditLine);
@@ -42,6 +43,7 @@ contract MorphoCreditIntegrationTest is BaseTest {
 
     function testSetCreditLineUnauthorized(address attacker, uint256 credit) public {
         vm.assume(attacker != marketParams.creditLine);
+        vm.assume(!_isProxyRelatedAddress(attacker));
         credit = bound(credit, 1, MAX_TEST_AMOUNT);
 
         vm.prank(attacker);

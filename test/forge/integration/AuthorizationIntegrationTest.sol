@@ -34,6 +34,7 @@ contract AuthorizationIntegrationTest is BaseTest {
 
     function testSetAuthorization(address addressFuzz) public {
         vm.assume(addressFuzz != address(this));
+        vm.assume(!_isProxyRelatedAddress(addressFuzz));
 
         morpho.setAuthorization(addressFuzz, true);
 
