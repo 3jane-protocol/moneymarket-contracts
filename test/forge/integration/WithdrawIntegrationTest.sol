@@ -49,6 +49,7 @@ contract WithdrawIntegrationTest is BaseTest {
 
     function testWithdrawUnauthorized(address attacker, uint256 amount) public {
         vm.assume(attacker != address(this));
+        vm.assume(!_isProxyRelatedAddress(attacker));
         amount = bound(amount, 1, MAX_TEST_AMOUNT);
 
         loanToken.setBalance(address(this), amount);

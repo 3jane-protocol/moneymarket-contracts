@@ -3,7 +3,7 @@ import { setNextBlockTimestamp } from "@nomicfoundation/hardhat-network-helpers/
 import { expect } from "chai";
 import { AbiCoder, MaxUint256, ZeroAddress, keccak256, toBigInt } from "ethers";
 import hre from "hardhat";
-import { Morpho, MorphoCredit, OracleMock, ERC20Mock, IrmMock } from "types";
+import { Morpho, MorphoCredit, OracleMock, ERC20Mock, IrmMock, ProxyAdmin, TransparentUpgradeableProxy } from "types";
 import { MarketParamsStruct } from "types/src/Morpho";
 import { CreditLineMock } from "types/src/mocks/CreditLineMock";
 import { FlashBorrowerMock } from "types/src/mocks/FlashBorrowerMock";
@@ -82,9 +82,28 @@ describe("Morpho", () => {
 
     await oracle.setPrice(oraclePriceScale);
 
+    // Deploy MorphoCredit implementation
     const MorphoCreditFactory = await hre.ethers.getContractFactory("MorphoCredit", admin);
+    const morphoImpl = await MorphoCreditFactory.deploy();
 
-    morpho = await MorphoCreditFactory.deploy(admin.address);
+    // Deploy ProxyAdmin
+    const ProxyAdminFactory = await hre.ethers.getContractFactory("ProxyAdmin", admin);
+    const proxyAdmin = await ProxyAdminFactory.deploy(admin.address);
+
+    // Deploy TransparentUpgradeableProxy with initialization
+    const TransparentUpgradeableProxyFactory = await hre.ethers.getContractFactory(
+      "TransparentUpgradeableProxy",
+      admin,
+    );
+    const initData = MorphoCreditFactory.interface.encodeFunctionData("initialize", [admin.address]);
+    const morphoProxy = await TransparentUpgradeableProxyFactory.deploy(
+      await morphoImpl.getAddress(),
+      await proxyAdmin.getAddress(),
+      initData,
+    );
+
+    // Connect to proxy as MorphoCredit interface
+    morpho = MorphoCreditFactory.attach(await morphoProxy.getAddress()) as MorphoCredit;
 
     const IrmMockFactory = await hre.ethers.getContractFactory("IrmMock", admin);
 
