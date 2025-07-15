@@ -40,6 +40,7 @@ contract USD3 is BaseHealthCheck {
         oracle = _marketParams.oracle;
         irm = _marketParams.irm;
         lltv = _marketParams.lltv;
+        creditLine = _marketParams.creditLine;
 
         asset.forceApprove(address(MORPHO_BLUE), type(uint256).max);
     }
