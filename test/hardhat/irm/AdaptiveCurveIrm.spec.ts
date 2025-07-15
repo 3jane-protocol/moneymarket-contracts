@@ -1,11 +1,10 @@
+import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
+import { setNextBlockTimestamp } from "@nomicfoundation/hardhat-network-helpers/dist/src/helpers/time";
 import { AbiCoder, keccak256, toBigInt } from "ethers";
 import hre from "hardhat";
 import _range from "lodash/range";
 import { AdaptiveCurveIrm } from "types";
 import { MarketParamsStruct } from "types/lib/morpho-blue/src/interfaces/IIrm";
-
-import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
-import { setNextBlockTimestamp } from "@nomicfoundation/hardhat-network-helpers/dist/src/helpers/time";
 
 let seed = 42;
 const random = () => {
