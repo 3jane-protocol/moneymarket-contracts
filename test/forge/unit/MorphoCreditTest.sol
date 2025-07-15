@@ -152,7 +152,7 @@ contract MorphoCreditTest is Test {
         creditLine.setCreditLine(marketId, borrower, 1_000e18, newRatePerSecond);
 
         // Check that snapshot was taken
-        (,, uint256 borrowAssetsAtLastAccrual) = MorphoCredit(address(morpho)).borrowerPremium(marketId, borrower);
+        (,, uint128 borrowAssetsAtLastAccrual) = MorphoCredit(address(morpho)).borrowerPremium(marketId, borrower);
         assertGt(borrowAssetsAtLastAccrual, 0);
         assertEq(borrowAssetsAtLastAccrual, 500e18); // Initial borrow amount
     }

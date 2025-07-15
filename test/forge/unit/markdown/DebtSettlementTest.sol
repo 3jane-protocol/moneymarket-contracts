@@ -287,7 +287,7 @@ contract DebtSettlementTest is BaseTest {
         vm.warp(block.timestamp + 1);
 
         // Verify obligation exists
-        (uint128 cycleId, uint128 amountDue, uint256 endingBalance) = morphoCredit.repaymentObligation(id, BORROWER);
+        (uint128 cycleId, uint128 amountDue, uint128 endingBalance) = morphoCredit.repaymentObligation(id, BORROWER);
         // cycleId can be 0 for the first cycle
         assertTrue(amountDue > 0, "Should have amount due");
         assertTrue(endingBalance > 0, "Should have ending balance");

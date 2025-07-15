@@ -502,7 +502,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "Should be delinquent from Cycle 1");
 
         // Record the cycle ID and ending balance that were set
-        (uint128 cycleId1, uint128 amountDue1, uint256 endingBalance1) =
+        (uint128 cycleId1, uint128 amountDue1, uint128 endingBalance1) =
             IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
         assertEq(cycleId1, 0, "First cycle should have ID 0");
         assertEq(endingBalance1, 20000e18, "Ending balance should be from Cycle 1");
@@ -521,7 +521,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
 
         // Verify the critical behavior: cycleId and endingBalance should NOT change
         // because Alice already had an outstanding obligation
-        (uint128 cycleId2, uint128 amountDue2, uint256 endingBalance2) =
+        (uint128 cycleId2, uint128 amountDue2, uint128 endingBalance2) =
             IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
 
         assertEq(cycleId2, cycleId1, "Cycle ID should remain unchanged");
@@ -541,7 +541,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         // Step 6: Calculate expected penalty based on Cycle 1 (not Cycle 2!)
         // Penalty should be calculated from Cycle 1 end date to now
         uint256 timeSinceCycle1 = block.timestamp - cycle1EndDate;
-        uint256 expectedPenalty = endingBalance1.wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(timeSinceCycle1));
+        uint256 expectedPenalty = uint256(endingBalance1).wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(timeSinceCycle1));
 
         // The total accrued should include base + premium + penalty
         // Penalty is based on Cycle 1's ending balance and time
