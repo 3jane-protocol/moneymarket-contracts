@@ -12,3 +12,7 @@
 [submodule "lib/tokenized-strategy-periphery"]
 	path = lib/tokenized-strategy-periphery
 	url = https://github.com/yearn/tokenized-strategy-periphery
+[submodule "lib/3jane-morpho-blue"]
+	path = lib/3jane-morpho-blue
+	url = git@github.com:3jane-protocol/3jane-morpho-blue.git
+	branch = main

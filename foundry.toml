@@ -3,12 +3,24 @@ src = 'src'
 out = 'out'
 libs = ['lib']
 solc = "0.8.23"
+optimizer = true
+optimizer_runs = 999999
+bytecode_hash = "none"
+evm_version = "shanghai"
 
 remappings = [
-    "@openzeppelin/=lib/openzeppelin-contracts/",
-    "forge-std/=lib/forge-std/src/",
-    "@tokenized-strategy/=lib/tokenized-strategy/src/",
-    "@periphery/=lib/tokenized-strategy-periphery/src/",
+  "@openzeppelin/=lib/openzeppelin-contracts/",
+  "forge-std/=lib/forge-std/src/",
+  "@tokenized-strategy/=lib/tokenized-strategy/src/",
+  "@periphery/=lib/tokenized-strategy-periphery/src/",
+  "@3jane-morpho-blue/=lib/3jane-morpho-blue/src/",
 ]
 
-# See more config options https://github.com/foundry-rs/foundry/tree/master/config
+
+[profile.default.fmt]
+wrap_comments = true
+
+
+[profile.test]
+via-ir = false
+
