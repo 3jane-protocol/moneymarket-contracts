@@ -28,6 +28,7 @@ contract BorrowIntegrationTest is BaseTest {
     }
 
     function testBorrowInconsistentInput(address borrowerFuzz, uint256 amount, uint256 shares) public {
+        vm.assume(!_isProxyRelatedAddress(borrowerFuzz));
         amount = bound(amount, 1, MAX_TEST_AMOUNT);
         shares = bound(shares, 1, MAX_TEST_SHARES);
 
