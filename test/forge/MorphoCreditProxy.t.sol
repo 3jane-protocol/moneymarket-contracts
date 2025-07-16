@@ -5,8 +5,8 @@ import "forge-std/Test.sol";
 import {
     TransparentUpgradeableProxy,
     ITransparentUpgradeableProxy
-} from "@openzeppelin/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "@openzeppelin/proxy/transparent/ProxyAdmin.sol";
+} from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MorphoCredit} from "../../src/MorphoCredit.sol";
 import {MarketParams, Id} from "../../src/interfaces/IMorpho.sol";
 import {MorphoStorageLib} from "../../src/libraries/periphery/MorphoStorageLib.sol";
