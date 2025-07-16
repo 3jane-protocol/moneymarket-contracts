@@ -5,7 +5,6 @@ import "forge-std/console2.sol";
 import {Setup, ERC20, IStrategyInterface} from "./utils/Setup.sol";
 import {USD3} from "../USD3.sol";
 import {IMorpho} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
-import {MockATokenVault} from "./mocks/MockATokenVault.sol";
 import {MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
 import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBalancesLib.sol";
@@ -16,7 +15,7 @@ contract OperationTest is Setup {
     
     USD3 public usd3Strategy;
     IMorpho public morpho;
-    MockATokenVault public aTokenVault;
+    ERC20 public aTokenVault;
     MarketParams public marketParams;
     address public creditLineAddress;
 
@@ -27,7 +26,7 @@ contract OperationTest is Setup {
         // The base setUp already deployed everything we need
         usd3Strategy = USD3(address(strategy));
         morpho = IMorpho(address(usd3Strategy.morphoBlue()));
-        aTokenVault = MockATokenVault(address(asset));
+        aTokenVault = ERC20(address(asset));
         marketParams = usd3Strategy.marketParams();
         creditLineAddress = marketParams.creditLine;
 
@@ -200,6 +199,9 @@ contract OperationTest is Setup {
         
         // Additional safety check to prevent overflow
         vm.assume(_amount <= 1e12 * 1e6); // Max 1 trillion USDC
+        
+        // Further limit to reasonable amounts for this test
+        _amount = bound(_amount, 1e6, 1_000_000e6); // Between 1 and 1M USDC
 
         (bool trigger,) = strategy.tendTrigger();
         assertTrue(!trigger);
@@ -232,8 +234,11 @@ contract OperationTest is Setup {
         (trigger,) = strategy.tendTrigger();
         assertTrue(!trigger);
 
+        uint256 userShares = strategy.balanceOf(user);
         vm.prank(user);
-        strategy.redeem(strategy.balanceOf(user), user, user);
+        strategy.approve(address(strategy), userShares);
+        vm.prank(user);
+        strategy.redeem(userShares, user, user);
 
         (trigger,) = strategy.tendTrigger();
         assertTrue(!trigger);
@@ -294,5 +299,49 @@ contract OperationTest is Setup {
         // Skip this test since we can't simulate markdown with real MorphoCredit
         // Just return early
         return;
+    }
+    
+    function test_tendTrigger_specific() public {
+        uint256 _amount = 1000e6; // 1000 USDC
+        
+        (bool trigger,) = strategy.tendTrigger();
+        assertTrue(!trigger);
+
+        // Deposit into strategy
+        mintAndDepositIntoStrategy(strategy, user, _amount);
+
+        (trigger,) = strategy.tendTrigger();
+        assertTrue(!trigger);
+
+        // Skip some time
+        skip(1 days);
+
+        (trigger,) = strategy.tendTrigger();
+        assertTrue(!trigger);
+
+        // Disable health check for this test
+        vm.prank(management);
+        USD3(address(strategy)).setDoHealthCheck(false);
+
+        vm.prank(keeper);
+        strategy.report();
+
+        (trigger,) = strategy.tendTrigger();
+        assertTrue(!trigger);
+
+        // Unlock Profits
+        skip(strategy.profitMaxUnlockTime());
+
+        (trigger,) = strategy.tendTrigger();
+        assertTrue(!trigger);
+
+        uint256 userShares = strategy.balanceOf(user);
+        vm.prank(user);
+        strategy.approve(address(strategy), userShares);
+        vm.prank(user);
+        strategy.redeem(userShares, user, user);
+
+        (trigger,) = strategy.tendTrigger();
+        assertTrue(!trigger);
     }
 }

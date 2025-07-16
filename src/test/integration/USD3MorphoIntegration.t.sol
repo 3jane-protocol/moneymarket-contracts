@@ -158,6 +158,8 @@ contract USD3MorphoIntegrationTest is BaseTest {
 
         // Withdraw should include profit
         vm.prank(SUPPLIER);
+        ITokenizedStrategy(address(usd3Strategy)).approve(address(usd3Strategy), shares);
+        vm.prank(SUPPLIER);
         uint256 assetsReceived = ITokenizedStrategy(address(usd3Strategy)).redeem(shares, SUPPLIER, SUPPLIER);
 
         assertGt(assetsReceived, supplyAmount, "Should receive principal + interest");
@@ -215,6 +217,9 @@ contract USD3MorphoIntegrationTest is BaseTest {
         assertApproxEqAbs(availableLimit, supplyAmount - borrowAmount, 1e6, "Should limit to available liquidity");
 
         // Try to withdraw all - should only get available liquidity
+        vm.prank(SUPPLIER);
+        uint256 requiredShares = ITokenizedStrategy(address(usd3Strategy)).previewWithdraw(supplyAmount);
+        ITokenizedStrategy(address(usd3Strategy)).approve(address(usd3Strategy), requiredShares);
         vm.prank(SUPPLIER);
         uint256 withdrawn = ITokenizedStrategy(address(usd3Strategy)).withdraw(supplyAmount, SUPPLIER, SUPPLIER);
 

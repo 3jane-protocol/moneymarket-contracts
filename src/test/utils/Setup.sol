@@ -14,11 +14,10 @@ import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
 import {USD3} from "../../USD3.sol";
 import {IMorpho, MarketParams} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
+import {RealisticATokenVault} from "../mocks/RealisticATokenVault.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
-import {ATokenVault} from "@Aave-Vault/src/ATokenVault.sol";
-import {IPoolAddressesProvider} from "@aave-v3-core/interfaces/IPoolAddressesProvider.sol";
 
 interface IFactory {
     function governance() external view returns (address);
@@ -103,15 +102,22 @@ contract Setup is Test, IEvents {
 
         IMorpho morpho = IMorpho(address(morphoProxy));
 
-        // Deploy MockATokenVault
-        MockATokenVault aTokenVault = new MockATokenVault(IERC20(address(underlyingAsset)));
+        // Deploy RealisticATokenVault
+        RealisticATokenVault aTokenVault = new RealisticATokenVault(
+            IERC20(address(underlyingAsset)),
+            "Realistic Aave USDC Vault",
+            "raUSDC",
+            address(this), // owner
+            1000, // 10% fee
+            address(this) // fee recipient
+        );
 
         // Set asset to aTokenVault for USD3 strategy
         asset = ERC20(address(aTokenVault));
 
         // Set up market params for credit-based lending
         MarketParams memory marketParams = MarketParams({
-            loanToken: address(aTokenVault),
+            loanToken: address(asset),
             collateralToken: address(underlyingAsset), // Use USDC as collateral token
             oracle: address(0), // Not needed for credit
             irm: address(0), // Mock IRM
@@ -127,7 +133,7 @@ contract Setup is Test, IEvents {
         vm.stopPrank();
 
         // Deploy USD3 strategy
-        USD3 _strategy = new USD3(address(aTokenVault), address(morpho), marketParams);
+        USD3 _strategy = new USD3(address(asset), address(morpho), marketParams);
 
         // Transfer management from test contract to management address
         IStrategyInterface(address(_strategy)).setPendingManagement(management);
@@ -165,7 +171,7 @@ contract Setup is Test, IEvents {
         underlyingAsset.approve(address(asset), _amount);
 
         vm.prank(_user);
-        uint256 aTokenAmount = MockATokenVault(address(asset)).deposit(_amount, _user);
+        uint256 aTokenAmount = RealisticATokenVault(address(asset)).deposit(_amount, _user);
 
         // Approve and deposit aTokens to strategy
         vm.prank(_user);
@@ -213,8 +219,6 @@ contract Setup is Test, IEvents {
 
     function _setTokenAddrs() internal {
         tokenAddrs["USDC"] = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-        tokenAddrs["aUSDC"] = 0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c;
-        tokenAddrs["AAVE_POOL_ADDRESSES_PROVIDER"] = 0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e;
     }
 
     // USD3-specific setup function

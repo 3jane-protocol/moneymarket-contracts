@@ -3,6 +3,7 @@ pragma solidity ^0.8.18;
 
 import {BaseHealthCheck, BaseStrategy, ERC20} from "@periphery/Bases/HealthCheck/BaseHealthCheck.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IMorpho, MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
 import {MorphoLib} from "@3jane-morpho-blue/libraries/periphery/MorphoLib.sol";
@@ -90,20 +91,31 @@ contract USD3 is BaseHealthCheck {
 
     /// @inheritdoc BaseStrategy
     function _freeFunds(uint256 amount) internal override {
+        if (amount == 0) return;
+        
         morphoBlue.accrueInterest(_marketParams());
         (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
 
-        if (amount >= assetsMax && assetsMax <= liquidity) {
-            // We use shares instead of amount
-            amount = 0;
+        // Calculate how much we can actually withdraw
+        uint256 availableToWithdraw = assetsMax > liquidity ? liquidity : assetsMax;
+        
+        // If we can't withdraw anything, return early
+        if (availableToWithdraw == 0) return;
+        
+        // Cap the requested amount to what's actually available
+        uint256 actualAmount = amount > availableToWithdraw ? availableToWithdraw : amount;
+        
+        if (actualAmount >= assetsMax) {
+            // Withdraw all our shares
+            morphoBlue.withdraw(_marketParams(), 0, shares, address(this), address(this));
         } else {
-            // We will use amount to indicate how much we want to withdraw
-            shares = 0;
-            // cap amount to withdraw if liquidity is low
-            amount = amount > liquidity ? liquidity : amount;
+            // Withdraw specific amount
+            morphoBlue.withdraw(_marketParams(), actualAmount, 0, address(this), address(this));
         }
-
-        morphoBlue.withdraw(_marketParams(), amount, shares, address(this), address(this));
+        
+        // Verify we received the tokens (allow for small rounding differences)
+        uint256 balance = asset.balanceOf(address(this));
+        require(balance > 0, "No tokens received from withdraw");
     }
 
     /// @inheritdoc BaseStrategy
@@ -128,7 +140,9 @@ contract USD3 is BaseHealthCheck {
 
     /// @inheritdoc BaseStrategy
     function availableWithdrawLimit(address) public view override returns (uint256) {
-        (,,, uint256 liquidity) = getMarketLiquidity();
-        return asset.balanceOf(address(this)) + liquidity;
+        (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
+        uint256 idle = asset.balanceOf(address(this));
+        
+        return idle + Math.min(liquidity, assetsMax);
     }
 }
