@@ -17,8 +17,9 @@ import {SigUtils} from "./helpers/SigUtils.sol";
 import {ArrayLib} from "./helpers/ArrayLib.sol";
 import {MorphoLib} from "../../src/libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "../../src/libraries/periphery/MorphoBalancesLib.sol";
-import {TransparentUpgradeableProxy} from "@openzeppelin/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "@openzeppelin/proxy/transparent/ProxyAdmin.sol";
+import {TransparentUpgradeableProxy} from
+    "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 contract BaseTest is Test {
     using Math for uint256;
@@ -493,7 +494,7 @@ contract BaseTest is Test {
     function _getRepaymentDetails(Id _id, address borrower)
         internal
         view
-        returns (uint128 cycleId, uint128 amountDue, uint256 endingBalance, RepaymentStatus status)
+        returns (uint128 cycleId, uint128 amountDue, uint128 endingBalance, RepaymentStatus status)
     {
         (cycleId, amountDue, endingBalance) = IMorphoCredit(address(morpho)).repaymentObligation(_id, borrower);
         (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(_id, borrower);
@@ -504,7 +505,7 @@ contract BaseTest is Test {
         pure
         returns (uint256)
     {
-        return endingBalance.wMulDown(penaltyRate.wTaylorCompounded(penaltyDuration));
+        return uint256(endingBalance).wMulDown(penaltyRate.wTaylorCompounded(penaltyDuration));
     }
 
     function _assertRepaymentStatus(Id _id, address borrower, RepaymentStatus expectedStatus) internal {

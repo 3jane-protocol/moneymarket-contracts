@@ -347,7 +347,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         );
 
         // Update premium struct in memory
-        premium.borrowAssetsAtLastAccrual = currentBorrowAssets;
+        premium.borrowAssetsAtLastAccrual = currentBorrowAssets.toUint128();
 
         // Safety check: Initialize timestamp if not already set
         if (premium.lastAccrualTime == 0) {
@@ -509,7 +509,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // Only set cycleId and endingBalance for new obligations
         if (obligation.amountDue == 0) {
             obligation.paymentCycleId = uint128(cycleId);
-            obligation.endingBalance = endingBalance;
+            obligation.endingBalance = endingBalance.toUint128();
         }
 
         // Update amount due

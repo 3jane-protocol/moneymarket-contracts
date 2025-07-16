@@ -26,7 +26,7 @@ import {MathLib, WAD} from "./libraries/MathLib.sol";
 import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 import {MarketParamsLib} from "./libraries/MarketParamsLib.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
-import {Initializable} from "@openzeppelin/proxy/utils/Initializable.sol";
+import {Initializable} from "../lib/openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 /// @title Morpho
 /// @author Morpho Labs

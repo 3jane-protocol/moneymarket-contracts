@@ -67,7 +67,6 @@ contract BorrowerJourneyTest is BaseTest {
         assertEq(uint8(status), uint8(RepaymentStatus.Current), "Should start as current");
 
         // Step 2: Create payment obligation (creates past obligation)
-        uint256 obligationAmount = borrowAmount * 5 / 100; // 5% monthly payment
         _createPastObligation(BORROWER, 500, borrowAmount);
 
         // After creating past obligation, borrower is already in grace period
@@ -202,7 +201,6 @@ contract BorrowerJourneyTest is BaseTest {
         assertEq(uint8(currentStatus), uint8(RepaymentStatus.Current), "Should be current after repayment");
 
         // Verify markdown cleared
-        uint256 borrowAssetsAfter = morpho.expectedBorrowAssets(marketParams, BORROWER);
         (RepaymentStatus statusAfter, uint256 statusStartTimeAfter) = morphoCredit.getRepaymentStatus(id, BORROWER);
         uint256 markdownAfter = 0;
         // After repayment, borrower should be current with no markdown

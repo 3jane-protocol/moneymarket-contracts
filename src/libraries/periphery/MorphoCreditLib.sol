@@ -102,13 +102,13 @@ library MorphoCreditLib {
         // BorrowerPremium struct layout:
         // - lastAccrualTime: uint128 (lower 128 bits)
         // - rate: uint128 (upper 128 bits)
-        // - borrowAssetsAtLastAccrual: uint256 (next slot)
+        // - borrowAssetsAtLastAccrual: uint128 (next slot, lower 128 bits)
         premium.lastAccrualTime = uint128(uint256(data));
         premium.rate = uint128(uint256(data) >> 128);
 
         // Get borrowAssetsAtLastAccrual from next slot
         slots[0] = bytes32(uint256(MorphoCreditStorageLib.borrowerPremiumSlot(id, borrower)) + 1);
-        premium.borrowAssetsAtLastAccrual = uint256(_asIMorpho(morpho).extSloads(slots)[0]);
+        premium.borrowAssetsAtLastAccrual = uint128(uint256(_asIMorpho(morpho).extSloads(slots)[0]));
     }
 
     /// @notice Get repayment obligation for a borrower
@@ -125,11 +125,16 @@ library MorphoCreditLib {
         slots[0] = MorphoCreditStorageLib.repaymentObligationSlot(id, borrower);
         bytes32 data = _asIMorpho(morpho).extSloads(slots)[0];
 
-        // RepaymentObligation struct layout (packed in one slot):
+        // RepaymentObligation struct layout:
         // - paymentCycleId: uint128 (lower 128 bits)
         // - amountDue: uint128 (upper 128 bits)
+        // - endingBalance: uint128 (next slot, lower 128 bits)
         obligation.paymentCycleId = uint128(uint256(data));
         obligation.amountDue = uint128(uint256(data) >> 128);
+
+        // Get endingBalance from next slot
+        slots[0] = bytes32(uint256(MorphoCreditStorageLib.repaymentObligationSlot(id, borrower)) + 1);
+        obligation.endingBalance = uint128(uint256(_asIMorpho(morpho).extSloads(slots)[0]));
     }
 
     /// @notice Get markdown state for a borrower

@@ -42,7 +42,7 @@ struct Market {
 struct BorrowerPremium {
     uint128 lastAccrualTime;
     uint128 rate;
-    uint256 borrowAssetsAtLastAccrual;
+    uint128 borrowAssetsAtLastAccrual;
 }
 
 /// @notice Repayment tracking structures
@@ -60,7 +60,7 @@ struct PaymentCycle {
 struct RepaymentObligation {
     uint128 paymentCycleId;
     uint128 amountDue;
-    uint256 endingBalance;
+    uint128 endingBalance;
 }
 
 /// @notice Market-specific credit terms for borrowers
@@ -415,7 +415,7 @@ interface IMorphoCredit {
     function borrowerPremium(Id id, address borrower)
         external
         view
-        returns (uint128 lastAccrualTime, uint128 rate, uint256 borrowAssetsAtLastAccrual);
+        returns (uint128 lastAccrualTime, uint128 rate, uint128 borrowAssetsAtLastAccrual);
 
     /// @notice Manually accrue premium for a borrower
     /// @param id Market ID
@@ -490,7 +490,7 @@ interface IMorphoCredit {
     function repaymentObligation(Id id, address borrower)
         external
         view
-        returns (uint128 cycleId, uint128 amountDue, uint256 endingBalance);
+        returns (uint128 cycleId, uint128 amountDue, uint128 endingBalance);
 
     /// @notice Get payment cycle end date
     /// @param id Market ID

@@ -564,9 +564,6 @@ contract PremiumIntegrationTest is BaseTest {
         // Get supplier position before withdrawal
         Position memory supplierPosBefore = morpho.position(id, SUPPLIER);
         Market memory marketBefore = morpho.market(id);
-        uint256 supplierValueBefore = uint256(supplierPosBefore.supplyShares).toAssetsDown(
-            marketBefore.totalSupplyAssets, marketBefore.totalSupplyShares
-        );
 
         // Supplier withdraws half of original supply
         vm.prank(SUPPLIER);
@@ -1006,7 +1003,6 @@ contract PremiumIntegrationTest is BaseTest {
     function testKeeperVsUserRaceCondition() public {
         uint256 supplyAmount = 10_000e18;
         uint256 borrowAmount = 5_000e18;
-        uint256 collateralAmount = 10_000e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.2e18) / 365 days); // 20% APR
 
         // Setup position

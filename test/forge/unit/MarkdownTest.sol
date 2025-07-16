@@ -152,8 +152,7 @@ contract MarkdownTest is BaseTest {
         // Setup: create supply and borrow
         loanToken.setBalance(address(this), supplyAmount);
         loanToken.approve(address(morpho), supplyAmount);
-        (uint256 suppliedAssets, uint256 supplyShares) =
-            morpho.supply(marketParams, supplyAmount, 0, address(this), hex"");
+        (, uint256 supplyShares) = morpho.supply(marketParams, supplyAmount, 0, address(this), hex"");
 
         // Set credit line and borrow
         vm.prank(address(creditLine));
@@ -173,7 +172,6 @@ contract MarkdownTest is BaseTest {
         uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
 
         // Get current market state to compare with effective supply
-        Market memory currentMarket = morpho.market(id);
 
         assertTrue(totalMarkdown > 0, "Total markdown should be positive");
         // Since markdowns directly reduce totalSupplyAssets, markdown is tracked in totalMarkdownAmount

@@ -74,9 +74,6 @@ contract DebtSettlementTest is BaseTest {
         // Get current debt
         Position memory positionBefore = morpho.position(id, BORROWER);
         Market memory marketBefore = morpho.market(id);
-        uint256 totalDebt = uint256(positionBefore.borrowShares).toAssetsUp(
-            marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares
-        );
 
         // Calculate expected repay amount for exact shares - ensure we have enough
         uint256 expectedRepayAmount = uint256(positionBefore.borrowShares).toAssetsUp(
@@ -127,9 +124,6 @@ contract DebtSettlementTest is BaseTest {
         // Get position details
         Position memory positionBefore = morpho.position(id, BORROWER);
         Market memory marketBefore = morpho.market(id);
-        uint256 totalDebt = uint256(positionBefore.borrowShares).toAssetsUp(
-            marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares
-        );
 
         // Calculate expected shares
         uint256 expectedRepaidShares =
@@ -287,7 +281,7 @@ contract DebtSettlementTest is BaseTest {
         vm.warp(block.timestamp + 1);
 
         // Verify obligation exists
-        (uint128 cycleId, uint128 amountDue, uint256 endingBalance) = morphoCredit.repaymentObligation(id, BORROWER);
+        (uint128 cycleId, uint128 amountDue, uint128 endingBalance) = morphoCredit.repaymentObligation(id, BORROWER);
         // cycleId can be 0 for the first cycle
         assertTrue(amountDue > 0, "Should have amount due");
         assertTrue(endingBalance > 0, "Should have ending balance");
