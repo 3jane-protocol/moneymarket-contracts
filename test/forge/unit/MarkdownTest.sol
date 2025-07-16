@@ -152,8 +152,7 @@ contract MarkdownTest is BaseTest {
         // Setup: create supply and borrow
         loanToken.setBalance(address(this), supplyAmount);
         loanToken.approve(address(morpho), supplyAmount);
-        (, uint256 supplyShares) =
-            morpho.supply(marketParams, supplyAmount, 0, address(this), hex"");
+        (, uint256 supplyShares) = morpho.supply(marketParams, supplyAmount, 0, address(this), hex"");
 
         // Set credit line and borrow
         vm.prank(address(creditLine));

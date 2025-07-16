@@ -502,8 +502,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "Should be delinquent from Cycle 1");
 
         // Record the cycle ID and ending balance that were set
-        (uint128 cycleId1, , uint128 endingBalance1) =
-            IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
+        (uint128 cycleId1,, uint128 endingBalance1) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
         assertEq(cycleId1, 0, "First cycle should have ID 0");
         assertEq(endingBalance1, 20000e18, "Ending balance should be from Cycle 1");
 
