@@ -131,7 +131,7 @@ library MorphoCreditLib {
         // - endingBalance: uint128 (next slot, lower 128 bits)
         obligation.paymentCycleId = uint128(uint256(data));
         obligation.amountDue = uint128(uint256(data) >> 128);
-        
+
         // Get endingBalance from next slot
         slots[0] = bytes32(uint256(MorphoCreditStorageLib.repaymentObligationSlot(id, borrower)) + 1);
         obligation.endingBalance = uint128(uint256(_asIMorpho(morpho).extSloads(slots)[0]));

@@ -96,7 +96,6 @@ contract PremiumScenarioTest is BaseTest {
         // without traditional liquidations
 
         uint256 supplyAmount = 100_000e18;
-        uint256 collateralAmount = 50_000e18;
 
         // Phase 1: Initial setup and credit assessment
         vm.prank(SUPPLIER);
@@ -115,7 +114,6 @@ contract PremiumScenarioTest is BaseTest {
         morpho.borrow(marketParams, initialBorrow, 0, BORROWER, BORROWER);
 
         // Record initial state
-        Position memory initialPosition = morpho.position(id, BORROWER);
 
         // Phase 3: Time passes, borrower makes partial payments
         vm.warp(block.timestamp + 30 days);
@@ -186,7 +184,6 @@ contract PremiumScenarioTest is BaseTest {
         // Each market has different risk assessment
 
         uint256 supplyAmount = 50_000e18;
-        uint256 collateralAmount = 30_000e18;
 
         // Supply to both markets
         vm.prank(SUPPLIER);
@@ -470,7 +467,6 @@ contract PremiumScenarioTest is BaseTest {
         // Simulates a borrower earning a credit line increase through good behavior
 
         uint256 initialSupply = 200_000e18;
-        uint256 initialCollateral = 30_000e18;
         uint256 initialCreditLine = 20_000e18;
 
         // Setup market with credit line feature
