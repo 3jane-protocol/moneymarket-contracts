@@ -16,3 +16,6 @@
 	path = lib/3jane-morpho-blue
 	url = git@github.com:3jane-protocol/3jane-morpho-blue.git
 	branch = main
+[submodule "lib/Aave-Vault"]
+	path = lib/Aave-Vault
+	url = https://github.com/aave/Aave-Vault

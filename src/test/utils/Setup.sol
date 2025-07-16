@@ -4,12 +4,21 @@ pragma solidity ^0.8.18;
 import "forge-std/console2.sol";
 import {Test} from "forge-std/Test.sol";
 
-import {Strategy, ERC20} from "../../Strategy.sol";
-import {StrategyFactory} from "../../StrategyFactory.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IStrategyInterface} from "../../interfaces/IStrategyInterface.sol";
 
 // Inherit the events so they can be checked if desired.
 import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
+
+// Add imports for USD3 testing
+import {USD3} from "../../USD3.sol";
+import {IMorpho, MarketParams} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
+import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {ATokenVault} from "@Aave-Vault/src/ATokenVault.sol";
+import {IPoolAddressesProvider} from "@aave-v3-core/interfaces/IPoolAddressesProvider.sol";
 
 interface IFactory {
     function governance() external view returns (address);
@@ -22,9 +31,10 @@ interface IFactory {
 contract Setup is Test, IEvents {
     // Contract instances that we will use repeatedly.
     ERC20 public asset;
+    ERC20 public underlyingAsset;
     IStrategyInterface public strategy;
 
-    StrategyFactory public strategyFactory;
+    // StrategyFactory not used in this test setup
 
     mapping(string => address) public tokenAddrs;
 
@@ -42,9 +52,8 @@ contract Setup is Test, IEvents {
     uint256 public decimals;
     uint256 public MAX_BPS = 10_000;
 
-    // Fuzz from $0.01 of 1e6 stable coins up to 1 trillion of a 1e18 coin
-    uint256 public maxFuzzAmount = 1e30;
-    uint256 public minFuzzAmount = 10_000;
+    uint256 public maxFuzzAmount = 1_000_000_000e6;
+    uint256 public minFuzzAmount = 0.01e6;
 
     // Default profit max unlock time is set for 10 days
     uint256 public profitMaxUnlockTime = 10 days;
@@ -52,55 +61,91 @@ contract Setup is Test, IEvents {
     function setUp() public virtual {
         _setTokenAddrs();
 
-        // Set asset
-        asset = ERC20(tokenAddrs["DAI"]);
+        // Set underlying asset (USDC)
+        underlyingAsset = ERC20(tokenAddrs["USDC"]);
 
-        // Set decimals
-        decimals = asset.decimals();
-
-        strategyFactory = new StrategyFactory(
-            management,
-            performanceFeeRecipient,
-            keeper,
-            emergencyAdmin
-        );
+        // StrategyFactory not used in this test setup
 
         // Deploy strategy and set variables
         strategy = IStrategyInterface(setUpStrategy());
 
         factory = strategy.FACTORY();
 
+        // Set decimals after asset is set in setUpStrategy
+        decimals = asset.decimals();
+
         // label all the used addresses for traces
         vm.label(keeper, "keeper");
         vm.label(factory, "factory");
         vm.label(address(asset), "asset");
+        vm.label(address(underlyingAsset), "underlyingAsset");
         vm.label(management, "management");
         vm.label(address(strategy), "strategy");
         vm.label(performanceFeeRecipient, "performanceFeeRecipient");
     }
 
     function setUpStrategy() public returns (address) {
-        // we save the strategy as a IStrategyInterface to give it the needed interface
-        IStrategyInterface _strategy = IStrategyInterface(
-            address(
-                strategyFactory.newStrategy(
-                    address(asset),
-                    "Tokenized Strategy"
-                )
-            )
-        );
+        // Deploy real MorphoCredit with proxy pattern
+        MorphoCredit morphoImpl = new MorphoCredit();
 
+        // Deploy proxy admin
+        address morphoOwner = makeAddr("MorphoOwner");
+        address proxyAdminOwner = makeAddr("ProxyAdminOwner");
+        ProxyAdmin proxyAdmin = new ProxyAdmin();
+        
+        // Transfer ownership to proxyAdminOwner
+        proxyAdmin.transferOwnership(proxyAdminOwner);
+
+        // Deploy proxy with initialization
+        bytes memory initData = abi.encodeWithSelector(MorphoCredit.initialize.selector, morphoOwner);
+        TransparentUpgradeableProxy morphoProxy =
+            new TransparentUpgradeableProxy(address(morphoImpl), address(proxyAdmin), initData);
+
+        IMorpho morpho = IMorpho(address(morphoProxy));
+
+        // Deploy MockATokenVault
+        MockATokenVault aTokenVault = new MockATokenVault(IERC20(address(underlyingAsset)));
+
+        // Set asset to aTokenVault for USD3 strategy
+        asset = ERC20(address(aTokenVault));
+
+        // Set up market params for credit-based lending
+        MarketParams memory marketParams = MarketParams({
+            loanToken: address(aTokenVault),
+            collateralToken: address(underlyingAsset), // Use USDC as collateral token
+            oracle: address(0), // Not needed for credit
+            irm: address(0), // Mock IRM
+            lltv: 0, // Credit-based lending
+            creditLine: makeAddr("CreditLine")
+        });
+
+        // Enable market parameters
+        vm.startPrank(morphoOwner);
+        morpho.enableIrm(address(0));
+        morpho.enableLltv(0);
+        morpho.createMarket(marketParams);
+        vm.stopPrank();
+
+        // Deploy USD3 strategy
+        USD3 _strategy = new USD3(address(aTokenVault), address(morpho), marketParams);
+
+        // Transfer management from test contract to management address
+        IStrategyInterface(address(_strategy)).setPendingManagement(management);
         vm.prank(management);
-        _strategy.acceptManagement();
+        IStrategyInterface(address(_strategy)).acceptManagement();
+
+        // Set keeper and performance fee recipient
+        vm.prank(management);
+        IStrategyInterface(address(_strategy)).setKeeper(keeper);
+        vm.prank(management);
+        IStrategyInterface(address(_strategy)).setPerformanceFeeRecipient(performanceFeeRecipient);
+        vm.prank(management);
+        IStrategyInterface(address(_strategy)).setEmergencyAdmin(emergencyAdmin);
 
         return address(_strategy);
     }
 
-    function depositIntoStrategy(
-        IStrategyInterface _strategy,
-        address _user,
-        uint256 _amount
-    ) public {
+    function depositIntoStrategy(IStrategyInterface _strategy, address _user, uint256 _amount) public {
         vm.prank(_user);
         asset.approve(address(_strategy), _amount);
 
@@ -108,13 +153,26 @@ contract Setup is Test, IEvents {
         _strategy.deposit(_amount, _user);
     }
 
-    function mintAndDepositIntoStrategy(
-        IStrategyInterface _strategy,
-        address _user,
-        uint256 _amount
-    ) public {
-        airdrop(asset, _user, _amount);
-        depositIntoStrategy(_strategy, _user, _amount);
+    function mintAndDepositIntoStrategy(IStrategyInterface _strategy, address _user, uint256 _amount) public {
+        // Since asset is now the aTokenVault and underlyingAsset is USDC,
+        // we need to mint USDC and convert to aTokens
+
+        // Mint USDC to user
+        airdrop(underlyingAsset, _user, _amount);
+
+        // Approve and deposit USDC to aTokenVault
+        vm.prank(_user);
+        underlyingAsset.approve(address(asset), _amount);
+
+        vm.prank(_user);
+        uint256 aTokenAmount = MockATokenVault(address(asset)).deposit(_amount, _user);
+
+        // Approve and deposit aTokens to strategy
+        vm.prank(_user);
+        asset.approve(address(_strategy), aTokenAmount);
+
+        vm.prank(_user);
+        _strategy.deposit(aTokenAmount, _user);
     }
 
     // For checking the amounts in the strategy
@@ -125,9 +183,7 @@ contract Setup is Test, IEvents {
         uint256 _totalIdle
     ) public {
         uint256 _assets = _strategy.totalAssets();
-        uint256 _balance = ERC20(_strategy.asset()).balanceOf(
-            address(_strategy)
-        );
+        uint256 _balance = ERC20(_strategy.asset()).balanceOf(address(_strategy));
         uint256 _idle = _balance > _assets ? _assets : _balance;
         uint256 _debt = _assets - _idle;
         assertEq(_assets, _totalAssets, "!totalAssets");
@@ -156,12 +212,33 @@ contract Setup is Test, IEvents {
     }
 
     function _setTokenAddrs() internal {
-        tokenAddrs["WBTC"] = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
-        tokenAddrs["YFI"] = 0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e;
-        tokenAddrs["WETH"] = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-        tokenAddrs["LINK"] = 0x514910771AF9Ca656af840dff83E8264EcF986CA;
-        tokenAddrs["USDT"] = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
-        tokenAddrs["DAI"] = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
         tokenAddrs["USDC"] = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+        tokenAddrs["aUSDC"] = 0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c;
+        tokenAddrs["AAVE_POOL_ADDRESSES_PROVIDER"] = 0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e;
+    }
+
+    // USD3-specific setup function
+    function setUpUSD3Strategy(address _morpho, MarketParams memory _marketParams) public returns (address) {
+        // Deploy USD3 strategy
+        USD3 _strategy = new USD3(
+            _marketParams.loanToken, // Use loanToken from marketParams
+            _morpho,
+            _marketParams
+        );
+
+        // Set up management
+        IStrategyInterface(address(_strategy)).setPendingManagement(management);
+        vm.prank(management);
+        IStrategyInterface(address(_strategy)).acceptManagement();
+
+        // Set keeper and performance fee recipient
+        vm.prank(management);
+        IStrategyInterface(address(_strategy)).setKeeper(keeper);
+        vm.prank(management);
+        IStrategyInterface(address(_strategy)).setPerformanceFeeRecipient(performanceFeeRecipient);
+        vm.prank(management);
+        IStrategyInterface(address(_strategy)).setEmergencyAdmin(emergencyAdmin);
+
+        return address(_strategy);
     }
 }

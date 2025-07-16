@@ -13,7 +13,7 @@ fmt :; forge fmt
 
 # specify which fork to use. set this in our .env
 # if we want to test multiple forks in one go, remove this as an argument below
-FORK_URL := ${ETH_RPC_URL} # BASE_RPC_URL, ETH_RPC_URL, ARBITRUM_RPC_URL
+FORK_URL := ${ETH_RPC_URL}
 
 # if we want to run only matching tests, set that here
 test := test_
