@@ -125,23 +125,32 @@ contract Setup is Test, IEvents {
         morpho.createMarket(marketParams);
         vm.stopPrank();
 
-        // Deploy USD3 strategy
-        USD3 _strategy = new USD3(address(asset), address(morpho), marketParams);
+        // Deploy USD3 implementation
+        USD3 usd3Implementation = new USD3(address(morpho), marketParams);
 
-        // Transfer management from test contract to management address
-        IStrategyInterface(address(_strategy)).setPendingManagement(management);
-        vm.prank(management);
-        IStrategyInterface(address(_strategy)).acceptManagement();
+        // Deploy proxy admin
+        ProxyAdmin usd3ProxyAdmin = new ProxyAdmin();
+        
+        // Deploy proxy with initialization
+        bytes memory usd3InitData = abi.encodeWithSelector(
+            USD3.initialize.selector,
+            "USD3",
+            management,
+            performanceFeeRecipient,
+            keeper
+        );
+        
+        TransparentUpgradeableProxy usd3Proxy = new TransparentUpgradeableProxy(
+            address(usd3Implementation),
+            address(usd3ProxyAdmin),
+            usd3InitData
+        );
 
-        // Set keeper and performance fee recipient
+        // Set emergency admin
         vm.prank(management);
-        IStrategyInterface(address(_strategy)).setKeeper(keeper);
-        vm.prank(management);
-        IStrategyInterface(address(_strategy)).setPerformanceFeeRecipient(performanceFeeRecipient);
-        vm.prank(management);
-        IStrategyInterface(address(_strategy)).setEmergencyAdmin(emergencyAdmin);
+        IStrategyInterface(address(usd3Proxy)).setEmergencyAdmin(emergencyAdmin);
 
-        return address(_strategy);
+        return address(usd3Proxy);
     }
 
     function depositIntoStrategy(IStrategyInterface _strategy, address _user, uint256 _amount) public {
@@ -202,30 +211,5 @@ contract Setup is Test, IEvents {
 
     function _setTokenAddrs() internal {
         tokenAddrs["USDC"] = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-    }
-
-    // USD3-specific setup function
-    function setUpUSD3Strategy(address _morpho, MarketParams memory _marketParams) public returns (address) {
-        // Deploy USD3 strategy
-        USD3 _strategy = new USD3(
-            _marketParams.loanToken, // Use loanToken from marketParams
-            _morpho,
-            _marketParams
-        );
-
-        // Set up management
-        IStrategyInterface(address(_strategy)).setPendingManagement(management);
-        vm.prank(management);
-        IStrategyInterface(address(_strategy)).acceptManagement();
-
-        // Set keeper and performance fee recipient
-        vm.prank(management);
-        IStrategyInterface(address(_strategy)).setKeeper(keeper);
-        vm.prank(management);
-        IStrategyInterface(address(_strategy)).setPerformanceFeeRecipient(performanceFeeRecipient);
-        vm.prank(management);
-        IStrategyInterface(address(_strategy)).setEmergencyAdmin(emergencyAdmin);
-
-        return address(_strategy);
     }
 }

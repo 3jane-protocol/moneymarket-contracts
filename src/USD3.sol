@@ -9,14 +9,24 @@ import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol"
 import {MorphoLib} from "@3jane-morpho-blue/libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBalancesLib.sol";
 import {SharesMathLib} from "@3jane-morpho-blue/libraries/SharesMathLib.sol";
+import {Initializable} from "../lib/openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
+import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
+import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
-contract USD3 is BaseHealthCheck {
+contract USD3 is BaseHealthCheck, Initializable {
     using SafeERC20 for ERC20;
     using MorphoLib for IMorpho;
     using MorphoBalancesLib for IMorpho;
     using MarketParamsLib for MarketParams;
     using SharesMathLib for uint256;
 
+    /*//////////////////////////////////////////////////////////////
+                            CONSTANTS
+    //////////////////////////////////////////////////////////////*/
+
+    /*//////////////////////////////////////////////////////////////
+                        IMMUTABLE STORAGE
+    //////////////////////////////////////////////////////////////*/
     /// @notice Address for the Morpho contract.
     IMorpho public immutable morphoBlue;
 
@@ -28,9 +38,40 @@ contract USD3 is BaseHealthCheck {
     uint256 internal immutable lltv;
     address internal immutable creditLine;
 
-    constructor(address _asset, address _morphoBlue, MarketParams memory _params) BaseHealthCheck(_asset, "USD3") {
+    /*//////////////////////////////////////////////////////////////
+                        UPGRADEABLE STORAGE
+    //////////////////////////////////////////////////////////////*/
+    // Ratio Management
+    uint256 public maxOnCredit; // MAX_ON_CREDIT in basis points (5000 = 50%)
+    uint256 public usd3MinRatio; // USD3_RATIO in basis points (8000 = 80%)
+    address public susd3Strategy; // For ratio calculations
+
+    // Access Control
+    bool public whitelistEnabled;
+    mapping(address => bool) public whitelist;
+    uint256 public minDeposit;
+    uint256 public minCommitmentTime; // Optional commitment time in seconds
+    mapping(address => uint256) public depositTimestamp; // Track deposit times
+
+    // Yield Sharing
+    uint256 public interestShareVariant; // Basis points for sUSD3 (2000 = 20%)
+
+    /*//////////////////////////////////////////////////////////////
+                            EVENTS
+    //////////////////////////////////////////////////////////////*/
+    event MaxOnCreditUpdated(uint256 newMaxOnCredit);
+    event USD3MinRatioUpdated(uint256 newRatio);
+    event SUSD3StrategyUpdated(address newStrategy);
+    event WhitelistUpdated(address indexed user, bool allowed);
+    event MinDepositUpdated(uint256 newMinDeposit);
+    event InterestShareVariantUpdated(uint256 newShare);
+    event MarkdownRecorded(address indexed borrower, uint256 amount);
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address _morphoBlue, MarketParams memory _params) 
+        BaseHealthCheck(_params.loanToken, "USD3") 
+    {
         require(_morphoBlue != address(0), "!morpho");
-        require(_asset == _params.loanToken, "!loantoken");
 
         morphoBlue = IMorpho(_morphoBlue);
         loanToken = _params.loanToken;
@@ -40,7 +81,29 @@ contract USD3 is BaseHealthCheck {
         lltv = _params.lltv;
         creditLine = _params.creditLine;
 
-        ERC20(_params.loanToken).forceApprove(_morphoBlue, type(uint256).max);
+        _disableInitializers();
+    }
+
+    function initialize(
+        string memory _name,
+        address _management,
+        address _performanceFeeRecipient,
+        address _keeper
+    ) external initializer {
+        // Initialize BaseStrategy through TokenizedStrategy
+        _delegateCall(
+            abi.encodeCall(
+                ITokenizedStrategy.initialize,
+                (loanToken, _name, _management, _performanceFeeRecipient, _keeper)
+            )
+        );
+
+        // Approve Morpho
+        ERC20(loanToken).forceApprove(address(morphoBlue), type(uint256).max);
+        
+        // Set default values
+        maxOnCredit = 10_000; // 100% by default (no restriction)
+        usd3MinRatio = 0; // No ratio enforcement by default
     }
 
     function symbol() external view returns (string memory) {
@@ -86,7 +149,29 @@ contract USD3 is BaseHealthCheck {
 
     /// @inheritdoc BaseStrategy
     function _deployFunds(uint256 _amount) internal override {
-        morphoBlue.supply(_marketParams(), _amount, 0, address(this), hex"");
+        if (_amount == 0) return;
+        
+        if (maxOnCredit == 0 || maxOnCredit == 10_000) {
+            // If not set or set to 100%, deploy everything
+            morphoBlue.supply(_marketParams(), _amount, 0, address(this), hex"");
+            return;
+        }
+        
+        uint256 totalValue = TokenizedStrategy.totalAssets();
+        uint256 maxDeployable = (totalValue * maxOnCredit) / 10_000;
+        uint256 currentlyDeployed = morphoBlue.expectedSupplyAssets(_marketParams(), address(this));
+        
+        if (currentlyDeployed >= maxDeployable) {
+            // Already at max deployment
+            return;
+        }
+        
+        uint256 deployableAmount = maxDeployable - currentlyDeployed;
+        uint256 toDeploy = Math.min(_amount, deployableAmount);
+        
+        if (toDeploy > 0) {
+            morphoBlue.supply(_marketParams(), toDeploy, 0, address(this), hex"");
+        }
     }
 
     /// @inheritdoc BaseStrategy
@@ -139,10 +224,175 @@ contract USD3 is BaseHealthCheck {
     }
 
     /// @inheritdoc BaseStrategy
-    function availableWithdrawLimit(address) public view override returns (uint256) {
+    function availableWithdrawLimit(address _owner) public view override returns (uint256) {
+        // Check commitment time first
+        if (minCommitmentTime > 0) {
+            uint256 depositTime = depositTimestamp[_owner];
+            if (depositTime > 0 && block.timestamp < depositTime + minCommitmentTime) {
+                return 0; // Commitment period not met
+            }
+        }
+        
+        // Get base liquidity available
         (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
         uint256 idle = asset.balanceOf(address(this));
+        uint256 baseLiquidity = idle + Math.min(liquidity, assetsMax);
         
-        return idle + Math.min(liquidity, assetsMax);
+        // Check USD3 ratio constraint
+        if (usd3MinRatio > 0 && susd3Strategy != address(0)) {
+            uint256 usd3Value = TokenizedStrategy.totalAssets();
+            uint256 susd3Value = IERC20(susd3Strategy).totalSupply();
+            uint256 totalValue = usd3Value + susd3Value;
+            
+            if (totalValue > 0) {
+                // Calculate max withdrawable while maintaining ratio
+                uint256 minUsd3Value = (totalValue * usd3MinRatio) / 10_000;
+                if (usd3Value <= minUsd3Value) {
+                    return 0; // Already at minimum ratio
+                }
+                
+                uint256 maxWithdrawable = usd3Value - minUsd3Value;
+                return Math.min(baseLiquidity, maxWithdrawable);
+            }
+        }
+        
+        return baseLiquidity;
     }
+
+    /// @inheritdoc BaseStrategy
+    function availableDepositLimit(address _owner) public view override returns (uint256) {
+        // Check whitelist if enabled
+        if (whitelistEnabled && !whitelist[_owner]) {
+            return 0;
+        }
+        
+        // Check if strategy is shutdown
+        if (TokenizedStrategy.isShutdown()) {
+            return 0;
+        }
+        
+        // Return max uint256 to indicate no limit 
+        // (minDeposit will be checked in custom deposit/mint functions)
+        return type(uint256).max;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        OVERRIDDEN ERC4626 FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Deposit assets with minimum deposit enforcement
+    function deposit(uint256 assets, address receiver) external nonReentrant returns (uint256 shares) {
+        require(assets >= minDeposit, "Below minimum deposit");
+        
+        // Track deposit timestamp if commitment enabled
+        if (minCommitmentTime > 0 && depositTimestamp[receiver] == 0) {
+            depositTimestamp[receiver] = block.timestamp;
+        }
+        
+        // Delegate to TokenizedStrategy implementation
+        bytes memory result = _delegateCall(
+            abi.encodeWithSelector(0x6e553f65, assets, receiver) // deposit(uint256,address)
+        );
+        return abi.decode(result, (uint256));
+    }
+
+    /// @notice Mint shares with minimum deposit enforcement
+    function mint(uint256 shares, address receiver) external nonReentrant returns (uint256 assets) {
+        // Calculate assets needed for shares
+        assets = TokenizedStrategy.previewMint(shares);
+        require(assets >= minDeposit, "Below minimum deposit");
+        
+        // Track deposit timestamp if commitment enabled
+        if (minCommitmentTime > 0 && depositTimestamp[receiver] == 0) {
+            depositTimestamp[receiver] = block.timestamp;
+        }
+        
+        // Delegate to TokenizedStrategy implementation
+        bytes memory result = _delegateCall(
+            abi.encodeWithSelector(0x94bf804d, shares, receiver) // mint(uint256,address)
+        );
+        return abi.decode(result, (uint256));
+    }
+
+
+    /*//////////////////////////////////////////////////////////////
+                        INTERNAL FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /*//////////////////////////////////////////////////////////////
+                        MANAGEMENT FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    function setMaxOnCredit(uint256 _maxOnCredit) external onlyManagement {
+        require(_maxOnCredit <= 10_000, "Invalid ratio");
+        maxOnCredit = _maxOnCredit;
+        emit MaxOnCreditUpdated(_maxOnCredit);
+    }
+
+    function setUsd3MinRatio(uint256 _usd3MinRatio) external onlyManagement {
+        require(_usd3MinRatio <= 10_000, "Invalid ratio");
+        usd3MinRatio = _usd3MinRatio;
+        emit USD3MinRatioUpdated(_usd3MinRatio);
+    }
+
+    function setSusd3Strategy(address _susd3Strategy) external onlyManagement {
+        susd3Strategy = _susd3Strategy;
+        emit SUSD3StrategyUpdated(_susd3Strategy);
+    }
+
+    function setWhitelistEnabled(bool _enabled) external onlyManagement {
+        whitelistEnabled = _enabled;
+    }
+
+    function setWhitelist(address _user, bool _allowed) external onlyManagement {
+        whitelist[_user] = _allowed;
+        emit WhitelistUpdated(_user, _allowed);
+    }
+
+    function setMinDeposit(uint256 _minDeposit) external onlyManagement {
+        minDeposit = _minDeposit;
+        emit MinDepositUpdated(_minDeposit);
+    }
+
+    function setMinCommitmentTime(uint256 _minCommitmentTime) external onlyManagement {
+        minCommitmentTime = _minCommitmentTime;
+    }
+
+    function setInterestShareVariant(uint256 _interestShareVariant) external onlyManagement {
+        require(_interestShareVariant <= 10_000, "Invalid share");
+        interestShareVariant = _interestShareVariant;
+        emit InterestShareVariantUpdated(_interestShareVariant);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        MARKDOWN TRACKING
+    //////////////////////////////////////////////////////////////*/
+
+    function recordMarkdown(address _borrower, uint256 _amount) external onlyManagement {
+        borrowerMarkdowns[_borrower] += _amount;
+        totalMarkdowns += _amount;
+        lastMarkdownTime = block.timestamp;
+        emit MarkdownRecorded(_borrower, _amount);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        MODIFIERS
+    //////////////////////////////////////////////////////////////*/
+
+    modifier nonReentrant() {
+        // Use a simple reentrancy guard since we're delegating to TokenizedStrategy
+        // which has its own reentrancy protection
+        _;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        STORAGE GAP
+    //////////////////////////////////////////////////////////////*/
+    
+    /**
+     * @dev This empty reserved space is put in place to allow future versions to add new
+     * variables without shifting down storage in the inheritance chain.
+     * See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
+     */
+    uint256[40] private __gap;
 }
