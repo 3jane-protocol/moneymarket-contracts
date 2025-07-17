@@ -6,6 +6,8 @@ import {Ownable} from "@openzeppelin/access/Ownable2Step.sol";
 
 contract ProtocolConfig is Initializable, Ownable2Step {
     // Configuration keys
+    bytes32 private constant MAX_LTV = keccak256("MAX_LTV");
+    bytes32 private constant MAX_CREDIT_LINE = keccak256("MAX_CREDIT_LINE");
     bytes32 private constant MIN_CREDIT_LINE = keccak256("MIN_CREDIT_LINE");
     bytes32 private constant MIN_BORROW = keccak256("MIN_BORROW");
     bytes32 private constant MAX_DRP = keccak256("MAX_DRP");
@@ -39,6 +41,14 @@ contract ProtocolConfig is Initializable, Ownable2Step {
     }
 
     // External getters for each parameter
+    function getMaxLTV() external view returns (uint256) {
+        return config[MAX_LTV];
+    }
+
+    function getMaxCreditLine() external view returns (uint256) {
+        return config[MAX_CREDIT_LINE];
+    }
+
     function getMinCreditLine() external view returns (uint256) {
         return config[MIN_CREDIT_LINE];
     }
