@@ -14,6 +14,7 @@ interface IProtocolConfig {
     // Struct to hold credit line parameters
     struct CreditLineConfig {
         uint256 maxLTV;
+        uint256 maxVV;
         uint256 maxCreditLine;
         uint256 minCreditLine;
         uint256 maxDRP;

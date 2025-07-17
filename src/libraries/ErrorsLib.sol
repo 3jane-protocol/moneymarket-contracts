@@ -96,6 +96,9 @@ library ErrorsLib {
     /// @notice Thrown when the borrower has outstanding repayment obligations.
     error OutstandingRepayment();
 
+    /// @notice Thrown when the protocol is paused.
+    error Paused();
+
     /// @notice Thrown when trying to close a future cycle.
     error CannotCloseFutureCycle();
 

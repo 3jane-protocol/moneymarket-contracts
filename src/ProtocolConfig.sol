@@ -9,6 +9,7 @@ contract ProtocolConfig is Initializable, Ownable {
     // Configuration keys
     // Credit Line
     bytes32 private constant MAX_LTV = keccak256("MAX_LTV");
+    bytes32 private constant MAX_VV = keccak256("MAX_VV");
     bytes32 private constant MAX_CREDIT_LINE = keccak256("MAX_CREDIT_LINE");
     bytes32 private constant MIN_CREDIT_LINE = keccak256("MIN_CREDIT_LINE");
     bytes32 private constant MAX_DRP = keccak256("MAX_DRP");
@@ -62,6 +63,7 @@ contract ProtocolConfig is Initializable, Ownable {
     function getCreditLineConfig() external view returns (CreditLineConfig memory) {
         return CreditLineConfig({
             maxLTV: config[MAX_LTV],
+            maxVV: config[MAX_VV],
             maxCreditLine: config[MAX_CREDIT_LINE],
             minCreditLine: config[MIN_CREDIT_LINE],
             maxDRP: config[MAX_DRP]

@@ -563,7 +563,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @inheritdoc Morpho
     function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
-        if (protocolConfig.getIsPaused() > 0) revert ErrorsLib.OutstandingRepayment();
+        if (protocolConfig.getIsPaused() > 0) revert ErrorsLib.Paused();
 
         // Check if borrower can borrow
         (RepaymentStatus status,) = getRepaymentStatus(id, onBehalf);
