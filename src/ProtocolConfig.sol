@@ -2,9 +2,9 @@
 pragma solidity 0.8.22;
 
 import {Initializable} from "@openzeppelin/proxy/utils/Initializable.sol";
-import {Ownable} from "@openzeppelin/access/Ownable2Step.sol";
+import {Ownable} from "@openzeppelin/access/Ownable.sol";
 
-contract ProtocolConfig is Initializable, Ownable2Step {
+contract ProtocolConfig is Initializable, Ownable {
     // Configuration keys
     bytes32 private constant MAX_LTV = keccak256("MAX_LTV");
     bytes32 private constant MAX_CREDIT_LINE = keccak256("MAX_CREDIT_LINE");
