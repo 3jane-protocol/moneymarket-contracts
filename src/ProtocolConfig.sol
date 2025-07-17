@@ -3,6 +3,7 @@ pragma solidity 0.8.22;
 
 import {Initializable} from "@openzeppelin/proxy/utils/Initializable.sol";
 import {Ownable} from "@openzeppelin/access/Ownable.sol";
+import {MarketConfig} from "./interfaces/IProtocolConfig.sol";
 
 contract ProtocolConfig is Initializable, Ownable {
     // Configuration keys
@@ -74,6 +75,15 @@ contract ProtocolConfig is Initializable, Ownable {
 
     function getDelinquencyPeriod() external view returns (uint256) {
         return config[DELINQUENCY_PERIOD];
+    }
+
+    function getMarketConfig() external view returns (MarketConfig memory) {
+        return MarketConfig({
+            gracePeriod: config[GRACE_PERIOD],
+            delinquencyPeriod: config[DELINQUENCY_PERIOD],
+            minBorrow: config[MIN_BORROW],
+            irp: config[IRP]
+        });
     }
 
     function getIsPaused() external view returns (uint256) {

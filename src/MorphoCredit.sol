@@ -1,24 +1,13 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.22;
 
-import {
-    Id,
-    MarketParams,
-    Position,
-    Market,
-    BorrowerPremium,
-    RepaymentStatus,
-    PaymentCycle,
-    RepaymentObligation,
-    MarketCreditTerms,
-    MarkdownState,
-    IMorphoCredit
-} from "./interfaces/IMorpho.sol";
+import {Id, MarketParams, MarkdownState, IMorphoCredit} from "./interfaces/IMorpho.sol";
 import {IMarkdownManager} from "./interfaces/IMarkdownManager.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IMorphoRepayCallback} from "./interfaces/IMorphoCallbacks.sol";
 import {IProtocolConfig} from "./interfaces/IProtocolConfig.sol";
 import {Morpho} from "./Morpho.sol";
+import {MarketConfig} from "./interfaces/IProtocolConfig.sol";
 
 import {UtilsLib} from "./libraries/UtilsLib.sol";
 import {EventsLib} from "./libraries/EventsLib.sol";
@@ -207,10 +196,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (status != RepaymentStatus.Current && status != RepaymentStatus.GracePeriod) {
             RepaymentObligation memory obligation = repaymentObligation[id][borrower];
             uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
-            MarketCreditTerms memory terms = getMarketCreditTerms(id);
+            MarketConfig memory terms = protocolConfig.getMarketConfig();
 
-            if (premium.lastAccrualTime > cycleEndDate + terms.gracePeriodDuration) {
-                totalPremiumRate += terms.penaltyRatePerSecond;
+            if (premium.lastAccrualTime > cycleEndDate + terms.gracePeriod) {
+                totalPremiumRate += terms.irp;
             }
         }
 
@@ -246,9 +235,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
         RepaymentObligation memory obligation = repaymentObligation[id][borrower];
         uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
-        MarketCreditTerms memory terms = getMarketCreditTerms(id);
+        MarketConfig memory terms = protocolConfig.getMarketConfig();
 
-        if (premium.lastAccrualTime > cycleEndDate + terms.gracePeriodDuration) {
+        if (premium.lastAccrualTime > cycleEndDate + terms.gracePeriod) {
             return 0; // Already handled in premium calculation
         }
 
@@ -257,7 +246,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             elapsed = MAX_ELAPSED_TIME;
         }
         penaltyAmount = _calculateBorrowerPremiumAmount(
-            obligation.endingBalance, borrowAssetsCurrent + basePremiumAmount, terms.penaltyRatePerSecond, elapsed
+            obligation.endingBalance, borrowAssetsCurrent + basePremiumAmount, terms.irp, elapsed
         );
     }
 
@@ -557,17 +546,17 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         _statusStartTime = paymentCycle[id][obligation.paymentCycleId].endDate;
 
-        MarketCreditTerms memory terms = getMarketCreditTerms(id);
+        MarketCreditTerms memory terms = protocolConfig.getMarketParams();
 
-        if (block.timestamp <= _statusStartTime + terms.gracePeriodDuration) {
+        if (block.timestamp <= _statusStartTime + terms.gracePeriod) {
             return (RepaymentStatus.GracePeriod, _statusStartTime);
         }
-        _statusStartTime += terms.gracePeriodDuration;
-        if (block.timestamp < _statusStartTime + terms.delinquencyPeriodDuration) {
+        _statusStartTime += terms.gracePeriod;
+        if (block.timestamp < _statusStartTime + terms.delinquencyPeriod) {
             return (RepaymentStatus.Delinquent, _statusStartTime);
         }
 
-        return (RepaymentStatus.Default, _statusStartTime + terms.delinquencyPeriodDuration);
+        return (RepaymentStatus.Default, _statusStartTime + terms.delinquencyPeriod);
     }
 
     /* INTERNAL FUNCTIONS - HOOK IMPLEMENTATIONS */
@@ -646,18 +635,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (cycleId != 0) {
             startDate = paymentCycle[id][cycleId - 1].endDate + 1 days;
         }
-    }
-
-    /// @notice Get market-specific credit terms
-    /// @return terms The credit terms for the market
-    /// @dev Currently returns default values for all markets
-    function getMarketCreditTerms(Id) public pure returns (MarketCreditTerms memory terms) {
-        return MarketCreditTerms({
-            gracePeriodDuration: 7 days, // Grace period for repayments
-            delinquencyPeriodDuration: 23 days, // Delinquency period before default (total 30 days from cycle end)
-            minOutstanding: 1000e18, // Minimum outstanding loan balance to prevent dust
-            penaltyRatePerSecond: 3170979198 // ~10% APR penalty rate for delinquent borrowers
-        });
     }
 
     /* INTERNAL FUNCTIONS - HEALTH CHECK OVERRIDES */

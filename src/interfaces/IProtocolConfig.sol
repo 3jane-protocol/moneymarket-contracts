@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: GPL-20later
-pragma solidity >=0.5.0;
+pragma solidity 0.8.22;
 /// @notice Interface for the ProtocolConfig contract
 
 interface IProtocolConfig {
+    // Struct to hold market parameters
+    struct MarketConfig {
+        uint256 gracePeriod; // Duration of grace period after cycle end
+        uint256 delinquencyPeriod; // Duration of delinquency period before default
+        uint256 minBorrow; // Minimum outstanding loan balance to prevent dust
+        uint256 irp; // Penalty rate per second for delinquent borrowers
+    }
+
     /// @dev Initialize the contract with the owner
     /// @param newOwner The address of the new owner
     function initialize(address newOwner) external;
@@ -32,9 +40,9 @@ interface IProtocolConfig {
     /// @return The maximum DRP value
     function getMaxDRP() external view returns (uint256);
 
-    /// @dev Get the maximum interest rate premium
-    /// @return The maximum IRP value
-    function getMaxIRP() external view returns (uint256);
+    /// @dev Get the interest rate premium
+    /// @return The IRP value
+    function getIRP() external view returns (uint256);
 
     /// @dev Get the grace period
     /// @return The grace period value
@@ -48,9 +56,9 @@ interface IProtocolConfig {
     /// @return The pause status value
     function getIsPaused() external view returns (uint256);
 
-    /// @dev Get the maximum overcollateralization
-    /// @return The maximum OC value
-    function getMaxOC() external view returns (uint256);
+    /// @dev Get the maximum on credit
+    /// @return The max on credit value
+    function getMaxOnCredit() external view returns (uint256);
 
     /// @dev Get the tranche ratio
     /// @return The tranche ratio value
@@ -72,4 +80,8 @@ interface IProtocolConfig {
     /// @param key The configuration key
     /// @return The configuration value
     function config(bytes32 key) external view returns (uint256);
+
+    /// @dev Get the market parameters
+    /// @return The market parameters
+    function getMarketConfig() external view returns (MarketConfig memory);
 }
