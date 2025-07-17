@@ -572,10 +572,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (msg.sender != usd3) revert ErrorsLib.NotUsd3();
     }
 
-    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
-        if (msg.sender != usd3) revert ErrorsLib.NotUsd3();
-    }
-
     /// @inheritdoc Morpho
     function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
         if (msg.sender != helper) revert ErrorsLib.NotHelper();

@@ -209,7 +209,6 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         if (receiver == address(0)) revert ErrorsLib.ZeroAddress();
 
         _accrueInterest(marketParams, id);
-        _beforeWithdraw(marketParams, id, onBehalf, assets, shares);
 
         if (assets > 0) shares = assets.toSharesUp(market[id].totalSupplyAssets, market[id].totalSupplyShares);
         else assets = shares.toAssetsDown(market[id].totalSupplyAssets, market[id].totalSupplyShares);
@@ -408,18 +407,6 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         uint256 shares,
         bytes calldata data
     ) internal virtual {}
-
-    /// @dev Hook called before withdraw operations to allow for particular pre-processing.
-    /// @param marketParams The market parameters.
-    /// @param id The market id.
-    /// @param onBehalf The address that will receive the debt.
-    /// @param assets The amount of assets to borrow.
-    /// @param shares The amount of shares to borrow.
-    /// @param data Additional data to pass to the callback.
-    function _beforeWithdraw(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
-        internal
-        virtual
-    {}
 
     /// @dev Hook called before borrow operations to allow for premium accrual or other pre-processing.
     /// @param marketParams The market parameters.
