@@ -12,11 +12,12 @@ import {ConstantsLib} from "./libraries/ConstantsLib.sol";
 import {MarketParamsLib} from "../../libraries/MarketParamsLib.sol";
 import {Id, MarketParams, Market} from "../../interfaces/IMorpho.sol";
 import {MathLib as MorphoMathLib} from "../../libraries/MathLib.sol";
+import {Initializable} from "@openzeppelin/proxy/utils/Initializable.sol";
 
 /// @title AdaptiveCurveIrm
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
-contract AdaptiveCurveIrm is IAdaptiveCurveIrm {
+abstract contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
     using MathLib for int256;
     using UtilsLib for int256;
     using MorphoMathLib for uint128;
@@ -37,6 +38,9 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm {
     /// @inheritdoc IAdaptiveCurveIrm
     mapping(Id => int256) public rateAtTarget;
 
+    /// @dev Storage gap for future upgrades (10 slots).
+    uint256[10] private __gap;
+
     /* CONSTRUCTOR */
 
     /// @notice Constructor.
@@ -45,7 +49,10 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm {
         require(morpho != address(0), ErrorsLib.ZERO_ADDRESS);
 
         MORPHO = morpho;
+        _disableInitializers();
     }
+
+    function __AdaptiveCurveIrm_init() internal onlyInitializing {}
 
     /* BORROW RATES */
 
@@ -142,7 +149,12 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm {
 
     /// @dev Returns the new rate at target, for a given `startRateAtTarget` and a given `linearAdaptation`.
     /// The formula is: max(min(startRateAtTarget * exp(linearAdaptation), maxRateAtTarget), minRateAtTarget).
-    function _newRateAtTarget(int256 startRateAtTarget, int256 linearAdaptation) private pure returns (int256) {
+    function _newRateAtTarget(int256 startRateAtTarget, int256 linearAdaptation)
+        internal
+        view
+        override
+        returns (int256)
+    {
         // Non negative because MIN_RATE_AT_TARGET > 0.
         return startRateAtTarget.wMulToZero(ExpLib.wExp(linearAdaptation)).bound(
             ConstantsLib.MIN_RATE_AT_TARGET, ConstantsLib.MAX_RATE_AT_TARGET
