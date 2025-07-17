@@ -311,7 +311,7 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
 
     /* AUTHORIZATION - REMOVED */
 
-    // Authorization logic has been removed to mitigate any potential fraud attack vectors.
+    // Authorization logic has been removed.
     // All borrows will be executed via a wrapper helper which performs fraud checks.
     // All withdraws will be executed by a single yield-bearing dollar contract.
 
