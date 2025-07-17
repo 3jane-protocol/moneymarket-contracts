@@ -16,6 +16,10 @@ library EventsLib {
     /// @param newHelper The new helper of the contract.
     event SetHelper(address indexed newHelper);
 
+    /// @notice Emitted when setting a new usd3.
+    /// @param newUsd3 The new usd3 of the contract.
+    event SetUsd3(address indexed newUsd3);
+
     /// @notice Emitted when setting a new fee.
     /// @param id The market id.
     /// @param newFee The new fee.
