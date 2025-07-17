@@ -68,9 +68,6 @@ contract OperationTest is Setup {
         // Earn Interest
         skip(1 days);
 
-        // Disable health check for this test
-        vm.prank(management);
-        USD3(address(strategy)).setDoHealthCheck(false);
 
         // Report profit
         vm.prank(keeper);
@@ -115,9 +112,6 @@ contract OperationTest is Setup {
         uint256 toAirdrop = (_amount * _profitFactor) / MAX_BPS;
         airdrop(asset, address(strategy), toAirdrop);
 
-        // Disable health check for this test
-        vm.prank(management);
-        USD3(address(strategy)).setDoHealthCheck(false);
 
         // Report profit
         vm.prank(keeper);
@@ -158,9 +152,6 @@ contract OperationTest is Setup {
         uint256 toAirdrop = (_amount * _profitFactor) / MAX_BPS;
         airdrop(asset, address(strategy), toAirdrop);
 
-        // Disable health check for this test
-        vm.prank(management);
-        USD3(address(strategy)).setDoHealthCheck(false);
 
         // Report profit
         vm.prank(keeper);
@@ -218,9 +209,6 @@ contract OperationTest is Setup {
         (trigger,) = strategy.tendTrigger();
         assertTrue(!trigger);
 
-        // Disable health check for this test
-        vm.prank(management);
-        USD3(address(strategy)).setDoHealthCheck(false);
 
         vm.prank(keeper);
         strategy.report();
@@ -282,9 +270,6 @@ contract OperationTest is Setup {
         // Return early since we can't simulate markdown with real MorphoCredit
         return;
 
-        // Disable health check for this test
-        vm.prank(management);
-        USD3(address(strategy)).setDoHealthCheck(false);
 
         // Report should show loss
         vm.prank(keeper);
@@ -319,9 +304,6 @@ contract OperationTest is Setup {
         (trigger,) = strategy.tendTrigger();
         assertTrue(!trigger);
 
-        // Disable health check for this test
-        vm.prank(management);
-        USD3(address(strategy)).setDoHealthCheck(false);
 
         vm.prank(keeper);
         strategy.report();

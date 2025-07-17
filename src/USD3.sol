@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {BaseHealthCheck, BaseStrategy, ERC20} from "@periphery/Bases/HealthCheck/BaseHealthCheck.sol";
+import {BaseStrategyUpgradeable} from "./base/BaseStrategyUpgradeable.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "../lib/openzeppelin-contracts/contracts/utils/math/Math.sol";
 import {IMorpho, MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
@@ -9,11 +10,10 @@ import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol"
 import {MorphoLib} from "@3jane-morpho-blue/libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBalancesLib.sol";
 import {SharesMathLib} from "@3jane-morpho-blue/libraries/SharesMathLib.sol";
-import {Initializable} from "../lib/openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
-contract USD3 is BaseHealthCheck, Initializable {
+contract USD3 is BaseStrategyUpgradeable {
     using SafeERC20 for ERC20;
     using MorphoLib for IMorpho;
     using MorphoBalancesLib for IMorpho;
@@ -25,18 +25,18 @@ contract USD3 is BaseHealthCheck, Initializable {
     //////////////////////////////////////////////////////////////*/
 
     /*//////////////////////////////////////////////////////////////
-                        IMMUTABLE STORAGE
+                        STORAGE - MORPHO PARAMETERS
     //////////////////////////////////////////////////////////////*/
     /// @notice Address for the Morpho contract.
-    IMorpho public immutable morphoBlue;
+    IMorpho public morphoBlue;
 
-    // these internal immutable vars can be accessed externally via marketParams()
-    address internal immutable loanToken;
-    address internal immutable collateralToken;
-    address internal immutable oracle;
-    address internal immutable irm;
-    uint256 internal immutable lltv;
-    address internal immutable creditLine;
+    // these internal vars can be accessed externally via marketParams()
+    address internal loanToken;
+    address internal collateralToken;
+    address internal oracle;
+    address internal irm;
+    uint256 internal lltv;
+    address internal creditLine;
 
     /*//////////////////////////////////////////////////////////////
                         UPGRADEABLE STORAGE
@@ -65,14 +65,23 @@ contract USD3 is BaseHealthCheck, Initializable {
     event WhitelistUpdated(address indexed user, bool allowed);
     event MinDepositUpdated(uint256 newMinDeposit);
     event InterestShareVariantUpdated(uint256 newShare);
-    event MarkdownRecorded(address indexed borrower, uint256 amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address _morphoBlue, MarketParams memory _params) 
-        BaseHealthCheck(_params.loanToken, "USD3") 
-    {
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        address _morphoBlue,
+        MarketParams memory _params,
+        string memory _name,
+        address _management,
+        address _performanceFeeRecipient,
+        address _keeper
+    ) external initializer {
         require(_morphoBlue != address(0), "!morpho");
 
+        // Set immutables as storage
         morphoBlue = IMorpho(_morphoBlue);
         loanToken = _params.loanToken;
         collateralToken = _params.collateralToken;
@@ -81,22 +90,8 @@ contract USD3 is BaseHealthCheck, Initializable {
         lltv = _params.lltv;
         creditLine = _params.creditLine;
 
-        _disableInitializers();
-    }
-
-    function initialize(
-        string memory _name,
-        address _management,
-        address _performanceFeeRecipient,
-        address _keeper
-    ) external initializer {
-        // Initialize BaseStrategy through TokenizedStrategy
-        _delegateCall(
-            abi.encodeCall(
-                ITokenizedStrategy.initialize,
-                (loanToken, _name, _management, _performanceFeeRecipient, _keeper)
-            )
-        );
+        // Initialize BaseStrategy
+        __BaseStrategy_init(loanToken, _name, _management, _performanceFeeRecipient, _keeper);
 
         // Approve Morpho
         ERC20(loanToken).forceApprove(address(morphoBlue), type(uint256).max);
@@ -147,7 +142,7 @@ contract USD3 is BaseHealthCheck, Initializable {
         assetsMax = shares.toAssetsDown(totalSupplyAssets, totalShares);
     }
 
-    /// @inheritdoc BaseStrategy
+    /// @inheritdoc BaseStrategyUpgradeable
     function _deployFunds(uint256 _amount) internal override {
         if (_amount == 0) return;
         
@@ -157,7 +152,7 @@ contract USD3 is BaseHealthCheck, Initializable {
             return;
         }
         
-        uint256 totalValue = TokenizedStrategy.totalAssets();
+        uint256 totalValue = _totalAssets();
         uint256 maxDeployable = (totalValue * maxOnCredit) / 10_000;
         uint256 currentlyDeployed = morphoBlue.expectedSupplyAssets(_marketParams(), address(this));
         
@@ -174,7 +169,7 @@ contract USD3 is BaseHealthCheck, Initializable {
         }
     }
 
-    /// @inheritdoc BaseStrategy
+    /// @inheritdoc BaseStrategyUpgradeable
     function _freeFunds(uint256 amount) internal override {
         if (amount == 0) return;
         
@@ -199,18 +194,18 @@ contract USD3 is BaseHealthCheck, Initializable {
         }
         
         // Verify we received the tokens (allow for small rounding differences)
-        uint256 balance = asset.balanceOf(address(this));
+        uint256 balance = asset().balanceOf(address(this));
         require(balance > 0, "No tokens received from withdraw");
     }
 
-    /// @inheritdoc BaseStrategy
+    /// @inheritdoc BaseStrategyUpgradeable
     function _harvestAndReport() internal override returns (uint256) {
         MarketParams memory params = _marketParams();
 
         morphoBlue.accrueInterest(params);
 
         // An airdrop might have cause asset to be available, deposit!
-        uint256 _totalIdle = asset.balanceOf(address(this));
+        uint256 _totalIdle = asset().balanceOf(address(this));
         if (_totalIdle > 0) {
             _tend(_totalIdle);
         }
@@ -218,12 +213,12 @@ contract USD3 is BaseHealthCheck, Initializable {
         return morphoBlue.expectedSupplyAssets(params, address(this));
     }
 
-    /// @inheritdoc BaseStrategy
+    /// @inheritdoc BaseStrategyUpgradeable
     function _tend(uint256 _totalIdle) internal virtual override {
         _deployFunds(_totalIdle);
     }
 
-    /// @inheritdoc BaseStrategy
+    /// @inheritdoc BaseStrategyUpgradeable
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
         // Check commitment time first
         if (minCommitmentTime > 0) {
@@ -235,12 +230,12 @@ contract USD3 is BaseHealthCheck, Initializable {
         
         // Get base liquidity available
         (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
-        uint256 idle = asset.balanceOf(address(this));
+        uint256 idle = asset().balanceOf(address(this));
         uint256 baseLiquidity = idle + Math.min(liquidity, assetsMax);
         
         // Check USD3 ratio constraint
         if (usd3MinRatio > 0 && susd3Strategy != address(0)) {
-            uint256 usd3Value = TokenizedStrategy.totalAssets();
+            uint256 usd3Value = _totalAssets();
             uint256 susd3Value = IERC20(susd3Strategy).totalSupply();
             uint256 totalValue = usd3Value + susd3Value;
             
@@ -259,7 +254,7 @@ contract USD3 is BaseHealthCheck, Initializable {
         return baseLiquidity;
     }
 
-    /// @inheritdoc BaseStrategy
+    /// @inheritdoc BaseStrategyUpgradeable
     function availableDepositLimit(address _owner) public view override returns (uint256) {
         // Check whitelist if enabled
         if (whitelistEnabled && !whitelist[_owner]) {
@@ -267,7 +262,7 @@ contract USD3 is BaseHealthCheck, Initializable {
         }
         
         // Check if strategy is shutdown
-        if (TokenizedStrategy.isShutdown()) {
+        if (_isShutdown()) {
             return 0;
         }
         
@@ -299,7 +294,7 @@ contract USD3 is BaseHealthCheck, Initializable {
     /// @notice Mint shares with minimum deposit enforcement
     function mint(uint256 shares, address receiver) external nonReentrant returns (uint256 assets) {
         // Calculate assets needed for shares
-        assets = TokenizedStrategy.previewMint(shares);
+        assets = _previewMint(shares);
         require(assets >= minDeposit, "Below minimum deposit");
         
         // Track deposit timestamp if commitment enabled
@@ -364,16 +359,6 @@ contract USD3 is BaseHealthCheck, Initializable {
         emit InterestShareVariantUpdated(_interestShareVariant);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        MARKDOWN TRACKING
-    //////////////////////////////////////////////////////////////*/
-
-    function recordMarkdown(address _borrower, uint256 _amount) external onlyManagement {
-        borrowerMarkdowns[_borrower] += _amount;
-        totalMarkdowns += _amount;
-        lastMarkdownTime = block.timestamp;
-        emit MarkdownRecorded(_borrower, _amount);
-    }
 
     /*//////////////////////////////////////////////////////////////
                         MODIFIERS
@@ -385,6 +370,7 @@ contract USD3 is BaseHealthCheck, Initializable {
         _;
     }
 
+
     /*//////////////////////////////////////////////////////////////
                         STORAGE GAP
     //////////////////////////////////////////////////////////////*/
@@ -394,5 +380,5 @@ contract USD3 is BaseHealthCheck, Initializable {
      * variables without shifting down storage in the inheritance chain.
      * See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
      */
-    uint256[40] private __gap;
+    uint256[37] private __gap;
 }

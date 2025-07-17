@@ -126,7 +126,7 @@ contract Setup is Test, IEvents {
         vm.stopPrank();
 
         // Deploy USD3 implementation
-        USD3 usd3Implementation = new USD3(address(morpho), marketParams);
+        USD3 usd3Implementation = new USD3();
 
         // Deploy proxy admin
         ProxyAdmin usd3ProxyAdmin = new ProxyAdmin();
@@ -134,6 +134,8 @@ contract Setup is Test, IEvents {
         // Deploy proxy with initialization
         bytes memory usd3InitData = abi.encodeWithSelector(
             USD3.initialize.selector,
+            address(morpho),
+            marketParams,
             "USD3",
             management,
             performanceFeeRecipient,
