@@ -4,15 +4,18 @@ pragma solidity >=0.5.0;
 import {IIrm} from "../../../interfaces/IIrm.sol";
 import {Id} from "../../../interfaces/IMorpho.sol";
 
-/// @title IAdaptiveCurveIrm
+/// @title IJaneAdaptiveCurveIrm
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
 /// @notice Interface exposed by the AdaptiveCurveIrm.
-interface IAdaptiveCurveIrm is IIrm {
+interface IJaneAdaptiveCurveIrm is IIrm {
     /// @notice Address of Morpho.
     function MORPHO() external view returns (address);
-
+    /// @notice Address of Aave market.
+    function AAVE_MARKET() external view returns (address);
     /// @notice Rate at target utilization.
     /// @dev Tells the height of the curve.
     function rateAtTarget(Id id) external view returns (int256);
+    /// @notice Touch the Aave rate at target utilization.
+    function touchAaveRate(MarketParams memory marketParams) external;
 }
