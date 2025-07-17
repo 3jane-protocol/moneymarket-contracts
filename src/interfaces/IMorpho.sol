@@ -382,14 +382,12 @@ interface IMorphoCredit {
     /// @notice The helper of the contract.
     function helper() external view returns (address);
 
+    /// @notice The protocol config of the contract.
+    function protocolConfig() external view returns (address);
+
     /// @notice Sets `helper` as `helper` of the contract.
     /// @param newHelper The new helper address
     function setHelper(address newHelper) external;
-
-    /// @notice Sets authorization for the helper
-    /// @param authorizee The address to authorize/unauthorize
-    /// @param newIsAuthorized Whether to authorize or unauthorize
-    function setAuthorizationV2(address authorizee, bool newIsAuthorized) external;
 
     /// @notice Sets the credit line and premium rate for a borrower
     /// @param id The market ID
