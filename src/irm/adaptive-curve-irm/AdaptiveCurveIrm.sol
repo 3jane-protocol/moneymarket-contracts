@@ -2,7 +2,7 @@
 pragma solidity 0.8.19;
 
 import {IIrm} from "../../interfaces/IIrm.sol";
-import {IJaneAdaptiveCurveIrm} from "./interfaces/IAdaptiveCurveIrm.sol";
+import {IAdaptiveCurveIrm} from "./interfaces/IAdaptiveCurveIrm.sol";
 import {IRMConfig} from "../../interfaces/IProtocolConfig.sol";
 import {IMorphoCredit} from "../../interfaces/IMorphoCredit.sol";
 import {UtilsLib} from "./libraries/UtilsLib.sol";
@@ -18,7 +18,7 @@ import {Initializable} from "@openzeppelin/proxy/utils/Initializable.sol";
 /// @title AdaptiveCurveIrm
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
-contract AdaptiveCurveIrm is IJaneAdaptiveCurveIrm, Initializable {
+contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
     using MathLib for int256;
     using UtilsLib for int256;
     using MorphoMathLib for uint128;
@@ -33,16 +33,11 @@ contract AdaptiveCurveIrm is IJaneAdaptiveCurveIrm, Initializable {
 
     /// @inheritdoc IAdaptiveCurveIrm
     address public immutable MORPHO;
-    /// @inheritdoc IAdaptiveCurveIrm
-    address public immutable AAVE_MARKET;
 
     /* STORAGE */
 
     /// @inheritdoc IAdaptiveCurveIrm
     mapping(Id => int256) public rateAtTarget;
-
-    /// @inheritdoc IAdaptiveCurveIrm
-    mapping(Id => int256) public aaveRate;
 
     /// @dev Storage gap for future upgrades (10 slots).
     uint256[10] private __gap;
@@ -51,13 +46,10 @@ contract AdaptiveCurveIrm is IJaneAdaptiveCurveIrm, Initializable {
 
     /// @notice Constructor.
     /// @param morpho The address of Morpho.
-    /// @param aaveMarket The address of Aave market.
-    constructor(address morpho, address aaveMarket) {
+    constructor(address morpho) {
         require(morpho != address(0), ErrorsLib.ZERO_ADDRESS);
-        require(aaveMarket != address(0), ErrorsLib.ZERO_ADDRESS);
 
         MORPHO = morpho;
-        AAVE_MARKET = aaveMarket;
         _disableInitializers();
     }
 
@@ -85,17 +77,6 @@ contract AdaptiveCurveIrm is IJaneAdaptiveCurveIrm, Initializable {
         emit BorrowRateUpdate(id, avgRate, uint256(endRateAtTarget));
 
         return avgRate;
-    }
-
-    /// @dev Returns the rate at target utilization.
-    function touchAaveRate(MarketParams memory marketParams) external {
-        Id id = marketParams.id();
-
-        address underlying = IMorpho(MORPHO).idToMarketParams(id).collateralToken;
-
-        ReserveDataLegacy memory reserveData = IAaveMarket(AAVE_MARKET).getReserveData(underlying);
-
-        aaveRate[id] = int128((reserveData.currentVariableBorrowRate / 1e9)) / int128(365 days);
     }
 
     /// @dev Returns avgRate and endRateAtTarget.
@@ -147,21 +128,10 @@ contract AdaptiveCurveIrm is IJaneAdaptiveCurveIrm, Initializable {
                 // With N = 2:
                 // avg ~= curve([(startRateAtTarget + endRateAtTarget)/2 + startRateAtTarget*exp(speed*T/2)] / 2, err)
                 // avg ~= curve([startRateAtTarget + endRateAtTarget + 2*startRateAtTarget*exp(speed*T/2)] / 4, err)
-                endRateAtTarget = _newRateAtTarget(
-                    id,
-                    startRateAtTarget,
-                    linearAdaptation,
-                    terms.curveSteepness,
-                    terms.minRateAtTarget,
-                    terms.maxRateAtTarget
-                );
+                endRateAtTarget =
+                    _newRateAtTarget(startRateAtTarget, linearAdaptation, terms.minRateAtTarget, terms.maxRateAtTarget);
                 int256 midRateAtTarget = _newRateAtTarget(
-                    id,
-                    startRateAtTarget,
-                    linearAdaptation / 2,
-                    terms.curveSteepness,
-                    terms.minRateAtTarget,
-                    terms.maxRateAtTarget
+                    startRateAtTarget, linearAdaptation / 2, terms.minRateAtTarget, terms.maxRateAtTarget
                 );
                 avgRateAtTarget = (startRateAtTarget + endRateAtTarget + 2 * midRateAtTarget) / 4;
             }
@@ -185,14 +155,11 @@ contract AdaptiveCurveIrm is IJaneAdaptiveCurveIrm, Initializable {
     /// @dev Returns the new rate at target, for a given `startRateAtTarget` and a given `linearAdaptation`.
     /// The formula is: max(min(startRateAtTarget * exp(linearAdaptation), maxRateAtTarget), minRateAtTarget).
     function _newRateAtTarget(
-        Id id,
         int256 startRateAtTarget,
         int256 linearAdaptation,
-        int256 curveSteepness,
         int256 minRateAtTarget,
         int256 maxRateAtTarget
     ) internal view virtual returns (int256) {
-        minRateAtTarget = aaveRate[id] * (curveSteepness / 1e18);
         // Non negative because MIN_RATE_AT_TARGET > 0.
         return startRateAtTarget.wMulToZero(ExpLib.wExp(linearAdaptation)).bound(minRateAtTarget, maxRateAtTarget);
     }

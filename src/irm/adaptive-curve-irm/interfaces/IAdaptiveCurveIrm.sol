@@ -11,11 +11,7 @@ import {Id} from "../../../interfaces/IMorpho.sol";
 interface IJaneAdaptiveCurveIrm is IIrm {
     /// @notice Address of Morpho.
     function MORPHO() external view returns (address);
-    /// @notice Address of Aave market.
-    function AAVE_MARKET() external view returns (address);
     /// @notice Rate at target utilization.
     /// @dev Tells the height of the curve.
     function rateAtTarget(Id id) external view returns (int256);
-    /// @notice Touch the Aave rate at target utilization.
-    function touchAaveRate(MarketParams memory marketParams) external;
 }
