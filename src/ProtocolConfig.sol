@@ -3,7 +3,7 @@ pragma solidity 0.8.22;
 
 import {Initializable} from "@openzeppelin/proxy/utils/Initializable.sol";
 import {Ownable} from "@openzeppelin/access/Ownable.sol";
-import {MarketConfig} from "./interfaces/IProtocolConfig.sol";
+import {MarketConfig, CreditLineConfig, IRMConfig} from "./interfaces/IProtocolConfig.sol";
 
 contract ProtocolConfig is Initializable, Ownable {
     // Configuration keys
@@ -13,12 +13,19 @@ contract ProtocolConfig is Initializable, Ownable {
     bytes32 private constant MIN_CREDIT_LINE = keccak256("MIN_CREDIT_LINE");
     bytes32 private constant MAX_DRP = keccak256("MAX_DRP");
     // Market
+    bytes32 private constant IS_PAUSED = keccak256("IS_PAUSED");
+    bytes32 private constant MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
     bytes32 private constant IRP = keccak256("IRP");
     bytes32 private constant MIN_BORROW = keccak256("MIN_BORROW");
     bytes32 private constant GRACE_PERIOD = keccak256("GRACE_PERIOD");
     bytes32 private constant DELINQUENCY_PERIOD = keccak256("DELINQUENCY_PERIOD");
-    bytes32 private constant IS_PAUSED = keccak256("IS_PAUSED");
-    bytes32 private constant MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
+    // IRM
+    bytes32 private constant CURVE_STEEPNESS = keccak256("CURVE_STEEPNESS");
+    bytes32 private constant ADJUSTMENT_SPEED = keccak256("ADJUSTMENT_SPEED");
+    bytes32 private constant TARGET_UTILIZATION = keccak256("TARGET_UTILIZATION");
+    bytes32 private constant INITIAL_RATE_AT_TARGET = keccak256("INITIAL_RATE_AT_TARGET");
+    bytes32 private constant MIN_RATE_AT_TARGET = keccak256("MIN_RATE_AT_TARGET");
+    bytes32 private constant MAX_RATE_AT_TARGET = keccak256("MAX_RATE_AT_TARGET");
     // USD3 & sUSD3
     bytes32 private constant TRANCHE_RATIO = keccak256("TRANCHE_RATIO");
     bytes32 private constant TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
@@ -44,37 +51,21 @@ contract ProtocolConfig is Initializable, Ownable {
         config[key] = value;
     }
 
-    // External getters for each parameter
-    function getMaxLTV() external view returns (uint256) {
-        return config[MAX_LTV];
+    function getIsPaused() external view returns (uint256) {
+        return config[IS_PAUSED];
     }
 
-    function getMaxCreditLine() external view returns (uint256) {
-        return config[MAX_CREDIT_LINE];
+    function getMaxOnCredit() external view returns (uint256) {
+        return config[MAX_ON_CREDIT];
     }
 
-    function getMinCreditLine() external view returns (uint256) {
-        return config[MIN_CREDIT_LINE];
-    }
-
-    function getMinBorrow() external view returns (uint256) {
-        return config[MIN_BORROW];
-    }
-
-    function getMaxDRP() external view returns (uint256) {
-        return config[MAX_DRP];
-    }
-
-    function getIRP() external view returns (uint256) {
-        return config[IRP];
-    }
-
-    function getGracePeriod() external view returns (uint256) {
-        return config[GRACE_PERIOD];
-    }
-
-    function getDelinquencyPeriod() external view returns (uint256) {
-        return config[DELINQUENCY_PERIOD];
+    function getCreditLineConfig() external view returns (CreditLineConfig memory) {
+        return CreditLineConfig({
+            maxLTV: config[MAX_LTV],
+            maxCreditLine: config[MAX_CREDIT_LINE],
+            minCreditLine: config[MIN_CREDIT_LINE],
+            maxDRP: config[MAX_DRP]
+        });
     }
 
     function getMarketConfig() external view returns (MarketConfig memory) {
@@ -86,12 +77,15 @@ contract ProtocolConfig is Initializable, Ownable {
         });
     }
 
-    function getIsPaused() external view returns (uint256) {
-        return config[IS_PAUSED];
-    }
-
-    function getMaxOnCredit() external view returns (uint256) {
-        return config[MAX_ON_CREDIT];
+    function getIRMConfig() external view returns (IRMConfig memory) {
+        return IRMConfig({
+            curveSteepness: config[CURVE_STEEPNESS],
+            adjustmentSpeed: config[ADJUSTMENT_SPEED],
+            targetUtilization: config[TARGET_UTILIZATION],
+            initialRateAtTarget: config[INITIAL_RATE_AT_TARGET],
+            minRateAtTarget: config[MIN_RATE_AT_TARGET],
+            maxRateAtTarget: config[MAX_RATE_AT_TARGET]
+        });
     }
 
     function getTrancheRatio() external view returns (uint256) {

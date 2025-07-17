@@ -11,6 +11,24 @@ interface IProtocolConfig {
         uint256 irp; // Penalty rate per second for delinquent borrowers
     }
 
+    // Struct to hold credit line parameters
+    struct CreditLineConfig {
+        uint256 maxLTV;
+        uint256 maxCreditLine;
+        uint256 minCreditLine;
+        uint256 maxDRP;
+    }
+
+    // Struct to hold IRM parameters
+    struct IRMConfig {
+        uint256 curveSteepness;
+        uint256 adjustmentSpeed;
+        uint256 targetUtilization;
+        uint256 initialRateAtTarget;
+        uint256 minRateAtTarget;
+        uint256 maxRateAtTarget;
+    }
+
     /// @dev Initialize the contract with the owner
     /// @param newOwner The address of the new owner
     function initialize(address newOwner) external;
@@ -20,38 +38,6 @@ interface IProtocolConfig {
     /// @param value The configuration value
     function setConfig(bytes32 key, uint256 value) external;
 
-    /// @dev Get the maximum loan-to-value ratio
-    /// @return The maximum LTV value
-    function getMaxLTV() external view returns (uint256);
-
-    /// @dev Get the maximum credit line
-    /// @return The maximum credit line value
-    function getMaxCreditLine() external view returns (uint256);
-
-    /// @dev Get the minimum credit line
-    /// @return The minimum credit line value
-    function getMinCreditLine() external view returns (uint256);
-
-    /// @dev Get the minimum borrow amount
-    /// @return The minimum borrow value
-    function getMinBorrow() external view returns (uint256);
-
-    /// @dev Get the maximum default risk premium
-    /// @return The maximum DRP value
-    function getMaxDRP() external view returns (uint256);
-
-    /// @dev Get the interest rate premium
-    /// @return The IRP value
-    function getIRP() external view returns (uint256);
-
-    /// @dev Get the grace period
-    /// @return The grace period value
-    function getGracePeriod() external view returns (uint256);
-
-    /// @dev Get the delinquency period
-    /// @return The delinquency period value
-    function getDelinquencyPeriod() external view returns (uint256);
-
     /// @dev Get the pause status
     /// @return The pause status value
     function getIsPaused() external view returns (uint256);
@@ -59,6 +45,18 @@ interface IProtocolConfig {
     /// @dev Get the maximum on credit
     /// @return The max on credit value
     function getMaxOnCredit() external view returns (uint256);
+
+    /// @dev Get the credit line parameters
+    /// @return The credit line parameters
+    function getCreditLineConfig() external view returns (CreditLineConfig memory);
+
+    /// @dev Get the market parameters
+    /// @return The market parameters
+    function getMarketConfig() external view returns (MarketConfig memory);
+
+    /// @dev Get the IRM parameters
+    /// @return The IRM parameters
+    function getIRMConfig() external view returns (IRMConfig memory);
 
     /// @dev Get the tranche ratio
     /// @return The tranche ratio value
@@ -80,8 +78,4 @@ interface IProtocolConfig {
     /// @param key The configuration key
     /// @return The configuration value
     function config(bytes32 key) external view returns (uint256);
-
-    /// @dev Get the market parameters
-    /// @return The market parameters
-    function getMarketConfig() external view returns (MarketConfig memory);
 }
