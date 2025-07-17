@@ -21,7 +21,6 @@ library SigUtils {
                 AUTHORIZATION_TYPEHASH,
                 authorization.authorizer,
                 authorization.authorized,
-                authorization.isAuthorized,
                 authorization.nonce,
                 authorization.deadline
             )

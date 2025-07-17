@@ -161,7 +161,6 @@ contract BaseTest is Test {
         vm.startPrank(ONBEHALF);
         loanToken.approve(address(morpho), type(uint256).max);
         collateralToken.approve(address(morpho), type(uint256).max);
-        morpho.setAuthorization(BORROWER, true);
         vm.stopPrank();
 
         _setLltv(DEFAULT_TEST_LLTV);
