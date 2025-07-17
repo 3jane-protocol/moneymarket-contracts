@@ -17,7 +17,7 @@ import {
 import {IMarkdownManager} from "./interfaces/IMarkdownManager.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IMorphoRepayCallback} from "./interfaces/IMorphoCallbacks.sol";
-
+import {IProtocolConfig} from "./interfaces/IProtocolConfig.sol";
 import {Morpho} from "./Morpho.sol";
 
 import {UtilsLib} from "./libraries/UtilsLib.sol";
@@ -60,6 +60,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc IMorphoCredit
     address public helper;
 
+    /// @notice Immutable protocol configuration contract
+    IProtocolConfig public immutable protocolConfig;
+
     /// @inheritdoc IMorphoCredit
     mapping(Id => mapping(address => BorrowerPremium)) public borrowerPremium;
 
@@ -89,6 +92,13 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     uint256 internal constant MAX_BPS = 10000;
 
     /* INITIALIZER */
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(IProtocolConfig _protocolConfig) {
+        if (address(_protocolConfig) == address(0)) revert ErrorsLib.ZeroAddress();
+        protocolConfig = _protocolConfig;
+        _disableInitializers();
+    }
 
     /// @dev Initializes the MorphoCredit contract.
     /// @param newOwner The initial owner of the contract.
