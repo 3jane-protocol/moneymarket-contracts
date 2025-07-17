@@ -18,7 +18,7 @@ import {Initializable} from "@openzeppelin/proxy/utils/Initializable.sol";
 /// @title AdaptiveCurveIrm
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
-contract JaneAdaptiveCurveIrm is IJaneAdaptiveCurveIrm, Initializable {
+contract AdaptiveCurveIrm is IJaneAdaptiveCurveIrm, Initializable {
     using MathLib for int256;
     using UtilsLib for int256;
     using MorphoMathLib for uint128;
