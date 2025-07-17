@@ -1,4 +1,5 @@
 @openzeppelin/=lib/openzeppelin-contracts/
+@openzeppelin-upgradeable/=lib/Aave-Vault/lib/openzeppelin-contracts-upgradeable/contracts/
 forge-std/=lib/forge-std/src/
 @tokenized-strategy/=lib/tokenized-strategy/src/
 @periphery/=lib/tokenized-strategy-periphery/src/

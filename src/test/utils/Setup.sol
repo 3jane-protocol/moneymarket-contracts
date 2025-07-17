@@ -4,7 +4,7 @@ pragma solidity ^0.8.18;
 import "forge-std/console2.sol";
 import {Test} from "forge-std/Test.sol";
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import {IStrategyInterface} from "../../interfaces/IStrategyInterface.sol";
 
 // Inherit the events so they can be checked if desired.
@@ -14,10 +14,10 @@ import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
 import {USD3} from "../../USD3.sol";
 import {IMorpho, MarketParams} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
-import {RealisticATokenVault} from "../mocks/RealisticATokenVault.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {IrmMock} from "@3jane-morpho-blue/mocks/IrmMock.sol";
+import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {TransparentUpgradeableProxy} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
 
 interface IFactory {
     function governance() external view returns (address);
@@ -102,32 +102,25 @@ contract Setup is Test, IEvents {
 
         IMorpho morpho = IMorpho(address(morphoProxy));
 
-        // Deploy RealisticATokenVault
-        RealisticATokenVault aTokenVault = new RealisticATokenVault(
-            IERC20(address(underlyingAsset)),
-            "Realistic Aave USDC Vault",
-            "raUSDC",
-            address(this), // owner
-            1000, // 10% fee
-            address(this) // fee recipient
-        );
+        // Use USDC directly as the asset
+        asset = underlyingAsset;
 
-        // Set asset to aTokenVault for USD3 strategy
-        asset = ERC20(address(aTokenVault));
+        // Deploy IRM mock for interest accrual
+        IrmMock irm = new IrmMock();
 
         // Set up market params for credit-based lending
         MarketParams memory marketParams = MarketParams({
             loanToken: address(asset),
             collateralToken: address(underlyingAsset), // Use USDC as collateral token
             oracle: address(0), // Not needed for credit
-            irm: address(0), // Mock IRM
+            irm: address(irm), // Use the IRM mock
             lltv: 0, // Credit-based lending
             creditLine: makeAddr("CreditLine")
         });
 
         // Enable market parameters
         vm.startPrank(morphoOwner);
-        morpho.enableIrm(address(0));
+        morpho.enableIrm(address(irm));
         morpho.enableLltv(0);
         morpho.createMarket(marketParams);
         vm.stopPrank();
@@ -160,25 +153,15 @@ contract Setup is Test, IEvents {
     }
 
     function mintAndDepositIntoStrategy(IStrategyInterface _strategy, address _user, uint256 _amount) public {
-        // Since asset is now the aTokenVault and underlyingAsset is USDC,
-        // we need to mint USDC and convert to aTokens
+        // Mint asset (USDC) to user
+        airdrop(asset, _user, _amount);
 
-        // Mint USDC to user
-        airdrop(underlyingAsset, _user, _amount);
-
-        // Approve and deposit USDC to aTokenVault
+        // Approve and deposit to strategy
         vm.prank(_user);
-        underlyingAsset.approve(address(asset), _amount);
+        asset.approve(address(_strategy), _amount);
 
         vm.prank(_user);
-        uint256 aTokenAmount = RealisticATokenVault(address(asset)).deposit(_amount, _user);
-
-        // Approve and deposit aTokens to strategy
-        vm.prank(_user);
-        asset.approve(address(_strategy), aTokenAmount);
-
-        vm.prank(_user);
-        _strategy.deposit(aTokenAmount, _user);
+        _strategy.deposit(_amount, _user);
     }
 
     // For checking the amounts in the strategy
