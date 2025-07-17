@@ -2,12 +2,9 @@
 pragma solidity 0.8.22;
 
 import {Initializable} from "@openzeppelin/proxy/utils/Initializable.sol";
-import {Ownable} from "@openzeppelin/access/Ownable.sol";
+import {Ownable} from "@openzeppelin/access/Ownable2Step.sol";
 
-contract ProtocolConfig is Initializable, Ownable {
-    /// @dev Configuration storage mapping
-    mapping(bytes32 => uint256) private config;
-
+contract ProtocolConfig is Initializable, Ownable2Step {
     // Configuration keys
     bytes32 private constant MIN_CREDIT_LINE = keccak256("MIN_CREDIT_LINE");
     bytes32 private constant MIN_BORROW = keccak256("MIN_BORROW");
@@ -21,6 +18,9 @@ contract ProtocolConfig is Initializable, Ownable {
     bytes32 private constant TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
     bytes32 private constant SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
     bytes32 private constant SUSD3_COOLDOWN_PERIOD = keccak256("SUSD3_COOLDOWN_PERIOD");
+
+    /// @dev Configuration storage mapping
+    mapping(bytes32 => uint256) public config;
 
     /// @dev Storage gap for future upgrades (20 slots).
     uint256[20] private __gap;
