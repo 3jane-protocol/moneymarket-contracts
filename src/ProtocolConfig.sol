@@ -6,16 +6,19 @@ import {Ownable} from "@openzeppelin/access/Ownable.sol";
 
 contract ProtocolConfig is Initializable, Ownable {
     // Configuration keys
+    // Credit Line
     bytes32 private constant MAX_LTV = keccak256("MAX_LTV");
     bytes32 private constant MAX_CREDIT_LINE = keccak256("MAX_CREDIT_LINE");
     bytes32 private constant MIN_CREDIT_LINE = keccak256("MIN_CREDIT_LINE");
-    bytes32 private constant MIN_BORROW = keccak256("MIN_BORROW");
     bytes32 private constant MAX_DRP = keccak256("MAX_DRP");
-    bytes32 private constant MAX_IRP = keccak256("MAX_IRP");
+    // Market
+    bytes32 private constant IRP = keccak256("IRP");
+    bytes32 private constant MIN_BORROW = keccak256("MIN_BORROW");
     bytes32 private constant GRACE_PERIOD = keccak256("GRACE_PERIOD");
     bytes32 private constant DELINQUENCY_PERIOD = keccak256("DELINQUENCY_PERIOD");
     bytes32 private constant IS_PAUSED = keccak256("IS_PAUSED");
-    bytes32 private constant MAX_OC = keccak256("MAX_OC");
+    bytes32 private constant MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
+    // USD3 & sUSD3
     bytes32 private constant TRANCHE_RATIO = keccak256("TRANCHE_RATIO");
     bytes32 private constant TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
     bytes32 private constant SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
@@ -61,8 +64,8 @@ contract ProtocolConfig is Initializable, Ownable {
         return config[MAX_DRP];
     }
 
-    function getMaxIRP() external view returns (uint256) {
-        return config[MAX_IRP];
+    function getIRP() external view returns (uint256) {
+        return config[IRP];
     }
 
     function getGracePeriod() external view returns (uint256) {
@@ -77,8 +80,8 @@ contract ProtocolConfig is Initializable, Ownable {
         return config[IS_PAUSED];
     }
 
-    function getMaxOC() external view returns (uint256) {
-        return config[MAX_OC];
+    function getMaxOnCredit() external view returns (uint256) {
+        return config[MAX_ON_CREDIT];
     }
 
     function getTrancheRatio() external view returns (uint256) {
