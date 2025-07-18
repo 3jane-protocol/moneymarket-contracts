@@ -394,8 +394,8 @@ interface IMorphoCredit {
     /// @param id The market ID
     /// @param borrower The borrower address
     /// @param credit The credit line amount
-    /// @param premiumRate The premium rate per second in WAD
-    function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external;
+    /// @param drp The drp per second in WAD
+    function setCreditLine(Id id, address borrower, uint256 credit, uint128 drp) external;
 
     /// @notice Returns the premium data for a specific borrower in a market
     /// @param id The market ID
