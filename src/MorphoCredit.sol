@@ -53,6 +53,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     IProtocolConfig public immutable protocolConfig;
 
     /// @inheritdoc IMorphoCredit
+    address public usd3;
+
+    /// @inheritdoc IMorphoCredit
     mapping(Id => mapping(address => BorrowerPremium)) public borrowerPremium;
 
     /// @notice Payment cycles for each market
@@ -105,13 +108,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @inheritdoc IMorphoCredit
-    function setAuthorizationV2(address authorizee, bool newIsAuthorized) external {
-        if (msg.sender != helper) revert ErrorsLib.NotHelper();
-        if (newIsAuthorized == isAuthorized[authorizee][helper]) revert ErrorsLib.AlreadySet();
+    function setUsd3(address newUsd3) external onlyOwner {
+        if (newUsd3 == usd3) revert ErrorsLib.AlreadySet();
 
-        isAuthorized[authorizee][helper] = newIsAuthorized;
+        usd3 = newUsd3;
 
-        emit EventsLib.SetAuthorization(msg.sender, authorizee, helper, newIsAuthorized);
+        emit EventsLib.SetUsd3(newUsd3);
     }
 
     /* EXTERNAL FUNCTIONS - PREMIUM MANAGEMENT */
@@ -560,9 +562,18 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /* INTERNAL FUNCTIONS - HOOK IMPLEMENTATIONS */
 
     /// @inheritdoc Morpho
-    function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
-        if (protocolConfig.getIsPaused() > 0) revert ErrorsLib.Paused();
+    function _beforeSupply(MarketParams memory, Id id, address onBehalf, uint256, uint256, bytes calldata)
+        internal
+        override
+    {
+        if (msg.sender != usd3) revert ErrorsLib.NotUsd3();
+    }
 
+    /// @inheritdoc Morpho
+    function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
+        if (msg.sender != helper) revert ErrorsLib.NotHelper();
+        if (protocolConfig.getIsPaused() > 0) revert ErrorsLib.Paused();
+        
         // Check if borrower can borrow
         (RepaymentStatus status,) = getRepaymentStatus(id, onBehalf);
         if (status != RepaymentStatus.Current) revert ErrorsLib.OutstandingRepayment();

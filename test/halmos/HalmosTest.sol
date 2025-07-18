@@ -108,10 +108,6 @@ contract HalmosTest is SymTest, Test {
             args = abi.encode(marketParams, assets, shares, onBehalf, emptyData);
         } else if (selector == morpho.withdraw.selector || selector == morpho.borrow.selector) {
             args = abi.encode(marketParams, assets, shares, onBehalf, receiver);
-        } else if (selector == morpho.flashLoan.selector) {
-            address token = address(loanToken); // Use actual token
-            bytes memory _data = hex"1234"; // Fixed data
-            args = abi.encode(token, assets, _data);
         } else if (selector == morpho.accrueInterest.selector) {
             args = abi.encode(marketParams);
         } else if (selector == morpho.setFee.selector) {

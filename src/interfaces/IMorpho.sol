@@ -254,52 +254,6 @@ interface IMorphoBase {
         bytes memory data
     ) external returns (uint256 assetsRepaid, uint256 sharesRepaid);
 
-    /// @notice Liquidates the given `repaidShares` of debt asset or seize the given `seizedAssets` of collateral on the
-    /// given market `marketParams` of the given `borrower`'s position, optionally calling back the caller's
-    /// `onMorphoLiquidate` function with the given `data`.
-    /// @dev Either `seizedAssets` or `repaidShares` should be zero.
-    /// @dev Seizing more than the collateral balance will underflow and revert without any error message.
-    /// @dev Repaying more than the borrow balance will underflow and revert without any error message.
-    /// @dev An attacker can front-run a liquidation with a small repay making the transaction revert for underflow.
-    /// @param marketParams The market of the position.
-    /// @param borrower The owner of the position.
-    // Liquidation function removed - replaced by markdown system
-    // The markdown system handles debt write-offs through an external manager contract
-    // instead of traditional liquidations.
-    //
-    // function liquidate(
-    //     MarketParams memory marketParams,
-    //     address borrower,
-    //     uint256 seizedAssets,
-    //     uint256 repaidShares,
-    //     bytes memory data
-    // ) external returns (uint256, uint256);
-
-    /// @notice Executes a flash loan.
-    /// @dev Flash loans have access to the whole balance of the contract (the liquidity and deposited collateral of all
-    /// markets combined, plus donations).
-    /// @dev Warning: Not ERC-3156 compliant but compatibility is easily reached:
-    /// - `flashFee` is zero.
-    /// - `maxFlashLoan` is the token's balance of this contract.
-    /// - The receiver of `assets` is the caller.
-    /// @param token The token to flash loan.
-    /// @param assets The amount of assets to flash loan.
-    /// @param data Arbitrary data to pass to the `onMorphoFlashLoan` callback.
-    function flashLoan(address token, uint256 assets, bytes calldata data) external;
-
-    /// @notice Sets the authorization for `authorized` to manage `msg.sender`'s positions.
-    /// @param authorized The authorized address.
-    /// @param newIsAuthorized The new authorization status.
-    function setAuthorization(address authorized, bool newIsAuthorized) external;
-
-    /// @notice Sets the authorization for `authorization.authorized` to manage `authorization.authorizer`'s positions.
-    /// @dev Warning: Reverts if the signature has already been submitted.
-    /// @dev The signature is malleable, but it has no impact on the security here.
-    /// @dev The nonce is passed as argument to be able to revert with a different error message.
-    /// @param authorization The `Authorization` struct.
-    /// @param signature The signature.
-    function setAuthorizationWithSig(Authorization calldata authorization, Signature calldata signature) external;
-
     /// @notice Accrues interest for the given market `marketParams`.
     function accrueInterest(MarketParams memory marketParams) external;
 

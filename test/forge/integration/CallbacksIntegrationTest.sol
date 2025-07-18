@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import "../BaseTest.sol";
 import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 
-contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupplyCallback, IMorphoFlashLoanCallback {
+contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupplyCallback {
     using MathLib for uint256;
     using MorphoLib for IMorpho;
     using MarketParamsLib for MarketParams;
@@ -32,47 +32,7 @@ contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupp
         }
     }
 
-    function onMorphoFlashLoan(uint256 amount, bytes memory data) external {
-        require(msg.sender == address(morpho));
-        bytes4 selector;
-        (selector, data) = abi.decode(data, (bytes4, bytes));
-        if (selector == this.testFlashLoan.selector) {
-            assertEq(loanToken.balanceOf(address(this)), amount);
-            loanToken.approve(address(morpho), amount);
-        }
-    }
-
     // Tests.
-
-    function testFlashLoan(uint256 amount) public {
-        amount = bound(amount, 1, MAX_TEST_AMOUNT);
-
-        loanToken.setBalance(address(this), amount);
-        morpho.supply(marketParams, amount, 0, address(this), hex"");
-
-        morpho.flashLoan(address(loanToken), amount, abi.encode(this.testFlashLoan.selector, hex""));
-
-        assertEq(loanToken.balanceOf(address(morpho)), amount, "balanceOf");
-    }
-
-    function testFlashLoanZero() public {
-        vm.expectRevert(ErrorsLib.ZeroAssets.selector);
-        morpho.flashLoan(address(loanToken), 0, abi.encode(this.testFlashLoan.selector, hex""));
-    }
-
-    function testFlashLoanShouldRevertIfNotReimbursed(uint256 amount) public {
-        amount = bound(amount, 1, MAX_TEST_AMOUNT);
-
-        loanToken.setBalance(address(this), amount);
-        morpho.supply(marketParams, amount, 0, address(this), hex"");
-
-        loanToken.approve(address(morpho), 0);
-
-        vm.expectRevert(ErrorsLib.TransferFromReverted.selector);
-        morpho.flashLoan(
-            address(loanToken), amount, abi.encode(this.testFlashLoanShouldRevertIfNotReimbursed.selector, hex"")
-        );
-    }
 
     function testSupplyCallback(uint256 amount) public {
         amount = bound(amount, 1, MAX_TEST_AMOUNT);

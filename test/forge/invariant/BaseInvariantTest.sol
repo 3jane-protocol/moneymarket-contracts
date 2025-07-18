@@ -55,20 +55,6 @@ contract BaseInvariantTest is InvariantTest {
         _targetSender(USER);
     }
 
-    modifier authorized(address onBehalf) {
-        if (onBehalf != msg.sender && !morpho.isAuthorized(onBehalf, msg.sender)) {
-            vm.prank(onBehalf);
-            morpho.setAuthorization(msg.sender, true);
-        }
-
-        _;
-
-        if (morpho.isAuthorized(onBehalf, msg.sender)) {
-            vm.prank(onBehalf);
-            morpho.setAuthorization(msg.sender, false);
-        }
-    }
-
     function _randomMarket(uint256 marketSeed) internal view returns (MarketParams memory _marketParams) {
         return allMarketParams[marketSeed % allMarketParams.length];
     }
@@ -101,7 +87,7 @@ contract BaseInvariantTest is InvariantTest {
         uint256 shares,
         address onBehalf,
         address receiver
-    ) internal authorized(onBehalf) logCall("withdraw") {
+    ) internal logCall("withdraw") {
         vm.prank(msg.sender);
         morpho.withdraw(_marketParams, assets, shares, onBehalf, receiver);
     }
@@ -112,7 +98,7 @@ contract BaseInvariantTest is InvariantTest {
         uint256 shares,
         address onBehalf,
         address receiver
-    ) internal authorized(onBehalf) logCall("borrow") {
+    ) internal logCall("borrow") {
         vm.prank(msg.sender);
         morpho.borrow(_marketParams, assets, shares, onBehalf, receiver);
     }
@@ -151,7 +137,6 @@ contract BaseInvariantTest is InvariantTest {
 
     function _withdrawCollateral(MarketParams memory _marketParams, uint256 assets, address onBehalf, address receiver)
         internal
-        authorized(onBehalf)
         logCall("withdrawCollateral")
     {
         vm.prank(msg.sender);
