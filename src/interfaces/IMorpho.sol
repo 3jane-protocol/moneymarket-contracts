@@ -10,6 +10,7 @@ struct MarketParams {
     address irm;
     uint256 lltv;
     address creditLine;
+    address markdownManager;
 }
 
 /// @dev Warning: For `feeRecipient`, `supplyShares` does not contain the accrued shares since the last interest
@@ -465,11 +466,6 @@ interface IMorphoCredit {
     /// @return startDate The cycle start date
     /// @return endDate The cycle end date
     function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate);
-
-    /// @notice Get market-specific credit terms
-    /// @param id Market ID
-    /// @return terms The credit terms for the market
-    function getMarketCreditTerms(Id id) external pure returns (MarketCreditTerms memory terms);
 
     /// @notice Get repayment obligation for a borrower
     /// @param id Market ID
