@@ -10,7 +10,6 @@ struct MarketParams {
     address irm;
     uint256 lltv;
     address creditLine;
-    address markdownManager;
 }
 
 /// @dev Warning: For `feeRecipient`, `supplyShares` does not contain the accrued shares since the last interest

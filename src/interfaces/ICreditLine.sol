@@ -22,6 +22,9 @@ interface ICreditLine {
     /// @notice The morpho contract.
     function morpho() external view returns (address);
 
+    /// @notice The markdown manager
+    function mm() external view returns (address);
+
     /// @notice Sets `newOwner` as `owner` of the contract.
     /// @dev Warning: No two-step transfer ownership.
     /// @dev Warning: The owner can be set to the zero address.
