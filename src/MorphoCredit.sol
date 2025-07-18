@@ -1,24 +1,13 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.22;
 
-import {
-    Id,
-    MarketParams,
-    Position,
-    Market,
-    BorrowerPremium,
-    RepaymentStatus,
-    PaymentCycle,
-    RepaymentObligation,
-    MarketCreditTerms,
-    MarkdownState,
-    IMorphoCredit
-} from "./interfaces/IMorpho.sol";
+import {Id, MarketParams, MarkdownState, IMorphoCredit} from "./interfaces/IMorpho.sol";
 import {IMarkdownManager} from "./interfaces/IMarkdownManager.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IMorphoRepayCallback} from "./interfaces/IMorphoCallbacks.sol";
-
+import {IProtocolConfig} from "./interfaces/IProtocolConfig.sol";
 import {Morpho} from "./Morpho.sol";
+import {MarketConfig} from "./interfaces/IProtocolConfig.sol";
 
 import {UtilsLib} from "./libraries/UtilsLib.sol";
 import {EventsLib} from "./libraries/EventsLib.sol";
@@ -60,6 +49,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc IMorphoCredit
     address public helper;
 
+    /// @notice Immutable protocol configuration contract
+    IProtocolConfig public immutable protocolConfig;
+
     /// @inheritdoc IMorphoCredit
     mapping(Id => mapping(address => BorrowerPremium)) public borrowerPremium;
 
@@ -72,8 +64,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Markdown state for tracking defaulted debt value reduction
     mapping(Id => mapping(address => MarkdownState)) public markdownState;
 
-    /// @notice Markdown manager contract address for each market
-    mapping(Id => address) public markdownManager;
     /// @dev Storage gap for future upgrades (14 slots).
     uint256[14] private __gap;
 
@@ -89,6 +79,13 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     uint256 internal constant MAX_BPS = 10000;
 
     /* INITIALIZER */
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(IProtocolConfig _protocolConfig) {
+        if (address(_protocolConfig) == address(0)) revert ErrorsLib.ZeroAddress();
+        protocolConfig = _protocolConfig;
+        _disableInitializers();
+    }
 
     /// @dev Initializes the MorphoCredit contract.
     /// @param newOwner The initial owner of the contract.
@@ -197,10 +194,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (status != RepaymentStatus.Current && status != RepaymentStatus.GracePeriod) {
             RepaymentObligation memory obligation = repaymentObligation[id][borrower];
             uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
-            MarketCreditTerms memory terms = getMarketCreditTerms(id);
+            MarketConfig memory terms = protocolConfig.getMarketConfig();
 
-            if (premium.lastAccrualTime > cycleEndDate + terms.gracePeriodDuration) {
-                totalPremiumRate += terms.penaltyRatePerSecond;
+            if (premium.lastAccrualTime > cycleEndDate + terms.gracePeriod) {
+                totalPremiumRate += terms.irp;
             }
         }
 
@@ -236,9 +233,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
         RepaymentObligation memory obligation = repaymentObligation[id][borrower];
         uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
-        MarketCreditTerms memory terms = getMarketCreditTerms(id);
+        MarketConfig memory terms = protocolConfig.getMarketConfig();
 
-        if (premium.lastAccrualTime > cycleEndDate + terms.gracePeriodDuration) {
+        if (premium.lastAccrualTime > cycleEndDate + terms.gracePeriod) {
             return 0; // Already handled in premium calculation
         }
 
@@ -247,7 +244,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             elapsed = MAX_ELAPSED_TIME;
         }
         penaltyAmount = _calculateBorrowerPremiumAmount(
-            obligation.endingBalance, borrowAssetsCurrent + basePremiumAmount, terms.penaltyRatePerSecond, elapsed
+            obligation.endingBalance, borrowAssetsCurrent + basePremiumAmount, terms.irp, elapsed
         );
     }
 
@@ -547,23 +544,25 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         _statusStartTime = paymentCycle[id][obligation.paymentCycleId].endDate;
 
-        MarketCreditTerms memory terms = getMarketCreditTerms(id);
+        MarketCreditTerms memory terms = protocolConfig.getMarketParams();
 
-        if (block.timestamp <= _statusStartTime + terms.gracePeriodDuration) {
+        if (block.timestamp <= _statusStartTime + terms.gracePeriod) {
             return (RepaymentStatus.GracePeriod, _statusStartTime);
         }
-        _statusStartTime += terms.gracePeriodDuration;
-        if (block.timestamp < _statusStartTime + terms.delinquencyPeriodDuration) {
+        _statusStartTime += terms.gracePeriod;
+        if (block.timestamp < _statusStartTime + terms.delinquencyPeriod) {
             return (RepaymentStatus.Delinquent, _statusStartTime);
         }
 
-        return (RepaymentStatus.Default, _statusStartTime + terms.delinquencyPeriodDuration);
+        return (RepaymentStatus.Default, _statusStartTime + terms.delinquencyPeriod);
     }
 
     /* INTERNAL FUNCTIONS - HOOK IMPLEMENTATIONS */
 
     /// @inheritdoc Morpho
     function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
+        if (protocolConfig.getIsPaused() > 0) revert ErrorsLib.Paused();
+
         // Check if borrower can borrow
         (RepaymentStatus status,) = getRepaymentStatus(id, onBehalf);
         if (status != RepaymentStatus.Current) revert ErrorsLib.OutstandingRepayment();
@@ -638,18 +637,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         }
     }
 
-    /// @notice Get market-specific credit terms
-    /// @return terms The credit terms for the market
-    /// @dev Currently returns default values for all markets
-    function getMarketCreditTerms(Id) public pure returns (MarketCreditTerms memory terms) {
-        return MarketCreditTerms({
-            gracePeriodDuration: 7 days, // Grace period for repayments
-            delinquencyPeriodDuration: 23 days, // Delinquency period before default (total 30 days from cycle end)
-            minOutstanding: 1000e18, // Minimum outstanding loan balance to prevent dust
-            penaltyRatePerSecond: 3170979198 // ~10% APR penalty rate for delinquent borrowers
-        });
-    }
-
     /* INTERNAL FUNCTIONS - HEALTH CHECK OVERRIDES */
 
     /// @dev Override health check for credit-based lending (without price)
@@ -696,29 +683,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /* MARKDOWN FUNCTIONS */
 
-    /// @notice Set the markdown manager for a market
-    /// @param id Market ID
-    /// @param manager Address of the markdown manager contract
-    function setMarkdownManager(Id id, address manager) external onlyOwner {
-        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
-
-        if (manager != address(0)) {
-            if (!IMarkdownManager(manager).isValidForMarket(id)) revert ErrorsLib.InvalidMarkdownManager();
-        }
-
-        address oldManager = markdownManager[id];
-        markdownManager[id] = manager;
-
-        emit EventsLib.MarkdownManagerSet(id, oldManager, manager);
-    }
-
     /// @notice Update a borrower's markdown state and market total
     /// @param id Market ID
     /// @param borrower Borrower address
     function _updateBorrowerMarkdown(Id id, address borrower) internal {
-        address manager = markdownManager[id];
-        if (manager == address(0)) return; // No markdown manager set
-
         uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
         (RepaymentStatus status, uint256 statusStartTime) =
             _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
@@ -737,7 +705,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 newMarkdown = 0;
         if (isInDefault) {
             uint256 timeInDefault = block.timestamp > statusStartTime ? block.timestamp - statusStartTime : 0;
-            newMarkdown = IMarkdownManager(manager).calculateMarkdown(_getBorrowerAssets(id, borrower), timeInDefault);
+            newMarkdown = IMarkdownManager(idToMarketParams[id].markdownManager).calculateMarkdown(
+                borrower, _getBorrowerAssets(id, borrower), timeInDefault
+            );
         }
 
         if (newMarkdown != lastMarkdown) {

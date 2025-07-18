@@ -18,11 +18,23 @@ library ErrorsLib {
     /// @notice Thrown when the caller is not the owner or ozd.
     error NotOwnerOrOzd();
 
-    /// @notice Thrown when the TVV to enable exceeds the maximum TVV.
-    error UnsafeTvv();
+    /// @notice Thrown when the user is unverified.
+    error Unverified();
 
     /// @notice Thrown when the LLTV to enable exceeds the maximum LLTV.
     error MaxLltvExceeded();
+
+    /// @notice Thrown when the LTV to enable exceeds the maximum LTV.
+    error MaxLtvExceeded();
+
+    /// @notice Thrown when the VV to enable exceeds the maximum VV.
+    error MaxVvExceeded();
+
+    /// @notice Thrown when the credit to enable exceeds the maximum credit.
+    error MaxCreditLineExceeded();
+
+    /// @notice Thrown when the credit to enable is below the minimum credit.
+    error MinCreditLineExceeded();
 
     /// @notice Thrown when the fee to set exceeds the maximum fee.
     error MaxFeeExceeded();
@@ -91,10 +103,13 @@ library ErrorsLib {
     error MaxUint128Exceeded();
 
     /// @notice Thrown when the premium rate exceeds the maximum allowed.
-    error PremiumRateTooHigh();
+    error MaxDrpExceeded();
 
     /// @notice Thrown when the borrower has outstanding repayment obligations.
     error OutstandingRepayment();
+
+    /// @notice Thrown when the protocol is paused.
+    error Paused();
 
     /// @notice Thrown when trying to close a future cycle.
     error CannotCloseFutureCycle();
