@@ -10,6 +10,7 @@ struct MarketParams {
     address irm;
     uint256 lltv;
     address creditLine;
+    address markdownManager;
 }
 
 /// @dev Warning: For `feeRecipient`, `supplyShares` does not contain the accrued shares since the last interest
@@ -61,14 +62,6 @@ struct RepaymentObligation {
     uint128 paymentCycleId;
     uint128 amountDue;
     uint128 endingBalance;
-}
-
-/// @notice Market-specific credit terms for borrowers
-struct MarketCreditTerms {
-    uint256 gracePeriodDuration; // Duration of grace period after cycle end
-    uint256 delinquencyPeriodDuration; // Duration of delinquency period before default
-    uint256 minOutstanding; // Minimum outstanding loan balance to prevent dust
-    uint256 penaltyRatePerSecond; // Penalty rate per second for delinquent borrowers
 }
 
 /// @notice Markdown state for tracking defaulted debt value reduction
@@ -344,21 +337,19 @@ interface IMorphoCredit {
     /// @notice The helper of the contract.
     function helper() external view returns (address);
 
+    /// @notice The protocol config of the contract.
+    function protocolConfig() external view returns (address);
+
     /// @notice Sets `helper` as `helper` of the contract.
     /// @param newHelper The new helper address
     function setHelper(address newHelper) external;
-
-    /// @notice Sets authorization for the helper
-    /// @param authorizee The address to authorize/unauthorize
-    /// @param newIsAuthorized Whether to authorize or unauthorize
-    function setAuthorizationV2(address authorizee, bool newIsAuthorized) external;
 
     /// @notice Sets the credit line and premium rate for a borrower
     /// @param id The market ID
     /// @param borrower The borrower address
     /// @param credit The credit line amount
-    /// @param premiumRate The premium rate per second in WAD
-    function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external;
+    /// @param drp The drp per second in WAD
+    function setCreditLine(Id id, address borrower, uint256 credit, uint128 drp) external;
 
     /// @notice Returns the premium data for a specific borrower in a market
     /// @param id The market ID
@@ -429,11 +420,6 @@ interface IMorphoCredit {
     /// @return startDate The cycle start date
     /// @return endDate The cycle end date
     function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate);
-
-    /// @notice Get market-specific credit terms
-    /// @param id Market ID
-    /// @return terms The credit terms for the market
-    function getMarketCreditTerms(Id id) external pure returns (MarketCreditTerms memory terms);
 
     /// @notice Get repayment obligation for a borrower
     /// @param id Market ID

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0;
 
-import {IMorpho, IMorphoCredit} from "./interfaces/IMorpho.sol";
-import {IAaveMarket, IAaveToken} from "./interfaces/IAaveMarket.sol";
+import {IMorpho} from "./interfaces/IMorpho.sol";
+import {IAave} from "./interfaces/IAave.sol";
+import {IUSD3} from "./interfaces/IUSD3.sol";
+import {IWrap} from "./interfaces/IWrap.sol";
 import {MarketParams} from "./interfaces/IMorpho.sol";
 import {IHelper} from "./interfaces/IHelper.sol";
 
@@ -20,69 +22,80 @@ contract Helper is IHelper {
     using SafeTransferLib for IERC20;
 
     /// @inheritdoc IHelper
-    address public aaveMarket;
-
+    address private immutable AAVE;
     /// @inheritdoc IHelper
-    address public morpho;
+    address private immutable MORPHO;
+    /// @inheritdoc IHelper
+    address private immutable USD3;
+    /// @inheritdoc IHelper
+    address private immutable sUSD3;
+    /// @inheritdoc IHelper
+    address private immutable USDC;
+    /// @inheritdoc IHelper
+    address private immutable aUSDC;
+    /// @inheritdoc IHelper
+    address private immutable waUSDC;
 
     /* CONSTRUCTOR */
 
-    constructor(address newMorpho, address newAaveMarket) {
-        if (newMorpho == address(0)) revert ErrorsLib.ZeroAddress();
-        if (newAaveMarket == address(0)) revert ErrorsLib.ZeroAddress();
-        morpho = newMorpho;
-        aaveMarket = newAaveMarket;
+    constructor(
+        address aave,
+        address morpho,
+        address usd3,
+        address susd3,
+        address usdc,
+        address ausdc,
+        address wausdc
+    ) {
+        if (morpho == address(0)) revert ErrorsLib.ZeroAddress();
+        if (aave == address(0)) revert ErrorsLib.ZeroAddress();
+        if (usd3 == address(0)) revert ErrorsLib.ZeroAddress();
+        if (susd3 == address(0)) revert ErrorsLib.ZeroAddress();
+        if (usdc == address(0)) revert ErrorsLib.ZeroAddress();
+        if (ausdc == address(0)) revert ErrorsLib.ZeroAddress();
+        if (wausdc == address(0)) revert ErrorsLib.ZeroAddress();
+
+        AAVE = aave;
+        MORPHO = morpho;
+        USD3 = usd3;
+        sUSD3 = susd3;
+        USDC = usdc;
+        aUSDC = ausdc;
+        waUSDC = wausdc;
+
+        // Set max approvals
+        IERC20(USDC).approve(AAVE, type(uint256).max);
+        IERC20(aUSDC).approve(waUSDC, type(uint256).max);
+        IERC20(waUSDC).approve(USD3, type(uint256).max);
+        IERC20(USD3).approve(sUSD3, type(uint256).max);
     }
 
     /// @inheritdoc IHelper
-    function deposit(IERC4626 vault, uint256 assets, address receiver) external returns (uint256) {
-        address vaultAsset = vault.asset();
-        address underlying = IAaveToken(vaultAsset).UNDERLYING_ASSET_ADDRESS();
-
-        IERC20(underlying).safeTransferFrom(msg.sender, address(this), assets);
-
-        IERC20(underlying).approve(aaveMarket, assets);
-
-        IAaveMarket(aaveMarket).supply(underlying, assets, address(this), 0);
-
-        IERC20(vaultAsset).approve(address(vault), assets);
-
-        uint256 shares = vault.deposit(assets, receiver);
-
-        return shares;
-    }
-
-    /// @inheritdoc IHelper
-    function redeem(IERC4626 vault, uint256 shares, address receiver, address owner) external returns (uint256) {
-        address vaultAsset = vault.asset();
-
-        IERC20(address(vault)).safeTransferFrom(msg.sender, address(this), shares);
-
-        uint256 assets = vault.redeem(shares, address(this), owner);
-
-        IAaveMarket(aaveMarket).withdraw(IAaveToken(vaultAsset).UNDERLYING_ASSET_ADDRESS(), assets, receiver);
-
+    function deposit(uint256 assets, address receiver, bool hop) external returns (uint256) {
+        _wrap(msg.sender, assets);
+        assets = IUSD3(USD3).deposit(assets, receiver);
+        if (hop) {
+            assets = IUSD3(sUSD3).deposit(assets, receiver);
+        }
         return assets;
     }
 
     /// @inheritdoc IHelper
-    function borrow(
-        MarketParams memory marketParams,
-        uint256 assets,
-        uint256 shares,
-        address onBehalf,
-        address receiver
-    ) external returns (uint256, uint256) {
-        IMorpho _morpho = IMorpho(morpho);
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256) {
+        IERC20(USD3).safeTransferFrom(msg.sender, address(this), shares);
 
-        if (msg.sender != onBehalf && !_morpho.isAuthorized(onBehalf, msg.sender)) revert ErrorsLib.Unauthorized();
+        uint256 assets = IUSD3(USD3).redeem(shares, address(this), owner);
+        _unwrap(assets, receiver);
+        return assets;
+    }
 
-        if (!_morpho.isAuthorized(onBehalf, address(this))) IMorphoCredit(morpho).setAuthorizationV2(onBehalf, true);
-
-        (assets, shares) = _morpho.borrow(marketParams, assets, shares, onBehalf, address(this));
-
-        IAaveMarket(aaveMarket).withdraw(marketParams.collateralToken, assets, receiver);
-
+    /// @inheritdoc IHelper
+    function borrow(MarketParams memory marketParams, uint256 assets, uint256 shares)
+        external
+        returns (uint256, uint256)
+    {
+        (assets, shares) = IMorpho(MORPHO).borrow(marketParams, assets, shares, msg.sender, address(this));
+        _unwrap(assets, msg.sender);
         return (assets, shares);
     }
 
@@ -94,18 +107,20 @@ contract Helper is IHelper {
         address onBehalf,
         bytes calldata data
     ) external returns (uint256, uint256) {
-        address collateralToken = marketParams.collateralToken;
-
-        IERC20(collateralToken).safeTransferFrom(msg.sender, address(this), assets);
-
-        IERC20(collateralToken).approve(aaveMarket, assets);
-
-        IAaveMarket(aaveMarket).supply(collateralToken, assets, address(this), 0);
-
-        IERC20(marketParams.loanToken).approve(morpho, assets);
-
-        (assets, shares) = IMorpho(morpho).repay(marketParams, assets, shares, onBehalf, data);
-
+        _wrap(msg.sender, assets);
+        (assets, shares) = IMorpho(MORPHO).repay(marketParams, assets, shares, onBehalf, data);
         return (assets, shares);
+    }
+
+    function _wrap(address from, uint256 assets) internal returns (uint256) {
+        IERC20(USDC).safeTransferFrom(from, address(this), assets);
+        IAave(AAVE).supply(USDC, assets, address(this), 0);
+        IWrap(waUSDC).deposit(assets, address(this));
+    }
+
+    function _unwrap(uint256 assets, uint256 receiver) internal returns (uint256) {
+        IWrap(waUSDC).withdraw(assets, address(this));
+        IAave(AAVE).withdraw(USDC, assets, address(this));
+        IERC20(USDC).safeTransfer(receiver, assets);
     }
 }
