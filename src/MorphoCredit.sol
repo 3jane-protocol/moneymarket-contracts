@@ -64,8 +64,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Markdown state for tracking defaulted debt value reduction
     mapping(Id => mapping(address => MarkdownState)) public markdownState;
 
-    /// @notice Markdown manager contract address for each market
-    mapping(Id => address) public markdownManager;
     /// @dev Storage gap for future upgrades (14 slots).
     uint256[14] private __gap;
 
@@ -685,29 +683,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /* MARKDOWN FUNCTIONS */
 
-    /// @notice Set the markdown manager for a market
-    /// @param id Market ID
-    /// @param manager Address of the markdown manager contract
-    function setMarkdownManager(Id id, address manager) external onlyOwner {
-        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
-
-        if (manager != address(0)) {
-            if (!IMarkdownManager(manager).isValidForMarket(id)) revert ErrorsLib.InvalidMarkdownManager();
-        }
-
-        address oldManager = markdownManager[id];
-        markdownManager[id] = manager;
-
-        emit EventsLib.MarkdownManagerSet(id, oldManager, manager);
-    }
-
     /// @notice Update a borrower's markdown state and market total
     /// @param id Market ID
     /// @param borrower Borrower address
     function _updateBorrowerMarkdown(Id id, address borrower) internal {
-        address manager = markdownManager[id];
-        if (manager == address(0)) return; // No markdown manager set
-
         uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
         (RepaymentStatus status, uint256 statusStartTime) =
             _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
@@ -726,7 +705,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 newMarkdown = 0;
         if (isInDefault) {
             uint256 timeInDefault = block.timestamp > statusStartTime ? block.timestamp - statusStartTime : 0;
-            newMarkdown = IMarkdownManager(manager).calculateMarkdown(_getBorrowerAssets(id, borrower), timeInDefault);
+            newMarkdown = IMarkdownManager(idToMarketParams[id].markdownManager).calculateMarkdown(
+                borrower, _getBorrowerAssets(id, borrower), timeInDefault
+            );
         }
 
         if (newMarkdown != lastMarkdown) {
