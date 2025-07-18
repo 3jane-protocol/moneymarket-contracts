@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {BaseStrategyUpgradeable} from "./base/BaseStrategyUpgradeable.sol";
+import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "../lib/openzeppelin-contracts/contracts/utils/math/Math.sol";
@@ -13,7 +13,7 @@ import {SharesMathLib} from "@3jane-morpho-blue/libraries/SharesMathLib.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
-contract USD3 is BaseStrategyUpgradeable {
+contract USD3 is BaseHooksUpgradeable {
     using SafeERC20 for ERC20;
     using MorphoLib for IMorpho;
     using MorphoBalancesLib for IMorpho;
@@ -142,7 +142,6 @@ contract USD3 is BaseStrategyUpgradeable {
         assetsMax = shares.toAssetsDown(totalSupplyAssets, totalShares);
     }
 
-    /// @inheritdoc BaseStrategyUpgradeable
     function _deployFunds(uint256 _amount) internal override {
         if (_amount == 0) return;
         
@@ -169,7 +168,6 @@ contract USD3 is BaseStrategyUpgradeable {
         }
     }
 
-    /// @inheritdoc BaseStrategyUpgradeable
     function _freeFunds(uint256 amount) internal override {
         if (amount == 0) return;
         
@@ -198,7 +196,6 @@ contract USD3 is BaseStrategyUpgradeable {
         require(balance > 0, "No tokens received from withdraw");
     }
 
-    /// @inheritdoc BaseStrategyUpgradeable
     function _harvestAndReport() internal override returns (uint256) {
         MarketParams memory params = _marketParams();
 
@@ -213,12 +210,10 @@ contract USD3 is BaseStrategyUpgradeable {
         return morphoBlue.expectedSupplyAssets(params, address(this));
     }
 
-    /// @inheritdoc BaseStrategyUpgradeable
     function _tend(uint256 _totalIdle) internal virtual override {
         _deployFunds(_totalIdle);
     }
 
-    /// @inheritdoc BaseStrategyUpgradeable
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
         // Check commitment time first
         if (minCommitmentTime > 0) {
@@ -254,7 +249,6 @@ contract USD3 is BaseStrategyUpgradeable {
         return baseLiquidity;
     }
 
-    /// @inheritdoc BaseStrategyUpgradeable
     function availableDepositLimit(address _owner) public view override returns (uint256) {
         // Check whitelist if enabled
         if (whitelistEnabled && !whitelist[_owner]) {
@@ -272,41 +266,23 @@ contract USD3 is BaseStrategyUpgradeable {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        OVERRIDDEN ERC4626 FUNCTIONS
+                        HOOKS IMPLEMENTATION
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Deposit assets with minimum deposit enforcement
-    function deposit(uint256 assets, address receiver) external nonReentrant returns (uint256 shares) {
+    /// @dev Pre-deposit hook to enforce minimum deposit and track commitment time
+    function _preDepositHook(
+        uint256 assets,
+        uint256 shares,
+        address receiver
+    ) internal override {
+        // For deposit() calls, we check assets directly
+        // For mint() calls, assets is the preview amount
         require(assets >= minDeposit, "Below minimum deposit");
         
         // Track deposit timestamp if commitment enabled
         if (minCommitmentTime > 0 && depositTimestamp[receiver] == 0) {
             depositTimestamp[receiver] = block.timestamp;
         }
-        
-        // Delegate to TokenizedStrategy implementation
-        bytes memory result = _delegateCall(
-            abi.encodeWithSelector(0x6e553f65, assets, receiver) // deposit(uint256,address)
-        );
-        return abi.decode(result, (uint256));
-    }
-
-    /// @notice Mint shares with minimum deposit enforcement
-    function mint(uint256 shares, address receiver) external nonReentrant returns (uint256 assets) {
-        // Calculate assets needed for shares
-        assets = _previewMint(shares);
-        require(assets >= minDeposit, "Below minimum deposit");
-        
-        // Track deposit timestamp if commitment enabled
-        if (minCommitmentTime > 0 && depositTimestamp[receiver] == 0) {
-            depositTimestamp[receiver] = block.timestamp;
-        }
-        
-        // Delegate to TokenizedStrategy implementation
-        bytes memory result = _delegateCall(
-            abi.encodeWithSelector(0x94bf804d, shares, receiver) // mint(uint256,address)
-        );
-        return abi.decode(result, (uint256));
     }
 
 
@@ -360,15 +336,6 @@ contract USD3 is BaseStrategyUpgradeable {
     }
 
 
-    /*//////////////////////////////////////////////////////////////
-                        MODIFIERS
-    //////////////////////////////////////////////////////////////*/
-
-    modifier nonReentrant() {
-        // Use a simple reentrancy guard since we're delegating to TokenizedStrategy
-        // which has its own reentrancy protection
-        _;
-    }
 
 
     /*//////////////////////////////////////////////////////////////

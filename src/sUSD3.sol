@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {BaseStrategyUpgradeable} from "./base/BaseStrategyUpgradeable.sol";
+import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "../lib/openzeppelin-contracts/contracts/utils/math/Math.sol";
@@ -11,7 +11,7 @@ import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20
 /**
  * @title sUSD3
  * @notice Subordinate tranche strategy that accepts USD3 deposits and provides levered yield
- * @dev Inherits from BaseStrategyUpgradeable to maintain consistency with USD3 architecture
+ * @dev Inherits from BaseHooksUpgradeable to maintain consistency with USD3 architecture
  *      
  * Key features:
  * - 90-day initial lock period for new deposits
@@ -20,7 +20,7 @@ import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20
  * - First-loss absorption for USD3 protection
  * - Maximum 15% subordination ratio enforcement
  */
-contract sUSD3 is BaseStrategyUpgradeable {
+contract sUSD3 is BaseHooksUpgradeable {
     using SafeERC20 for ERC20;
     using Math for uint256;
 
@@ -39,7 +39,7 @@ contract sUSD3 is BaseStrategyUpgradeable {
                             CONSTANTS
     //////////////////////////////////////////////////////////////*/
     
-    uint256 public constant MAX_BPS = 10_000;
+    // MAX_BPS is inherited from BaseHooksUpgradeable
     uint256 public constant MAX_SUBORDINATION_RATIO = 1500; // 15% in basis points
 
     /*//////////////////////////////////////////////////////////////
@@ -152,45 +152,21 @@ contract sUSD3 is BaseStrategyUpgradeable {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        DEPOSIT OVERRIDES
+                        HOOKS IMPLEMENTATION
     //////////////////////////////////////////////////////////////*/
     
     /**
-     * @notice Deposit USD3 tokens and receive sUSD3 shares
-     * @param assets Amount of USD3 to deposit
-     * @param receiver Address to receive the shares
-     * @return shares Amount of shares minted
+     * @dev Pre-deposit hook to track lock period on first deposit
      */
-    function deposit(uint256 assets, address receiver) public returns (uint256 shares) {
+    function _preDepositHook(
+        uint256 assets,
+        uint256 shares,
+        address receiver
+    ) internal override {
         // Track lock period on first deposit
-        if (lockedUntil[receiver] == 0 && assets > 0) {
+        if (lockedUntil[receiver] == 0 && (assets > 0 || shares > 0)) {
             lockedUntil[receiver] = block.timestamp + lockDuration;
         }
-        
-        // Delegate to TokenizedStrategy implementation
-        bytes memory result = _delegateCall(
-            abi.encodeWithSelector(0x6e553f65, assets, receiver) // deposit(uint256,address)
-        );
-        return abi.decode(result, (uint256));
-    }
-    
-    /**
-     * @notice Mint specific amount of shares
-     * @param shares Amount of shares to mint
-     * @param receiver Address to receive the shares
-     * @return assets Amount of USD3 deposited
-     */
-    function mint(uint256 shares, address receiver) public returns (uint256 assets) {
-        // Track lock period on first deposit
-        if (lockedUntil[receiver] == 0 && shares > 0) {
-            lockedUntil[receiver] = block.timestamp + lockDuration;
-        }
-        
-        // Delegate to TokenizedStrategy implementation
-        bytes memory result = _delegateCall(
-            abi.encodeWithSelector(0x94bf804d, shares, receiver) // mint(uint256,address)
-        );
-        return abi.decode(result, (uint256));
     }
 
     /*//////////////////////////////////////////////////////////////
