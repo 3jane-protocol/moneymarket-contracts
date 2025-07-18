@@ -137,4 +137,7 @@ library ErrorsLib {
 
     /// @notice Thrown when trying to settle non-existent debt.
     error NoAccountToSettle();
+
+    /// @notice Thrown when the cover amount exceeds the assets amount.
+    error InvalidCoverAmount();
 }

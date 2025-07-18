@@ -1,14 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.22;
 
-import {Initializable} from "@openzeppelin/proxy/utils/Initializable.sol";
-
-contract MarkdownManager is Initializable {
-    /// @dev Storage gap for future upgrades (20 slots).
-    uint256[20] private __gap;
-
-    function initialize() external initializer {}
-
+contract MarkdownManager {
     /// @notice Calculate the markdown amount for a borrower's position
     /// @param borrower The address of the borrower
     /// @param borrowAmount The current borrow amount in assets
