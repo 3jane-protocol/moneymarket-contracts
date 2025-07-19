@@ -6,6 +6,7 @@ import {IMarkdownManager} from "./interfaces/IMarkdownManager.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IMorphoRepayCallback} from "./interfaces/IMorphoCallbacks.sol";
 import {IProtocolConfig} from "./interfaces/IProtocolConfig.sol";
+import {ICreditLine} from "./interfaces/ICreditLine.sol";
 import {Morpho} from "./Morpho.sol";
 import {MarketConfig} from "./interfaces/IProtocolConfig.sol";
 
@@ -573,7 +574,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
         if (msg.sender != helper) revert ErrorsLib.NotHelper();
         if (protocolConfig.getIsPaused() > 0) revert ErrorsLib.Paused();
-        
+
         // Check if borrower can borrow
         (RepaymentStatus status,) = getRepaymentStatus(id, onBehalf);
         if (status != RepaymentStatus.Current) revert ErrorsLib.OutstandingRepayment();
@@ -716,7 +717,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 newMarkdown = 0;
         if (isInDefault) {
             uint256 timeInDefault = block.timestamp > statusStartTime ? block.timestamp - statusStartTime : 0;
-            newMarkdown = IMarkdownManager(idToMarketParams[id].markdownManager).calculateMarkdown(
+            newMarkdown = IMarkdownManager(ICreditLine(idToMarketParams[id].creditLine).mm()).calculateMarkdown(
                 borrower, _getBorrowerAssets(id, borrower), timeInDefault
             );
         }
