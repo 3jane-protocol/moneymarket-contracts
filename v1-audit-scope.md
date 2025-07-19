@@ -12,6 +12,10 @@ Read the whitepaper for more: https://www.3jane.xyz/pdf/whitepaper.pdf
 
 ## Protocol Overview
 
+Repos:
+1. https://github.com/3jane-protocol/3jane-morpho-blue/tree/v1-audit-scope (branch v1-audit-scope)
+2. https://github.com/3jane-protocol/usd3 (branch master)
+
 ### 1. USD3 (Senior Tranche Strategy)
 
 **Location**: `usd3/src/USD3.sol`
