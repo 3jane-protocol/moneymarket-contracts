@@ -1,5 +1,8 @@
 # 3Jane Protocol - Smart Contract Audit Scope
 
+![Alt text](architecture.png)
+
+
 ## Executive Summary
 
 3Jane is a credit-based lending protocol built on top of Aave and Morpho Blue that provides asset-backed credit lines with dynamic risk-based pricing. The protocol consists of two main repositories: `morpho-blue` (credit infrastructure) and `usd3` (tranched yield strategies).
