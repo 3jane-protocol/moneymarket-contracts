@@ -111,11 +111,18 @@ Read the whitepaper for more: https://www.3jane.xyz/pdf/whitepaper.pdf
 
 -  **Default Tracking**: Monitors borrower default status and duration
 
-### 8. Helper (Integration Layer)
+### 8. Helper 
 
 **Location**: `morpho-blue/src/Helper.sol`
 
 **Purpose**: Provides convenient integration functions for users to interact with the protocol.
+
+### 8. InsuranceFund 
+
+**Location**: `morpho-blue/src/InsuranceFund.sol`
+
+**Purpose**: Simple custody of insurance fund assets (ex: USDC)
+
 
 ## Out-of-Scope
 1. $xJANE
