@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
+pragma solidity ^0.8.18;
 
 import {Id, IMorphoCredit, MarketParams} from "./interfaces/IMorpho.sol";
 import {ICreditLine} from "./interfaces/ICreditLine.sol";
@@ -8,7 +8,7 @@ import {IProver} from "./interfaces/IProver.sol";
 import {EventsLib} from "./libraries/EventsLib.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {MathLib} from "./libraries/MathLib.sol";
-import {Ownable} from "@openzeppelin/access/Ownable.sol";
+import {Ownable} from "../lib/openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IInsuranceFund} from "./interfaces/IInsuranceFund.sol";
 
@@ -117,43 +117,46 @@ contract CreditLine is ICreditLine, Ownable {
         insuranceFund = newInsuranceFund;
     }
 
-    /// @notice Sets or updates a credit line for a specific borrower
-    /// @param id Unique identifier for the credit line
-    /// @param borrower Address of the borrower
-    /// @param vv Value verified for the credit line
-    /// @param credit Maximum credit amount that can be borrowed
-    /// @param drp Default risk premium (interest rate) for the credit line
-    /// @dev Only callable by owner or OZD contract
-    /// @dev Validates all parameters against protocol limits and constraints
-    /// @dev Calls the main Morpho contract to set the credit line
-    /// @inheritdoc ICreditLine
-    function setCreditLine(Id id, address borrower, uint256 vv, uint256 credit, uint128 drp) external {
+    function setCreditLines(
+        Id[] calldata ids,
+        address[] calldata borrowers,
+        uint256[] calldata vv,
+        uint256[] calldata credit,
+        uint128[] calldata drp
+    ) external {
         // Check authorization - only owner or OZD can set credit lines
         if (msg.sender != owner && msg.sender != ozd) revert ErrorsLib.NotOwnerOrOzd();
 
-        // Verify the credit line parameters if a prover is set
-        if (prover != address(0) && !IProver(prover).verify(id, borrower, vv, credit, drp)) {
-            revert ErrorsLib.Unverified();
+        uint256 len = ids.length;
+        if (borrowers.length != len || vv.length != len || credit.length != len || drp.length != len) {
+            revert ErrorsLib.InvalidArrayLength();
         }
 
         // Get protocol configuration for validation
         CreditLineConfig memory terms = IProtocolConfig(MORPHO.protocolConfig()).getCreditLineConfig();
 
-        // Validate value verified against maximum allowed
-        if (vv > terms.maxVV) revert ErrorsLib.MaxVvExceeded();
+        for (uint256 i = 0; i < len; ++i) {
+            // Verify the credit line parameters if a prover is set
+            if (prover != address(0) && !IProver(prover).verify(ids[i], borrowers[i], vv[i], credit[i], drp[i])) {
+                revert ErrorsLib.Unverified();
+            }
 
-        // Validate credit amount against minimum and maximum limits
-        if (credit > terms.maxCreditLine) revert ErrorsLib.MaxCreditLineExceeded();
-        if (credit < terms.minCreditLine) revert ErrorsLib.MinCreditLineExceeded();
+            // Validate value verified against maximum allowed
+            if (vv[i] > terms.maxVV) revert ErrorsLib.MaxVvExceeded();
 
-        // Validate loan-to-value ratio (LTV) - credit/vv must not exceed maxLTV
-        if (credit.wDivDown(vv) > terms.maxLTV) revert ErrorsLib.MaxLtvExceeded();
+            // Validate credit amount against minimum and maximum limits
+            if (credit[i] > terms.maxCreditLine) revert ErrorsLib.MaxCreditLineExceeded();
+            if (credit[i] < terms.minCreditLine) revert ErrorsLib.MinCreditLineExceeded();
 
-        // Validate default risk premium against both contract and protocol limits
-        if (drp > MAX_DRP || drp > terms.maxDRP) revert ErrorsLib.MaxDrpExceeded();
+            // Validate loan-to-value ratio (LTV) - credit/vv must not exceed maxLTV
+            if (credit[i].wDivDown(vv[i]) > terms.maxLTV) revert ErrorsLib.MaxLtvExceeded();
 
-        // Set the credit line in the main Morpho contract
-        IMorphoCredit(MORPHO).setCreditLine(id, borrower, credit, drp);
+            // Validate default risk premium against both contract and protocol limits
+            if (drp[i] > MAX_DRP || drp[i] > terms.maxDRP) revert ErrorsLib.MaxDrpExceeded();
+
+            // Set the credit line in the main Morpho contract
+            IMorphoCredit(MORPHO).setCreditLine(ids[i], borrowers[i], credit[i], drp[i]);
+        }
     }
 
     /// @notice Close a payment cycle and create it on-chain retroactively
