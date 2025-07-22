@@ -6,7 +6,9 @@
 
 3Jane is a credit-based money market built on top of Morpho Blue that provides unsecured credit lines underwritten against DeFi assets and FICO credit scores. 3Jane provides the following augmentations on top of the base Morpho functionality:
 1. Dynamic risk-based pricing: interest rates per user are the sum of the a) base variable rate on the morpho utilization curve b) fixed default credit risk premium assigned on a per-user basis.
-2. Repayment schedules: liquidations are replaced by monthly repayments a user must perform in order to be considered healthy, past which point they are considered delinquent or even in default which adds an additional penalty interest rate. The protocol may in real-time mark down the position to reflect the recovery rate (which may be less than the amount borrowed). If funds are considered non-recoverable, the debt may be written off via settle which may or may not be covered by the insurance fund.
+2. Repayment schedules: liquidations are replaced by monthly repayments a user must perform in order to be considered healthy, past which point they are considered delinquent or even in default which adds an additional penalty interest rate. 
+3. Collateral: supply/withdraw collateral replaced with permissioned access control role that can directly set a user's collateral mapping based on offchain underwriting of DeFi assets, effectively abstracting away the notion of "unsecured credit" and allowing people to borrow the loan token.
+4. Markdown: the protocol may in real-time mark down delinquent/defaulted positions to reflect the recovery rate (which may be less than the amount borrowed). If funds are considered non-recoverable, the debt may be written off via settle which may or may not be covered by the insurance fund.
 
 Read the whitepaper for more: https://www.3jane.xyz/pdf/whitepaper.pdf
 
