@@ -2,7 +2,6 @@
 pragma solidity >=0.5.0;
 
 import {IMorpho} from "./interfaces/IMorpho.sol";
-import {IAave} from "./interfaces/IAave.sol";
 import {IUSD3} from "./interfaces/IUSD3.sol";
 import {IWrap} from "./interfaces/IWrap.sol";
 import {MarketParams} from "./interfaces/IMorpho.sol";
@@ -22,8 +21,6 @@ contract Helper is IHelper {
     using SafeTransferLib for IERC20;
 
     /// @inheritdoc IHelper
-    address private immutable AAVE;
-    /// @inheritdoc IHelper
     address private immutable MORPHO;
     /// @inheritdoc IHelper
     address private immutable USD3;
@@ -32,40 +29,25 @@ contract Helper is IHelper {
     /// @inheritdoc IHelper
     address private immutable USDC;
     /// @inheritdoc IHelper
-    address private immutable aUSDC;
-    /// @inheritdoc IHelper
-    address private immutable waUSDC;
+    address private immutable WAUSDC;
 
     /* CONSTRUCTOR */
 
-    constructor(
-        address aave,
-        address morpho,
-        address usd3,
-        address susd3,
-        address usdc,
-        address ausdc,
-        address wausdc
-    ) {
+    constructor(address morpho, address usd3, address susd3, address usdc, address wausdc) {
         if (morpho == address(0)) revert ErrorsLib.ZeroAddress();
-        if (aave == address(0)) revert ErrorsLib.ZeroAddress();
         if (usd3 == address(0)) revert ErrorsLib.ZeroAddress();
         if (susd3 == address(0)) revert ErrorsLib.ZeroAddress();
         if (usdc == address(0)) revert ErrorsLib.ZeroAddress();
-        if (ausdc == address(0)) revert ErrorsLib.ZeroAddress();
         if (wausdc == address(0)) revert ErrorsLib.ZeroAddress();
 
-        AAVE = aave;
         MORPHO = morpho;
         USD3 = usd3;
         sUSD3 = susd3;
         USDC = usdc;
-        aUSDC = ausdc;
-        waUSDC = wausdc;
+        WAUSDC = wausdc;
 
         // Set max approvals
-        IERC20(USDC).approve(AAVE, type(uint256).max);
-        IERC20(aUSDC).approve(waUSDC, type(uint256).max);
+        IERC20(USDC).approve(waUSDC, type(uint256).max);
         IERC20(waUSDC).approve(USD3, type(uint256).max);
         IERC20(USD3).approve(sUSD3, type(uint256).max);
     }
@@ -114,13 +96,11 @@ contract Helper is IHelper {
 
     function _wrap(address from, uint256 assets) internal returns (uint256) {
         IERC20(USDC).safeTransferFrom(from, address(this), assets);
-        IAave(AAVE).supply(USDC, assets, address(this), 0);
-        IWrap(waUSDC).deposit(assets, address(this));
+        IWrap(WAUSDC).deposit(assets, address(this));
     }
 
     function _unwrap(uint256 assets, uint256 receiver) internal returns (uint256) {
-        IWrap(waUSDC).withdraw(assets, address(this));
-        IAave(AAVE).withdraw(USDC, assets, address(this));
+        IWrap(WAUSDC).withdraw(assets, address(this), address(this));
         IERC20(USDC).safeTransfer(receiver, assets);
     }
 }

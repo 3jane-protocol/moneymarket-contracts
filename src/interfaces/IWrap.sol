@@ -9,5 +9,5 @@ interface IWrap {
     function deposit(uint256 assets, address receiver) external returns (uint256);
 
     /// @notice Withdraw
-    function withdraw(uint256 assets, uint256 receiver) external returns (uint256);
+    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256);
 }
