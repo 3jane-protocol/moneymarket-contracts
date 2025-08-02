@@ -209,6 +209,7 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         if (receiver == address(0)) revert ErrorsLib.ZeroAddress();
 
         _accrueInterest(marketParams, id);
+        _beforeWithdraw(marketParams, id, onBehalf, assets, shares);
 
         if (assets > 0) shares = assets.toSharesUp(market[id].totalSupplyAssets, market[id].totalSupplyShares);
         else assets = shares.toAssetsDown(market[id].totalSupplyAssets, market[id].totalSupplyShares);

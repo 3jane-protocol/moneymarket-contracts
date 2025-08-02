@@ -571,6 +571,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @inheritdoc Morpho
+    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
+        if (msg.sender != onBehalf) revert ErrorsLib.NotOnBehalf();
+    }
+
+    /// @inheritdoc Morpho
     function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
         if (msg.sender != helper) revert ErrorsLib.NotHelper();
         if (protocolConfig.getIsPaused() > 0) revert ErrorsLib.Paused();
