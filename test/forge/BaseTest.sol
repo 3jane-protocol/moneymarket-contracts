@@ -9,6 +9,7 @@ import "../../src/interfaces/IMorphoCallbacks.sol";
 import {IrmMock} from "../../src/mocks/IrmMock.sol";
 import {ERC20Mock} from "../../src/mocks/ERC20Mock.sol";
 import {OracleMock} from "../../src/mocks/OracleMock.sol";
+import {MorphoCreditMock} from "../../src/mocks/MorphoCreditMock.sol";
 
 import "../../src/Morpho.sol";
 import "../../src/MorphoCredit.sol";
@@ -107,7 +108,7 @@ contract BaseTest is Test {
         FEE_RECIPIENT = makeAddr("FeeRecipient");
 
         // Deploy implementation
-        MorphoCredit morphoImpl = new MorphoCredit(address(1));
+        MorphoCredit morphoImpl = new MorphoCreditMock(address(1));
 
         // Deploy proxy admin (owned by PROXY_ADMIN_OWNER, separate from Morpho owner)
         proxyAdmin = new ProxyAdmin(PROXY_ADMIN_OWNER);

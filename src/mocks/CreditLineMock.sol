@@ -26,12 +26,10 @@ contract CreditLineMock {
     }
 
     function setMm(address newMm) external {
-        require(msg.sender == owner, "NOT_OWNER");
         mm = newMm;
     }
 
     function setOwner(address newOwner) external {
-        require(msg.sender == owner, "NOT_OWNER");
         owner = newOwner;
     }
 }
