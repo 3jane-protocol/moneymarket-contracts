@@ -107,7 +107,7 @@ contract BaseTest is Test {
         FEE_RECIPIENT = makeAddr("FeeRecipient");
 
         // Deploy implementation
-        MorphoCredit morphoImpl = new MorphoCredit();
+        MorphoCredit morphoImpl = new MorphoCredit(address(1));
 
         // Deploy proxy admin (owned by PROXY_ADMIN_OWNER, separate from Morpho owner)
         proxyAdmin = new ProxyAdmin(PROXY_ADMIN_OWNER);

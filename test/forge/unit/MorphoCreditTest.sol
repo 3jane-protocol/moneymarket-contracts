@@ -46,6 +46,7 @@ contract MorphoCreditTest is Test {
 
     address public helper;
     address public usd3;
+    address public protocolConfig;
 
     function setUp() public {
         // Setup accounts
@@ -55,9 +56,9 @@ contract MorphoCreditTest is Test {
         feeRecipient = makeAddr("feeRecipient");
         helper = makeAddr("helper");
         usd3 = makeAddr("usd3");
-
+        protocolConfig = makeAddr("protocolConfig");
         // Deploy contracts through proxy
-        MorphoCredit morphoImpl = new MorphoCredit();
+        MorphoCredit morphoImpl = new MorphoCredit(protocolConfig);
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
             address(morphoImpl),
             address(this), // Test contract acts as admin

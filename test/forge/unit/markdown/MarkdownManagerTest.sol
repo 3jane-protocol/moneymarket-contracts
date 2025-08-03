@@ -331,7 +331,7 @@ contract MarkdownManagerTest is BaseTest {
 
 /// @notice Mock markdown manager that always returns false for isValidForMarket
 contract InvalidMarkdownManager is IMarkdownManager {
-    function calculateMarkdown(uint256, uint256) external pure returns (uint256) {
+    function calculateMarkdown(address, uint256, uint256) external pure returns (uint256) {
         return 0;
     }
 
@@ -346,7 +346,7 @@ contract InvalidMarkdownManager is IMarkdownManager {
 
 /// @notice Mock markdown manager that always reverts
 contract RevertingMarkdownManager is IMarkdownManager {
-    function calculateMarkdown(uint256, uint256) external pure returns (uint256) {
+    function calculateMarkdown(address, uint256, uint256) external pure returns (uint256) {
         revert("Markdown calculation failed");
     }
 

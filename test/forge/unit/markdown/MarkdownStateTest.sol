@@ -6,13 +6,7 @@ import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
-import {
-    Market,
-    MarkdownState,
-    RepaymentStatus,
-    MarketCreditTerms,
-    PaymentCycle
-} from "../../../../src/interfaces/IMorpho.sol";
+import {Market, MarkdownState, RepaymentStatus, PaymentCycle} from "../../../../src/interfaces/IMorpho.sol";
 
 /// @title MarkdownStateTest
 /// @notice Tests for markdown state management including default timestamp tracking and state transitions

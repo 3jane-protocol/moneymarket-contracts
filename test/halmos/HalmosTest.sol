@@ -43,7 +43,7 @@ contract HalmosTest is SymTest, Test {
         owner = address(0x1234); // Use fixed address instead of symbolic
 
         // For Halmos, deploy through proxy like other tests
-        MorphoCredit morphoImpl = new MorphoCredit();
+        MorphoCredit morphoImpl = new MorphoCredit(address(1));
 
         // Deploy minimal proxy setup for Halmos
         ProxyAdmin proxyAdmin = new ProxyAdmin(owner);
