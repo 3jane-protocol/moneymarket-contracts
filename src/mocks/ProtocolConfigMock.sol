@@ -15,12 +15,10 @@ contract ProtocolConfigMock {
     }
 
     function setPaused(uint256 _paused) external {
-        require(msg.sender == owner, "NOT_OWNER");
         isPaused = _paused;
     }
 
     function setOwner(address newOwner) external {
-        require(msg.sender == owner, "NOT_OWNER");
         owner = newOwner;
     }
 }

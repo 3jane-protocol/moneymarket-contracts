@@ -575,18 +575,23 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc Morpho
     function _beforeSupply(MarketParams memory, Id id, address onBehalf, uint256, uint256, bytes calldata)
         internal
+        virtual
         override
     {
         if (msg.sender != usd3) revert ErrorsLib.NotUsd3();
     }
 
     /// @inheritdoc Morpho
-    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
+    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256)
+        internal
+        virtual
+        override
+    {
         if (msg.sender != usd3) revert ErrorsLib.NotUsd3();
     }
 
     /// @inheritdoc Morpho
-    function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
+    function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal virtual override {
         if (msg.sender != helper) revert ErrorsLib.NotHelper();
         if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
 
@@ -601,7 +606,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @dev Accrues premium before tracking payment. During grace period, only base + premium
     /// accrue (no penalty), allowing borrowers to clear obligations without penalty.
     /// During delinquent/default, penalty also accrues before payment is tracked.
-    function _beforeRepay(MarketParams memory, Id id, address onBehalf, uint256 assets, uint256) internal override {
+    function _beforeRepay(MarketParams memory, Id id, address onBehalf, uint256 assets, uint256)
+        internal
+        virtual
+        override
+    {
         // Accrue premium (including penalty if past grace period)
         _accrueBorrowerPremium(id, onBehalf);
         _updateBorrowerMarkdown(id, onBehalf); // TODO: decide whether to remove
@@ -611,12 +620,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @inheritdoc Morpho
-    function _afterBorrow(MarketParams memory, Id id, address onBehalf) internal override {
+    function _afterBorrow(MarketParams memory, Id id, address onBehalf) internal virtual override {
         _snapshotBorrowerPosition(id, onBehalf);
     }
 
     /// @inheritdoc Morpho
-    function _afterRepay(MarketParams memory, Id id, address onBehalf, uint256) internal override {
+    function _afterRepay(MarketParams memory, Id id, address onBehalf, uint256) internal virtual override {
         _snapshotBorrowerPosition(id, onBehalf);
         _updateBorrowerMarkdown(id, onBehalf);
     }

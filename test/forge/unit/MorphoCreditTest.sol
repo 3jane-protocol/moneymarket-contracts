@@ -55,8 +55,6 @@ contract MorphoCreditTest is Test {
         borrower = makeAddr("borrower");
         supplier = makeAddr("supplier");
         feeRecipient = makeAddr("feeRecipient");
-        helper = makeAddr("helper");
-        usd3 = makeAddr("usd3");
 
         // Deploy credit line mock
         creditLine = new CreditLineMock(address(morpho));
@@ -116,9 +114,9 @@ contract MorphoCreditTest is Test {
         collateralToken.approve(address(morpho), type(uint256).max);
 
         vm.prank(owner);
-        MorphoCredit(address(morpho)).setHelper(helper);
+        MorphoCredit(address(morpho)).setHelper(borrower);
         vm.prank(owner);
-        MorphoCredit(address(morpho)).setUsd3(usd3);
+        MorphoCredit(address(morpho)).setUsd3(supplier);
 
         // Verify that helper, usd3, and protocolConfig were set properly
         assertEq(MorphoCredit(address(morpho)).helper(), helper);
@@ -144,7 +142,6 @@ contract MorphoCreditTest is Test {
         loanToken.approve(address(morpho), supplyAmount);
 
         // Pause the protocol
-        vm.prank(owner);
         protocolConfig.setPaused(1);
 
         vm.expectRevert(ErrorsLib.Paused.selector);

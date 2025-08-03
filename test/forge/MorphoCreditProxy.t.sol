@@ -7,6 +7,7 @@ import {
     ITransparentUpgradeableProxy
 } from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {MorphoCreditMock} from "../../src/mocks/MorphoCreditMock.sol";
 import {MorphoCredit} from "../../src/MorphoCredit.sol";
 import {MarketParams, Id} from "../../src/interfaces/IMorpho.sol";
 import {MorphoStorageLib} from "../../src/libraries/periphery/MorphoStorageLib.sol";
@@ -46,7 +47,7 @@ contract MorphoCreditProxyTest is Test {
         irm = new IrmMock();
 
         // Deploy implementation
-        implementation = new MorphoCredit(address(1));
+        implementation = new MorphoCreditMock(address(1));
 
         // Deploy ProxyAdmin separately
         proxyAdmin = new ProxyAdmin(admin);
@@ -56,7 +57,7 @@ contract MorphoCreditProxyTest is Test {
         proxy = new TransparentUpgradeableProxy(address(implementation), address(proxyAdmin), initData);
 
         // Cast proxy to MorphoCredit
-        morphoCredit = MorphoCredit(address(proxy));
+        morphoCredit = MorphoCreditMock(address(proxy));
 
         // Setup market params
         marketParams = MarketParams({
@@ -93,7 +94,7 @@ contract MorphoCreditProxyTest is Test {
     }
 
     function testImplementationCannotBeInitialized() public {
-        MorphoCredit impl = new MorphoCredit(address(1));
+        MorphoCredit impl = new MorphoCreditMock(address(1));
         vm.expectRevert(bytes4(0xf92ee8a9)); // Initializable.InvalidInitialization()
         impl.initialize(owner);
     }
@@ -193,7 +194,7 @@ contract MorphoCreditProxyTest is Test {
 
     function testDirectImplementationCallsRevert() public {
         // Try to call implementation directly - should revert because it's disabled
-        MorphoCredit directImpl = new MorphoCredit(address(1));
+        MorphoCredit directImpl = new MorphoCreditMock(address(1));
 
         vm.expectRevert(bytes4(0xf92ee8a9)); // Initializable.InvalidInitialization()
         directImpl.initialize(owner);

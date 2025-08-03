@@ -8,7 +8,7 @@ contract OnlyOwnerIntegrationTest is BaseTest {
     using MorphoLib for IMorpho;
 
     function testDeployWithAddressZero() public {
-        MorphoCredit impl = new MorphoCredit(address(1));
+        MorphoCredit impl = new MorphoCreditMock(address(1));
 
         // Try to deploy proxy with zero address owner
         bytes memory initData = abi.encodeWithSelector(MorphoCredit.initialize.selector, address(0));
@@ -17,7 +17,7 @@ contract OnlyOwnerIntegrationTest is BaseTest {
     }
 
     function testDeployEmitOwner() public {
-        MorphoCredit impl = new MorphoCredit(address(1));
+        MorphoCredit impl = new MorphoCreditMock(address(1));
 
         // Deploy proxy and expect SetOwner event
         bytes memory initData = abi.encodeWithSelector(MorphoCredit.initialize.selector, OWNER);
