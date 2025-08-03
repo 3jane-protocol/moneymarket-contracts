@@ -18,9 +18,6 @@ library ErrorsLib {
     /// @notice Thrown when the caller is not the market's usd3.
     error NotUsd3();
 
-    /// @notice Thrown when the caller is not on behalf of the borrower.
-    error NotOnBehalf();
-
     /// @notice Thrown when the caller is not the owner or ozd.
     error NotOwnerOrOzd();
 
