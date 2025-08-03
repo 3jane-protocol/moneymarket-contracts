@@ -578,6 +578,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         override
     {
         if (msg.sender != usd3) revert ErrorsLib.NotUsd3();
+        if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
     }
 
     /// @inheritdoc Morpho
