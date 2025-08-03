@@ -21,15 +21,15 @@ contract Helper is IHelper {
     using SafeTransferLib for IERC20;
 
     /// @inheritdoc IHelper
-    address private immutable MORPHO;
+    address public immutable MORPHO;
     /// @inheritdoc IHelper
-    address private immutable USD3;
+    address public immutable USD3;
     /// @inheritdoc IHelper
-    address private immutable sUSD3;
+    address public immutable sUSD3;
     /// @inheritdoc IHelper
-    address private immutable USDC;
+    address public immutable USDC;
     /// @inheritdoc IHelper
-    address private immutable WAUSDC;
+    address public immutable WAUSDC;
 
     /* CONSTRUCTOR */
 
@@ -47,8 +47,8 @@ contract Helper is IHelper {
         WAUSDC = wausdc;
 
         // Set max approvals
-        IERC20(USDC).approve(waUSDC, type(uint256).max);
-        IERC20(waUSDC).approve(USD3, type(uint256).max);
+        IERC20(USDC).approve(WAUSDC, type(uint256).max);
+        IERC20(WAUSDC).approve(USD3, type(uint256).max);
         IERC20(USD3).approve(sUSD3, type(uint256).max);
     }
 
@@ -67,7 +67,7 @@ contract Helper is IHelper {
         IERC20(USD3).safeTransferFrom(msg.sender, address(this), shares);
 
         uint256 assets = IUSD3(USD3).redeem(shares, address(this), owner);
-        _unwrap(assets, receiver);
+        _unwrap(receiver, assets);
         return assets;
     }
 
@@ -77,7 +77,7 @@ contract Helper is IHelper {
         returns (uint256, uint256)
     {
         (assets, shares) = IMorpho(MORPHO).borrow(marketParams, assets, shares, msg.sender, address(this));
-        _unwrap(assets, msg.sender);
+        _unwrap(msg.sender, assets);
         return (assets, shares);
     }
 
@@ -94,12 +94,12 @@ contract Helper is IHelper {
         return (assets, shares);
     }
 
-    function _wrap(address from, uint256 assets) internal returns (uint256) {
+    function _wrap(address from, uint256 assets) internal {
         IERC20(USDC).safeTransferFrom(from, address(this), assets);
         IWrap(WAUSDC).deposit(assets, address(this));
     }
 
-    function _unwrap(uint256 assets, uint256 receiver) internal returns (uint256) {
+    function _unwrap(address receiver, uint256 assets) internal {
         IWrap(WAUSDC).withdraw(assets, address(this), address(this));
         IERC20(USDC).safeTransfer(receiver, assets);
     }

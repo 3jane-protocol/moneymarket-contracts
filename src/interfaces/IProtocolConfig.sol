@@ -1,35 +1,35 @@
 // SPDX-License-Identifier: GPL-20later
-pragma solidity 0.8.22;
+pragma solidity ^0.8.18;
 /// @notice Interface for the ProtocolConfig contract
 
+// Struct to hold market parameters
+struct MarketConfig {
+    uint256 gracePeriod; // Duration of grace period after cycle end
+    uint256 delinquencyPeriod; // Duration of delinquency period before default
+    uint256 minBorrow; // Minimum outstanding loan balance to prevent dust
+    uint256 irp; // Penalty rate per second for delinquent borrowers
+}
+
+// Struct to hold credit line parameters
+struct CreditLineConfig {
+    uint256 maxLTV;
+    uint256 maxVV;
+    uint256 maxCreditLine;
+    uint256 minCreditLine;
+    uint256 maxDRP;
+}
+
+// Struct to hold IRM parameters
+struct IRMConfig {
+    uint256 curveSteepness;
+    uint256 adjustmentSpeed;
+    uint256 targetUtilization;
+    uint256 initialRateAtTarget;
+    uint256 minRateAtTarget;
+    uint256 maxRateAtTarget;
+}
+
 interface IProtocolConfig {
-    // Struct to hold market parameters
-    struct MarketConfig {
-        uint256 gracePeriod; // Duration of grace period after cycle end
-        uint256 delinquencyPeriod; // Duration of delinquency period before default
-        uint256 minBorrow; // Minimum outstanding loan balance to prevent dust
-        uint256 irp; // Penalty rate per second for delinquent borrowers
-    }
-
-    // Struct to hold credit line parameters
-    struct CreditLineConfig {
-        uint256 maxLTV;
-        uint256 maxVV;
-        uint256 maxCreditLine;
-        uint256 minCreditLine;
-        uint256 maxDRP;
-    }
-
-    // Struct to hold IRM parameters
-    struct IRMConfig {
-        uint256 curveSteepness;
-        uint256 adjustmentSpeed;
-        uint256 targetUtilization;
-        uint256 initialRateAtTarget;
-        uint256 minRateAtTarget;
-        uint256 maxRateAtTarget;
-    }
-
     /// @dev Initialize the contract with the owner
     /// @param newOwner The address of the new owner
     function initialize(address newOwner) external;

@@ -9,7 +9,7 @@ contract MarkdownManager {
     /// @return markdownAmount The amount to reduce from the face value
     function calculateMarkdown(address borrower, uint256 borrowAmount, uint256 timeInDefault)
         external
-        view
+        pure
         returns (uint256 markdownAmount)
     {
         return 0;
@@ -18,7 +18,7 @@ contract MarkdownManager {
     /// @notice Get the markdown multiplier for a given time in default
     /// @param timeInDefault The duration in seconds since the borrower entered default
     /// @return multiplier The value multiplier (1e18 = 100% value, 0 = 0% value)
-    function getMarkdownMultiplier(uint256 timeInDefault) external view returns (uint256 multiplier) {
+    function getMarkdownMultiplier(uint256 timeInDefault) external pure returns (uint256 multiplier) {
         return 0;
     }
 }

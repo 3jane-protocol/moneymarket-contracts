@@ -59,7 +59,7 @@ library MorphoCreditLib {
             address manager = getMarkdownManager(morpho, id);
             if (manager != address(0) && defaultStartTime > 0 && borrowAssets > 0) {
                 uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
-                currentMarkdown = IMarkdownManager(manager).calculateMarkdown(borrowAssets, timeInDefault);
+                currentMarkdown = IMarkdownManager(manager).calculateMarkdown(borrower, borrowAssets, timeInDefault);
             }
         }
     }

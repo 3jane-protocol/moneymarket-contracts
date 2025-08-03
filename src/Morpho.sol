@@ -69,8 +69,8 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
     constructor() {
         _disableInitializers();
     }
-    /// @param newOwner The initial owner of the contract.
 
+    /// @param newOwner The initial owner of the contract.
     function __Morpho_init(address newOwner) internal onlyInitializing {
         if (newOwner == address(0)) revert ErrorsLib.ZeroAddress();
 
@@ -408,6 +408,17 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         uint256 shares,
         bytes calldata data
     ) internal virtual {}
+
+    /// @dev Hook called before withdraw operations to allow for particular pre-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param onBehalf The address that will receive the debt.
+    /// @param assets The amount of assets to borrow.
+    /// @param shares The amount of shares to borrow.
+    function _beforeWithdraw(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
+        internal
+        virtual
+    {}
 
     /// @dev Hook called before borrow operations to allow for premium accrual or other pre-processing.
     /// @param marketParams The market parameters.

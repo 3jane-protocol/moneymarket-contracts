@@ -9,10 +9,6 @@ import {Id} from "./IMorpho.sol";
 /// @notice Interface that credit line used by Morpho must implement.
 /// @dev It is the user's responsibility to select markets with safe credit line.
 interface ICreditLine {
-    /// @notice The owner of the contract.
-    /// @dev It has the power to change the owner.
-    function owner() external view returns (address);
-
     /// @notice The defender
     function ozd() external view returns (address);
 
@@ -20,15 +16,10 @@ interface ICreditLine {
     function prover() external view returns (address);
 
     /// @notice The morpho contract.
-    function morpho() external view returns (address);
+    function MORPHO() external view returns (address);
 
     /// @notice The markdown manager
     function mm() external view returns (address);
-
-    /// @notice Sets `newOwner` as `owner` of the contract.
-    /// @dev Warning: No two-step transfer ownership.
-    /// @dev Warning: The owner can be set to the zero address.
-    function setOwner(address newOwner) external;
 
     /// @notice Sets `newOzd` as `ozd` of the contract.
     /// @dev Warning: No two-step transfer ownership.
@@ -40,6 +31,17 @@ interface ICreditLine {
     /// @dev Warning: The prover can be set to the zero address.
     function setProver(address newProver) external;
 
+    /// @notice Sets `newMm` as `mm` of the contract.
+    /// @dev Warning: No two-step transfer ownership.
+    /// @dev Warning: The mm can be set to the zero address.
+    function setMm(address newMm) external;
+
     /// @notice Sets credit line
-    function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external;
+    function setCreditLines(
+        Id[] calldata ids,
+        address[] calldata borrowers,
+        uint256[] calldata vv,
+        uint256[] calldata credit,
+        uint128[] calldata drp
+    ) external;
 }

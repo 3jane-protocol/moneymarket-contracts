@@ -25,6 +25,9 @@ contract MarkdownManagerMock is IMarkdownManager {
     /// @notice Seconds in a day
     uint256 internal constant SECONDS_PER_DAY = 86400;
 
+    /// @notice Mapping from borrower address to custom markdown amount
+    mapping(address => uint256) public markdowns;
+
     /// @notice Set the daily markdown rate
     /// @param _dailyMarkdownBps New daily markdown rate in basis points
     function setDailyMarkdownRate(uint256 _dailyMarkdownBps) external {
@@ -40,11 +43,15 @@ contract MarkdownManagerMock is IMarkdownManager {
     }
 
     /// @inheritdoc IMarkdownManager
-    function calculateMarkdown(uint256 borrowAmount, uint256 timeInDefault)
+    function calculateMarkdown(address borrower, uint256 borrowAmount, uint256 timeInDefault)
         external
         view
         returns (uint256 markdownAmount)
     {
+        if (markdowns[borrower] > 0) {
+            return markdowns[borrower];
+        }
+
         if (timeInDefault == 0) return 0;
 
         uint256 daysInDefault = timeInDefault / SECONDS_PER_DAY;
