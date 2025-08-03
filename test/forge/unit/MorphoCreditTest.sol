@@ -14,6 +14,7 @@ import {ERC20Mock} from "../../../src/mocks/ERC20Mock.sol";
 import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
+import {ProtocolConfigMock} from "../../../src/mocks/ProtocolConfigMock.sol";
 import {TransparentUpgradeableProxy} from
     "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
@@ -28,6 +29,7 @@ contract MorphoCreditTest is Test {
     address public supplier;
     address public feeRecipient;
     CreditLineMock public creditLine;
+    ProtocolConfigMock public protocolConfig;
 
     ERC20Mock public loanToken;
     ERC20Mock public collateralToken;
@@ -46,7 +48,6 @@ contract MorphoCreditTest is Test {
 
     address public helper;
     address public usd3;
-    address public protocolConfig;
 
     function setUp() public {
         // Setup accounts
@@ -56,18 +57,21 @@ contract MorphoCreditTest is Test {
         feeRecipient = makeAddr("feeRecipient");
         helper = makeAddr("helper");
         usd3 = makeAddr("usd3");
-        protocolConfig = makeAddr("protocolConfig");
+
+        // Deploy credit line mock
+        creditLine = new CreditLineMock(address(morpho));
+
+        // Deploy protocol config mock
+        protocolConfig = new ProtocolConfigMock();
+
         // Deploy contracts through proxy
-        MorphoCredit morphoImpl = new MorphoCredit(protocolConfig);
+        MorphoCredit morphoImpl = new MorphoCredit(address(protocolConfig));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
             address(morphoImpl),
             address(this), // Test contract acts as admin
             abi.encodeWithSelector(MorphoCredit.initialize.selector, owner)
         );
         morpho = IMorpho(address(proxy));
-
-        // Deploy credit line mock
-        creditLine = new CreditLineMock(address(morpho));
 
         // Setup tokens
         loanToken = new ERC20Mock();
@@ -128,6 +132,21 @@ contract MorphoCreditTest is Test {
         morpho.supply(marketParams, supplyAmount, 0, borrower, "");
     }
 
+    function testSupplyIsPausedReverts() public {
+        uint256 supplyAmount = 1000e18;
+        loanToken.setBalance(usd3, supplyAmount);
+        vm.prank(usd3);
+        loanToken.approve(address(morpho), supplyAmount);
+
+        // Pause the protocol
+        vm.prank(owner);
+        protocolConfig.setPaused(1);
+
+        vm.expectRevert(ErrorsLib.Paused.selector);
+        vm.prank(usd3);
+        morpho.supply(marketParams, supplyAmount, 0, borrower, "");
+    }
+
     function testSupplyWithUsd3Succeeds() public {
         uint256 supplyAmount = 1000e18;
         loanToken.setBalance(usd3, supplyAmount);
@@ -149,6 +168,25 @@ contract MorphoCreditTest is Test {
         // Try to withdraw as non-usd3
         vm.expectRevert(ErrorsLib.NotUsd3.selector);
         vm.prank(borrower);
+        morpho.withdraw(marketParams, 100e18, 0, borrower, borrower);
+    }
+
+    function testWithdrawIsPausedReverts() public {
+        // First supply as usd3 when not paused
+        uint256 supplyAmount = 1000e18;
+        loanToken.setBalance(usd3, supplyAmount);
+        vm.prank(usd3);
+        loanToken.approve(address(morpho), supplyAmount);
+        vm.prank(usd3);
+        morpho.supply(marketParams, supplyAmount, 0, borrower, "");
+
+        // Pause the protocol
+        vm.prank(owner);
+        protocolConfig.setPaused(1);
+
+        // Try to withdraw as usd3 when paused
+        vm.expectRevert(ErrorsLib.Paused.selector);
+        vm.prank(usd3);
         morpho.withdraw(marketParams, 100e18, 0, borrower, borrower);
     }
 
@@ -176,6 +214,26 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, 1000e18, 0);
         vm.expectRevert(ErrorsLib.NotHelper.selector);
         vm.prank(borrower);
+        morpho.borrow(marketParams, 100e18, 0, borrower, borrower);
+    }
+
+    function testBorrowIsPausedReverts() public {
+        // Setup supply and credit line
+        uint256 supplyAmount = 1000e18;
+        loanToken.setBalance(usd3, supplyAmount);
+        vm.prank(usd3);
+        loanToken.approve(address(morpho), supplyAmount);
+        vm.prank(usd3);
+        morpho.supply(marketParams, supplyAmount, 0, borrower, "");
+        vm.prank(address(creditLine));
+        MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, 1000e18, 0);
+
+        // Pause the protocol
+        vm.prank(owner);
+        protocolConfig.setPaused(1);
+
+        vm.expectRevert(ErrorsLib.Paused.selector);
+        vm.prank(helper);
         morpho.borrow(marketParams, 100e18, 0, borrower, borrower);
     }
 
