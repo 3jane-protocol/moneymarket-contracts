@@ -119,6 +119,11 @@ contract MorphoCreditTest is Test {
         MorphoCredit(address(morpho)).setHelper(helper);
         vm.prank(owner);
         MorphoCredit(address(morpho)).setUsd3(usd3);
+
+        // Verify that helper, usd3, and protocolConfig were set properly
+        assertEq(MorphoCredit(address(morpho)).helper(), helper);
+        assertEq(MorphoCredit(address(morpho)).usd3(), usd3);
+        assertEq(MorphoCredit(address(morpho)).protocolConfig(), address(protocolConfig));
     }
 
     // --- AUTHORIZATION TESTS ---

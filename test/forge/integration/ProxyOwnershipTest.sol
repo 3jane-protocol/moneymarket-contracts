@@ -26,7 +26,7 @@ contract ProxyOwnershipTest is BaseTest {
 
     function testMorphoOwnerCannotUpgradeProxy() public {
         // OWNER (Morpho owner) should not be able to upgrade the proxy
-        MorphoCredit newImpl = new MorphoCredit();
+        MorphoCredit newImpl = new MorphoCredit(address(1));
 
         vm.prank(OWNER);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, OWNER));
@@ -39,7 +39,7 @@ contract ProxyOwnershipTest is BaseTest {
 
         // Verify that a random user cannot call ProxyAdmin functions
         address randomUser = makeAddr("RandomUser");
-        MorphoCredit newImpl = new MorphoCredit();
+        MorphoCredit newImpl = new MorphoCredit(address(1));
 
         vm.prank(randomUser);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, randomUser));

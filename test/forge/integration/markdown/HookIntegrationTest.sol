@@ -44,7 +44,7 @@ contract HookIntegrationTest is BaseTest {
 
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
+        creditLine.setMm(address(markdownManager));
         vm.stopPrank();
 
         // Setup initial supply
@@ -83,7 +83,7 @@ contract HookIntegrationTest is BaseTest {
         uint256 markdownBefore = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
-            markdownBefore = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+            markdownBefore = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
         }
         assertTrue(markdownBefore > 0, "Should have markdown after 5 days in default");
 
@@ -292,7 +292,7 @@ contract HookIntegrationTest is BaseTest {
         uint256 markdownInDefault = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
-            markdownInDefault = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+            markdownInDefault = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
         }
         assertTrue(markdownInDefault > 0, "Should have markdown in default");
 
@@ -349,7 +349,7 @@ contract HookIntegrationTest is BaseTest {
             uint256 markdown1 = 0;
             if (status1 == RepaymentStatus.Default && defaultTime1 > 0) {
                 uint256 timeInDefault = block.timestamp > defaultTime1 ? block.timestamp - defaultTime1 : 0;
-                markdown1 = markdownManager.calculateMarkdown(borrowAssets1, timeInDefault);
+                markdown1 = markdownManager.calculateMarkdown(borrower1, borrowAssets1, timeInDefault);
             }
             assertTrue(markdown1 > 0, "Borrower1 should have markdown");
         }

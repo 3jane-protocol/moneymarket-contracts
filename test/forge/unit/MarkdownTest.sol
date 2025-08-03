@@ -40,12 +40,13 @@ contract MarkdownTest is BaseTest {
 
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
+        creditLine.setMm(address(markdownManager));
         vm.stopPrank();
     }
 
     function testMarkdownManagerSet() public {
-        assertEq(MorphoCredit(address(morphoCredit)).markdownManager(id), address(markdownManager));
+        // Test that the markdown manager is set in the credit line
+        assertEq(creditLine.mm(), address(markdownManager));
     }
 
     function testMarkdownCalculation() public {
@@ -57,7 +58,7 @@ contract MarkdownTest is BaseTest {
 
         // Calculate markdown (10 days * 1% per day = 10%)
         uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
-        uint256 markdown = markdownManager.calculateMarkdown(borrowAmount, timeInDefault);
+        uint256 markdown = markdownManager.calculateMarkdown(BORROWER, borrowAmount, timeInDefault);
 
         assertEq(markdown, 100e18); // 10% of 1000 = 100
     }
@@ -93,7 +94,7 @@ contract MarkdownTest is BaseTest {
         uint256 currentMarkdown = 0;
         if (status == RepaymentStatus.Default && defaultStartTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
-            currentMarkdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+            currentMarkdown = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
         }
 
         assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default");

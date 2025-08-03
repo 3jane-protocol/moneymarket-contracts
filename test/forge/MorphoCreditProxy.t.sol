@@ -46,7 +46,7 @@ contract MorphoCreditProxyTest is Test {
         irm = new IrmMock();
 
         // Deploy implementation
-        implementation = new MorphoCredit();
+        implementation = new MorphoCredit(address(1));
 
         // Deploy ProxyAdmin separately
         proxyAdmin = new ProxyAdmin(admin);
@@ -93,7 +93,7 @@ contract MorphoCreditProxyTest is Test {
     }
 
     function testImplementationCannotBeInitialized() public {
-        MorphoCredit impl = new MorphoCredit();
+        MorphoCredit impl = new MorphoCredit(address(1));
         vm.expectRevert(bytes4(0xf92ee8a9)); // Initializable.InvalidInitialization()
         impl.initialize(owner);
     }
@@ -113,18 +113,21 @@ contract MorphoCreditProxyTest is Test {
 
         // Test MorphoCredit storage slots (start after Morpho base + __gap)
         assertEq(uint256(MorphoCreditStorageLib.helperSlot()), 20);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.BORROWER_PREMIUM_SLOT)), 21);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.PAYMENT_CYCLE_SLOT)), 22);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.REPAYMENT_OBLIGATION_SLOT)), 23);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.MARKDOWN_STATE_SLOT)), 24);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.MARKDOWN_MANAGER_SLOT)), 25);
+        assertEq(uint256(MorphoCreditStorageLib.protocolConfigSlot()), 21);
+        assertEq(uint256(MorphoCreditStorageLib.usd3Slot()), 22);
+        assertEq(uint256(bytes32(MorphoCreditStorageLib.BORROWER_PREMIUM_SLOT)), 23);
+        assertEq(uint256(bytes32(MorphoCreditStorageLib.PAYMENT_CYCLE_SLOT)), 24);
+        assertEq(uint256(bytes32(MorphoCreditStorageLib.REPAYMENT_OBLIGATION_SLOT)), 25);
+        assertEq(uint256(bytes32(MorphoCreditStorageLib.MARKDOWN_STATE_SLOT)), 26);
     }
 
     function testProxyStatePreservation() public {
         // Store some state
         vm.prank(owner);
         morphoCredit.setHelper(user);
+        morphoCredit.setUsd3(user);
         assertEq(morphoCredit.helper(), user);
+        assertEq(morphoCredit.usd3(), user);
 
         // Create a market and supply
         vm.startPrank(user);
@@ -135,6 +138,7 @@ contract MorphoCreditProxyTest is Test {
 
         // Check state is preserved across multiple calls
         assertEq(morphoCredit.helper(), user);
+        assertEq(morphoCredit.usd3(), user);
         assertEq(morphoCredit.owner(), owner);
         (uint256 supplyShares,,) = morphoCredit.position(id, user);
         assertTrue(supplyShares > 0);
@@ -189,7 +193,7 @@ contract MorphoCreditProxyTest is Test {
 
     function testDirectImplementationCallsRevert() public {
         // Try to call implementation directly - should revert because it's disabled
-        MorphoCredit directImpl = new MorphoCredit();
+        MorphoCredit directImpl = new MorphoCredit(address(1));
 
         vm.expectRevert(bytes4(0xf92ee8a9)); // Initializable.InvalidInitialization()
         directImpl.initialize(owner);

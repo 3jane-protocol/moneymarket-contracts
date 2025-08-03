@@ -51,7 +51,7 @@ contract DebtSettlementTest is BaseTest {
 
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
+        creditLine.setMm(address(markdownManager));
         vm.stopPrank();
 
         // Setup initial supply
@@ -239,7 +239,7 @@ contract DebtSettlementTest is BaseTest {
         uint256 markdownBefore = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
-            markdownBefore = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+            markdownBefore = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
         }
         assertTrue(markdownBefore > 0, "Should have markdown before settlement");
 
