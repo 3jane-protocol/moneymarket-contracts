@@ -14,11 +14,12 @@ library MorphoCreditStorageLib {
 
     // MorphoCredit storage starts at slot 20 (after Morpho base storage and gap)
     uint256 internal constant HELPER_SLOT = 20;
-    uint256 internal constant BORROWER_PREMIUM_SLOT = 21;
-    uint256 internal constant PAYMENT_CYCLE_SLOT = 22;
-    uint256 internal constant REPAYMENT_OBLIGATION_SLOT = 23;
-    uint256 internal constant MARKDOWN_STATE_SLOT = 24;
-    uint256 internal constant MARKDOWN_MANAGER_SLOT = 25;
+    uint256 internal constant PROTOCOL_CONFIG_SLOT = 21;
+    uint256 internal constant USD3_SLOT = 22;
+    uint256 internal constant BORROWER_PREMIUM_SLOT = 23;
+    uint256 internal constant PAYMENT_CYCLE_SLOT = 24;
+    uint256 internal constant REPAYMENT_OBLIGATION_SLOT = 25;
+    uint256 internal constant MARKDOWN_STATE_SLOT = 26;
 
     /* SLOT OFFSETS */
 
@@ -32,6 +33,14 @@ library MorphoCreditStorageLib {
 
     function helperSlot() internal pure returns (bytes32) {
         return bytes32(HELPER_SLOT);
+    }
+
+    function protocolConfigSlot() internal pure returns (bytes32) {
+        return bytes32(PROTOCOL_CONFIG_SLOT);
+    }
+
+    function usd3Slot() internal pure returns (bytes32) {
+        return bytes32(USD3_SLOT);
     }
 
     function borrowerPremiumSlot(Id id, address borrower) internal pure returns (bytes32) {
@@ -54,10 +63,6 @@ library MorphoCreditStorageLib {
 
     function markdownStateSlot(Id id, address borrower) internal pure returns (bytes32) {
         return keccak256(abi.encode(borrower, keccak256(abi.encode(id, MARKDOWN_STATE_SLOT))));
-    }
-
-    function markdownManagerSlot(Id id) internal pure returns (bytes32) {
-        return keccak256(abi.encode(id, MARKDOWN_MANAGER_SLOT));
     }
 
     // Additional slot for accessing Market.totalMarkdownAmount

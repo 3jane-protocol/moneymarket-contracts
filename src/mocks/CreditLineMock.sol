@@ -7,6 +7,7 @@ import {IMorphoCredit} from "../interfaces/IMorpho.sol";
 contract CreditLineMock {
     address public owner;
     address public morpho;
+    address public mm;
 
     mapping(address account => uint256) public creditLines;
     mapping(Id => mapping(address => uint128)) public borrowerRates;
@@ -22,6 +23,11 @@ contract CreditLineMock {
 
         // Call MorphoCredit to set the actual credit line and premium rate
         IMorphoCredit(morpho).setCreditLine(id, borrower, credit, premiumRate);
+    }
+
+    function setMm(address newMm) external {
+        require(msg.sender == owner, "NOT_OWNER");
+        mm = newMm;
     }
 
     function setOwner(address newOwner) external {
