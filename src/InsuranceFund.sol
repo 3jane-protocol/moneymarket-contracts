@@ -4,6 +4,7 @@ pragma solidity >=0.5.0;
 import {IERC20} from "./interfaces/IERC20.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {IInsuranceFund} from "./interfaces/IInsuranceFund.sol";
+import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 
 /// @title InsuranceFund
 /// @author Morpho Labs
@@ -11,6 +12,8 @@ import {IInsuranceFund} from "./interfaces/IInsuranceFund.sol";
 /// @notice This contract manages insurance fund operations for the Morpho protocol
 /// @dev Handles insurance fund transfers to the CreditLine contract
 contract InsuranceFund is IInsuranceFund {
+    using SafeTransferLib for IERC20;
+
     /// @notice Address of the CreditLine contract
     address public immutable CREDIT_LINE;
 

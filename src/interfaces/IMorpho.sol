@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
+pragma solidity ^0.8.18;
 
 type Id is bytes32;
 
@@ -106,10 +106,6 @@ interface IMorphoBase {
 
     /// @notice Whether the `lltv` is enabled.
     function isLltvEnabled(uint256 lltv) external view returns (bool);
-
-    /// @notice Whether `authorized` is authorized to modify `authorizer`'s position on all markets.
-    /// @dev Anyone is authorized to modify their own positions, regardless of this variable.
-    function isAuthorized(address authorizer, address authorized) external view returns (bool);
 
     /// @notice The `authorizer`'s current nonce. Used to prevent replay attacks with EIP-712 signatures.
     function nonce(address authorizer) external view returns (uint256);
@@ -336,12 +332,19 @@ interface IMorphoCredit {
     /// @notice The helper of the contract.
     function helper() external view returns (address);
 
+    /// @notice The usd3 contract
+    function usd3() external view returns (address);
+
     /// @notice The protocol config of the contract.
     function protocolConfig() external view returns (address);
 
     /// @notice Sets `helper` as `helper` of the contract.
     /// @param newHelper The new helper address
     function setHelper(address newHelper) external;
+
+    /// @notice Sets `usd3` as `usd3` of the contract.
+    /// @param newUsd3 The new usd3 address
+    function setUsd3(address newUsd3) external;
 
     /// @notice Sets the credit line and premium rate for a borrower
     /// @param id The market ID
@@ -436,11 +439,6 @@ interface IMorphoCredit {
     /// @param cycleId Cycle ID
     /// @return endDate The cycle end date
     function paymentCycle(Id id, uint256 cycleId) external view returns (uint256 endDate);
-
-    /// @notice Set the markdown manager for a market
-    /// @param id Market ID
-    /// @param manager Address of the markdown manager contract
-    function setMarkdownManager(Id id, address manager) external;
 
     /// @notice Settle a borrower's account by writing off all remaining debt
     /// @dev Only callable by credit line contract

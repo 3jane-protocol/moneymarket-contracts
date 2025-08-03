@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.22;
 
-import {Initializable} from "@openzeppelin/proxy/utils/Initializable.sol";
-import {Ownable} from "@openzeppelin/access/Ownable.sol";
+import {Initializable} from "../lib/openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {Ownable} from "../lib/openzeppelin/contracts/access/Ownable.sol";
 import {MarketConfig, CreditLineConfig, IRMConfig} from "./interfaces/IProtocolConfig.sol";
 
 contract ProtocolConfig is Initializable, Ownable {
@@ -39,11 +39,13 @@ contract ProtocolConfig is Initializable, Ownable {
     /// @dev Storage gap for future upgrades (20 slots).
     uint256[20] private __gap;
 
-    /// @dev Initialize the contract with the owner
-    /// @param newOwner The address of the new owner
-    function initialize(address newOwner) external initializer {
-        _transferOwnership(newOwner);
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address _owner) Ownable(_owner) {
+        _disableInitializers();
     }
+
+    /// @dev Initialize the contract with the owner
+    function initialize() external initializer {}
 
     /// @dev Set a configuration value
     /// @param key The configuration key

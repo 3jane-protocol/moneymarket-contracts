@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.18;
 
-import {Id, IMorphoCredit, MarketParams} from "./interfaces/IMorpho.sol";
+import {Id, IMorpho, IMorphoCredit, MarketParams} from "./interfaces/IMorpho.sol";
 import {ICreditLine} from "./interfaces/ICreditLine.sol";
-import {CreditLineConfig} from "./interfaces/IProtocolConfig.sol";
+import {IProtocolConfig, CreditLineConfig} from "./interfaces/IProtocolConfig.sol";
 import {IProver} from "./interfaces/IProver.sol";
 import {EventsLib} from "./libraries/EventsLib.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
@@ -41,35 +41,34 @@ contract CreditLine is ICreditLine, Ownable {
     address public insuranceFund;
 
     /// @inheritdoc ICreditLine
-    IMorphoCredit public immutable MORPHO;
+    address public immutable MORPHO;
 
     /* CONSTRUCTOR */
     /// @notice Initializes the CreditLine contract with required addresses
-    /// @param morpho Address of the main Morpho Credit contract
-    /// @param owner Address that will have owner privileges
-    /// @param ozd Address of the OZD contract for external touch
-    /// @param prover Address of the prover contract (can be address(0))
-    /// @param mm Address of the markdown manager
+    /// @param _morpho Address of the main Morpho Credit contract
+    /// @param _owner Address that will have owner privileges
+    /// @param _ozd Address of the OZD contract for external touch
+    /// @param _prover Address of the prover contract (can be address(0))
+    /// @param _mm Address of the markdown manager
     /// @dev Validates all non-zero addresses and transfers ownership to the specified owner
-    constructor(address morpho, address owner, address ozd, address mm, address prover) {
+    constructor(address _morpho, address _owner, address _ozd, address _mm, address _prover) Ownable(_owner) {
         // Validate that critical addresses are not zero
-        if (morpho == address(0)) revert ErrorsLib.ZeroAddress();
-        if (owner == address(0)) revert ErrorsLib.ZeroAddress();
-        if (ozd == address(0)) revert ErrorsLib.ZeroAddress();
-        if (mm == address(0)) revert ErrorsLib.ZeroAddress();
+        if (_morpho == address(0)) revert ErrorsLib.ZeroAddress();
+        if (_owner == address(0)) revert ErrorsLib.ZeroAddress();
+        if (_ozd == address(0)) revert ErrorsLib.ZeroAddress();
+        if (_mm == address(0)) revert ErrorsLib.ZeroAddress();
 
         // Initialize contract state
-        MORPHO = IMorphoCredit(morpho);
-        ozd = ozd;
-        prover = prover;
-        mm = mm;
-        _transferOwnership(owner);
+        MORPHO = _morpho;
+        ozd = _ozd;
+        prover = _prover;
+        mm = _mm;
     }
 
-    /// @dev Reverts if the caller is not the owner
-    /// @notice Ensures only the contract owner can execute privileged functions
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert ErrorsLib.NotOwner();
+    /// @dev Reverts if the caller is not the owner or ozd
+    /// @notice Ensures only the contract owner or ozd can execute privileged functions
+    modifier onlyOwnerOrOzd() {
+        if (msg.sender != owner() && msg.sender != ozd) revert ErrorsLib.NotOwnerOrOzd();
         _;
     }
 
@@ -117,23 +116,26 @@ contract CreditLine is ICreditLine, Ownable {
         insuranceFund = newInsuranceFund;
     }
 
+    /// @notice Sets credit lines for multiple borrowers
+    /// @param ids Array of market IDs
+    /// @param borrowers Array of borrower addresses
+    /// @param vv Array of value verified values
+    /// @param credit Array of credit amounts
+    /// @param drp Array of default risk premiums
     function setCreditLines(
         Id[] calldata ids,
         address[] calldata borrowers,
         uint256[] calldata vv,
         uint256[] calldata credit,
         uint128[] calldata drp
-    ) external {
-        // Check authorization - only owner or OZD can set credit lines
-        if (msg.sender != owner && msg.sender != ozd) revert ErrorsLib.NotOwnerOrOzd();
-
+    ) external onlyOwnerOrOzd {
         uint256 len = ids.length;
         if (borrowers.length != len || vv.length != len || credit.length != len || drp.length != len) {
             revert ErrorsLib.InvalidArrayLength();
         }
 
         // Get protocol configuration for validation
-        CreditLineConfig memory terms = IProtocolConfig(MORPHO.protocolConfig()).getCreditLineConfig();
+        CreditLineConfig memory terms = IProtocolConfig(IMorphoCredit(MORPHO).protocolConfig()).getCreditLineConfig();
 
         for (uint256 i = 0; i < len; ++i) {
             // Verify the credit line parameters if a prover is set
@@ -174,9 +176,7 @@ contract CreditLine is ICreditLine, Ownable {
         address[] calldata borrowers,
         uint256[] calldata repaymentBps,
         uint256[] calldata endingBalances
-    ) external {
-        if (msg.sender != owner && msg.sender != ozd) revert ErrorsLib.NotOwnerOrOzd();
-
+    ) external onlyOwnerOrOzd {
         IMorphoCredit(MORPHO).closeCycleAndPostObligations(id, endDate, borrowers, repaymentBps, endingBalances);
     }
 
@@ -190,9 +190,7 @@ contract CreditLine is ICreditLine, Ownable {
         address[] calldata borrowers,
         uint256[] calldata repaymentBps,
         uint256[] calldata endingBalances
-    ) external {
-        if (msg.sender != owner && msg.sender != ozd) revert ErrorsLib.NotOwnerOrOzd();
-
+    ) external onlyOwnerOrOzd {
         IMorphoCredit(MORPHO).addObligationsToLatestCycle(id, borrowers, repaymentBps, endingBalances);
     }
 
@@ -200,17 +198,15 @@ contract CreditLine is ICreditLine, Ownable {
     /// @param marketParams Market parameters for the position
     /// @param borrower Address of the borrower
     /// @param assets Amount of assets to settle (currently unused, settles entire position)
-    /// @param shares Amount of shares to settle (currently unused, settles entire position)
     /// @param cover Amount of assets to cover from insurance fund (must be <= assets)
     /// @dev Only callable by owner or OZD contract
     /// @dev If cover > 0, transfers loanToken from insurance fund, approves, and repays before settling
     /// @dev Returns the amount of assets and shares written off
-    function settle(MarketParams memory marketParams, address borrower, uint256 assets, uint256 shares, uint256 cover)
+    function settle(MarketParams memory marketParams, address borrower, uint256 assets, uint256 cover)
         external
+        onlyOwnerOrOzd
         returns (uint256 writtenOffAssets, uint256 writtenOffShares)
     {
-        if (msg.sender != owner && msg.sender != ozd) revert ErrorsLib.NotOwnerOrOzd();
-
         // Validate that cover is less than or equal to assets
         if (cover > assets) revert ErrorsLib.InvalidCoverAmount();
 
@@ -223,7 +219,7 @@ contract CreditLine is ICreditLine, Ownable {
             IERC20(marketParams.loanToken).approve(address(MORPHO), cover);
 
             // Call repay on the borrower's account
-            IMorphoCredit(MORPHO).repay(marketParams, cover, 0, borrower, "");
+            IMorpho(MORPHO).repay(marketParams, cover, 0, borrower, "");
         }
 
         // Settle the account (which will handle any remaining debt)

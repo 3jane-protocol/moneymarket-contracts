@@ -18,6 +18,9 @@ library ErrorsLib {
     /// @notice Thrown when the caller is not the market's usd3.
     error NotUsd3();
 
+    /// @notice Thrown when the caller is not on behalf of the borrower.
+    error NotOnBehalf();
+
     /// @notice Thrown when the caller is not the owner or ozd.
     error NotOwnerOrOzd();
 
@@ -68,6 +71,9 @@ library ErrorsLib {
 
     /// @notice Thrown when a zero address is passed as input.
     error ZeroAddress();
+
+    /// @notice Thrown when an array has an invalid length.
+    error InvalidArrayLength();
 
     /// @notice Thrown when the caller is not authorized to conduct an action.
     error Unauthorized();

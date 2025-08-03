@@ -1,14 +1,24 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.22;
 
-import {Id, MarketParams, MarkdownState, IMorphoCredit} from "./interfaces/IMorpho.sol";
+import {
+    Id,
+    MarketParams,
+    Position,
+    Market,
+    BorrowerPremium,
+    RepaymentStatus,
+    PaymentCycle,
+    RepaymentObligation,
+    MarkdownState,
+    IMorphoCredit
+} from "./interfaces/IMorpho.sol";
 import {IMarkdownManager} from "./interfaces/IMarkdownManager.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IMorphoRepayCallback} from "./interfaces/IMorphoCallbacks.sol";
-import {IProtocolConfig} from "./interfaces/IProtocolConfig.sol";
+import {IProtocolConfig, MarketConfig} from "./interfaces/IProtocolConfig.sol";
 import {ICreditLine} from "./interfaces/ICreditLine.sol";
 import {Morpho} from "./Morpho.sol";
-import {MarketConfig} from "./interfaces/IProtocolConfig.sol";
 
 import {UtilsLib} from "./libraries/UtilsLib.sol";
 import {EventsLib} from "./libraries/EventsLib.sol";
@@ -51,7 +61,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     address public helper;
 
     /// @notice Immutable protocol configuration contract
-    IProtocolConfig public immutable protocolConfig;
+    address public immutable protocolConfig;
 
     /// @inheritdoc IMorphoCredit
     address public usd3;
@@ -85,8 +95,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /* INITIALIZER */
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(IProtocolConfig _protocolConfig) {
-        if (address(_protocolConfig) == address(0)) revert ErrorsLib.ZeroAddress();
+    constructor(address _protocolConfig) {
+        if (_protocolConfig == address(0)) revert ErrorsLib.ZeroAddress();
         protocolConfig = _protocolConfig;
         _disableInitializers();
     }
@@ -197,7 +207,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (status != RepaymentStatus.Current && status != RepaymentStatus.GracePeriod) {
             RepaymentObligation memory obligation = repaymentObligation[id][borrower];
             uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
-            MarketConfig memory terms = protocolConfig.getMarketConfig();
+            MarketConfig memory terms = IProtocolConfig(protocolConfig).getMarketConfig();
 
             if (premium.lastAccrualTime > cycleEndDate + terms.gracePeriod) {
                 totalPremiumRate += terms.irp;
@@ -236,7 +246,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
         RepaymentObligation memory obligation = repaymentObligation[id][borrower];
         uint256 cycleEndDate = paymentCycle[id][obligation.paymentCycleId].endDate;
-        MarketConfig memory terms = protocolConfig.getMarketConfig();
+        MarketConfig memory terms = IProtocolConfig(protocolConfig).getMarketConfig();
 
         if (premium.lastAccrualTime > cycleEndDate + terms.gracePeriod) {
             return 0; // Already handled in premium calculation
@@ -547,7 +557,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         _statusStartTime = paymentCycle[id][obligation.paymentCycleId].endDate;
 
-        MarketCreditTerms memory terms = protocolConfig.getMarketParams();
+        MarketConfig memory terms = IProtocolConfig(protocolConfig).getMarketConfig();
 
         if (block.timestamp <= _statusStartTime + terms.gracePeriod) {
             return (RepaymentStatus.GracePeriod, _statusStartTime);
@@ -578,7 +588,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc Morpho
     function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
         if (msg.sender != helper) revert ErrorsLib.NotHelper();
-        if (protocolConfig.getIsPaused() > 0) revert ErrorsLib.Paused();
+        if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
 
         // Check if borrower can borrow
         (RepaymentStatus status,) = getRepaymentStatus(id, onBehalf);

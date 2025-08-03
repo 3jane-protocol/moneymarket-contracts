@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
-pragma solidity >=0.5.0;
+pragma solidity ^0.8.18;
 
 import {IIrm} from "../../../interfaces/IIrm.sol";
 import {Id} from "../../../interfaces/IMorpho.sol";
 
-/// @title IJaneAdaptiveCurveIrm
+/// @title IAdaptiveCurveIrm
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
 /// @notice Interface exposed by the AdaptiveCurveIrm.
-interface IJaneAdaptiveCurveIrm is IIrm {
+interface IAdaptiveCurveIrm is IIrm {
     /// @notice Address of Morpho.
     function MORPHO() external view returns (address);
     /// @notice Rate at target utilization.
