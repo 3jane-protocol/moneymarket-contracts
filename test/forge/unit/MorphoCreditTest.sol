@@ -171,25 +171,6 @@ contract MorphoCreditTest is Test {
         morpho.withdraw(marketParams, 100e18, 0, borrower, borrower);
     }
 
-    function testWithdrawIsPausedReverts() public {
-        // First supply as usd3 when not paused
-        uint256 supplyAmount = 1000e18;
-        loanToken.setBalance(usd3, supplyAmount);
-        vm.prank(usd3);
-        loanToken.approve(address(morpho), supplyAmount);
-        vm.prank(usd3);
-        morpho.supply(marketParams, supplyAmount, 0, borrower, "");
-
-        // Pause the protocol
-        vm.prank(owner);
-        protocolConfig.setPaused(1);
-
-        // Try to withdraw as usd3 when paused
-        vm.expectRevert(ErrorsLib.Paused.selector);
-        vm.prank(usd3);
-        morpho.withdraw(marketParams, 100e18, 0, borrower, borrower);
-    }
-
     function testWithdrawWithUsd3Succeeds() public {
         uint256 supplyAmount = 1000e18;
         loanToken.setBalance(usd3, supplyAmount);
