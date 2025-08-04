@@ -2,10 +2,11 @@
 pragma solidity 0.8.22;
 
 import {Initializable} from "../lib/openzeppelin/contracts/proxy/utils/Initializable.sol";
-import {Ownable} from "../lib/openzeppelin/contracts/access/Ownable.sol";
 import {MarketConfig, CreditLineConfig, IRMConfig} from "./interfaces/IProtocolConfig.sol";
+import {EventsLib} from "./libraries/EventsLib.sol";
+import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 
-contract ProtocolConfig is Initializable, Ownable {
+contract ProtocolConfig is Initializable {
     // Configuration keys
     // Credit Line
     bytes32 private constant MAX_LTV = keccak256("MAX_LTV");
@@ -36,21 +37,34 @@ contract ProtocolConfig is Initializable, Ownable {
     /// @dev Configuration storage mapping
     mapping(bytes32 => uint256) public config;
 
+    address public owner;
+
     /// @dev Storage gap for future upgrades (20 slots).
     uint256[20] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address _owner) Ownable(_owner) {
+    constructor() {
         _disableInitializers();
     }
 
     /// @dev Initialize the contract with the owner
-    function initialize() external initializer {}
+    function initialize(address _owner) external initializer {
+        if (_owner == address(0)) revert ErrorsLib.ZeroAddress();
+        owner = _owner;
+    }
+
+    /// @dev Set owner
+    function setOwner(address _owner) external {
+        if (msg.sender != owner) revert ErrorsLib.NotOwner();
+        owner = _owner;
+        emit EventsLib.SetOwner(_owner);
+    }
 
     /// @dev Set a configuration value
     /// @param key The configuration key
     /// @param value The configuration value
-    function setConfig(bytes32 key, uint256 value) external onlyOwner {
+    function setConfig(bytes32 key, uint256 value) external {
+        if (msg.sender != owner) revert ErrorsLib.NotOwner();
         config[key] = value;
     }
 
