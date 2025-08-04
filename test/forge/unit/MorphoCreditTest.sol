@@ -57,7 +57,15 @@ contract MorphoCreditTest is Test {
         feeRecipient = makeAddr("feeRecipient");
 
         // Deploy protocol config mock
-        protocolConfig = new ProtocolConfig(owner);
+        ProtocolConfig protocolConfigImpl = new ProtocolConfig();
+        TransparentUpgradeableProxy protocolConfigProxy = new TransparentUpgradeableProxy(
+            address(protocolConfigImpl),
+            address(this), // Test contract acts as admin
+            abi.encodeWithSelector(ProtocolConfig.initialize.selector, owner)
+        );
+
+        // Set the protocolConfig to the proxy address
+        protocolConfig = ProtocolConfig(address(protocolConfigProxy));
 
         // Deploy contracts through proxy
         MorphoCredit morphoImpl = new MorphoCredit(address(protocolConfig));

@@ -110,7 +110,15 @@ contract BaseTest is Test {
         FEE_RECIPIENT = makeAddr("FeeRecipient");
 
         // Deploy protocol config mock
-        protocolConfig = new ProtocolConfig(OWNER);
+        ProtocolConfig protocolConfigImpl = new ProtocolConfig();
+        TransparentUpgradeableProxy protocolConfigProxy = new TransparentUpgradeableProxy(
+            address(protocolConfigImpl),
+            address(this), // Test contract acts as admin
+            abi.encodeWithSelector(ProtocolConfig.initialize.selector, OWNER)
+        );
+
+        // Set the protocolConfig to the proxy address
+        protocolConfig = ProtocolConfig(address(protocolConfigProxy));
 
         // Deploy implementation
         MorphoCredit morphoImpl = new MorphoCreditMock(address(protocolConfig));

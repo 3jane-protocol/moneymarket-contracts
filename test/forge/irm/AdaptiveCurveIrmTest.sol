@@ -29,7 +29,15 @@ contract AdaptiveCurveIrmTest is Test {
         OWNER = makeAddr("Owner");
 
         // Deploy protocol config
-        protocolConfig = new ProtocolConfig(OWNER);
+        ProtocolConfig protocolConfigImpl = new ProtocolConfig();
+        TransparentUpgradeableProxy protocolConfigProxy = new TransparentUpgradeableProxy(
+            address(protocolConfigImpl),
+            address(this), // Test contract acts as admin
+            abi.encodeWithSelector(ProtocolConfig.initialize.selector, OWNER)
+        );
+
+        // Set the protocolConfig to the proxy address
+        protocolConfig = ProtocolConfig(address(protocolConfigProxy));
 
         // Deploy MorphoCredit with protocol config
         morphoCredit = new MorphoCredit(address(protocolConfig));
