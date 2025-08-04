@@ -67,14 +67,14 @@ contract Helper is IHelper {
         IERC20(USD3).safeTransferFrom(msg.sender, address(this), shares);
 
         uint256 assets = IUSD3(USD3).redeem(shares, address(this), owner);
-        return _unwrap(receiver, assets);
+        return IWrap(WAUSDC).redeem(assets, address(this), receiver);
     }
 
     /// @inheritdoc IHelper
     function borrow(MarketParams memory marketParams, uint256 assets) external returns (uint256, uint256) {
         (uint256 waUSDCAmount, uint256 shares) =
             IMorpho(MORPHO).borrow(marketParams, assets, 0, msg.sender, address(this));
-        _unwrap(msg.sender, waUSDCAmount);
+        IWrap(WAUSDC).redeem(waUSDCAmount, address(this), msg.sender);
         return (waUSDCAmount, shares);
     }
 
@@ -91,11 +91,5 @@ contract Helper is IHelper {
     function _wrap(address from, uint256 assets) internal returns (uint256) {
         IERC20(USDC).safeTransferFrom(from, address(this), assets);
         return IWrap(WAUSDC).deposit(assets, address(this));
-    }
-
-    function _unwrap(address receiver, uint256 assets) internal returns (uint256) {
-        uint256 shares = IWrap(WAUSDC).withdraw(assets, address(this), address(this));
-        IERC20(USDC).safeTransfer(receiver, shares);
-        return shares;
     }
 }

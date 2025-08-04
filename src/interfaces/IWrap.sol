@@ -8,6 +8,6 @@ interface IWrap {
     /// @notice Deposit
     function deposit(uint256 assets, address receiver) external returns (uint256);
 
-    /// @notice Withdraw
-    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256);
+    /// @notice Redeem
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256);
 }
