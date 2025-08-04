@@ -18,6 +18,11 @@ import {ERC20Mock} from "../../../src/mocks/ERC20Mock.sol";
 // Mock contracts for dependencies with price per share functionality
 contract USD3Mock is IUSD3, ERC20Mock {
     uint256 public pricePerShare = 1e18; // Default 1:1 ratio
+    ERC20Mock public underlying; // waUSDC
+
+    function setUnderlying(address _underlying) external {
+        underlying = ERC20Mock(_underlying);
+    }
 
     function setPricePerShare(uint256 _pricePerShare) external {
         pricePerShare = _pricePerShare;
@@ -27,6 +32,12 @@ contract USD3Mock is IUSD3, ERC20Mock {
         // Calculate shares based on price per share
         uint256 shares = (assets * 1e18) / pricePerShare;
         _mint(receiver, shares);
+
+        // Transfer underlying assets (waUSDC) to this contract
+        if (address(underlying) != address(0)) {
+            underlying.transferFrom(msg.sender, address(this), assets);
+        }
+
         return shares;
     }
 
@@ -34,6 +45,12 @@ contract USD3Mock is IUSD3, ERC20Mock {
         require(balanceOf[owner] >= shares, "insufficient shares");
         uint256 assets = (shares * pricePerShare) / 1e18;
         _burn(owner, shares);
+
+        // Transfer underlying assets (waUSDC) to receiver
+        if (address(underlying) != address(0)) {
+            underlying.transfer(receiver, assets);
+        }
+
         return assets;
     }
 
@@ -96,6 +113,14 @@ contract WrapMock is IWrap, ERC20Mock {
 }
 
 contract MorphoMock {
+    ERC20Mock public loanToken;
+    ERC20Mock public collateralToken;
+
+    function setTokens(address _loanToken, address _collateralToken) external {
+        loanToken = ERC20Mock(_loanToken);
+        collateralToken = ERC20Mock(_collateralToken);
+    }
+
     function borrow(
         MarketParams memory marketParams,
         uint256 assets,
@@ -103,7 +128,10 @@ contract MorphoMock {
         address receiver,
         address onBehalf
     ) external returns (uint256, uint256) {
-        // Simulate borrow by returning the requested assets and shares
+        // Simulate borrow by transferring loan tokens to receiver
+        if (address(loanToken) != address(0)) {
+            loanToken.transfer(receiver, assets);
+        }
         return (assets, shares);
     }
 
@@ -114,7 +142,10 @@ contract MorphoMock {
         address onBehalf,
         bytes calldata data
     ) external returns (uint256, uint256) {
-        // Simulate repay by returning the repaid assets and shares
+        // Simulate repay by transferring loan tokens from msg.sender to this contract
+        if (address(loanToken) != address(0)) {
+            loanToken.transferFrom(msg.sender, address(this), assets);
+        }
         return (assets, shares);
     }
 }
@@ -144,6 +175,13 @@ contract HelperTest is BaseTest {
         sUsd3 = new USD3Mock();
         morphoMock = new MorphoMock();
 
+        // Configure USD3Mock with waUSDC as underlying
+        usd3.setUnderlying(address(waUsdc));
+        sUsd3.setUnderlying(address(usd3));
+
+        // Configure MorphoMock with tokens
+        morphoMock.setTokens(address(waUsdc), address(usdc));
+
         // Deploy Helper contract
         helper = new Helper(address(morphoMock), address(usd3), address(sUsd3), address(usdc), address(waUsdc));
 
@@ -151,10 +189,16 @@ contract HelperTest is BaseTest {
         usdc.setBalance(user, DEPOSIT_AMOUNT * 10);
         usdc.setBalance(address(helper), 0);
 
+        // Give MorphoMock some waUSDC to borrow from
+        waUsdc.setBalance(address(morphoMock), DEPOSIT_AMOUNT * 10);
+
         // Approve tokens
         vm.startPrank(user);
         usdc.approve(address(helper), type(uint256).max);
         usd3.approve(address(helper), type(uint256).max);
+        sUsd3.approve(address(helper), type(uint256).max);
+        waUsdc.approve(address(helper), type(uint256).max);
+        waUsdc.approve(address(morphoMock), type(uint256).max);
         vm.stopPrank();
     }
 
@@ -183,6 +227,50 @@ contract HelperTest is BaseTest {
 
         vm.expectRevert();
         new Helper(address(morphoMock), address(usd3), address(sUsd3), address(usdc), address(0));
+    }
+
+    function test_SimpleDepositRedeem() public {
+        // Test with 1:1 price per share (no premiums)
+        uint256 waUSDCPricePerShare = 1e18; // 1:1 ratio
+        uint256 usd3PricePerShare = 1e18; // 1:1 ratio
+        uint256 sUsd3PricePerShare = 1e18; // 1:1 ratio
+
+        waUsdc.setPricePerShare(waUSDCPricePerShare);
+        usd3.setPricePerShare(usd3PricePerShare);
+        sUsd3.setPricePerShare(sUsd3PricePerShare);
+
+        uint256 initialUSDCBalance = usdc.balanceOf(user);
+
+        console.log("=== SIMPLE DEPOSIT ===");
+        console.log("Initial USDC balance:", initialUSDCBalance);
+
+        // Step 1: Deposit without hop (USDC -> waUSDC -> USD3)
+        vm.startPrank(user);
+        uint256 shares = helper.deposit(DEPOSIT_AMOUNT, user, false);
+        vm.stopPrank();
+
+        console.log("USD3 shares received:", shares);
+        console.log("Expected shares:", DEPOSIT_AMOUNT);
+
+        // Verify the shares match expected
+        assertEq(shares, DEPOSIT_AMOUNT);
+        assertEq(usd3.balanceOf(user), DEPOSIT_AMOUNT);
+
+        // Step 2: Redeem USD3 shares
+        vm.startPrank(user);
+        uint256 redeemedAssets = helper.redeem(shares, user, user);
+        vm.stopPrank();
+
+        console.log("Redeemed assets:", redeemedAssets);
+        console.log("Expected assets:", DEPOSIT_AMOUNT);
+
+        // Verify the redeemed assets match expected
+        assertEq(redeemedAssets, DEPOSIT_AMOUNT);
+        assertEq(usdc.balanceOf(user), initialUSDCBalance);
+
+        // Verify all shares were burned
+        assertEq(usd3.balanceOf(user), 0);
+        assertEq(waUsdc.balanceOf(address(helper)), 0);
     }
 
     function test_ComprehensiveDepositRedeemCycle() public {
@@ -354,8 +442,10 @@ contract HelperTest is BaseTest {
 
         uint256 initialBalance = usdc.balanceOf(user);
 
-        // Deposit with hop
+        // Ensure user has enough balance and approvals
         vm.startPrank(user);
+
+        // Deposit with hop
         uint256 shares = helper.deposit(amount, user, true);
 
         // Convert sUSD3 back to USD3 first
