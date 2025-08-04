@@ -575,6 +575,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc Morpho
     function _beforeSupply(MarketParams memory, Id id, address onBehalf, uint256, uint256, bytes calldata)
         internal
+        virtual
         override
     {
         if (msg.sender != usd3) revert ErrorsLib.NotUsd3();
@@ -582,12 +583,16 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @inheritdoc Morpho
-    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
+    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256)
+        internal
+        virtual
+        override
+    {
         if (msg.sender != usd3) revert ErrorsLib.NotUsd3();
     }
 
     /// @inheritdoc Morpho
-    function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal override {
+    function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal virtual override {
         if (msg.sender != helper) revert ErrorsLib.NotHelper();
         if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
 
@@ -602,7 +607,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @dev Accrues premium before tracking payment. During grace period, only base + premium
     /// accrue (no penalty), allowing borrowers to clear obligations without penalty.
     /// During delinquent/default, penalty also accrues before payment is tracked.
-    function _beforeRepay(MarketParams memory, Id id, address onBehalf, uint256 assets, uint256) internal override {
+    function _beforeRepay(MarketParams memory, Id id, address onBehalf, uint256 assets, uint256)
+        internal
+        virtual
+        override
+    {
         // Accrue premium (including penalty if past grace period)
         _accrueBorrowerPremium(id, onBehalf);
         _updateBorrowerMarkdown(id, onBehalf); // TODO: decide whether to remove
@@ -612,12 +621,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @inheritdoc Morpho
-    function _afterBorrow(MarketParams memory, Id id, address onBehalf) internal override {
+    function _afterBorrow(MarketParams memory, Id id, address onBehalf) internal virtual override {
         _snapshotBorrowerPosition(id, onBehalf);
     }
 
     /// @inheritdoc Morpho
-    function _afterRepay(MarketParams memory, Id id, address onBehalf, uint256) internal override {
+    function _afterRepay(MarketParams memory, Id id, address onBehalf, uint256) internal virtual override {
         _snapshotBorrowerPosition(id, onBehalf);
         _updateBorrowerMarkdown(id, onBehalf);
     }
@@ -715,6 +724,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @param borrower Borrower address
     function _updateBorrowerMarkdown(Id id, address borrower) internal {
+        address manager = ICreditLine(idToMarketParams[id].creditLine).mm();
+        if (manager == address(0)) return; // No markdown manager set
+
         uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
         (RepaymentStatus status, uint256 statusStartTime) =
             _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
@@ -733,9 +745,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 newMarkdown = 0;
         if (isInDefault) {
             uint256 timeInDefault = block.timestamp > statusStartTime ? block.timestamp - statusStartTime : 0;
-            newMarkdown = IMarkdownManager(ICreditLine(idToMarketParams[id].creditLine).mm()).calculateMarkdown(
-                borrower, _getBorrowerAssets(id, borrower), timeInDefault
-            );
+            newMarkdown =
+                IMarkdownManager(manager).calculateMarkdown(borrower, _getBorrowerAssets(id, borrower), timeInDefault);
         }
 
         if (newMarkdown != lastMarkdown) {

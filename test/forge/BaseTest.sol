@@ -9,6 +9,8 @@ import "../../src/interfaces/IMorphoCallbacks.sol";
 import {IrmMock} from "../../src/mocks/IrmMock.sol";
 import {ERC20Mock} from "../../src/mocks/ERC20Mock.sol";
 import {OracleMock} from "../../src/mocks/OracleMock.sol";
+import {MorphoCreditMock} from "../../src/mocks/MorphoCreditMock.sol";
+import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 
 import "../../src/Morpho.sol";
 import "../../src/MorphoCredit.sol";
@@ -91,6 +93,7 @@ contract BaseTest is Test {
     ERC20Mock internal collateralToken;
     OracleMock internal oracle;
     IIrm internal irm;
+    ProtocolConfig internal protocolConfig;
 
     MarketParams internal marketParams;
     Id internal id;
@@ -106,8 +109,11 @@ contract BaseTest is Test {
         PROXY_ADMIN_OWNER = makeAddr("ProxyAdminOwner");
         FEE_RECIPIENT = makeAddr("FeeRecipient");
 
+        // Deploy protocol config mock
+        protocolConfig = new ProtocolConfig(OWNER);
+
         // Deploy implementation
-        MorphoCredit morphoImpl = new MorphoCredit();
+        MorphoCredit morphoImpl = new MorphoCreditMock(address(protocolConfig));
 
         // Deploy proxy admin (owned by PROXY_ADMIN_OWNER, separate from Morpho owner)
         proxyAdmin = new ProxyAdmin(PROXY_ADMIN_OWNER);
@@ -164,6 +170,7 @@ contract BaseTest is Test {
         vm.stopPrank();
 
         _setLltv(DEFAULT_TEST_LLTV);
+        _setProtocolConfig();
     }
 
     function _setLltv(uint256 lltv) internal {
@@ -177,6 +184,44 @@ contract BaseTest is Test {
         vm.stopPrank();
 
         _forward(1);
+    }
+
+    function _setProtocolConfig() internal {
+        vm.startPrank(OWNER);
+
+        // Credit Line configurations
+        protocolConfig.setConfig(keccak256("MAX_LTV"), 0.8 ether); // 80% LTV
+        protocolConfig.setConfig(keccak256("MAX_VV"), 0.9 ether); // 90% VV
+        protocolConfig.setConfig(keccak256("MAX_CREDIT_LINE"), 1e30); // Large credit line for testing
+        protocolConfig.setConfig(keccak256("MIN_CREDIT_LINE"), 1e18); // 1 token minimum
+        protocolConfig.setConfig(keccak256("MAX_DRP"), 0.1 ether); // 10% max DRP
+
+        // Market configurations
+        protocolConfig.setConfig(keccak256("IS_PAUSED"), 0); // Not paused
+        protocolConfig.setConfig(keccak256("MAX_ON_CREDIT"), 0.95 ether); // 95% max on credit
+        protocolConfig.setConfig(keccak256("IRP"), uint256(0.1 ether / int256(365 days))); // 10% IRP
+        protocolConfig.setConfig(keccak256("MIN_BORROW"), 1000e18); // 1 token minimum borrow
+        protocolConfig.setConfig(keccak256("GRACE_PERIOD"), 7 days); // 7 days grace period
+        protocolConfig.setConfig(keccak256("DELINQUENCY_PERIOD"), 23 days); // 23 days delinquency period
+
+        // IRM configurations
+        protocolConfig.setConfig(keccak256("CURVE_STEEPNESS"), uint256(4 ether)); // 4 curve steepness
+        protocolConfig.setConfig(keccak256("ADJUSTMENT_SPEED"), uint256(50 ether / int256(365 days)));
+        protocolConfig.setConfig(keccak256("TARGET_UTILIZATION"), uint256(0.9 ether)); // 90% target utilization
+        protocolConfig.setConfig(keccak256("INITIAL_RATE_AT_TARGET"), uint256(0.04 ether / int256(365 days))); // 4%
+            // initial rate
+        protocolConfig.setConfig(keccak256("MIN_RATE_AT_TARGET"), uint256(0.001 ether / int256(365 days))); // 0.1%
+            // minimum rate
+        protocolConfig.setConfig(keccak256("MAX_RATE_AT_TARGET"), uint256(2.0 ether / int256(365 days))); // 200%
+            // maximum rate
+
+        // USD3 & sUSD3 configurations
+        protocolConfig.setConfig(keccak256("TRANCHE_RATIO"), 0.7 ether); // 70% tranche ratio
+        protocolConfig.setConfig(keccak256("TRANCHE_SHARE_VARIANT"), 1); // Variant 1
+        protocolConfig.setConfig(keccak256("SUSD3_LOCK_DURATION"), 30 days); // 30 days lock duration
+        protocolConfig.setConfig(keccak256("SUSD3_COOLDOWN_PERIOD"), 7 days); // 7 days cooldown period
+
+        vm.stopPrank();
     }
 
     /// @dev Rolls & warps the given number of blocks forward the blockchain.

@@ -43,7 +43,7 @@ contract EffectiveSupplyTest is BaseTest {
 
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
+        creditLine.setMm(address(markdownManager));
         vm.stopPrank();
     }
 
@@ -166,7 +166,7 @@ contract EffectiveSupplyTest is BaseTest {
             uint256 markdown = 0;
             if (status == RepaymentStatus.Default && defaultTime > 0) {
                 uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
-                markdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+                markdown = markdownManager.calculateMarkdown(borrowers[i], borrowAssets, timeInDefault);
             }
             calculatedTotalMarkdown += markdown;
         }

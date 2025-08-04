@@ -3,7 +3,7 @@ pragma solidity ^0.8.18;
 
 import {IIrm} from "../../interfaces/IIrm.sol";
 import {IAdaptiveCurveIrm} from "./interfaces/IAdaptiveCurveIrm.sol";
-import {IProtocolConfig, IRMConfig} from "../../interfaces/IProtocolConfig.sol";
+import {IProtocolConfig, IRMConfig, IRMConfigTyped} from "../../interfaces/IProtocolConfig.sol";
 import {UtilsLib} from "./libraries/UtilsLib.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {ExpLib} from "./libraries/ExpLib.sol";
@@ -81,21 +81,15 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
     /// @dev Returns avgRate and endRateAtTarget.
     /// @dev Assumes that the inputs `marketParams` and `id` match.
     function _borrowRate(Id id, Market memory market) internal view returns (uint256, int256) {
-        (
-            int256 curveSteepness,
-            int256 adjustmentSpeed,
-            int256 targetUtilization,
-            int256 initialRateAtTarget,
-            int256 minRateAtTarget,
-            int256 maxRateAtTarget
-        ) = _unpackIRMConfig();
+        IRMConfigTyped memory terms = _unpackIRMConfig();
 
         // Safe "unchecked" cast because the utilization is smaller than 1 (scaled by WAD).
         int256 utilization =
             int256(market.totalSupplyAssets > 0 ? market.totalBorrowAssets.wDivDown(market.totalSupplyAssets) : 0);
 
-        int256 errNormFactor = utilization > targetUtilization ? WAD - targetUtilization : targetUtilization;
-        int256 err = (utilization - targetUtilization).wDivToZero(errNormFactor);
+        int256 errNormFactor =
+            utilization > terms.targetUtilization ? WAD - terms.targetUtilization : terms.targetUtilization;
+        int256 err = (utilization - terms.targetUtilization).wDivToZero(errNormFactor);
 
         int256 startRateAtTarget = rateAtTarget[id];
 
@@ -104,12 +98,12 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
 
         if (startRateAtTarget == 0) {
             // First interaction.
-            avgRateAtTarget = initialRateAtTarget;
-            endRateAtTarget = initialRateAtTarget;
+            avgRateAtTarget = terms.initialRateAtTarget;
+            endRateAtTarget = terms.initialRateAtTarget;
         } else {
             // The speed is assumed constant between two updates, but it is in fact not constant because of interest.
             // So the rate is always underestimated.
-            int256 speed = adjustmentSpeed.wMulToZero(err);
+            int256 speed = terms.adjustmentSpeed.wMulToZero(err);
             // market.lastUpdate != 0 because it is not the first interaction with this market.
             // Safe "unchecked" cast because block.timestamp - market.lastUpdate <= block.timestamp <= type(int256).max.
             int256 elapsed = int256(block.timestamp - market.lastUpdate);
@@ -134,15 +128,16 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
                 // avg ~= curve([(startRateAtTarget + endRateAtTarget)/2 + startRateAtTarget*exp(speed*T/2)] / 2, err)
                 // avg ~= curve([startRateAtTarget + endRateAtTarget + 2*startRateAtTarget*exp(speed*T/2)] / 4, err)
                 endRateAtTarget =
-                    _newRateAtTarget(startRateAtTarget, linearAdaptation, minRateAtTarget, maxRateAtTarget);
-                int256 midRateAtTarget =
-                    _newRateAtTarget(startRateAtTarget, linearAdaptation / 2, minRateAtTarget, maxRateAtTarget);
+                    _newRateAtTarget(startRateAtTarget, linearAdaptation, terms.minRateAtTarget, terms.maxRateAtTarget);
+                int256 midRateAtTarget = _newRateAtTarget(
+                    startRateAtTarget, linearAdaptation / 2, terms.minRateAtTarget, terms.maxRateAtTarget
+                );
                 avgRateAtTarget = (startRateAtTarget + endRateAtTarget + 2 * midRateAtTarget) / 4;
             }
         }
 
         // Safe "unchecked" cast because avgRateAtTarget >= 0.
-        return (uint256(_curve(avgRateAtTarget, err, curveSteepness)), endRateAtTarget);
+        return (uint256(_curve(avgRateAtTarget, err, terms.curveSteepness)), endRateAtTarget);
     }
 
     /// @dev Returns the rate for a given `_rateAtTarget` and an `err`.
@@ -169,31 +164,16 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
     }
 
     /// @dev Unpacks IRMConfig into individual int256 values.
-    /// @return curveSteepness The curve steepness parameter.
-    /// @return adjustmentSpeed The adjustment speed parameter.
-    /// @return targetUtilization The target utilization parameter.
-    /// @return initialRateAtTarget The initial rate at target parameter.
-    /// @return minRateAtTarget The minimum rate at target parameter.
-    /// @return maxRateAtTarget The maximum rate at target parameter.
-    function _unpackIRMConfig()
-        internal
-        view
-        returns (
-            int256 curveSteepness,
-            int256 adjustmentSpeed,
-            int256 targetUtilization,
-            int256 initialRateAtTarget,
-            int256 minRateAtTarget,
-            int256 maxRateAtTarget
-        )
-    {
+    /// @return terms The IRMConfigTyped struct.
+    function _unpackIRMConfig() internal view returns (IRMConfigTyped memory) {
         IRMConfig memory terms = IProtocolConfig(IMorphoCredit(MORPHO).protocolConfig()).getIRMConfig();
-        // Safe "unchecked" casts because these are configuration values that should be positive.
-        curveSteepness = int256(terms.curveSteepness);
-        adjustmentSpeed = int256(terms.adjustmentSpeed);
-        targetUtilization = int256(terms.targetUtilization);
-        initialRateAtTarget = int256(terms.initialRateAtTarget);
-        minRateAtTarget = int256(terms.minRateAtTarget);
-        maxRateAtTarget = int256(terms.maxRateAtTarget);
+        return IRMConfigTyped({
+            curveSteepness: int256(terms.curveSteepness),
+            adjustmentSpeed: int256(terms.adjustmentSpeed),
+            targetUtilization: int256(terms.targetUtilization),
+            initialRateAtTarget: int256(terms.initialRateAtTarget),
+            minRateAtTarget: int256(terms.minRateAtTarget),
+            maxRateAtTarget: int256(terms.maxRateAtTarget)
+        });
     }
 }

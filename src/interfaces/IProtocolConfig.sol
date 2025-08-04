@@ -29,6 +29,16 @@ struct IRMConfig {
     uint256 maxRateAtTarget;
 }
 
+/// @notice Struct to hold IRM parameters with int256 types for internal calculations
+struct IRMConfigTyped {
+    int256 curveSteepness;
+    int256 adjustmentSpeed;
+    int256 targetUtilization;
+    int256 initialRateAtTarget;
+    int256 minRateAtTarget;
+    int256 maxRateAtTarget;
+}
+
 interface IProtocolConfig {
     /// @dev Initialize the contract with the owner
     /// @param newOwner The address of the new owner

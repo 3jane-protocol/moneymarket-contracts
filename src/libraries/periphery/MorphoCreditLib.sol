@@ -16,6 +16,7 @@ import {MorphoLib} from "./MorphoLib.sol";
 import {MorphoCreditStorageLib} from "./MorphoCreditStorageLib.sol";
 import {MorphoBalancesLib} from "./MorphoBalancesLib.sol";
 import {SharesMathLib} from "../SharesMathLib.sol";
+import {ICreditLine} from "../../interfaces/ICreditLine.sol";
 
 /// @title MorphoCreditLib
 /// @author Morpho Labs
@@ -80,9 +81,9 @@ library MorphoCreditLib {
     /// @param id Market ID
     /// @return manager Address of the markdown manager (0 if not set)
     function getMarkdownManager(IMorphoCredit morpho, Id id) internal view returns (address manager) {
-        bytes32[] memory slots = new bytes32[](1);
-        slots[0] = MorphoCreditStorageLib.markdownManagerSlot(id);
-        manager = address(uint160(uint256(_asIMorpho(morpho).extSloads(slots)[0])));
+        IMorpho morphoBase = _asIMorpho(morpho);
+        MarketParams memory marketParams = morphoBase.idToMarketParams(id);
+        manager = ICreditLine(marketParams.creditLine).mm();
     }
 
     /// @notice Get borrower premium details

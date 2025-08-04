@@ -20,8 +20,6 @@ contract MarkdownManagerTest is BaseTest {
     CreditLineMock creditLine;
     IMorphoCredit morphoCredit;
 
-    event MarkdownManagerSet(Id indexed id, address oldManager, address newManager);
-
     function setUp() public override {
         super.setUp();
 
@@ -55,68 +53,17 @@ contract MarkdownManagerTest is BaseTest {
         // Deploy markdown manager
         markdownManager = new MarkdownManagerMock();
 
-        // Test setting manager as owner
-        vm.expectEmit(true, false, false, true);
-        emit MarkdownManagerSet(id, address(0), address(markdownManager));
-
         vm.prank(OWNER);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
+        creditLine.setMm(address(markdownManager));
 
-        assertEq(
-            MorphoCredit(address(morphoCredit)).markdownManager(id), address(markdownManager), "Manager should be set"
-        );
-    }
-
-    /// @notice Test that only owner can set markdown manager
-    function testOnlyOwnerCanSetMarkdownManager() public {
-        markdownManager = new MarkdownManagerMock();
-
-        // Try as non-owner
-        vm.prank(BORROWER);
-        vm.expectRevert(ErrorsLib.NotOwner.selector);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
-
-        // Verify not set
-        assertEq(MorphoCredit(address(morphoCredit)).markdownManager(id), address(0), "Manager should not be set");
-    }
-
-    /// @notice Test manager validation when setting
-    function testMarkdownManagerValidation() public {
-        // Create a manager that reports invalid for our market
-        InvalidMarkdownManager invalidManager = new InvalidMarkdownManager();
-
-        vm.prank(OWNER);
-        vm.expectRevert(ErrorsLib.InvalidMarkdownManager.selector);
-        morphoCredit.setMarkdownManager(id, address(invalidManager));
-
-        // Verify not set
-        assertEq(
-            MorphoCredit(address(morphoCredit)).markdownManager(id), address(0), "Invalid manager should not be set"
-        );
-    }
-
-    /// @notice Test setting manager to zero address (disabling markdowns)
-    function testSetMarkdownManagerToZero() public {
-        // First set a manager
-        markdownManager = new MarkdownManagerMock();
-        vm.prank(OWNER);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
-
-        // Then set to zero
-        vm.expectEmit(true, false, false, true);
-        emit MarkdownManagerSet(id, address(markdownManager), address(0));
-
-        vm.prank(OWNER);
-        morphoCredit.setMarkdownManager(id, address(0));
-
-        assertEq(MorphoCredit(address(morphoCredit)).markdownManager(id), address(0), "Manager should be cleared");
+        assertEq(creditLine.mm(), address(markdownManager), "Manager should be set in credit line");
     }
 
     /// @notice Test correct parameters passed to markdown manager
     function testMarkdownManagerParameterPassing() public {
         markdownManager = new MarkdownManagerMock();
         vm.prank(OWNER);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
+        creditLine.setMm(address(markdownManager));
 
         // Setup borrower in default
         _setupBorrowerWithLoan(BORROWER, 10_000e18);
@@ -143,7 +90,7 @@ contract MarkdownManagerTest is BaseTest {
         uint256 markdown = 0;
         if (status == RepaymentStatus.Default && defaultStartTime > 0) {
             uint256 actualTimeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
-            markdown = markdownManager.calculateMarkdown(borrowAssets, actualTimeInDefault);
+            markdown = markdownManager.calculateMarkdown(BORROWER, borrowAssets, actualTimeInDefault);
         }
 
         // Verify parameters were correct
@@ -188,7 +135,7 @@ contract MarkdownManagerTest is BaseTest {
     function testMarkdownGasConsumption() public {
         markdownManager = new MarkdownManagerMock();
         vm.prank(OWNER);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
+        creditLine.setMm(address(markdownManager));
 
         // Setup borrower in default
         _setupBorrowerWithLoan(BORROWER, 10_000e18);
@@ -211,7 +158,7 @@ contract MarkdownManagerTest is BaseTest {
     function testMarkdownManagerRevert() public {
         RevertingMarkdownManager revertingManager = new RevertingMarkdownManager();
         vm.prank(OWNER);
-        morphoCredit.setMarkdownManager(id, address(revertingManager));
+        creditLine.setMm(address(revertingManager));
 
         // Setup borrower
         _setupBorrowerWithLoan(BORROWER, 10_000e18);
@@ -252,7 +199,7 @@ contract MarkdownManagerTest is BaseTest {
         // Now set a markdown manager after borrower already defaulted
         markdownManager = new MarkdownManagerMock();
         vm.prank(OWNER);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
+        creditLine.setMm(address(markdownManager));
 
         // Move forward more time
         vm.warp(block.timestamp + 2 days); // Now 7 days total in default
@@ -263,7 +210,7 @@ contract MarkdownManagerTest is BaseTest {
         // Verify markdown is now calculated from original default time
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
         uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
-        uint256 expectedMarkdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+        uint256 expectedMarkdown = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
 
         // Check state was updated
         uint256 markdownAfter = morphoCredit.markdownState(id, BORROWER);
@@ -287,7 +234,7 @@ contract MarkdownManagerTest is BaseTest {
         // Set initial manager
         markdownManager = new MarkdownManagerMock();
         vm.prank(OWNER);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
+        creditLine.setMm(address(markdownManager));
 
         // Setup borrower in default with markdown
         _setupBorrowerWithLoan(BORROWER, 10_000e18);
@@ -301,7 +248,7 @@ contract MarkdownManagerTest is BaseTest {
         uint256 markdownBefore = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
-            markdownBefore = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+            markdownBefore = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
         }
         assertTrue(markdownBefore > 0, "Should have initial markdown");
 
@@ -311,7 +258,7 @@ contract MarkdownManagerTest is BaseTest {
 
         // Update manager
         vm.prank(OWNER);
-        morphoCredit.setMarkdownManager(id, address(newManager));
+        creditLine.setMm(address(newManager));
 
         // Forward time and update
         vm.warp(block.timestamp + 1 days);
@@ -323,7 +270,7 @@ contract MarkdownManagerTest is BaseTest {
         uint256 markdownAfter = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
-            markdownAfter = newManager.calculateMarkdown(borrowAssets, timeInDefault);
+            markdownAfter = newManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
         }
         assertTrue(markdownAfter > markdownBefore, "Markdown should increase with new manager");
     }
@@ -331,7 +278,7 @@ contract MarkdownManagerTest is BaseTest {
 
 /// @notice Mock markdown manager that always returns false for isValidForMarket
 contract InvalidMarkdownManager is IMarkdownManager {
-    function calculateMarkdown(uint256, uint256) external pure returns (uint256) {
+    function calculateMarkdown(address, uint256, uint256) external pure returns (uint256) {
         return 0;
     }
 
@@ -346,7 +293,7 @@ contract InvalidMarkdownManager is IMarkdownManager {
 
 /// @notice Mock markdown manager that always reverts
 contract RevertingMarkdownManager is IMarkdownManager {
-    function calculateMarkdown(uint256, uint256) external pure returns (uint256) {
+    function calculateMarkdown(address, uint256, uint256) external pure returns (uint256) {
         revert("Markdown calculation failed");
     }
 

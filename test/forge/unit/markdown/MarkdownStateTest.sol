@@ -6,13 +6,7 @@ import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
-import {
-    Market,
-    MarkdownState,
-    RepaymentStatus,
-    MarketCreditTerms,
-    PaymentCycle
-} from "../../../../src/interfaces/IMorpho.sol";
+import {Market, MarkdownState, RepaymentStatus, PaymentCycle} from "../../../../src/interfaces/IMorpho.sol";
 
 /// @title MarkdownStateTest
 /// @notice Tests for markdown state management including default timestamp tracking and state transitions
@@ -51,7 +45,7 @@ contract MarkdownStateTest is BaseTest {
 
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
+        creditLine.setMm(address(markdownManager));
         vm.stopPrank();
 
         // Setup initial supply
@@ -95,7 +89,7 @@ contract MarkdownStateTest is BaseTest {
         // Verify markdown is being calculated
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
         uint256 timeInDefault = block.timestamp > expectedDefaultTime ? block.timestamp - expectedDefaultTime : 0;
-        uint256 markdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+        uint256 markdown = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
         assertTrue(markdown > 0, "Should have markdown in default");
     }
 
@@ -164,7 +158,7 @@ contract MarkdownStateTest is BaseTest {
         uint256 borrowerMarkdown = 0;
         if (borrowerStatus == RepaymentStatus.Default && borrowerDefaultTime > 0) {
             uint256 timeInDefault = block.timestamp > borrowerDefaultTime ? block.timestamp - borrowerDefaultTime : 0;
-            borrowerMarkdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+            borrowerMarkdown = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
         }
         assertTrue(borrowerMarkdown > 0, "BORROWER should have markdown");
 
@@ -190,7 +184,7 @@ contract MarkdownStateTest is BaseTest {
         uint256 newBorrowerMarkdown = 0;
         if (borrowerStatus == RepaymentStatus.Default && borrowerDefaultTime > 0) {
             uint256 timeInDefault = block.timestamp > borrowerDefaultTime ? block.timestamp - borrowerDefaultTime : 0;
-            newBorrowerMarkdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+            newBorrowerMarkdown = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
         }
         assertTrue(newBorrowerMarkdown > oldMarkdown, "Markdown should increase over time");
     }
@@ -232,7 +226,7 @@ contract MarkdownStateTest is BaseTest {
             uint256 markdown = 0;
             if (status == RepaymentStatus.Default && defaultTime > 0) {
                 uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
-                markdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+                markdown = markdownManager.calculateMarkdown(borrowers[i], borrowAssets, timeInDefault);
             }
             expectedTotal += markdown;
 
@@ -257,7 +251,7 @@ contract MarkdownStateTest is BaseTest {
         uint256 newMarkdown = 0;
         if (borrower0Status == RepaymentStatus.Default && borrower0DefaultTime > 0) {
             uint256 timeInDefault = block.timestamp > borrower0DefaultTime ? block.timestamp - borrower0DefaultTime : 0;
-            newMarkdown = markdownManager.calculateMarkdown(borrower0Assets, timeInDefault);
+            newMarkdown = markdownManager.calculateMarkdown(borrowers[0], borrower0Assets, timeInDefault);
         }
         uint256 markdownIncrease = newMarkdown - storedMarkdown;
 
