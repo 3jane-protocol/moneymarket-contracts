@@ -54,7 +54,6 @@ contract CreditLine is ICreditLine, Ownable {
     constructor(address _morpho, address _owner, address _ozd, address _mm, address _prover) Ownable(_owner) {
         // Validate that critical addresses are not zero
         if (_morpho == address(0)) revert ErrorsLib.ZeroAddress();
-        if (_owner == address(0)) revert ErrorsLib.ZeroAddress();
         if (_ozd == address(0)) revert ErrorsLib.ZeroAddress();
         if (_mm == address(0)) revert ErrorsLib.ZeroAddress();
 
