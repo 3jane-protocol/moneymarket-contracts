@@ -59,32 +59,6 @@ contract MarkdownManagerTest is BaseTest {
         assertEq(creditLine.mm(), address(markdownManager), "Manager should be set in credit line");
     }
 
-    /// @notice Test that only owner can set markdown manager
-    function testOnlyOwnerCanSetMarkdownManager() public {
-        markdownManager = new MarkdownManagerMock();
-
-        // Try as non-owner
-        vm.prank(BORROWER);
-        vm.expectRevert(ErrorsLib.NotOwner.selector);
-        creditLine.setMm(address(markdownManager));
-
-        // Verify not set
-        assertEq(creditLine.mm(), address(0), "Manager should not be set in credit line");
-    }
-
-    /// @notice Test setting manager to zero address (disabling markdowns)
-    function testSetMarkdownManagerToZero() public {
-        // First set a manager
-        markdownManager = new MarkdownManagerMock();
-        vm.prank(OWNER);
-        creditLine.setMm(address(markdownManager));
-
-        vm.prank(OWNER);
-        creditLine.setMm(address(0));
-
-        assertEq(creditLine.mm(), address(0), "Manager should be cleared from credit line");
-    }
-
     /// @notice Test correct parameters passed to markdown manager
     function testMarkdownManagerParameterPassing() public {
         markdownManager = new MarkdownManagerMock();

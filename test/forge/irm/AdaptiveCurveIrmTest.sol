@@ -2,8 +2,11 @@
 pragma solidity ^0.8.0;
 
 import "../../../src/irm/adaptive-curve-irm/AdaptiveCurveIrm.sol";
-
 import "../../../lib/forge-std/src/Test.sol";
+import {MorphoCredit} from "../../../src/MorphoCredit.sol";
+import {ProtocolConfig} from "../../../src/ProtocolConfig.sol";
+import {TransparentUpgradeableProxy} from
+    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 contract AdaptiveCurveIrmTest is Test {
     using MathLib for int256;
@@ -16,16 +19,59 @@ contract AdaptiveCurveIrmTest is Test {
     event BorrowRateUpdate(Id indexed id, uint256 avgBorrowRate, uint256 rateAtTarget);
 
     IAdaptiveCurveIrm internal irm;
+    MorphoCredit internal morphoCredit;
+    ProtocolConfig internal protocolConfig;
     MarketParams internal marketParams = MarketParams(address(0), address(0), address(0), address(0), 0, address(0));
 
+    address internal OWNER;
+
     function setUp() public {
-        irm = new AdaptiveCurveIrm(address(this));
+        OWNER = makeAddr("Owner");
+
+        // Deploy protocol config
+        protocolConfig = new ProtocolConfig(OWNER);
+
+        // Deploy MorphoCredit with protocol config
+        morphoCredit = new MorphoCredit(address(protocolConfig));
+
+        // Deploy contracts through proxy
+        AdaptiveCurveIrm irmImpl = new AdaptiveCurveIrm(address(morphoCredit));
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
+            address(irmImpl),
+            address(this), // Test contract acts as admin
+            abi.encodeWithSelector(AdaptiveCurveIrm.initialize.selector)
+        );
+
+        // Deploy IRM
+        irm = IAdaptiveCurveIrm(address(proxy));
+
         vm.warp(90 days);
+
+        // Set up protocol configuration values
+        _setProtocolConfig();
 
         bytes4[] memory selectors = new bytes4[](1);
         selectors[0] = AdaptiveCurveIrmTest.handleBorrowRate.selector;
         targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
         targetContract(address(this));
+    }
+
+    function _setProtocolConfig() internal {
+        vm.startPrank(OWNER);
+        // IRM configurations
+        protocolConfig.setConfig(keccak256("CURVE_STEEPNESS"), uint256(ConstantsLib.CURVE_STEEPNESS)); // 4 curve
+            // steepness
+        protocolConfig.setConfig(keccak256("ADJUSTMENT_SPEED"), uint256(ConstantsLib.ADJUSTMENT_SPEED));
+        protocolConfig.setConfig(keccak256("TARGET_UTILIZATION"), uint256(ConstantsLib.TARGET_UTILIZATION)); // 90%
+            // target utilization
+        protocolConfig.setConfig(keccak256("INITIAL_RATE_AT_TARGET"), uint256(ConstantsLib.INITIAL_RATE_AT_TARGET)); // 4%
+            // initial rate
+        protocolConfig.setConfig(keccak256("MIN_RATE_AT_TARGET"), uint256(ConstantsLib.MIN_RATE_AT_TARGET)); // 0.1%
+            // minimum rate
+        protocolConfig.setConfig(keccak256("MAX_RATE_AT_TARGET"), uint256(ConstantsLib.MAX_RATE_AT_TARGET)); // 200%
+            // maximum rate
+
+        vm.stopPrank();
     }
 
     /* TESTS */
@@ -38,6 +84,7 @@ contract AdaptiveCurveIrmTest is Test {
     function testFirstBorrowRateUtilizationZero() public {
         Market memory market;
 
+        vm.startPrank(address(morphoCredit));
         assertApproxEqRel(
             irm.borrowRate(marketParams, market),
             uint256(ConstantsLib.INITIAL_RATE_AT_TARGET / 4),
@@ -52,6 +99,7 @@ contract AdaptiveCurveIrmTest is Test {
         market.totalBorrowAssets = 1 ether;
         market.totalSupplyAssets = 1 ether;
 
+        vm.startPrank(address(morphoCredit));
         assertEq(
             irm.borrowRate(marketParams, market), uint256(ConstantsLib.INITIAL_RATE_AT_TARGET * 4), "avgBorrowRate"
         );
@@ -61,6 +109,7 @@ contract AdaptiveCurveIrmTest is Test {
     function testRateAfterUtilizationOne() public {
         vm.warp(365 days * 2);
         Market memory market;
+        vm.startPrank(address(morphoCredit));
         assertApproxEqRel(
             irm.borrowRate(marketParams, market), uint256(ConstantsLib.INITIAL_RATE_AT_TARGET / 4), 0.001 ether
         );
@@ -92,6 +141,7 @@ contract AdaptiveCurveIrmTest is Test {
     function testRateAfterUtilizationZero() public {
         vm.warp(365 days * 2);
         Market memory market;
+        vm.startPrank(address(morphoCredit));
         assertApproxEqRel(
             irm.borrowRate(marketParams, market), uint256(ConstantsLib.INITIAL_RATE_AT_TARGET / 4), 0.001 ether
         );
@@ -124,6 +174,7 @@ contract AdaptiveCurveIrmTest is Test {
         Market memory market;
         market.totalSupplyAssets = 1 ether;
         market.totalBorrowAssets = uint128(uint256(ConstantsLib.TARGET_UTILIZATION));
+        vm.startPrank(address(morphoCredit));
         assertEq(irm.borrowRate(marketParams, market), uint256(ConstantsLib.INITIAL_RATE_AT_TARGET));
         assertEq(irm.rateAtTarget(marketParams.id()), ConstantsLib.INITIAL_RATE_AT_TARGET);
 
@@ -131,6 +182,7 @@ contract AdaptiveCurveIrmTest is Test {
         vm.warp(block.timestamp + 45 days);
 
         market.totalBorrowAssets = uint128(uint256(ConstantsLib.TARGET_UTILIZATION + 1 ether) / 2); // Error = 50%
+        vm.startPrank(address(morphoCredit));
         irm.borrowRate(marketParams, market);
 
         // Expected rate: 4% * exp(50 * 45 / 365 * 50%) = 87.22%.
@@ -141,6 +193,7 @@ contract AdaptiveCurveIrmTest is Test {
         Market memory market;
         market.totalSupplyAssets = 1 ether;
         market.totalBorrowAssets = uint128(uint256(ConstantsLib.TARGET_UTILIZATION));
+        vm.startPrank(address(morphoCredit));
         assertEq(irm.borrowRate(marketParams, market), uint256(ConstantsLib.INITIAL_RATE_AT_TARGET));
         assertEq(irm.rateAtTarget(marketParams.id()), ConstantsLib.INITIAL_RATE_AT_TARGET);
 
@@ -152,6 +205,7 @@ contract AdaptiveCurveIrmTest is Test {
             market.lastUpdate = uint128(block.timestamp);
             vm.warp(block.timestamp + 1 minutes);
 
+            vm.startPrank(address(morphoCredit));
             uint256 avgBorrowRate = irm.borrowRate(marketParams, market);
             uint256 interest = market.totalBorrowAssets.wMulDown(avgBorrowRate.wTaylorCompounded(1 minutes));
             market.totalSupplyAssets += uint128(interest);
@@ -182,12 +236,14 @@ contract AdaptiveCurveIrmTest is Test {
         Market memory market;
         market.totalSupplyAssets = 1 ether;
         market.totalBorrowAssets = uint128(uint256(ConstantsLib.TARGET_UTILIZATION));
+        vm.startPrank(address(morphoCredit));
         assertEq(irm.borrowRate(marketParams, market), uint256(ConstantsLib.INITIAL_RATE_AT_TARGET));
         assertEq(irm.rateAtTarget(marketParams.id()), ConstantsLib.INITIAL_RATE_AT_TARGET);
 
         market.lastUpdate = uint128(block.timestamp);
         vm.warp(block.timestamp + elapsed);
 
+        vm.startPrank(address(morphoCredit));
         irm.borrowRate(marketParams, market);
 
         assertEq(irm.rateAtTarget(marketParams.id()), ConstantsLib.INITIAL_RATE_AT_TARGET);
@@ -199,6 +255,7 @@ contract AdaptiveCurveIrmTest is Test {
         Market memory market;
         market.totalSupplyAssets = 1 ether;
         market.totalBorrowAssets = uint128(uint256(ConstantsLib.TARGET_UTILIZATION));
+        vm.startPrank(address(morphoCredit));
         assertEq(irm.borrowRate(marketParams, market), uint256(ConstantsLib.INITIAL_RATE_AT_TARGET));
         assertEq(irm.rateAtTarget(marketParams.id()), ConstantsLib.INITIAL_RATE_AT_TARGET);
 
@@ -206,6 +263,7 @@ contract AdaptiveCurveIrmTest is Test {
             market.lastUpdate = uint128(block.timestamp);
             vm.warp(block.timestamp + 1 minutes);
 
+            vm.startPrank(address(morphoCredit));
             uint256 avgBorrowRate = irm.borrowRate(marketParams, market);
             uint256 interest = market.totalBorrowAssets.wMulDown(avgBorrowRate.wTaylorCompounded(1 minutes));
             market.totalSupplyAssets += uint128(interest);
@@ -228,6 +286,7 @@ contract AdaptiveCurveIrmTest is Test {
         vm.assume(market.totalBorrowAssets > 0);
         vm.assume(market.totalSupplyAssets >= market.totalBorrowAssets);
 
+        vm.startPrank(address(morphoCredit));
         uint256 avgBorrowRate = irm.borrowRate(marketParams, market);
         int256 rateAtTarget = irm.rateAtTarget(marketParams.id());
 
@@ -245,6 +304,7 @@ contract AdaptiveCurveIrmTest is Test {
             _curve(int256(ConstantsLib.INITIAL_RATE_AT_TARGET), _err(market)),
             uint256(_expectedRateAtTarget(marketParams.id(), market))
         );
+        vm.startPrank(address(morphoCredit));
         irm.borrowRate(marketParams, market);
     }
 
@@ -262,6 +322,7 @@ contract AdaptiveCurveIrmTest is Test {
     function testBorrowRate(Market memory market0, Market memory market1) public {
         vm.assume(market0.totalBorrowAssets > 0);
         vm.assume(market0.totalSupplyAssets >= market0.totalBorrowAssets);
+        vm.startPrank(address(morphoCredit));
         irm.borrowRate(marketParams, market0);
 
         vm.assume(market1.totalBorrowAssets > 0);
@@ -272,6 +333,7 @@ contract AdaptiveCurveIrmTest is Test {
         uint256 expectedAvgRate = _expectedAvgRate(marketParams.id(), market1);
 
         uint256 borrowRateView = irm.borrowRateView(marketParams, market1);
+        vm.startPrank(address(morphoCredit));
         uint256 borrowRate = irm.borrowRate(marketParams, market1);
 
         assertEq(borrowRateView, borrowRate, "borrowRateView");
@@ -282,6 +344,7 @@ contract AdaptiveCurveIrmTest is Test {
     function testBorrowRateNoTimeElapsed(Market memory market0, Market memory market1) public {
         vm.assume(market0.totalBorrowAssets > 0);
         vm.assume(market0.totalSupplyAssets >= market0.totalBorrowAssets);
+        vm.startPrank(address(morphoCredit));
         irm.borrowRate(marketParams, market0);
 
         vm.assume(market1.totalBorrowAssets > 0);
@@ -292,6 +355,7 @@ contract AdaptiveCurveIrmTest is Test {
         uint256 expectedAvgRate = _expectedAvgRate(marketParams.id(), market1);
 
         uint256 borrowRateView = irm.borrowRateView(marketParams, market1);
+        vm.startPrank(address(morphoCredit));
         uint256 borrowRate = irm.borrowRate(marketParams, market1);
 
         assertEq(borrowRateView, borrowRate, "borrowRateView");
@@ -302,6 +366,7 @@ contract AdaptiveCurveIrmTest is Test {
     function testBorrowRateNoUtilizationChange(Market memory market0, Market memory market1) public {
         vm.assume(market0.totalBorrowAssets > 0);
         vm.assume(market0.totalSupplyAssets >= market0.totalBorrowAssets);
+        vm.startPrank(address(morphoCredit));
         irm.borrowRate(marketParams, market0);
 
         market1.totalBorrowAssets = market0.totalBorrowAssets;
@@ -312,6 +377,7 @@ contract AdaptiveCurveIrmTest is Test {
         uint256 expectedAvgRate = _expectedAvgRate(marketParams.id(), market1);
 
         uint256 borrowRateView = irm.borrowRateView(marketParams, market1);
+        vm.startPrank(address(morphoCredit));
         uint256 borrowRate = irm.borrowRate(marketParams, market1);
 
         assertEq(borrowRateView, borrowRate, "borrowRateView");
@@ -332,6 +398,7 @@ contract AdaptiveCurveIrmTest is Test {
         market.totalSupplyAssets = uint128(totalBorrowAssets);
 
         vm.warp(block.timestamp + elapsed);
+        vm.startPrank(address(morphoCredit));
         irm.borrowRate(marketParams, market);
     }
 
@@ -346,6 +413,7 @@ contract AdaptiveCurveIrmTest is Test {
             irm.borrowRateView(marketParams, market),
             uint256(ConstantsLib.MIN_RATE_AT_TARGET.wDivToZero(ConstantsLib.CURVE_STEEPNESS))
         );
+        vm.startPrank(address(morphoCredit));
         assertGe(
             irm.borrowRate(marketParams, market),
             uint256(ConstantsLib.MIN_RATE_AT_TARGET.wDivToZero(ConstantsLib.CURVE_STEEPNESS))
@@ -361,6 +429,7 @@ contract AdaptiveCurveIrmTest is Test {
             irm.borrowRateView(marketParams, market),
             uint256(ConstantsLib.MAX_RATE_AT_TARGET.wMulToZero(ConstantsLib.CURVE_STEEPNESS))
         );
+        vm.startPrank(address(morphoCredit));
         assertLe(
             irm.borrowRate(marketParams, market),
             uint256(ConstantsLib.MAX_RATE_AT_TARGET.wMulToZero(ConstantsLib.CURVE_STEEPNESS))

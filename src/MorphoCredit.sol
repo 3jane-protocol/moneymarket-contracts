@@ -723,6 +723,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @param borrower Borrower address
     function _updateBorrowerMarkdown(Id id, address borrower) internal {
+        address manager = ICreditLine(idToMarketParams[id].creditLine).mm();
+        if (manager == address(0)) return; // No markdown manager set
+
         uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
         (RepaymentStatus status, uint256 statusStartTime) =
             _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
@@ -741,9 +744,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 newMarkdown = 0;
         if (isInDefault) {
             uint256 timeInDefault = block.timestamp > statusStartTime ? block.timestamp - statusStartTime : 0;
-            newMarkdown = IMarkdownManager(ICreditLine(idToMarketParams[id].creditLine).mm()).calculateMarkdown(
-                borrower, _getBorrowerAssets(id, borrower), timeInDefault
-            );
+            newMarkdown =
+                IMarkdownManager(manager).calculateMarkdown(borrower, _getBorrowerAssets(id, borrower), timeInDefault);
         }
 
         if (newMarkdown != lastMarkdown) {

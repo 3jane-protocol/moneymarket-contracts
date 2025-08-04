@@ -124,9 +124,10 @@ contract MorphoCreditProxyTest is Test {
 
     function testProxyStatePreservation() public {
         // Store some state
-        vm.prank(owner);
+        vm.startPrank(owner);
         morphoCredit.setHelper(user);
         morphoCredit.setUsd3(user);
+        vm.stopPrank();
         assertEq(morphoCredit.helper(), user);
         assertEq(morphoCredit.usd3(), user);
 

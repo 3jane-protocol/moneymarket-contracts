@@ -19,7 +19,7 @@ contract MorphoCreditIntegrationTest is BaseTest {
         super.setUp();
 
         // Deploy CreditLine contract
-        creditLine = new CreditLine(address(morpho), address(this), address(0), address(0), address(0));
+        creditLine = new CreditLine(address(morpho), address(this), address(1), address(1), address(1));
 
         // Create market with creditLine
         marketParams.creditLine = address(creditLine);
