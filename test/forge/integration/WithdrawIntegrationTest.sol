@@ -5,6 +5,9 @@ import "../BaseTest.sol";
 import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 import {SimpleCreditLineMock} from "../mocks/SimpleCreditLineMock.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
+import {MorphoCredit} from "../../../src/MorphoCredit.sol";
+import {TransparentUpgradeableProxy} from
+    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 contract WithdrawIntegrationTest is BaseTest {
     using MathLib for uint256;
@@ -75,8 +78,63 @@ contract WithdrawIntegrationTest is BaseTest {
     }
 
     function testWithdrawUnauthorized(address attacker, uint256 amount) public {
-        // Skip this test as MorphoCreditMock removes authorization checks for testing
-        vm.skip(true);
+        // Test that only USD3 contract can call withdraw
+        // For this test, we need to use actual MorphoCredit, not the mock
+        amount = bound(amount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
+
+        // Exclude proxy-related addresses from fuzzing
+        vm.assume(!_isProxyRelatedAddress(attacker));
+        vm.assume(attacker != address(0));
+        vm.assume(attacker != SUPPLIER);
+
+        // Deploy a separate MorphoCredit instance (not mock) for this test
+        MorphoCredit morphoCreditImpl = new MorphoCredit(address(protocolConfig));
+        TransparentUpgradeableProxy morphoCreditProxy = new TransparentUpgradeableProxy(
+            address(morphoCreditImpl),
+            address(proxyAdmin),
+            abi.encodeWithSelector(MorphoCredit.initialize.selector, OWNER)
+        );
+        IMorpho morphoCredit = IMorpho(address(morphoCreditProxy));
+
+        // Set helper and usd3 addresses to allow supply
+        address mockUsd3 = makeAddr("MockUSD3");
+        vm.startPrank(OWNER);
+        IMorphoCredit(address(morphoCredit)).setUsd3(mockUsd3);
+        vm.stopPrank();
+
+        // Create a new market params for the isolated test
+        MarketParams memory isolatedMarketParams = MarketParams({
+            loanToken: address(loanToken),
+            collateralToken: address(collateralToken),
+            oracle: address(oracle),
+            irm: address(irm),
+            lltv: DEFAULT_TEST_LLTV,
+            creditLine: address(creditLine)
+        });
+
+        // Set up the market on the new instance
+        vm.prank(OWNER);
+        morphoCredit.enableIrm(address(irm));
+        vm.prank(OWNER);
+        morphoCredit.enableLltv(DEFAULT_TEST_LLTV);
+        morphoCredit.createMarket(isolatedMarketParams);
+
+        // Supply to the market (through mockUsd3 to pass the check)
+        loanToken.setBalance(mockUsd3, amount);
+        vm.startPrank(mockUsd3);
+        loanToken.approve(address(morphoCredit), amount);
+        morphoCredit.supply(isolatedMarketParams, amount, 0, SUPPLIER, hex"");
+        vm.stopPrank();
+
+        // Try to withdraw directly (not through USD3) - should fail
+        vm.prank(attacker);
+        vm.expectRevert(ErrorsLib.NotUsd3.selector);
+        morphoCredit.withdraw(isolatedMarketParams, amount, 0, SUPPLIER, attacker);
+
+        // Even the supplier themselves cannot withdraw directly
+        vm.prank(SUPPLIER);
+        vm.expectRevert(ErrorsLib.NotUsd3.selector);
+        morphoCredit.withdraw(isolatedMarketParams, amount, 0, SUPPLIER, SUPPLIER);
     }
 
     function testWithdrawInsufficientLiquidity(uint256 amountSupplied, uint256 amountBorrowed) public {
