@@ -3,7 +3,18 @@ import { setNextBlockTimestamp } from "@nomicfoundation/hardhat-network-helpers/
 import { expect } from "chai";
 import { AbiCoder, MaxUint256, ZeroAddress, keccak256, toBigInt } from "ethers";
 import hre from "hardhat";
-import { Morpho, MorphoCredit, OracleMock, ERC20Mock, IrmMock, ProxyAdmin, TransparentUpgradeableProxy } from "types";
+import {
+  Morpho,
+  MorphoCredit,
+  OracleMock,
+  ERC20Mock,
+  IrmMock,
+  ProxyAdmin,
+  TransparentUpgradeableProxy,
+  ProtocolConfig,
+  USD3Mock,
+  HelperMock,
+} from "types";
 import { MarketParamsStruct } from "types/src/Morpho";
 import { CreditLineMock } from "types/src/mocks/CreditLineMock";
 import { FlashBorrowerMock } from "types/src/mocks/FlashBorrowerMock";
@@ -53,6 +64,8 @@ describe("Morpho", () => {
   let irm: IrmMock;
   let creditLine: CreditLineMock;
   let flashBorrower: FlashBorrowerMock;
+  let usd3: USD3Mock;
+  let helper: HelperMock;
 
   let marketParams: MarketParamsStruct;
   let id: Buffer;
@@ -82,28 +95,54 @@ describe("Morpho", () => {
 
     await oracle.setPrice(oraclePriceScale);
 
-    // Deploy MorphoCredit implementation
-    const MorphoCreditFactory = await hre.ethers.getContractFactory("MorphoCredit", admin);
-    const morphoImpl = await MorphoCreditFactory.deploy();
+    // Deploy ProtocolConfig implementation
+    const ProtocolConfigFactory = await hre.ethers.getContractFactory("ProtocolConfig", admin);
+    const protocolConfigImpl = await ProtocolConfigFactory.deploy();
 
     // Deploy ProxyAdmin
     const ProxyAdminFactory = await hre.ethers.getContractFactory("ProxyAdmin", admin);
     const proxyAdmin = await ProxyAdminFactory.deploy(admin.address);
 
-    // Deploy TransparentUpgradeableProxy with initialization
+    // Deploy TransparentUpgradeableProxy for ProtocolConfig with initialization
     const TransparentUpgradeableProxyFactory = await hre.ethers.getContractFactory(
       "TransparentUpgradeableProxy",
       admin,
     );
-    const initData = MorphoCreditFactory.interface.encodeFunctionData("initialize", [admin.address]);
+    const protocolConfigInitData = ProtocolConfigFactory.interface.encodeFunctionData("initialize", [admin.address]);
+    const protocolConfigProxy = await TransparentUpgradeableProxyFactory.deploy(
+      await protocolConfigImpl.getAddress(),
+      await proxyAdmin.getAddress(),
+      protocolConfigInitData,
+    );
+
+    const protocolConfig = ProtocolConfigFactory.attach(await protocolConfigProxy.getAddress()) as ProtocolConfig;
+
+    // Deploy MorphoCredit implementation with ProtocolConfig
+    const MorphoCreditFactory = await hre.ethers.getContractFactory("MorphoCredit", admin);
+    const morphoImpl = await MorphoCreditFactory.deploy(await protocolConfig.getAddress());
+
+    // Deploy TransparentUpgradeableProxy for MorphoCredit with initialization
+    const morphoInitData = MorphoCreditFactory.interface.encodeFunctionData("initialize", [admin.address]);
     const morphoProxy = await TransparentUpgradeableProxyFactory.deploy(
       await morphoImpl.getAddress(),
       await proxyAdmin.getAddress(),
-      initData,
+      morphoInitData,
     );
 
     // Connect to proxy as MorphoCredit interface
     morpho = MorphoCreditFactory.attach(await morphoProxy.getAddress()) as MorphoCredit;
+
+    // Deploy USD3Mock
+    const USD3MockFactory = await hre.ethers.getContractFactory("USD3Mock", admin);
+    usd3 = await USD3MockFactory.deploy(await morpho.getAddress());
+
+    // Deploy HelperMock
+    const HelperMockFactory = await hre.ethers.getContractFactory("HelperMock", admin);
+    helper = await HelperMockFactory.deploy(await morpho.getAddress());
+
+    // Set USD3 and Helper to enable operations
+    await morpho.setUsd3(await usd3.getAddress());
+    await morpho.setHelper(await helper.getAddress());
 
     const IrmMockFactory = await hre.ethers.getContractFactory("IrmMock", admin);
 
@@ -126,19 +165,24 @@ describe("Morpho", () => {
     await morpho.createMarket(marketParams);
 
     const morphoAddress = await morpho.getAddress();
+    const usd3Address = await usd3.getAddress();
+    const helperAddress = await helper.getAddress();
 
     for (const user of users) {
       await loanToken.setBalance(user.address, initBalance);
-      await loanToken.connect(user).approve(morphoAddress, MaxUint256);
+      await loanToken.connect(user).approve(usd3Address, MaxUint256); // Approve USD3 for supply/withdraw
+      await loanToken.connect(user).approve(helperAddress, MaxUint256); // Approve Helper for repay
       await collateralToken.setBalance(user.address, initBalance);
       await collateralToken.connect(user).approve(morphoAddress, MaxUint256);
     }
 
     await loanToken.setBalance(admin.address, initBalance);
-    await loanToken.connect(admin).approve(morphoAddress, MaxUint256);
+    await loanToken.connect(admin).approve(usd3Address, MaxUint256); // Approve USD3
+    await loanToken.connect(admin).approve(helperAddress, MaxUint256); // Approve Helper
 
     await loanToken.setBalance(liquidator.address, initBalance);
-    await loanToken.connect(liquidator).approve(morphoAddress, MaxUint256);
+    await loanToken.connect(liquidator).approve(usd3Address, MaxUint256); // Approve USD3
+    await loanToken.connect(liquidator).approve(helperAddress, MaxUint256); // Approve Helper
 
     const FlashBorrowerFactory = await hre.ethers.getContractFactory("FlashBorrowerMock", admin);
 
@@ -155,11 +199,11 @@ describe("Morpho", () => {
 
       await randomForwardTimestamp();
 
-      await morpho.connect(supplier).supply(marketParams, assets, 0, supplier.address, "0x");
+      await usd3.connect(supplier).supply(marketParams, assets, 0, supplier.address, "0x");
 
       await randomForwardTimestamp();
 
-      await morpho.connect(supplier).withdraw(marketParams, assets / 2n, 0, supplier.address, supplier.address);
+      await usd3.connect(supplier).withdraw(marketParams, assets / 2n, 0, supplier.address, supplier.address);
 
       const borrower = borrowers[i];
 
@@ -174,11 +218,11 @@ describe("Morpho", () => {
 
       await randomForwardTimestamp();
 
-      await morpho.connect(borrower).borrow(marketParams, assets / 2n, 0, borrower.address, borrower.address);
+      await helper.connect(borrower).borrow(marketParams, assets / 2n, 0, borrower.address, borrower.address);
 
       await randomForwardTimestamp();
 
-      await morpho.connect(borrower).repay(marketParams, assets / 4n, 0, borrower.address, "0x");
+      await helper.connect(borrower).repay(marketParams, assets / 4n, 0, borrower.address, "0x");
 
       await randomForwardTimestamp();
     }
@@ -206,11 +250,11 @@ describe("Morpho", () => {
 
       await randomForwardTimestamp();
 
-      await morpho.connect(supplier).supply(marketParams, assets, 0, supplier.address, "0x");
+      await usd3.connect(supplier).supply(marketParams, assets, 0, supplier.address, "0x");
 
       await randomForwardTimestamp();
 
-      await morpho.connect(supplier).withdraw(marketParams, assets / 2n, 0, supplier.address, supplier.address);
+      await usd3.connect(supplier).withdraw(marketParams, assets / 2n, 0, supplier.address, supplier.address);
     }
   });
 
@@ -218,7 +262,7 @@ describe("Morpho", () => {
     const user = borrowers[0];
     const assets = BigInt.WAD;
 
-    await morpho.connect(user).supply(marketParams, assets, 0, user.address, "0x");
+    await usd3.connect(user).supply(marketParams, assets, 0, user.address, "0x");
 
     const loanAddress = await loanToken.getAddress();
 
