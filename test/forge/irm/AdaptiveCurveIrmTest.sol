@@ -250,7 +250,7 @@ contract AdaptiveCurveIrmTest is Test {
     }
 
     function testRateAfter3WeeksUtilizationTargetPingEveryMinute() public {
-        irm = new AdaptiveCurveIrm(address(this));
+        irm = new AdaptiveCurveIrm(address(morphoCredit));
 
         Market memory market;
         market.totalSupplyAssets = 1 ether;
