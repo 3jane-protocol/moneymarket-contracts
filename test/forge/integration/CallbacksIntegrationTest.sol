@@ -3,11 +3,43 @@ pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
 import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
+import {SimpleCreditLineMock} from "../mocks/SimpleCreditLineMock.sol";
+import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
 
 contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupplyCallback {
     using MathLib for uint256;
     using MorphoLib for IMorpho;
     using MarketParamsLib for MarketParams;
+
+    SimpleCreditLineMock internal creditLine;
+
+    function setUp() public override {
+        super.setUp();
+
+        // Deploy credit line mock
+        creditLine = new SimpleCreditLineMock();
+
+        // Update marketParams to use the credit line
+        marketParams = MarketParams(
+            address(loanToken),
+            address(collateralToken),
+            address(oracle),
+            address(irm),
+            DEFAULT_TEST_LLTV,
+            address(creditLine)
+        );
+        id = marketParams.id();
+
+        // Create the market with credit line
+        vm.prank(OWNER);
+        morpho.createMarket(marketParams);
+
+        // Set up MorphoCredit to allow this test contract to act as helper and USD3
+        vm.startPrank(OWNER);
+        IMorphoCredit(address(morpho)).setHelper(address(this));
+        IMorphoCredit(address(morpho)).setUsd3(address(this));
+        vm.stopPrank();
+    }
 
     // Callback functions.
 
