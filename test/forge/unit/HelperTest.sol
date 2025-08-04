@@ -366,11 +366,11 @@ contract MorphoMock {
         MarketParams memory marketParams,
         uint256 assets,
         uint256 shares,
-        address receiver,
-        address onBehalf
+        address onBehalf,
+        address receiver
     ) external returns (uint256, uint256) {
         // Simulate borrow by transferring loan tokens to receiver
-        // Use the loanToken from marketParams to the receiver (not msg.sender/user)
+        // The receiver is Helper, not the user
         if (marketParams.loanToken != address(0)) {
             // Cast to our mock interface that has transfer
             WrapMock(marketParams.loanToken).transfer(receiver, assets);
@@ -615,9 +615,6 @@ contract HelperTest is BaseTest {
     }
 
     function test_BorrowRepayCycle() public {
-        // Skip this test for now - the mock setup is complex
-        vm.skip(true);
-
         // Test borrow and repay with proper USDC flow
         uint256 initialUSDCBalance = usdc.balanceOf(user);
 
@@ -637,6 +634,10 @@ contract HelperTest is BaseTest {
         usdc.setBalance(address(waUsdc), BORROW_AMOUNT * 10);
         // Give MorphoMock some waUSDC to lend
         waUsdc.setBalance(address(morphoMock), BORROW_AMOUNT * 10);
+
+        // Ensure waUsdc can transfer USDC during unwrap
+        vm.prank(address(waUsdc));
+        usdc.approve(address(waUsdc), type(uint256).max);
 
         // Test borrow
         vm.startPrank(user);
