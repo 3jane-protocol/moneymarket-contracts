@@ -370,8 +370,10 @@ contract MorphoMock {
         address onBehalf
     ) external returns (uint256, uint256) {
         // Simulate borrow by transferring loan tokens to receiver
-        if (address(loanToken) != address(0)) {
-            loanToken.transfer(receiver, assets);
+        // Use the loanToken from marketParams to the receiver (not msg.sender/user)
+        if (marketParams.loanToken != address(0)) {
+            // Cast to our mock interface that has transfer
+            WrapMock(marketParams.loanToken).transfer(receiver, assets);
         }
         return (assets, shares);
     }
@@ -384,8 +386,9 @@ contract MorphoMock {
         bytes calldata data
     ) external returns (uint256, uint256) {
         // Simulate repay by transferring loan tokens from msg.sender to this contract
-        if (address(loanToken) != address(0)) {
-            loanToken.transferFrom(msg.sender, address(this), assets);
+        // Use the loanToken from marketParams
+        if (marketParams.loanToken != address(0)) {
+            ERC20Mock(marketParams.loanToken).transferFrom(msg.sender, address(this), assets);
         }
         return (assets, shares);
     }
@@ -514,115 +517,112 @@ contract HelperTest is BaseTest {
         assertEq(waUsdc.balanceOf(address(helper)), 0);
     }
 
-    function test_ComprehensiveDepositRedeemCycle() public {
-        vm.skip(true); // Skip - test setup needs refactoring for proper token flow
-        // Set different price per share for each layer to test all conversions
-        uint256 waUSDCPricePerShare = 1.02e18; // 2% premium for waUSDC
-        uint256 usd3PricePerShare = 1.05e18; // 5% premium for USD3
-        uint256 sUsd3PricePerShare = 1.03e18; // 3% premium for sUSD3
-
-        waUsdc.setPricePerShare(waUSDCPricePerShare);
-        usd3.setPricePerShare(usd3PricePerShare);
-        sUsd3.setPricePerShare(sUsd3PricePerShare);
-
+    function test_DepositWithHop() public {
+        // Test deposit with hop=true (USDC -> waUSDC -> USD3 -> sUSD3)
         uint256 initialUSDCBalance = usdc.balanceOf(user);
-        uint256 initialHelperUSDCBalance = usdc.balanceOf(address(helper));
 
-        console.log("=== DEPOSIT WITH HOP (USDC -> waUSDC -> USD3 -> sUSD3) ===");
-        console.log("Initial USDC balance:", initialUSDCBalance);
+        // Give waUsdc some balance to USD3 mock for deposits
+        waUsdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 10);
+        // Give USD3 some balance to sUSD3 mock for deposits
+        usd3.setBalance(address(sUsd3), DEPOSIT_AMOUNT * 10);
 
-        // Step 1: Deposit with hop (USDC -> waUSDC -> USD3 -> sUSD3)
         vm.startPrank(user);
-        uint256 finalShares = helper.deposit(DEPOSIT_AMOUNT, user, true);
+        uint256 shares = helper.deposit(DEPOSIT_AMOUNT, user, true);
         vm.stopPrank();
 
-        // Calculate expected conversions through all layers:
-        // 1. USDC -> waUSDC: 1000e6 USDC -> 1000e6 * 1e18 / 1.02e18 = 980.39e6 waUSDC shares
-        uint256 expectedWaUSDCShares = (DEPOSIT_AMOUNT * 1e18) / waUSDCPricePerShare;
+        // With 1:1 ratios, should receive same amount in sUSD3
+        assertEq(shares, DEPOSIT_AMOUNT);
+        assertEq(sUsd3.balanceOf(user), DEPOSIT_AMOUNT);
 
-        // 2. waUSDC -> USD3: 980.39e6 waUSDC -> 980.39e6 * 1e18 / 1.05e18 = 933.70e6 USD3 shares
-        uint256 expectedUSD3Shares = (expectedWaUSDCShares * 1e18) / usd3PricePerShare;
-
-        // 3. USD3 -> sUSD3: 933.70e6 USD3 -> 933.70e6 * 1e18 / 1.03e18 = 906.50e6 sUSD3 shares
-        uint256 expectedSUSD3Shares = (expectedUSD3Shares * 1e18) / sUsd3PricePerShare;
-
-        console.log("Expected waUSDC shares:", expectedWaUSDCShares);
-        console.log("Expected USD3 shares:", expectedUSD3Shares);
-        console.log("Expected sUSD3 shares:", expectedSUSD3Shares);
-        console.log("Actual final shares:", finalShares);
-
-        // Verify the final shares match expected calculation
-        assertEq(finalShares, expectedSUSD3Shares);
-        assertEq(sUsd3.balanceOf(user), expectedSUSD3Shares);
-
-        // Verify USDC was transferred from user to helper
-        assertEq(usdc.balanceOf(user), initialUSDCBalance - DEPOSIT_AMOUNT);
-        assertEq(usdc.balanceOf(address(helper)), initialHelperUSDCBalance + DEPOSIT_AMOUNT);
-
-        console.log("=== REDEEM (sUSD3 -> USD3 -> waUSDC -> USDC) ===");
-        console.log("sUSD3 shares to convert:", finalShares);
-
-        // Step 2: Convert sUSD3 back to USD3 first (since redeem only works with USD3)
-        vm.startPrank(user);
-        uint256 usd3Shares = sUsd3.redeem(finalShares, user, user);
-        vm.stopPrank();
-
-        console.log("Converted to USD3 shares:", usd3Shares);
-
-        // Step 3: Now redeem USD3 shares (USD3 -> waUSDC -> USDC)
-        vm.startPrank(user);
-        uint256 redeemedAssets = helper.redeem(usd3Shares, user);
-        vm.stopPrank();
-
-        // Calculate expected reverse conversions:
-        // 1. sUSD3 -> USD3: 906.50e6 sUSD3 shares -> 906.50e6 * 1.03e18 / 1e18 = 933.70e6 USD3 assets
-        uint256 expectedUSD3Assets = (finalShares * sUsd3PricePerShare) / 1e18;
-
-        // 2. USD3 -> waUSDC: 933.70e6 USD3 assets -> 933.70e6 * 1.05e18 / 1e18 = 980.39e6 waUSDC assets
-        uint256 expectedWaUSDCAssets = (expectedUSD3Assets * usd3PricePerShare) / 1e18;
-
-        // 3. waUSDC -> USDC: 980.39e6 waUSDC assets -> 980.39e6 * 1.02e18 / 1e18 = 1000e6 USDC
-        uint256 expectedUSDC = (expectedWaUSDCAssets * waUSDCPricePerShare) / 1e18;
-
-        console.log("Expected USD3 assets:", expectedUSD3Assets);
-        console.log("Expected waUSDC assets:", expectedWaUSDCAssets);
-        console.log("Expected USDC:", expectedUSDC);
-        console.log("Actual redeemed USDC:", redeemedAssets);
-
-        // Verify the redeemed assets match expected calculation
-        assertEq(redeemedAssets, expectedUSDC);
-        assertEq(usdc.balanceOf(user), initialUSDCBalance - DEPOSIT_AMOUNT + redeemedAssets);
-
-        // Verify all shares were burned
-        assertEq(sUsd3.balanceOf(user), 0);
+        // User should have no USD3 (it was deposited into sUSD3)
         assertEq(usd3.balanceOf(user), 0);
+
+        // Helper should have no tokens
+        assertEq(usd3.balanceOf(address(helper)), 0);
+        assertEq(sUsd3.balanceOf(address(helper)), 0);
         assertEq(waUsdc.balanceOf(address(helper)), 0);
 
-        console.log("=== VERIFICATION ===");
-        console.log("Final USDC balance:", usdc.balanceOf(user));
-        console.log("Expected final balance:", initialUSDCBalance - DEPOSIT_AMOUNT + expectedUSDC);
-
-        // The round trip should preserve the original amount (minus any fees/premiums)
-        // In this case, the user should get back exactly what they put in due to the mock implementation
-        assertEq(usdc.balanceOf(user), initialUSDCBalance);
+        // User's USDC should be reduced by deposit amount
+        assertEq(usdc.balanceOf(user), initialUSDCBalance - DEPOSIT_AMOUNT);
     }
 
-    function test_ComprehensiveBorrowRepayCycle() public {
-        vm.skip(true); // Skip - test setup needs refactoring for proper token flow
-        // Set different price per share for each layer
-        uint256 waUSDCPricePerShare = 1.01e18; // 1% premium for waUSDC
-        uint256 usd3PricePerShare = 1.04e18; // 4% premium for USD3
+    function test_RedeemFromSUSD3() public {
+        // First deposit with hop to get sUSD3
+        waUsdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 10);
+        usd3.setBalance(address(sUsd3), DEPOSIT_AMOUNT * 10);
 
-        waUsdc.setPricePerShare(waUSDCPricePerShare);
-        usd3.setPricePerShare(usd3PricePerShare);
+        vm.startPrank(user);
+        uint256 sUsd3Shares = helper.deposit(DEPOSIT_AMOUNT, user, true);
+        vm.stopPrank();
+
+        // Now test redemption: sUSD3 -> USD3 -> waUSDC -> USDC
+        // Give mocks necessary balances for redemption
+        usd3.setBalance(address(sUsd3), DEPOSIT_AMOUNT * 10); // sUSD3 needs USD3 to redeem
+        waUsdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 10); // USD3 needs waUSDC to redeem
+        usdc.setBalance(address(waUsdc), DEPOSIT_AMOUNT * 10); // waUSDC needs USDC to redeem
+
+        // First, user needs to convert sUSD3 back to USD3
+        vm.startPrank(user);
+        uint256 usd3Amount = sUsd3.redeem(sUsd3Shares, user, user);
+        vm.stopPrank();
+
+        assertEq(usd3Amount, DEPOSIT_AMOUNT);
+        assertEq(usd3.balanceOf(user), DEPOSIT_AMOUNT);
+        assertEq(sUsd3.balanceOf(user), 0);
+
+        // Now redeem USD3 through Helper
+        vm.startPrank(user);
+        uint256 usdcAmount = helper.redeem(usd3Amount, user);
+        vm.stopPrank();
+
+        // Should get back original USDC amount with 1:1 ratios
+        assertEq(usdcAmount, DEPOSIT_AMOUNT);
+        assertEq(usdc.balanceOf(user), DEPOSIT_AMOUNT * 10); // Initial balance restored
+        assertEq(usd3.balanceOf(user), 0);
+
+        // Helper should have no tokens
+        assertEq(waUsdc.balanceOf(address(helper)), 0);
+        assertEq(usd3.balanceOf(address(helper)), 0);
+    }
+
+    function test_DepositWithHop_WithDifferentPriceRatios() public {
+        // Test with different price ratios to ensure calculations work correctly
+        waUsdc.setPricePerShare(1.1e18); // 10% premium
+        usd3.setPricePerShare(1.05e18); // 5% premium
+        sUsd3.setPricePerShare(1.02e18); // 2% premium
+
+        // Give sufficient balances for conversions
+        waUsdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 20);
+        usd3.setBalance(address(sUsd3), DEPOSIT_AMOUNT * 20);
 
         uint256 initialUSDCBalance = usdc.balanceOf(user);
 
-        console.log("=== BORROW CYCLE ===");
-        console.log("Initial USDC balance:", initialUSDCBalance);
+        vm.startPrank(user);
+        uint256 shares = helper.deposit(DEPOSIT_AMOUNT, user, true);
+        vm.stopPrank();
+
+        // Calculate expected shares through all conversions
+        // USDC -> waUSDC: 1000e6 / 1.1 = 909.09e6 waUSDC shares
+        uint256 expectedWaUSDCShares = (DEPOSIT_AMOUNT * 1e18) / 1.1e18;
+        // waUSDC -> USD3: 909.09e6 / 1.05 = 865.80e6 USD3 shares
+        uint256 expectedUSD3Shares = (expectedWaUSDCShares * 1e18) / 1.05e18;
+        // USD3 -> sUSD3: 865.80e6 / 1.02 = 848.82e6 sUSD3 shares
+        uint256 expectedSUSD3Shares = (expectedUSD3Shares * 1e18) / 1.02e18;
+
+        assertEq(shares, expectedSUSD3Shares);
+        assertEq(sUsd3.balanceOf(user), expectedSUSD3Shares);
+        assertEq(usdc.balanceOf(user), initialUSDCBalance - DEPOSIT_AMOUNT);
+    }
+
+    function test_BorrowRepayCycle() public {
+        // Skip this test for now - the mock setup is complex
+        vm.skip(true);
+
+        // Test borrow and repay with proper USDC flow
+        uint256 initialUSDCBalance = usdc.balanceOf(user);
 
         MarketParams memory marketParams = MarketParams({
-            loanToken: address(usdc),
+            loanToken: address(waUsdc),
             collateralToken: address(usdc),
             oracle: address(0),
             irm: address(0),
@@ -630,88 +630,70 @@ contract HelperTest is BaseTest {
             creditLine: address(1)
         });
 
-        // Step 1: Borrow assets
+        // Configure MorphoMock to transfer waUSDC to Helper (not user)
+        // MorphoMock's borrow should send to the 'receiver' parameter which is Helper
+
+        // Give waUsdc mock USDC to unwrap for the borrower
+        usdc.setBalance(address(waUsdc), BORROW_AMOUNT * 10);
+        // Give MorphoMock some waUSDC to lend
+        waUsdc.setBalance(address(morphoMock), BORROW_AMOUNT * 10);
+
+        // Test borrow
         vm.startPrank(user);
-        (uint256 borrowedAssets, uint256 shares) = helper.borrow(marketParams, BORROW_AMOUNT);
+        (uint256 borrowedAssets, uint256 borrowShares) = helper.borrow(marketParams, BORROW_AMOUNT);
         vm.stopPrank();
 
-        console.log("Borrowed assets:", borrowedAssets);
-        console.log("Borrow shares:", shares);
-        console.log("USDC balance after borrow:", usdc.balanceOf(user));
-
-        // Verify borrow results
+        // Should receive USDC amount
         assertEq(borrowedAssets, BORROW_AMOUNT);
-        assertEq(shares, 0);
+        assertEq(borrowShares, 0); // Mock returns 0 shares
         assertEq(usdc.balanceOf(user), initialUSDCBalance + BORROW_AMOUNT);
 
-        // Step 2: Repay the borrowed amount
+        // Test repay
         bytes memory data = "";
-        uint256 repayAmount = BORROW_AMOUNT;
-
         vm.startPrank(user);
-        (uint256 repaidAssets, uint256 repaidShares) = helper.repay(marketParams, repayAmount, user, data);
+        (uint256 repaidAssets, uint256 repaidShares) = helper.repay(marketParams, BORROW_AMOUNT, user, data);
         vm.stopPrank();
 
-        console.log("=== REPAY CYCLE ===");
-        console.log("Repay amount:", repayAmount);
-        console.log("Repaid assets:", repaidAssets);
-        console.log("Repaid shares:", repaidShares);
-        console.log("Final USDC balance:", usdc.balanceOf(user));
-
-        // Verify repay results
-        assertEq(repaidAssets, repayAmount);
-        assertEq(repaidShares, 0);
-        assertEq(usdc.balanceOf(user), initialUSDCBalance + BORROW_AMOUNT - repayAmount);
-
-        console.log("=== BORROW/REPAY VERIFICATION ===");
-        console.log("Net USDC change:", usdc.balanceOf(user) - initialUSDCBalance);
-
-        // The borrow/repay cycle should result in no net change to USDC balance
-        // (since we borrowed and then repaid the same amount)
+        // Should have repaid the USDC amount
+        assertEq(repaidAssets, BORROW_AMOUNT);
+        assertEq(repaidShares, 0); // Mock returns 0 shares
         assertEq(usdc.balanceOf(user), initialUSDCBalance);
+
+        // Helper should have no tokens
+        assertEq(waUsdc.balanceOf(address(helper)), 0);
+        assertEq(usdc.balanceOf(address(helper)), 0);
     }
 
-    function testFuzz_ComprehensiveCycle(uint256 amount) public {
-        vm.skip(true); // Skip - test setup needs refactoring for proper token flow
-        vm.assume(amount > 0 && amount <= usdc.balanceOf(user) / 10); // Use smaller amounts for fuzz testing
+    function testFuzz_DepositRedeemCycle(uint256 amount) public {
+        // Bound the amount to reasonable values
+        amount = bound(amount, 1e6, 100_000e6); // Between 1 and 100,000 USDC
 
-        // Set random price per shares for each layer
-        uint256 waUSDCPricePerShare = 0.98e18 + (amount % 6) * 0.01e18; // 0.98 to 1.03
-        uint256 usd3PricePerShare = 1.0e18 + (amount % 8) * 0.01e18; // 1.00 to 1.07
-        uint256 sUsd3PricePerShare = 0.99e18 + (amount % 5) * 0.01e18; // 0.99 to 1.03
+        // Give user sufficient balance
+        usdc.setBalance(user, amount * 2);
 
-        waUsdc.setPricePerShare(waUSDCPricePerShare);
-        usd3.setPricePerShare(usd3PricePerShare);
-        sUsd3.setPricePerShare(sUsd3PricePerShare);
+        // Give mocks sufficient balances
+        waUsdc.setBalance(address(usd3), amount * 10);
+        usd3.setBalance(address(sUsd3), amount * 10);
+        usdc.setBalance(address(waUsdc), amount * 10);
 
         uint256 initialBalance = usdc.balanceOf(user);
 
-        // Ensure user has enough balance and approvals
+        // Test deposit without hop
         vm.startPrank(user);
-
-        // Deposit with hop
-        uint256 shares = helper.deposit(amount, user, true);
-
-        // Convert sUSD3 back to USD3 first
-        uint256 usd3Shares = sUsd3.redeem(shares, user, user);
-
-        // Then redeem USD3 shares
-        uint256 redeemedAssets = helper.redeem(usd3Shares, user);
+        uint256 usd3Shares = helper.deposit(amount, user, false);
         vm.stopPrank();
 
-        // Calculate expected shares through all layers
-        uint256 expectedShares = (amount * 1e18) / waUSDCPricePerShare;
-        expectedShares = (expectedShares * 1e18) / usd3PricePerShare;
-        expectedShares = (expectedShares * 1e18) / sUsd3PricePerShare;
+        assertEq(usd3Shares, amount); // 1:1 ratio
+        assertEq(usd3.balanceOf(user), amount);
+        assertEq(usdc.balanceOf(user), initialBalance - amount);
 
-        // Calculate expected redeemed assets through reverse layers
-        uint256 expectedAssets = (shares * sUsd3PricePerShare) / 1e18;
-        expectedAssets = (expectedAssets * usd3PricePerShare) / 1e18;
-        expectedAssets = (expectedAssets * waUSDCPricePerShare) / 1e18;
+        // Test redeem
+        vm.startPrank(user);
+        uint256 redeemedAmount = helper.redeem(usd3Shares, user);
+        vm.stopPrank();
 
-        // Verify the round trip
-        assertEq(shares, expectedShares);
-        assertEq(redeemedAssets, expectedAssets);
+        assertEq(redeemedAmount, amount);
         assertEq(usdc.balanceOf(user), initialBalance);
+        assertEq(usd3.balanceOf(user), 0);
     }
 }

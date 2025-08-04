@@ -4,13 +4,13 @@ pragma solidity >=0.5.0;
 import {IMorpho} from "./interfaces/IMorpho.sol";
 import {MarketParams} from "./interfaces/IMorpho.sol";
 import {IHelper} from "./interfaces/IHelper.sol";
-
-import {IERC4626} from "../lib/forge-std/src/interfaces/IERC4626.sol";
-
+import {IUSD3} from "./interfaces/IUSD3.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
+
+import {IERC4626} from "../lib/forge-std/src/interfaces/IERC4626.sol";
 
 /// @title Helper
 /// @author Morpho Labs
@@ -53,16 +53,21 @@ contract Helper is IHelper {
 
     /// @inheritdoc IHelper
     function deposit(uint256 assets, address receiver, bool hop) external returns (uint256) {
-        assets = IERC4626(USD3).deposit(_wrap(msg.sender, assets), receiver);
+        uint256 waUsdcAmount = _wrap(msg.sender, assets);
+
         if (hop) {
+            assets = IUSD3(USD3).deposit(waUsdcAmount, address(this));
             assets = IERC4626(sUSD3).deposit(assets, receiver);
+        } else {
+            assets = IUSD3(USD3).deposit(waUsdcAmount, receiver);
         }
+
         return assets;
     }
 
     /// @inheritdoc IHelper
     function redeem(uint256 shares, address receiver) external returns (uint256) {
-        uint256 waUsdcAssets = IERC4626(USD3).redeem(shares, address(this), msg.sender);
+        uint256 waUsdcAssets = IUSD3(USD3).redeem(shares, address(this), msg.sender);
         return _unwrap(receiver, waUsdcAssets);
     }
 
