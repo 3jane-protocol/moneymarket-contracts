@@ -1,0 +1,473 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.0;
+
+import "../../../lib/forge-std/src/Test.sol";
+import "../../../lib/forge-std/src/console.sol";
+
+import {Helper} from "../../../src/Helper.sol";
+import {IHelper} from "../../../src/interfaces/IHelper.sol";
+import {IUSD3} from "../../../src/interfaces/IUSD3.sol";
+import {IWrap} from "../../../src/interfaces/IWrap.sol";
+import {IMorpho} from "../../../src/interfaces/IMorpho.sol";
+import {MarketParams} from "../../../src/interfaces/IMorpho.sol";
+import {IERC20} from "../../../src/interfaces/IERC20.sol";
+
+import {BaseTest} from "../BaseTest.sol";
+import {ERC20Mock} from "../../../src/mocks/ERC20Mock.sol";
+
+// Mock contracts for dependencies with price per share functionality
+contract USD3Mock is IUSD3, ERC20Mock {
+    uint256 public pricePerShare = 1e18; // Default 1:1 ratio
+    ERC20Mock public underlying; // waUSDC
+
+    function setUnderlying(address _underlying) external {
+        underlying = ERC20Mock(_underlying);
+    }
+
+    function setPricePerShare(uint256 _pricePerShare) external {
+        pricePerShare = _pricePerShare;
+    }
+
+    function deposit(uint256 assets, address receiver) external returns (uint256) {
+        // Calculate shares based on price per share
+        uint256 shares = (assets * 1e18) / pricePerShare;
+        _mint(receiver, shares);
+
+        // Transfer underlying assets (waUSDC) to this contract
+        if (address(underlying) != address(0)) {
+            underlying.transferFrom(msg.sender, address(this), assets);
+        }
+
+        return shares;
+    }
+
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256) {
+        require(balanceOf[owner] >= shares, "insufficient shares");
+        uint256 assets = (shares * pricePerShare) / 1e18;
+        _burn(owner, shares);
+
+        // Transfer underlying assets (waUSDC) to receiver
+        if (address(underlying) != address(0)) {
+            underlying.transfer(receiver, assets);
+        }
+
+        return assets;
+    }
+
+    function _mint(address to, uint256 amount) internal {
+        balanceOf[to] += amount;
+        totalSupply += amount;
+        emit Transfer(address(0), to, amount);
+    }
+
+    function _burn(address from, uint256 amount) internal {
+        require(balanceOf[from] >= amount, "insufficient balance");
+        balanceOf[from] -= amount;
+        totalSupply -= amount;
+        emit Transfer(from, address(0), amount);
+    }
+}
+
+contract WrapMock is IWrap, ERC20Mock {
+    ERC20Mock public underlying;
+    uint256 public pricePerShare = 1e18; // Default 1:1 ratio
+
+    constructor(address _underlying) {
+        underlying = ERC20Mock(_underlying);
+    }
+
+    function setPricePerShare(uint256 _pricePerShare) external {
+        pricePerShare = _pricePerShare;
+    }
+
+    function deposit(uint256 assets, address receiver) external returns (uint256) {
+        // Transfer underlying tokens from caller
+        underlying.transferFrom(msg.sender, address(this), assets);
+        // Calculate shares based on price per share
+        uint256 shares = (assets * 1e18) / pricePerShare;
+        _mint(receiver, shares);
+        return shares;
+    }
+
+    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256) {
+        uint256 shares = (assets * 1e18) / pricePerShare;
+        require(balanceOf[owner] >= shares, "insufficient wrapped balance");
+        _burn(owner, shares);
+        // Transfer underlying tokens to receiver
+        underlying.transfer(receiver, assets);
+        return shares;
+    }
+
+    function _mint(address to, uint256 amount) internal {
+        balanceOf[to] += amount;
+        totalSupply += amount;
+        emit Transfer(address(0), to, amount);
+    }
+
+    function _burn(address from, uint256 amount) internal {
+        require(balanceOf[from] >= amount, "insufficient balance");
+        balanceOf[from] -= amount;
+        totalSupply -= amount;
+        emit Transfer(from, address(0), amount);
+    }
+}
+
+contract MorphoMock {
+    ERC20Mock public loanToken;
+    ERC20Mock public collateralToken;
+
+    function setTokens(address _loanToken, address _collateralToken) external {
+        loanToken = ERC20Mock(_loanToken);
+        collateralToken = ERC20Mock(_collateralToken);
+    }
+
+    function borrow(
+        MarketParams memory marketParams,
+        uint256 assets,
+        uint256 shares,
+        address receiver,
+        address onBehalf
+    ) external returns (uint256, uint256) {
+        // Simulate borrow by transferring loan tokens to receiver
+        if (address(loanToken) != address(0)) {
+            loanToken.transfer(receiver, assets);
+        }
+        return (assets, shares);
+    }
+
+    function repay(
+        MarketParams memory marketParams,
+        uint256 assets,
+        uint256 shares,
+        address onBehalf,
+        bytes calldata data
+    ) external returns (uint256, uint256) {
+        // Simulate repay by transferring loan tokens from msg.sender to this contract
+        if (address(loanToken) != address(0)) {
+            loanToken.transferFrom(msg.sender, address(this), assets);
+        }
+        return (assets, shares);
+    }
+}
+
+contract HelperTest is BaseTest {
+    Helper public helper;
+    USD3Mock public usd3;
+    USD3Mock public sUsd3;
+    ERC20Mock public usdc;
+    WrapMock public waUsdc;
+    MorphoMock public morphoMock;
+
+    address public user = makeAddr("User");
+    address public receiver = makeAddr("Receiver");
+    address public owner = makeAddr("Owner");
+
+    uint256 public constant DEPOSIT_AMOUNT = 1000e6; // 1000 USDC
+    uint256 public constant BORROW_AMOUNT = 500e6; // 500 USDC
+
+    function setUp() public override {
+        super.setUp();
+
+        // Deploy mock contracts
+        usdc = new ERC20Mock();
+        waUsdc = new WrapMock(address(usdc));
+        usd3 = new USD3Mock();
+        sUsd3 = new USD3Mock();
+        morphoMock = new MorphoMock();
+
+        // Configure USD3Mock with waUSDC as underlying
+        usd3.setUnderlying(address(waUsdc));
+        sUsd3.setUnderlying(address(usd3));
+
+        // Configure MorphoMock with tokens
+        morphoMock.setTokens(address(waUsdc), address(usdc));
+
+        // Deploy Helper contract
+        helper = new Helper(address(morphoMock), address(usd3), address(sUsd3), address(usdc), address(waUsdc));
+
+        // Set up initial balances
+        usdc.setBalance(user, DEPOSIT_AMOUNT * 10);
+        usdc.setBalance(address(helper), 0);
+
+        // Give MorphoMock some waUSDC to borrow from
+        waUsdc.setBalance(address(morphoMock), DEPOSIT_AMOUNT * 10);
+
+        // Approve tokens
+        vm.startPrank(user);
+        usdc.approve(address(helper), type(uint256).max);
+        usd3.approve(address(helper), type(uint256).max);
+        sUsd3.approve(address(helper), type(uint256).max);
+        waUsdc.approve(address(helper), type(uint256).max);
+        waUsdc.approve(address(morphoMock), type(uint256).max);
+        vm.stopPrank();
+    }
+
+    function test_Constructor() public {
+        // Test that all addresses are set correctly
+        assertEq(helper.MORPHO(), address(morphoMock));
+        assertEq(helper.USD3(), address(usd3));
+        assertEq(helper.sUSD3(), address(sUsd3));
+        assertEq(helper.USDC(), address(usdc));
+        assertEq(helper.WAUSDC(), address(waUsdc));
+    }
+
+    function test_Constructor_ZeroAddress() public {
+        // Test that constructor reverts with zero addresses
+        vm.expectRevert();
+        new Helper(address(0), address(usd3), address(sUsd3), address(usdc), address(waUsdc));
+
+        vm.expectRevert();
+        new Helper(address(morphoMock), address(0), address(sUsd3), address(usdc), address(waUsdc));
+
+        vm.expectRevert();
+        new Helper(address(morphoMock), address(usd3), address(0), address(usdc), address(waUsdc));
+
+        vm.expectRevert();
+        new Helper(address(morphoMock), address(usd3), address(sUsd3), address(0), address(waUsdc));
+
+        vm.expectRevert();
+        new Helper(address(morphoMock), address(usd3), address(sUsd3), address(usdc), address(0));
+    }
+
+    function test_SimpleDepositRedeem() public {
+        // Test with 1:1 price per share (no premiums)
+        uint256 waUSDCPricePerShare = 1e18; // 1:1 ratio
+        uint256 usd3PricePerShare = 1e18; // 1:1 ratio
+        uint256 sUsd3PricePerShare = 1e18; // 1:1 ratio
+
+        waUsdc.setPricePerShare(waUSDCPricePerShare);
+        usd3.setPricePerShare(usd3PricePerShare);
+        sUsd3.setPricePerShare(sUsd3PricePerShare);
+
+        uint256 initialUSDCBalance = usdc.balanceOf(user);
+
+        console.log("=== SIMPLE DEPOSIT ===");
+        console.log("Initial USDC balance:", initialUSDCBalance);
+
+        // Step 1: Deposit without hop (USDC -> waUSDC -> USD3)
+        vm.startPrank(user);
+        uint256 shares = helper.deposit(DEPOSIT_AMOUNT, user, false);
+        vm.stopPrank();
+
+        console.log("USD3 shares received:", shares);
+        console.log("Expected shares:", DEPOSIT_AMOUNT);
+
+        // Verify the shares match expected
+        assertEq(shares, DEPOSIT_AMOUNT);
+        assertEq(usd3.balanceOf(user), DEPOSIT_AMOUNT);
+
+        // Step 2: Redeem USD3 shares
+        vm.startPrank(user);
+        uint256 redeemedAssets = helper.redeem(shares, user, user);
+        vm.stopPrank();
+
+        console.log("Redeemed assets:", redeemedAssets);
+        console.log("Expected assets:", DEPOSIT_AMOUNT);
+
+        // Verify the redeemed assets match expected
+        assertEq(redeemedAssets, DEPOSIT_AMOUNT);
+        assertEq(usdc.balanceOf(user), initialUSDCBalance);
+
+        // Verify all shares were burned
+        assertEq(usd3.balanceOf(user), 0);
+        assertEq(waUsdc.balanceOf(address(helper)), 0);
+    }
+
+    function test_ComprehensiveDepositRedeemCycle() public {
+        // Set different price per share for each layer to test all conversions
+        uint256 waUSDCPricePerShare = 1.02e18; // 2% premium for waUSDC
+        uint256 usd3PricePerShare = 1.05e18; // 5% premium for USD3
+        uint256 sUsd3PricePerShare = 1.03e18; // 3% premium for sUSD3
+
+        waUsdc.setPricePerShare(waUSDCPricePerShare);
+        usd3.setPricePerShare(usd3PricePerShare);
+        sUsd3.setPricePerShare(sUsd3PricePerShare);
+
+        uint256 initialUSDCBalance = usdc.balanceOf(user);
+        uint256 initialHelperUSDCBalance = usdc.balanceOf(address(helper));
+
+        console.log("=== DEPOSIT WITH HOP (USDC -> waUSDC -> USD3 -> sUSD3) ===");
+        console.log("Initial USDC balance:", initialUSDCBalance);
+
+        // Step 1: Deposit with hop (USDC -> waUSDC -> USD3 -> sUSD3)
+        vm.startPrank(user);
+        uint256 finalShares = helper.deposit(DEPOSIT_AMOUNT, user, true);
+        vm.stopPrank();
+
+        // Calculate expected conversions through all layers:
+        // 1. USDC -> waUSDC: 1000e6 USDC -> 1000e6 * 1e18 / 1.02e18 = 980.39e6 waUSDC shares
+        uint256 expectedWaUSDCShares = (DEPOSIT_AMOUNT * 1e18) / waUSDCPricePerShare;
+
+        // 2. waUSDC -> USD3: 980.39e6 waUSDC -> 980.39e6 * 1e18 / 1.05e18 = 933.70e6 USD3 shares
+        uint256 expectedUSD3Shares = (expectedWaUSDCShares * 1e18) / usd3PricePerShare;
+
+        // 3. USD3 -> sUSD3: 933.70e6 USD3 -> 933.70e6 * 1e18 / 1.03e18 = 906.50e6 sUSD3 shares
+        uint256 expectedSUSD3Shares = (expectedUSD3Shares * 1e18) / sUsd3PricePerShare;
+
+        console.log("Expected waUSDC shares:", expectedWaUSDCShares);
+        console.log("Expected USD3 shares:", expectedUSD3Shares);
+        console.log("Expected sUSD3 shares:", expectedSUSD3Shares);
+        console.log("Actual final shares:", finalShares);
+
+        // Verify the final shares match expected calculation
+        assertEq(finalShares, expectedSUSD3Shares);
+        assertEq(sUsd3.balanceOf(user), expectedSUSD3Shares);
+
+        // Verify USDC was transferred from user to helper
+        assertEq(usdc.balanceOf(user), initialUSDCBalance - DEPOSIT_AMOUNT);
+        assertEq(usdc.balanceOf(address(helper)), initialHelperUSDCBalance + DEPOSIT_AMOUNT);
+
+        console.log("=== REDEEM (sUSD3 -> USD3 -> waUSDC -> USDC) ===");
+        console.log("sUSD3 shares to convert:", finalShares);
+
+        // Step 2: Convert sUSD3 back to USD3 first (since redeem only works with USD3)
+        vm.startPrank(user);
+        uint256 usd3Shares = sUsd3.redeem(finalShares, user, user);
+        vm.stopPrank();
+
+        console.log("Converted to USD3 shares:", usd3Shares);
+
+        // Step 3: Now redeem USD3 shares (USD3 -> waUSDC -> USDC)
+        vm.startPrank(user);
+        uint256 redeemedAssets = helper.redeem(usd3Shares, user, user);
+        vm.stopPrank();
+
+        // Calculate expected reverse conversions:
+        // 1. sUSD3 -> USD3: 906.50e6 sUSD3 shares -> 906.50e6 * 1.03e18 / 1e18 = 933.70e6 USD3 assets
+        uint256 expectedUSD3Assets = (finalShares * sUsd3PricePerShare) / 1e18;
+
+        // 2. USD3 -> waUSDC: 933.70e6 USD3 assets -> 933.70e6 * 1.05e18 / 1e18 = 980.39e6 waUSDC assets
+        uint256 expectedWaUSDCAssets = (expectedUSD3Assets * usd3PricePerShare) / 1e18;
+
+        // 3. waUSDC -> USDC: 980.39e6 waUSDC assets -> 980.39e6 * 1.02e18 / 1e18 = 1000e6 USDC
+        uint256 expectedUSDC = (expectedWaUSDCAssets * waUSDCPricePerShare) / 1e18;
+
+        console.log("Expected USD3 assets:", expectedUSD3Assets);
+        console.log("Expected waUSDC assets:", expectedWaUSDCAssets);
+        console.log("Expected USDC:", expectedUSDC);
+        console.log("Actual redeemed USDC:", redeemedAssets);
+
+        // Verify the redeemed assets match expected calculation
+        assertEq(redeemedAssets, expectedUSDC);
+        assertEq(usdc.balanceOf(user), initialUSDCBalance - DEPOSIT_AMOUNT + redeemedAssets);
+
+        // Verify all shares were burned
+        assertEq(sUsd3.balanceOf(user), 0);
+        assertEq(usd3.balanceOf(user), 0);
+        assertEq(waUsdc.balanceOf(address(helper)), 0);
+
+        console.log("=== VERIFICATION ===");
+        console.log("Final USDC balance:", usdc.balanceOf(user));
+        console.log("Expected final balance:", initialUSDCBalance - DEPOSIT_AMOUNT + expectedUSDC);
+
+        // The round trip should preserve the original amount (minus any fees/premiums)
+        // In this case, the user should get back exactly what they put in due to the mock implementation
+        assertEq(usdc.balanceOf(user), initialUSDCBalance);
+    }
+
+    function test_ComprehensiveBorrowRepayCycle() public {
+        // Set different price per share for each layer
+        uint256 waUSDCPricePerShare = 1.01e18; // 1% premium for waUSDC
+        uint256 usd3PricePerShare = 1.04e18; // 4% premium for USD3
+
+        waUsdc.setPricePerShare(waUSDCPricePerShare);
+        usd3.setPricePerShare(usd3PricePerShare);
+
+        uint256 initialUSDCBalance = usdc.balanceOf(user);
+
+        console.log("=== BORROW CYCLE ===");
+        console.log("Initial USDC balance:", initialUSDCBalance);
+
+        MarketParams memory marketParams = MarketParams({
+            loanToken: address(usdc),
+            collateralToken: address(usdc),
+            oracle: address(0),
+            irm: address(0),
+            lltv: 0.8e18,
+            creditLine: address(1)
+        });
+
+        // Step 1: Borrow assets
+        vm.startPrank(user);
+        (uint256 borrowedAssets, uint256 shares) = helper.borrow(marketParams, BORROW_AMOUNT);
+        vm.stopPrank();
+
+        console.log("Borrowed assets:", borrowedAssets);
+        console.log("Borrow shares:", shares);
+        console.log("USDC balance after borrow:", usdc.balanceOf(user));
+
+        // Verify borrow results
+        assertEq(borrowedAssets, BORROW_AMOUNT);
+        assertEq(shares, 0);
+        assertEq(usdc.balanceOf(user), initialUSDCBalance + BORROW_AMOUNT);
+
+        // Step 2: Repay the borrowed amount
+        bytes memory data = "";
+        uint256 repayAmount = BORROW_AMOUNT;
+
+        vm.startPrank(user);
+        (uint256 repaidAssets, uint256 repaidShares) = helper.repay(marketParams, repayAmount, user, data);
+        vm.stopPrank();
+
+        console.log("=== REPAY CYCLE ===");
+        console.log("Repay amount:", repayAmount);
+        console.log("Repaid assets:", repaidAssets);
+        console.log("Repaid shares:", repaidShares);
+        console.log("Final USDC balance:", usdc.balanceOf(user));
+
+        // Verify repay results
+        assertEq(repaidAssets, repayAmount);
+        assertEq(repaidShares, 0);
+        assertEq(usdc.balanceOf(user), initialUSDCBalance + BORROW_AMOUNT - repayAmount);
+
+        console.log("=== BORROW/REPAY VERIFICATION ===");
+        console.log("Net USDC change:", usdc.balanceOf(user) - initialUSDCBalance);
+
+        // The borrow/repay cycle should result in no net change to USDC balance
+        // (since we borrowed and then repaid the same amount)
+        assertEq(usdc.balanceOf(user), initialUSDCBalance);
+    }
+
+    function testFuzz_ComprehensiveCycle(uint256 amount) public {
+        vm.assume(amount > 0 && amount <= usdc.balanceOf(user) / 10); // Use smaller amounts for fuzz testing
+
+        // Set random price per shares for each layer
+        uint256 waUSDCPricePerShare = 0.98e18 + (amount % 6) * 0.01e18; // 0.98 to 1.03
+        uint256 usd3PricePerShare = 1.0e18 + (amount % 8) * 0.01e18; // 1.00 to 1.07
+        uint256 sUsd3PricePerShare = 0.99e18 + (amount % 5) * 0.01e18; // 0.99 to 1.03
+
+        waUsdc.setPricePerShare(waUSDCPricePerShare);
+        usd3.setPricePerShare(usd3PricePerShare);
+        sUsd3.setPricePerShare(sUsd3PricePerShare);
+
+        uint256 initialBalance = usdc.balanceOf(user);
+
+        // Ensure user has enough balance and approvals
+        vm.startPrank(user);
+
+        // Deposit with hop
+        uint256 shares = helper.deposit(amount, user, true);
+
+        // Convert sUSD3 back to USD3 first
+        uint256 usd3Shares = sUsd3.redeem(shares, user, user);
+
+        // Then redeem USD3 shares
+        uint256 redeemedAssets = helper.redeem(usd3Shares, user, user);
+        vm.stopPrank();
+
+        // Calculate expected shares through all layers
+        uint256 expectedShares = (amount * 1e18) / waUSDCPricePerShare;
+        expectedShares = (expectedShares * 1e18) / usd3PricePerShare;
+        expectedShares = (expectedShares * 1e18) / sUsd3PricePerShare;
+
+        // Calculate expected redeemed assets through reverse layers
+        uint256 expectedAssets = (shares * sUsd3PricePerShare) / 1e18;
+        expectedAssets = (expectedAssets * usd3PricePerShare) / 1e18;
+        expectedAssets = (expectedAssets * waUSDCPricePerShare) / 1e18;
+
+        // Verify the round trip
+        assertEq(shares, expectedShares);
+        assertEq(redeemedAssets, expectedAssets);
+        assertEq(usdc.balanceOf(user), initialBalance);
+    }
+}

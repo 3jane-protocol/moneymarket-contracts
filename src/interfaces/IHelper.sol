@@ -31,16 +31,10 @@ interface IHelper {
     function redeem(uint256 shares, address receiver, address owner) external returns (uint256);
 
     /// @notice Borrow
-    function borrow(MarketParams memory marketParams, uint256 assets, uint256 shares)
-        external
-        returns (uint256, uint256);
+    function borrow(MarketParams memory marketParams, uint256 assets) external returns (uint256, uint256);
 
     /// @notice Repay
-    function repay(
-        MarketParams memory marketParams,
-        uint256 assets,
-        uint256 shares,
-        address onBehalf,
-        bytes calldata data
-    ) external returns (uint256, uint256);
+    function repay(MarketParams memory marketParams, uint256 assets, address onBehalf, bytes calldata data)
+        external
+        returns (uint256, uint256);
 }
