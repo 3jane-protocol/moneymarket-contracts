@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
 import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
-import {SimpleCreditLineMock} from "../mocks/SimpleCreditLineMock.sol";
+import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
 
 contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupplyCallback {
@@ -11,13 +11,13 @@ contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupp
     using MorphoLib for IMorpho;
     using MarketParamsLib for MarketParams;
 
-    SimpleCreditLineMock internal creditLine;
+    CreditLineMock internal creditLine;
 
     function setUp() public override {
         super.setUp();
 
         // Deploy credit line mock
-        creditLine = new SimpleCreditLineMock();
+        creditLine = new CreditLineMock(address(morpho));
 
         // Update marketParams to use the credit line
         marketParams = MarketParams(

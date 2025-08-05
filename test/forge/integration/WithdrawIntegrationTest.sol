@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
 import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
-import {SimpleCreditLineMock} from "../mocks/SimpleCreditLineMock.sol";
+import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {TransparentUpgradeableProxy} from
@@ -15,13 +15,13 @@ contract WithdrawIntegrationTest is BaseTest {
     using SharesMathLib for uint256;
     using MarketParamsLib for MarketParams;
 
-    SimpleCreditLineMock internal creditLine;
+    CreditLineMock internal creditLine;
 
     function setUp() public override {
         super.setUp();
 
         // Deploy credit line mock
-        creditLine = new SimpleCreditLineMock();
+        creditLine = new CreditLineMock(address(morpho));
 
         // Update marketParams to use the credit line
         marketParams = MarketParams(
@@ -98,9 +98,8 @@ contract WithdrawIntegrationTest is BaseTest {
 
         // Set helper and usd3 addresses to allow supply
         address mockUsd3 = makeAddr("MockUSD3");
-        vm.startPrank(OWNER);
+        vm.prank(OWNER);
         IMorphoCredit(address(morphoCredit)).setUsd3(mockUsd3);
-        vm.stopPrank();
 
         // Create a new market params for the isolated test
         MarketParams memory isolatedMarketParams = MarketParams({

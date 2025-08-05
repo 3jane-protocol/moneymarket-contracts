@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import {BaseTest} from "../BaseTest.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
-import {SimpleCreditLineMock} from "../mocks/SimpleCreditLineMock.sol";
+import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {
     Id,
     MarketParams,
@@ -24,13 +24,13 @@ contract PathIndependentPenaltyTest is BaseTest {
     using MarketParamsLib for MarketParams;
     using SharesMathLib for uint256;
 
-    SimpleCreditLineMock internal creditLine;
+    CreditLineMock internal creditLine;
 
     function setUp() public override {
         super.setUp();
 
         // Deploy a mock credit line contract
-        creditLine = new SimpleCreditLineMock();
+        creditLine = new CreditLineMock(address(morpho));
 
         // Create credit line market
         marketParams = MarketParams(
