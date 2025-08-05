@@ -90,10 +90,7 @@ contract Setup is Test, IEvents {
         // Deploy proxy admin
         address morphoOwner = makeAddr("MorphoOwner");
         address proxyAdminOwner = makeAddr("ProxyAdminOwner");
-        ProxyAdmin proxyAdmin = new ProxyAdmin();
-        
-        // Transfer ownership to proxyAdminOwner
-        proxyAdmin.transferOwnership(proxyAdminOwner);
+        ProxyAdmin proxyAdmin = new ProxyAdmin(proxyAdminOwner);
 
         // Deploy proxy with initialization
         bytes memory initData = abi.encodeWithSelector(MorphoCredit.initialize.selector, morphoOwner);
@@ -129,7 +126,7 @@ contract Setup is Test, IEvents {
         USD3 usd3Implementation = new USD3();
 
         // Deploy proxy admin
-        ProxyAdmin usd3ProxyAdmin = new ProxyAdmin();
+        ProxyAdmin usd3ProxyAdmin = new ProxyAdmin(proxyAdminOwner);
         
         // Deploy proxy with initialization
         bytes memory usd3InitData = abi.encodeWithSelector(

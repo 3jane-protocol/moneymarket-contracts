@@ -29,7 +29,7 @@ contract sUSD3Test is Setup {
         sUSD3 susd3Implementation = new sUSD3();
         
         // Deploy proxy admin
-        ProxyAdmin susd3ProxyAdmin = new ProxyAdmin();
+        ProxyAdmin susd3ProxyAdmin = new ProxyAdmin(management);
         
         // Deploy proxy with initialization
         bytes memory susd3InitData = abi.encodeWithSelector(

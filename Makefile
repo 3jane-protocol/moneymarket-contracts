@@ -1,5 +1,8 @@
 -include .env
 
+# Mark all targets as PHONY to ensure they always run
+.PHONY: update build size inspect fmt test trace gas test-contract test-contract-gas trace-contract test-test test-test-trace trace-test snapshot snapshot-diff trace-setup trace-max coverage coverage-report coverage-debug coverage-html clean
+
 # deps
 update:; forge update
 build  :; forge build

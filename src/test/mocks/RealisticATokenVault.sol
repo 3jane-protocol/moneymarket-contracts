@@ -36,11 +36,10 @@ contract RealisticATokenVault is ERC4626, Ownable {
         address _owner,
         uint256 _fee,
         address _feeRecipient
-    ) ERC4626(_asset) ERC20(_name, _symbol) Ownable() {
+    ) ERC4626(_asset) ERC20(_name, _symbol) Ownable(_owner) {
         lastUpdate = block.timestamp;
         fee = _fee;
         feeRecipient = _feeRecipient;
-        _transferOwnership(_owner);
     }
 
     /**
