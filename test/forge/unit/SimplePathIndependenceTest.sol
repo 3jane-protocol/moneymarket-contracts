@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import {BaseTest} from "../BaseTest.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
+import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {
     Id,
     MarketParams,
@@ -21,13 +22,13 @@ contract SimplePathIndependenceTest is BaseTest {
     using MathLib for uint256;
     using MarketParamsLib for MarketParams;
 
-    address internal creditLine;
+    CreditLineMock internal creditLine;
 
     function setUp() public override {
         super.setUp();
 
         // Deploy a mock credit line contract
-        creditLine = makeAddr("CreditLine");
+        creditLine = new CreditLineMock(address(morpho));
 
         // Create credit line market
         marketParams = MarketParams(
@@ -36,7 +37,7 @@ contract SimplePathIndependenceTest is BaseTest {
             address(0), // No oracle needed
             address(irm),
             0, // No LLTV
-            creditLine // Credit line address
+            address(creditLine) // Credit line address
         );
         id = marketParams.id();
 
@@ -50,7 +51,7 @@ contract SimplePathIndependenceTest is BaseTest {
         vm.stopPrank();
 
         // Set credit line for borrower (must be called by creditLine address)
-        vm.prank(creditLine);
+        vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, 100_000e18, uint128(PREMIUM_RATE_PER_SECOND));
 
         // Borrow

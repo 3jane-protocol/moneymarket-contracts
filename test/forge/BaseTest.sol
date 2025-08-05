@@ -255,6 +255,23 @@ contract BaseTest is Test {
         IMorphoCredit(address(morpho)).setCreditLine(marketParams.id(), borrower, HIGH_COLLATERAL_AMOUNT, 0);
     }
 
+    function _setupMockUsd3() internal returns (address) {
+        address mockUsd3 = makeAddr("MockUSD3");
+        vm.prank(OWNER);
+        IMorphoCredit(address(morpho)).setUsd3(mockUsd3);
+        return mockUsd3;
+    }
+
+    function _supplyThroughMockUsd3(uint256 amount) internal returns (address) {
+        address mockUsd3 = _setupMockUsd3();
+        loanToken.setBalance(mockUsd3, amount);
+        vm.startPrank(mockUsd3);
+        loanToken.approve(address(morpho), amount);
+        morpho.supply(marketParams, amount, 0, mockUsd3, hex"");
+        vm.stopPrank();
+        return mockUsd3;
+    }
+
     function _boundHealthyPosition(uint256 amountCollateral, uint256 amountBorrowed, uint256 priceCollateral)
         internal
         view

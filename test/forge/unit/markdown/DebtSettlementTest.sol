@@ -574,10 +574,12 @@ contract SettlementCallbackHandler is IMorphoRepayCallback {
     address public immutable morpho;
     bool public callbackExecuted;
     uint256 public lastRepayAmount;
+    address public mm; // Market manager for credit line compatibility
 
     constructor(address _token, address _morpho) {
         token = _token;
         morpho = _morpho;
+        mm = address(0); // No markdown manager for this test
     }
 
     function onMorphoRepay(uint256 amount, bytes calldata data) external {

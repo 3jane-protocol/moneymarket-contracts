@@ -159,6 +159,9 @@ contract MorphoCreditTest is Test {
     }
 
     function testSupplyIsPausedReverts() public {
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setUsd3(usd3);
+
         uint256 supplyAmount = 1000e18;
         loanToken.setBalance(usd3, supplyAmount);
         vm.prank(usd3);
@@ -289,18 +292,27 @@ contract MorphoCreditTest is Test {
         morpho.supply(marketParams, supplyAmount, 0, borrower, "");
         vm.prank(address(creditLine));
         MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, 1000e18, 0);
-        // Create a payment cycle with obligation
-        uint256 endDate = block.timestamp - 1 days;
+        // Move time forward first to avoid underflow
+        vm.warp(block.timestamp + 10 days);
+
+        // First, have the borrower actually borrow some funds
+        loanToken.setBalance(borrower, 0);
+        vm.prank(helper);
+        morpho.borrow(marketParams, 100e18, 0, borrower, borrower);
+
+        // Create a payment cycle with obligation that ended in the past
+        uint256 endDate = block.timestamp - 2 days;
         address[] memory borrowers = new address[](1);
         uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory endingBalances = new uint256[](1);
         borrowers[0] = borrower;
-        repaymentBps[0] = 1000;
-        endingBalances[0] = 1e21;
+        repaymentBps[0] = 1000; // 10% repayment
+        endingBalances[0] = 100e18; // Current balance
         vm.prank(address(creditLine));
         MorphoCredit(address(morpho)).closeCycleAndPostObligations(
             marketId, endDate, borrowers, repaymentBps, endingBalances
         );
+
         vm.expectRevert(ErrorsLib.OutstandingRepayment.selector);
         vm.prank(helper);
         morpho.borrow(marketParams, 100e18, 0, borrower, borrower);
