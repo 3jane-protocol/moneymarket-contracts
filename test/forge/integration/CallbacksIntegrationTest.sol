@@ -19,20 +19,8 @@ contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupp
         // Deploy credit line mock
         creditLine = new CreditLineMock(address(morpho));
 
-        // Update marketParams to use the credit line
-        marketParams = MarketParams(
-            address(loanToken),
-            address(collateralToken),
-            address(oracle),
-            address(irm),
-            DEFAULT_TEST_LLTV,
-            address(creditLine)
-        );
-        id = marketParams.id();
-
-        // Create the market with credit line
-        vm.prank(OWNER);
-        morpho.createMarket(marketParams);
+        // Set up market with credit line using helper
+        (marketParams, id) = _setupCreditLineMarket(address(creditLine));
 
         // Set up MorphoCredit to allow this test contract to act as helper and USD3
         vm.startPrank(OWNER);

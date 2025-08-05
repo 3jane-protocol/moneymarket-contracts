@@ -272,6 +272,66 @@ contract BaseTest is Test {
         return mockUsd3;
     }
 
+    function _setupCreditLineMarket(address creditLineAddress) internal returns (MarketParams memory, Id) {
+        // Update marketParams to use the credit line
+        MarketParams memory creditLineMarketParams = MarketParams(
+            address(loanToken),
+            address(collateralToken),
+            address(oracle),
+            address(irm),
+            DEFAULT_TEST_LLTV,
+            creditLineAddress
+        );
+        Id creditLineId = creditLineMarketParams.id();
+
+        // Create the market with credit line
+        vm.prank(OWNER);
+        morpho.createMarket(creditLineMarketParams);
+
+        return (creditLineMarketParams, creditLineId);
+    }
+
+    function _createIsolatedMorphoCredit() internal returns (IMorpho) {
+        // Deploy a separate MorphoCredit instance (not mock) for isolated testing
+        MorphoCredit morphoCreditImpl = new MorphoCredit(address(protocolConfig));
+        TransparentUpgradeableProxy morphoCreditProxy = new TransparentUpgradeableProxy(
+            address(morphoCreditImpl),
+            address(proxyAdmin),
+            abi.encodeWithSelector(MorphoCredit.initialize.selector, OWNER)
+        );
+        return IMorpho(address(morphoCreditProxy));
+    }
+
+    function _setupIsolatedMarket(IMorpho isolatedMorpho, address creditLineAddress)
+        internal
+        returns (MarketParams memory, Id, address)
+    {
+        // Set up USD3 mock for the isolated instance
+        address mockUsd3 = makeAddr("IsolatedMockUSD3");
+        vm.prank(OWNER);
+        IMorphoCredit(address(isolatedMorpho)).setUsd3(mockUsd3);
+
+        // Create market params for the isolated test
+        MarketParams memory isolatedMarketParams = MarketParams({
+            loanToken: address(loanToken),
+            collateralToken: address(collateralToken),
+            oracle: address(oracle),
+            irm: address(irm),
+            lltv: DEFAULT_TEST_LLTV,
+            creditLine: creditLineAddress
+        });
+
+        // Enable IRM and LLTV on the isolated instance
+        vm.startPrank(OWNER);
+        isolatedMorpho.enableIrm(address(irm));
+        isolatedMorpho.enableLltv(DEFAULT_TEST_LLTV);
+        isolatedMorpho.createMarket(isolatedMarketParams);
+        vm.stopPrank();
+
+        Id isolatedId = isolatedMarketParams.id();
+        return (isolatedMarketParams, isolatedId, mockUsd3);
+    }
+
     function _boundHealthyPosition(uint256 amountCollateral, uint256 amountBorrowed, uint256 priceCollateral)
         internal
         view

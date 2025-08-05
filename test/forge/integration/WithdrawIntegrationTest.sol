@@ -23,20 +23,8 @@ contract WithdrawIntegrationTest is BaseTest {
         // Deploy credit line mock
         creditLine = new CreditLineMock(address(morpho));
 
-        // Update marketParams to use the credit line
-        marketParams = MarketParams(
-            address(loanToken),
-            address(collateralToken),
-            address(oracle),
-            address(irm),
-            DEFAULT_TEST_LLTV,
-            address(creditLine)
-        );
-        id = marketParams.id();
-
-        // Create the market with credit line
-        vm.prank(OWNER);
-        morpho.createMarket(marketParams);
+        // Set up market with credit line using helper
+        (marketParams, id) = _setupCreditLineMarket(address(creditLine));
     }
 
     function testWithdrawMarketNotCreated(MarketParams memory marketParamsParamsFuzz) public {
@@ -87,36 +75,12 @@ contract WithdrawIntegrationTest is BaseTest {
         vm.assume(attacker != address(0));
         vm.assume(attacker != SUPPLIER);
 
-        // Deploy a separate MorphoCredit instance (not mock) for this test
-        MorphoCredit morphoCreditImpl = new MorphoCredit(address(protocolConfig));
-        TransparentUpgradeableProxy morphoCreditProxy = new TransparentUpgradeableProxy(
-            address(morphoCreditImpl),
-            address(proxyAdmin),
-            abi.encodeWithSelector(MorphoCredit.initialize.selector, OWNER)
-        );
-        IMorpho morphoCredit = IMorpho(address(morphoCreditProxy));
+        // Create an isolated MorphoCredit instance for this test
+        IMorpho morphoCredit = _createIsolatedMorphoCredit();
 
-        // Set helper and usd3 addresses to allow supply
-        address mockUsd3 = makeAddr("MockUSD3");
-        vm.prank(OWNER);
-        IMorphoCredit(address(morphoCredit)).setUsd3(mockUsd3);
-
-        // Create a new market params for the isolated test
-        MarketParams memory isolatedMarketParams = MarketParams({
-            loanToken: address(loanToken),
-            collateralToken: address(collateralToken),
-            oracle: address(oracle),
-            irm: address(irm),
-            lltv: DEFAULT_TEST_LLTV,
-            creditLine: address(creditLine)
-        });
-
-        // Set up the market on the new instance
-        vm.prank(OWNER);
-        morphoCredit.enableIrm(address(irm));
-        vm.prank(OWNER);
-        morphoCredit.enableLltv(DEFAULT_TEST_LLTV);
-        morphoCredit.createMarket(isolatedMarketParams);
+        // Set up the isolated market with helper
+        (MarketParams memory isolatedMarketParams,, address mockUsd3) =
+            _setupIsolatedMarket(morphoCredit, address(creditLine));
 
         // Supply to the market (through mockUsd3 to pass the check)
         loanToken.setBalance(mockUsd3, amount);
