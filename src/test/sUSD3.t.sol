@@ -221,10 +221,10 @@ contract sUSD3Test is Setup {
         // Fast forward past cooldown
         skip(7 days + 1);
         
-        // Withdraw
+        // Withdraw using standard redeem function
         uint256 balanceBefore = ERC20(address(usd3)).balanceOf(alice);
         vm.prank(alice);
-        uint256 assets = susd3Strategy.withdraw();
+        uint256 assets = susd3Strategy.redeem(shares, alice, alice);
         
         // Check results
         assertEq(ERC20(address(susd3Strategy)).balanceOf(alice), 0);
@@ -251,8 +251,8 @@ contract sUSD3Test is Setup {
         // Try to withdraw before cooldown ends
         skip(6 days); // Not enough
         vm.prank(alice);
-        vm.expectRevert("Still cooling down");
-        susd3Strategy.withdraw();
+        vm.expectRevert(); // Will revert due to availableWithdrawLimit returning 0
+        susd3Strategy.redeem(depositAmount, alice, alice);
     }
     
     function test_withdraw_windowExpired() public {
@@ -270,14 +270,23 @@ contract sUSD3Test is Setup {
         // Fast forward past window
         skip(10 days); // Past 7 day cooldown + 2 day window
         vm.prank(alice);
-        vm.expectRevert("Withdrawal window expired");
-        susd3Strategy.withdraw();
+        vm.expectRevert(); // Will revert due to availableWithdrawLimit returning 0
+        susd3Strategy.redeem(depositAmount, alice, alice);
     }
     
     function test_withdraw_noCooldown() public {
+        // Without a cooldown, availableWithdrawLimit returns 0, so withdraw will revert
+        // Setup: Alice deposits some of her USD3 into sUSD3
+        uint256 depositAmount = 1000e6; // 1000 USD3 (with 6 decimals like USDC)
+        vm.startPrank(alice);
+        ERC20(address(usd3)).approve(address(susd3Strategy), depositAmount);
+        uint256 shares = susd3Strategy.deposit(depositAmount, alice);
+        vm.stopPrank();
+        
+        // Try to withdraw without starting cooldown
         vm.prank(alice);
-        vm.expectRevert("No active cooldown");
-        susd3Strategy.withdraw();
+        vm.expectRevert(); // Will revert due to availableWithdrawLimit returning 0
+        susd3Strategy.withdraw(depositAmount, alice, alice);
     }
     
     /*//////////////////////////////////////////////////////////////
@@ -409,10 +418,10 @@ contract sUSD3Test is Setup {
         (, , uint256 cooldownShares) = susd3Strategy.getCooldownStatus(alice);
         assertEq(cooldownShares, 0);
         
-        // Cannot withdraw anymore
+        // Cannot withdraw anymore (availableWithdrawLimit will return 0)
         vm.prank(alice);
-        vm.expectRevert("No active cooldown");
-        susd3Strategy.withdraw();
+        vm.expectRevert(); // Will revert due to availableWithdrawLimit returning 0
+        susd3Strategy.withdraw(depositAmount, alice, alice);
     }
     
     function test_availableWithdrawLimit_withCooldown() public {
@@ -423,20 +432,159 @@ contract sUSD3Test is Setup {
         susd3Strategy.deposit(depositAmount, alice);
         vm.stopPrank();
         
-        // Before cooldown - should return max
+        // Before cooldown - should return 0 (no cooldown started)
         uint256 limitBefore = susd3Strategy.availableWithdrawLimit(alice);
-        assertEq(limitBefore, type(uint256).max);
+        assertEq(limitBefore, 0);
         
         // Start cooldown
         skip(91 days);
         vm.prank(alice);
         susd3Strategy.startCooldown(depositAmount);
         
-        // During cooldown - should return 0
+        // During cooldown - should still return 0
         uint256 limitDuring = susd3Strategy.availableWithdrawLimit(alice);
         assertEq(limitDuring, 0);
+        
+        // After cooldown - should return the withdrawable amount
+        skip(7 days + 1);
+        uint256 limitAfter = susd3Strategy.availableWithdrawLimit(alice);
+        assertEq(limitAfter, depositAmount);
     }
     
+    function test_subsequentDepositsExtendLock() public {
+        // First deposit sets initial lock
+        uint256 firstDeposit = 500e6;
+        vm.startPrank(alice);
+        ERC20(address(usd3)).approve(address(susd3Strategy), type(uint256).max);
+        susd3Strategy.deposit(firstDeposit, alice);
+        
+        uint256 firstLock = susd3Strategy.lockedUntil(alice);
+        assertEq(firstLock, block.timestamp + 90 days, "First lock should be 90 days");
+        
+        // Fast forward 30 days
+        skip(30 days);
+        
+        // Second deposit should extend the lock
+        uint256 secondDeposit = 300e6;
+        susd3Strategy.deposit(secondDeposit, alice);
+        
+        uint256 secondLock = susd3Strategy.lockedUntil(alice);
+        assertEq(secondLock, block.timestamp + 90 days, "Lock should be extended to 90 days from now");
+        assertGt(secondLock, firstLock, "Second lock should be later than first");
+        
+        // Verify cannot withdraw before new lock expires
+        vm.expectRevert(); // Still locked
+        susd3Strategy.redeem(100e6, alice, alice);
+        
+        // Fast forward to after original lock but before new lock
+        skip(60 days); // Now 90 days from first deposit, but only 60 from second
+        
+        // Still cannot withdraw
+        vm.expectRevert(); // Still locked due to extension
+        susd3Strategy.redeem(100e6, alice, alice);
+        
+        // Fast forward past new lock
+        skip(31 days); // Now past 90 days from second deposit
+        
+        // Can start cooldown now
+        susd3Strategy.startCooldown(100e6);
+        vm.stopPrank();
+    }
+
+    function test_lockClearedOnFullWithdrawal() public {
+        // Deposit and wait for lock
+        vm.startPrank(alice);
+        ERC20(address(usd3)).approve(address(susd3Strategy), type(uint256).max);
+        uint256 shares = susd3Strategy.deposit(500e6, alice);
+        
+        // Verify lock is set
+        uint256 lockTime = susd3Strategy.lockedUntil(alice);
+        assertGt(lockTime, 0, "Lock should be set");
+        
+        // Fast forward past lock and cooldown
+        skip(91 days);
+        susd3Strategy.startCooldown(shares);
+        skip(8 days);
+        
+        // Full withdrawal
+        susd3Strategy.redeem(shares, alice, alice);
+        
+        // Verify lock is cleared
+        assertEq(susd3Strategy.lockedUntil(alice), 0, "Lock should be cleared after full withdrawal");
+        assertEq(ERC20(address(susd3Strategy)).balanceOf(alice), 0, "Balance should be 0");
+        
+        // New deposit should set fresh lock
+        susd3Strategy.deposit(100e6, alice);
+        uint256 newLock = susd3Strategy.lockedUntil(alice);
+        assertEq(newLock, block.timestamp + 90 days, "New lock should be 90 days from now");
+        vm.stopPrank();
+    }
+
+    function test_mintAlsoSetsLockPeriod() public {
+        // Verify that using mint() instead of deposit() also sets the lock period
+        uint256 sharesToMint = 100e6; // Request 100 shares
+        
+        // Alice uses mint instead of deposit
+        vm.startPrank(alice);
+        ERC20(address(usd3)).approve(address(susd3Strategy), type(uint256).max);
+        susd3Strategy.mint(sharesToMint, alice);
+        vm.stopPrank();
+        
+        // Check that lock period was set
+        assertGt(susd3Strategy.lockedUntil(alice), block.timestamp, "Lock period should be set via mint");
+        assertEq(susd3Strategy.lockedUntil(alice), block.timestamp + 90 days, "Lock should be 90 days");
+        
+        // Verify cannot withdraw before lock expires
+        vm.prank(alice);
+        vm.expectRevert(); // Should fail due to lock
+        susd3Strategy.redeem(sharesToMint, alice, alice);
+        
+        // Fast forward past lock and verify can withdraw (with cooldown)
+        skip(91 days);
+        vm.prank(alice);
+        susd3Strategy.startCooldown(sharesToMint);
+        
+        skip(7 days + 1);
+        vm.prank(alice);
+        uint256 assets = susd3Strategy.redeem(sharesToMint, alice, alice);
+        assertGt(assets, 0, "Should be able to withdraw after lock and cooldown");
+    }
+
+    function test_partialWithdrawal() public {
+        // Setup: Alice deposits
+        uint256 depositAmount = 1000e6;
+        vm.startPrank(alice);
+        ERC20(address(usd3)).approve(address(susd3Strategy), depositAmount);
+        uint256 totalShares = susd3Strategy.deposit(depositAmount, alice);
+        vm.stopPrank();
+        
+        // Fast forward and start cooldown
+        skip(91 days);
+        vm.prank(alice);
+        susd3Strategy.startCooldown(totalShares);
+        
+        // Fast forward past cooldown
+        skip(7 days + 1);
+        
+        // Withdraw only 30% of shares
+        uint256 partialShares = totalShares * 30 / 100;
+        vm.prank(alice);
+        uint256 assetsWithdrawn = susd3Strategy.redeem(partialShares, alice, alice);
+        
+        // Check cooldown still exists with remaining shares
+        (, , uint256 remainingCooldownShares) = susd3Strategy.getCooldownStatus(alice);
+        assertEq(remainingCooldownShares, totalShares - partialShares, "Cooldown should have remaining shares");
+        
+        // Can withdraw more within same window
+        uint256 moreShares = totalShares * 20 / 100;
+        vm.prank(alice);
+        susd3Strategy.redeem(moreShares, alice, alice);
+        
+        // Check cooldown updated again
+        (, , uint256 finalCooldownShares) = susd3Strategy.getCooldownStatus(alice);
+        assertEq(finalCooldownShares, totalShares - partialShares - moreShares, "Cooldown should be reduced");
+    }
+
     function test_multipleUsers() public {
         // Check balances first
         uint256 aliceBalance = ERC20(address(usd3)).balanceOf(alice);

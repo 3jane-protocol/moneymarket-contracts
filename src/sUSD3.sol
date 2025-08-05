@@ -7,6 +7,7 @@ import {SafeERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/uti
 import {Math} from "../lib/openzeppelin-contracts/contracts/utils/math/Math.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {USD3} from "./USD3.sol";
 
 /**
  * @title sUSD3
@@ -146,15 +147,37 @@ contract sUSD3 is BaseHooksUpgradeable {
      * @return Total assets held by the strategy
      */
     function _harvestAndReport() internal override returns (uint256) {
-        // In production, this would track yield received from USD3
-        // and any losses absorbed from markdowns
-        return asset().balanceOf(address(this));
+        // First, try to claim any pending yield from USD3
+        if (usd3Strategy != address(0)) {
+            try USD3(usd3Strategy).claimYieldDistribution() returns (uint256 claimed) {
+                if (claimed > 0) {
+                    accumulatedYield += claimed;
+                    lastYieldUpdate = block.timestamp;
+                    emit YieldReceived(claimed, usd3Strategy);
+                }
+            } catch {
+                // Silently handle if claim fails
+            }
+        }
+        
+        // Return total USD3 tokens held
+        return IERC20(_asset).balanceOf(address(this));
     }
 
     /*//////////////////////////////////////////////////////////////
                         HOOKS IMPLEMENTATION
     //////////////////////////////////////////////////////////////*/
     
+    /**
+     * @dev Set/extend lock period on each deposit
+     */
+    function _setInitialLockIfNeeded(address receiver, uint256 assets, uint256 shares) private {
+        // Each deposit extends lock period for entire balance
+        if (assets > 0 || shares > 0) {
+            lockedUntil[receiver] = block.timestamp + lockDuration;
+        }
+    }
+
     /**
      * @dev Pre-deposit hook to track lock period on first deposit
      */
@@ -163,10 +186,63 @@ contract sUSD3 is BaseHooksUpgradeable {
         uint256 shares,
         address receiver
     ) internal override {
-        // Track lock period on first deposit
-        if (lockedUntil[receiver] == 0 && (assets > 0 || shares > 0)) {
-            lockedUntil[receiver] = block.timestamp + lockDuration;
+        _setInitialLockIfNeeded(receiver, assets, shares);
+    }
+
+    /**
+     * @dev Pre-mint hook to track lock period on first mint
+     * Must match deposit hook to prevent lock bypass
+     */
+    function _preMintHook(
+        uint256 assets,
+        uint256 shares,
+        address receiver
+    ) internal override {
+        _setInitialLockIfNeeded(receiver, assets, shares);
+    }
+
+    /**
+     * @dev Update cooldown after successful withdrawal/redemption
+     */
+    function _updateCooldownAfterWithdrawal(address owner, uint256 shares, uint256 assets) private {
+        UserCooldown storage cooldown = cooldowns[owner];
+        if (cooldown.shares > 0) {
+            if (shares >= cooldown.shares) {
+                // Full withdrawal - clear the cooldown
+                delete cooldowns[owner];
+            } else {
+                // Partial withdrawal - reduce cooldown shares
+                cooldown.shares -= shares;
+            }
+            emit WithdrawalCompleted(owner, shares, assets);
         }
+        
+        // Clear lock timestamp if fully withdrawn
+        if (ITokenizedStrategy(address(this)).balanceOf(owner) == 0) {
+            delete lockedUntil[owner];
+        }
+    }
+
+    /**
+     * @dev Post-withdraw hook to update cooldown after successful withdrawal
+     */
+    function _postWithdrawHook(
+        uint256 assets,
+        uint256 shares,
+        address owner
+    ) internal override {
+        _updateCooldownAfterWithdrawal(owner, shares, assets);
+    }
+
+    /**
+     * @dev Post-redeem hook to update cooldown after successful redemption
+     */
+    function _postRedeemHook(
+        uint256 assets,
+        uint256 shares,
+        address owner
+    ) internal override {
+        _updateCooldownAfterWithdrawal(owner, shares, assets);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -201,28 +277,6 @@ contract sUSD3 is BaseHooksUpgradeable {
         emit CooldownCancelled(msg.sender);
     }
     
-    /**
-     * @notice Complete withdrawal after cooldown
-     * @return assets Amount of USD3 tokens withdrawn
-     */
-    function withdraw() external returns (uint256 assets) {
-        UserCooldown memory cooldown = cooldowns[msg.sender];
-        require(cooldown.shares > 0, "No active cooldown");
-        require(block.timestamp >= cooldown.cooldownEnd, "Still cooling down");
-        require(block.timestamp <= cooldown.windowEnd, "Withdrawal window expired");
-        
-        // Clear cooldown
-        delete cooldowns[msg.sender];
-        
-        // Delegate to TokenizedStrategy's redeem function
-        bytes memory result = _delegateCall(
-            abi.encodeWithSelector(0xba087652, cooldown.shares, msg.sender, msg.sender) // redeem(uint256,address,address)
-        );
-        assets = abi.decode(result, (uint256));
-        
-        emit WithdrawalCompleted(msg.sender, cooldown.shares, assets);
-        return assets;
-    }
 
     /*//////////////////////////////////////////////////////////////
                         VIEW FUNCTIONS
@@ -264,16 +318,33 @@ contract sUSD3 is BaseHooksUpgradeable {
     /**
      * @notice Check available withdraw limit (considers cooldowns)
      * @param _owner Address to check limit for
-     * @return Maximum withdrawal amount allowed
+     * @return Maximum withdrawal amount allowed in assets
      */
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
-        // If user has active cooldown, they must use the withdraw() function
-        if (cooldowns[_owner].shares > 0) {
+        // Check initial lock period
+        if (block.timestamp < lockedUntil[_owner]) {
             return 0;
         }
         
-        // Otherwise they can start a new cooldown for their full balance
-        return type(uint256).max;
+        UserCooldown memory cooldown = cooldowns[_owner];
+        
+        // No cooldown started - cannot withdraw
+        if (cooldown.shares == 0) {
+            return 0;
+        }
+        
+        // Still in cooldown period
+        if (block.timestamp < cooldown.cooldownEnd) {
+            return 0;
+        }
+        
+        // Window expired - must restart cooldown
+        if (block.timestamp > cooldown.windowEnd) {
+            return 0;
+        }
+        
+        // Within valid withdrawal window - return withdrawable amount in assets
+        return ITokenizedStrategy(address(this)).convertToAssets(cooldown.shares);
     }
     
     /**

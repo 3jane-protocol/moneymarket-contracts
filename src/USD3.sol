@@ -14,7 +14,7 @@ import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrat
 import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
 contract USD3 is BaseHooksUpgradeable {
-    using SafeERC20 for ERC20;
+    using SafeERC20 for IERC20;
     using MorphoLib for IMorpho;
     using MorphoBalancesLib for IMorpho;
     using MarketParamsLib for MarketParams;
@@ -55,16 +55,18 @@ contract USD3 is BaseHooksUpgradeable {
 
     // Yield Sharing
     uint256 public interestShareVariant; // Basis points for sUSD3 (2000 = 20%)
+    uint256 public pendingYieldDistribution; // Yield pending for sUSD3
 
     /*//////////////////////////////////////////////////////////////
                             EVENTS
     //////////////////////////////////////////////////////////////*/
     event MaxOnCreditUpdated(uint256 newMaxOnCredit);
     event USD3MinRatioUpdated(uint256 newRatio);
-    event SUSD3StrategyUpdated(address newStrategy);
+    event SUSD3StrategyUpdated(address oldStrategy, address newStrategy);
     event WhitelistUpdated(address indexed user, bool allowed);
     event MinDepositUpdated(uint256 newMinDeposit);
-    event InterestShareVariantUpdated(uint256 newShare);
+    event InterestShareUpdated(uint256 oldBps, uint256 newBps);
+    event YieldDistributed(address indexed recipient, uint256 valueDistributed, uint256 sharesIssued);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -94,7 +96,7 @@ contract USD3 is BaseHooksUpgradeable {
         __BaseStrategy_init(loanToken, _name, _management, _performanceFeeRecipient, _keeper);
 
         // Approve Morpho
-        ERC20(loanToken).forceApprove(address(morphoBlue), type(uint256).max);
+        IERC20(loanToken).forceApprove(address(morphoBlue), type(uint256).max);
         
         // Set default values
         maxOnCredit = 10_000; // 100% by default (no restriction)
@@ -192,7 +194,7 @@ contract USD3 is BaseHooksUpgradeable {
         }
         
         // Verify we received the tokens (allow for small rounding differences)
-        uint256 balance = asset().balanceOf(address(this));
+        uint256 balance = IERC20(loanToken).balanceOf(address(this));
         require(balance > 0, "No tokens received from withdraw");
     }
 
@@ -202,12 +204,29 @@ contract USD3 is BaseHooksUpgradeable {
         morphoBlue.accrueInterest(params);
 
         // An airdrop might have cause asset to be available, deposit!
-        uint256 _totalIdle = asset().balanceOf(address(this));
+        uint256 _totalIdle = IERC20(loanToken).balanceOf(address(this));
         if (_totalIdle > 0) {
             _tend(_totalIdle);
         }
 
-        return morphoBlue.expectedSupplyAssets(params, address(this));
+        uint256 currentTotalAssets = morphoBlue.expectedSupplyAssets(params, address(this)) + IERC20(loanToken).balanceOf(address(this));
+        
+        // Calculate profit for interest sharing
+        uint256 lastTotal = ITokenizedStrategy(address(this)).totalAssets();
+        if (currentTotalAssets > lastTotal && interestShareVariant > 0 && susd3Strategy != address(0)) {
+            uint256 profit = currentTotalAssets - lastTotal;
+            uint256 sUSD3ValueShare = (profit * interestShareVariant) / MAX_BPS;
+            
+            if (sUSD3ValueShare > 0) {
+                // Accumulate yield for sUSD3 to claim
+                pendingYieldDistribution += sUSD3ValueShare;
+                
+                // Reduce reported assets to account for the reserved yield
+                currentTotalAssets = currentTotalAssets - sUSD3ValueShare;
+            }
+        }
+
+        return currentTotalAssets;
     }
 
     function _tend(uint256 _totalIdle) internal virtual override {
@@ -223,12 +242,18 @@ contract USD3 is BaseHooksUpgradeable {
             }
         }
         
-        // Get base liquidity available
+        // Get available liquidity
         (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
-        uint256 idle = asset().balanceOf(address(this));
-        uint256 baseLiquidity = idle + Math.min(liquidity, assetsMax);
+        uint256 idle = IERC20(loanToken).balanceOf(address(this));
+        uint256 availableLiquidity = idle + Math.min(liquidity, assetsMax);
         
-        // Check USD3 ratio constraint
+        // Account for pending yield distribution that's reserved for sUSD3
+        if (pendingYieldDistribution > 0) {
+            availableLiquidity = availableLiquidity > pendingYieldDistribution ? 
+                availableLiquidity - pendingYieldDistribution : 0;
+        }
+        
+        // Apply USD3 ratio constraint if configured
         if (usd3MinRatio > 0 && susd3Strategy != address(0)) {
             uint256 usd3Value = _totalAssets();
             uint256 susd3Value = IERC20(susd3Strategy).totalSupply();
@@ -237,16 +262,16 @@ contract USD3 is BaseHooksUpgradeable {
             if (totalValue > 0) {
                 // Calculate max withdrawable while maintaining ratio
                 uint256 minUsd3Value = (totalValue * usd3MinRatio) / 10_000;
-                if (usd3Value <= minUsd3Value) {
-                    return 0; // Already at minimum ratio
+                if (usd3Value > minUsd3Value) {
+                    uint256 maxWithdrawableForRatio = usd3Value - minUsd3Value;
+                    availableLiquidity = Math.min(availableLiquidity, maxWithdrawableForRatio);
+                } else {
+                    return 0; // Already at or below minimum ratio
                 }
-                
-                uint256 maxWithdrawable = usd3Value - minUsd3Value;
-                return Math.min(baseLiquidity, maxWithdrawable);
             }
         }
         
-        return baseLiquidity;
+        return availableLiquidity;
     }
 
     function availableDepositLimit(address _owner) public view override returns (uint256) {
@@ -269,22 +294,59 @@ contract USD3 is BaseHooksUpgradeable {
                         HOOKS IMPLEMENTATION
     //////////////////////////////////////////////////////////////*/
 
+    /// @dev Enforce minimum deposit and set commitment time
+    function _enforceDepositRequirements(uint256 assets, address receiver) private {
+        require(assets >= minDeposit, "Below minimum deposit");
+        
+        // Each deposit extends commitment for entire balance
+        if (minCommitmentTime > 0) {
+            depositTimestamp[receiver] = block.timestamp;
+        }
+    }
+
     /// @dev Pre-deposit hook to enforce minimum deposit and track commitment time
     function _preDepositHook(
         uint256 assets,
         uint256 shares,
         address receiver
     ) internal override {
-        // For deposit() calls, we check assets directly
-        // For mint() calls, assets is the preview amount
-        require(assets >= minDeposit, "Below minimum deposit");
-        
-        // Track deposit timestamp if commitment enabled
-        if (minCommitmentTime > 0 && depositTimestamp[receiver] == 0) {
-            depositTimestamp[receiver] = block.timestamp;
+        _enforceDepositRequirements(assets, receiver);
+    }
+
+    /// @dev Pre-mint hook - must match deposit hook to prevent bypass
+    function _preMintHook(
+        uint256 assets,
+        uint256 shares,
+        address receiver
+    ) internal override {
+        // For mint(), assets is the preview amount needed
+        _enforceDepositRequirements(assets, receiver);
+    }
+
+    /// @dev Clear commitment timestamp if user fully exited
+    function _clearCommitmentIfNeeded(address owner) private {
+        if (ITokenizedStrategy(address(this)).balanceOf(owner) == 0) {
+            delete depositTimestamp[owner];
         }
     }
 
+    /// @dev Post-withdraw hook to clear commitment on full exit
+    function _postWithdrawHook(
+        uint256 assets,
+        uint256 shares,
+        address owner
+    ) internal override {
+        _clearCommitmentIfNeeded(owner);
+    }
+
+    /// @dev Post-redeem hook to clear commitment on full exit
+    function _postRedeemHook(
+        uint256 assets,
+        uint256 shares,
+        address owner
+    ) internal override {
+        _clearCommitmentIfNeeded(owner);
+    }
 
     /*//////////////////////////////////////////////////////////////
                         INTERNAL FUNCTIONS
@@ -307,8 +369,9 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     function setSusd3Strategy(address _susd3Strategy) external onlyManagement {
+        address oldStrategy = susd3Strategy;
         susd3Strategy = _susd3Strategy;
-        emit SUSD3StrategyUpdated(_susd3Strategy);
+        emit SUSD3StrategyUpdated(oldStrategy, _susd3Strategy);
     }
 
     function setWhitelistEnabled(bool _enabled) external onlyManagement {
@@ -331,12 +394,36 @@ contract USD3 is BaseHooksUpgradeable {
 
     function setInterestShareVariant(uint256 _interestShareVariant) external onlyManagement {
         require(_interestShareVariant <= 10_000, "Invalid share");
+        uint256 oldShare = interestShareVariant;
         interestShareVariant = _interestShareVariant;
-        emit InterestShareVariantUpdated(_interestShareVariant);
+        emit InterestShareUpdated(oldShare, _interestShareVariant);
     }
 
-
-
+    /**
+     * @notice Allows sUSD3 to claim its pending yield distribution
+     * @dev Only callable by the configured sUSD3 strategy
+     * @return amount The amount of assets transferred to sUSD3
+     */
+    function claimYieldDistribution() external returns (uint256 amount) {
+        require(msg.sender == susd3Strategy, "!susd3");
+        amount = pendingYieldDistribution;
+        
+        if (amount > 0) {
+            pendingYieldDistribution = 0;
+            
+            // Withdraw from MorphoCredit if needed
+            uint256 idle = IERC20(loanToken).balanceOf(address(this));
+            if (idle < amount) {
+                _freeFunds(amount - idle);
+            }
+            
+            // Transfer assets to sUSD3
+            IERC20(IERC20(loanToken)).safeTransfer(susd3Strategy, amount);
+            emit YieldDistributed(susd3Strategy, amount, 0);
+        }
+        
+        return amount;
+    }
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE GAP
@@ -347,5 +434,5 @@ contract USD3 is BaseHooksUpgradeable {
      * variables without shifting down storage in the inheritance chain.
      * See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
      */
-    uint256[37] private __gap;
+    uint256[36] private __gap;
 }
