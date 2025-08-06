@@ -131,38 +131,37 @@ contract ReentrancyTest is Setup {
         assertEq(IERC20(address(usd3Strategy)).balanceOf(address(attacker)), 50e6);
     }
 
-    function test_claimYieldDistribution_reentrancy_protection() public {
-        // Setup: Create some yield to claim
+    function test_yield_distribution_no_reentrancy() public {
+        // Setup: Create some yield to distribute
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), 1000e6);
         usd3Strategy.deposit(1000e6, alice);
         vm.stopPrank();
 
-        // Set interest share
-        vm.prank(management);
-        usd3Strategy.setInterestShareVariant(2000); // 20%
-
-        // Simulate some yield
-        airdrop(asset, address(usd3Strategy), 100e6);
-        vm.prank(keeper);
-        ITokenizedStrategy(address(usd3Strategy)).report();
-
-        // Deploy malicious sUSD3 that tries reentrancy
+        // Deploy malicious sUSD3 that might try reentrancy
         MaliciousSUSD3 maliciousSUSD3 = new MaliciousSUSD3(address(usd3Strategy));
 
         // Set malicious contract as sUSD3
-        vm.prank(management);
+        vm.startPrank(management);
         usd3Strategy.setSusd3Strategy(address(maliciousSUSD3));
+        // Set performance fee to distribute yield to malicious sUSD3
+        ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(uint16(2000)); // 20%
+        ITokenizedStrategy(address(usd3Strategy)).setPerformanceFeeRecipient(address(maliciousSUSD3));
+        vm.stopPrank();
 
-        // Try to claim yield with reentrancy attack
-        // The pendingYieldDistribution gets set to 0 before transfer,
-        // so reentrancy attempt will claim 0
-        uint256 pendingBefore = usd3Strategy.pendingYieldDistribution();
-        maliciousSUSD3.attackClaimYield();
+        // Simulate some yield
+        airdrop(asset, address(usd3Strategy), 100e6);
 
-        // Verify the claim succeeded but reentrancy was ineffective
-        assertEq(usd3Strategy.pendingYieldDistribution(), 0);
-        assertEq(asset.balanceOf(address(maliciousSUSD3)), pendingBefore);
+        // Report should mint shares directly to malicious sUSD3
+        // Even if it tries reentrancy, shares are minted atomically
+        vm.prank(keeper);
+        ITokenizedStrategy(address(usd3Strategy)).report();
+
+        // Verify malicious contract received shares
+        uint256 maliciousBalance = IERC20(address(usd3Strategy)).balanceOf(address(maliciousSUSD3));
+        assertGt(maliciousBalance, 0, "Should have received shares");
+
+        // No reentrancy possible since minting is atomic
     }
 
     function test_crossContract_reentrancy_protection() public {
@@ -264,39 +263,16 @@ contract MaliciousReentrant {
 }
 
 /**
- * @notice Malicious sUSD3 attempting to exploit claimYieldDistribution
+ * @notice Malicious sUSD3 for testing
+ * @dev Since yield is now minted directly as shares, no claiming needed
  */
 contract MaliciousSUSD3 {
     USD3 public immutable usd3;
-    bool public attacking;
-    uint256 public attackCount;
 
     constructor(address _usd3) {
         usd3 = USD3(_usd3);
     }
 
-    function attackClaimYield() external {
-        attacking = true;
-        attackCount = 0;
-        usd3.claimYieldDistribution();
-    }
-
-    // Try to reenter during token transfer
-    receive() external payable {
-        if (attacking && attackCount < 2) {
-            attackCount++;
-            // Try to claim again during first claim
-            try usd3.claimYieldDistribution() {} catch {}
-        }
-    }
-
-    // ERC20 callback hook
-    function onERC20Received(address, address, uint256, bytes calldata) external returns (bytes4) {
-        if (attacking && attackCount < 2) {
-            attackCount++;
-            // Try to claim again during transfer
-            try usd3.claimYieldDistribution() {} catch {}
-        }
-        return this.onERC20Received.selector;
-    }
+    // Receives shares directly during USD3's report()
+    // No claim function to exploit anymore
 }

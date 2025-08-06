@@ -50,7 +50,9 @@ contract InterestDistribution is Setup {
         // Link strategies and configure interest sharing
         vm.startPrank(management);
         usd3Strategy.setSusd3Strategy(address(susd3Strategy));
-        usd3Strategy.setInterestShareVariant(INTEREST_SHARE_BPS);
+        // Set performance fee to distribute yield to sUSD3
+        ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(uint16(INTEREST_SHARE_BPS));
+        ITokenizedStrategy(address(usd3Strategy)).setPerformanceFeeRecipient(address(susd3Strategy));
         susd3Strategy.setUsd3Strategy(address(usd3Strategy));
         vm.stopPrank();
 
@@ -93,18 +95,15 @@ contract InterestDistribution is Setup {
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
 
-        // Check pending yield for sUSD3
+        // sUSD3 should have received minted USD3 shares
+        uint256 susd3BalanceAfter = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        assertGt(susd3BalanceAfter, 3000e6, "sUSD3 should have received USD3 shares");
+
+        // The value of the yield shares should be approximately expectedSusd3Share
         uint256 expectedSusd3Share = (yieldAmount * INTEREST_SHARE_BPS) / 10000;
-        assertEq(usd3Strategy.pendingYieldDistribution(), expectedSusd3Share, "Incorrect pending yield");
-
-        // sUSD3 claims its yield
-        vm.prank(address(susd3Strategy));
-        uint256 claimed = usd3Strategy.claimYieldDistribution();
-        assertEq(claimed, expectedSusd3Share, "Incorrect claimed amount");
-
-        // Verify balances
-        assertEq(IERC20(asset).balanceOf(address(susd3Strategy)), expectedSusd3Share, "sUSD3 didn't receive yield");
-        assertEq(usd3Strategy.pendingYieldDistribution(), 0, "Pending yield not cleared");
+        uint256 yieldSharesReceived = susd3BalanceAfter - 3000e6; // Subtract initial deposit
+        uint256 yieldValue = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(yieldSharesReceived);
+        assertApproxEqAbs(yieldValue, expectedSusd3Share, 1e6, "Incorrect share value minted");
     }
 
     function test_no_distribution_without_susd3() public {
@@ -126,8 +125,9 @@ contract InterestDistribution is Setup {
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
 
-        // No yield should be reserved for sUSD3
-        assertEq(usd3Strategy.pendingYieldDistribution(), 0, "Should not reserve yield without sUSD3");
+        // Without sUSD3, no shares should be minted to address(0)
+        // Total supply should only be alice's shares
+        uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
 
         // All yield goes to USD3
         assertEq(
@@ -138,7 +138,7 @@ contract InterestDistribution is Setup {
     function test_distribution_with_zero_interest_share() public {
         // Set interest share to 0
         vm.prank(management);
-        usd3Strategy.setInterestShareVariant(0);
+        ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(0);
 
         // Setup deposits
         vm.startPrank(alice);
@@ -157,12 +157,16 @@ contract InterestDistribution is Setup {
         uint256 yieldAmount = 1000e6;
         airdrop(asset, address(usd3Strategy), yieldAmount);
 
+        // Track sUSD3 balance before report
+        uint256 susd3BalanceBefore = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        
         // Report
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
 
-        // No yield reserved for sUSD3
-        assertEq(usd3Strategy.pendingYieldDistribution(), 0, "Should not reserve yield with 0% share");
+        // With 0% share, no additional shares should be minted to sUSD3
+        uint256 susd3BalanceAfter = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        assertEq(susd3BalanceAfter, susd3BalanceBefore, "No additional shares should be minted to sUSD3");
     }
 
     function test_multiple_yield_accumulation() public {
@@ -180,26 +184,25 @@ contract InterestDistribution is Setup {
         vm.stopPrank();
 
         // First yield event
+        uint256 initialSusd3Balance = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
         airdrop(asset, address(usd3Strategy), 500e6);
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
-        uint256 firstPending = usd3Strategy.pendingYieldDistribution();
-        assertEq(firstPending, 100e6, "First yield incorrect"); // 20% of 500
+        uint256 firstSusd3Balance = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        assertGt(firstSusd3Balance, initialSusd3Balance, "sUSD3 should receive shares");
 
-        // Second yield event without claiming
+        // Second yield event - shares accumulate
         airdrop(asset, address(usd3Strategy), 300e6);
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
-        uint256 secondPending = usd3Strategy.pendingYieldDistribution();
-        // The calculation is complex due to changing total assets
-        assertGt(secondPending, firstPending, "Should have accumulated more");
-        assertLt(secondPending, 200e6, "Should be reasonable"); // Less than 100 + full 100
+        uint256 secondSusd3Balance = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        assertGt(secondSusd3Balance, firstSusd3Balance, "sUSD3 should receive more shares");
 
-        // Claim all accumulated yield
-        vm.prank(address(susd3Strategy));
-        uint256 totalClaimed = usd3Strategy.claimYieldDistribution();
-        assertEq(totalClaimed, secondPending, "Should claim all pending");
-        assertEq(usd3Strategy.pendingYieldDistribution(), 0, "Pending not cleared");
+        // Verify accumulated value
+        uint256 totalValue =
+            ITokenizedStrategy(address(usd3Strategy)).convertToAssets(secondSusd3Balance - initialSusd3Balance);
+        // Should be approximately 20% of 800 total yield
+        assertApproxEqAbs(totalValue, 160e6, 10e6, "Total accumulated value incorrect");
     }
 
     function test_distribution_affects_withdrawal_limits() public {
@@ -224,39 +227,38 @@ contract InterestDistribution is Setup {
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
 
-        // Withdrawal limit should be reduced by pending distribution
-        uint256 pendingYield = usd3Strategy.pendingYieldDistribution();
-        uint256 newLimit = usd3Strategy.availableWithdrawLimit(alice);
+        // sUSD3 should have received shares
+        uint256 susd3Shares = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        assertGt(susd3Shares, 0, "sUSD3 should have received shares");
 
-        // The available limit should account for reserved yield
-        assertTrue(newLimit < initialLimit + 1000e6, "Limit should account for reserved yield");
+        // Withdrawal limit for alice should still work normally
+        uint256 newLimit = usd3Strategy.availableWithdrawLimit(alice);
+        assertGt(newLimit, 0, "Alice should still be able to withdraw");
     }
 
-    function test_only_susd3_can_claim() public {
+    function test_automatic_distribution_to_susd3() public {
         // Setup and generate yield
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), 10000e6);
         usd3Strategy.deposit(10000e6, alice);
         vm.stopPrank();
 
+        vm.startPrank(bob);
+        asset.approve(address(usd3Strategy), 10000e6);
+        usd3Strategy.deposit(10000e6, bob);
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 3000e6);
+        susd3Strategy.deposit(3000e6, bob);
+        vm.stopPrank();
+
+        uint256 initialSusd3Balance = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+
         airdrop(asset, address(usd3Strategy), 1000e6);
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
 
-        // Random address cannot claim
-        vm.prank(alice);
-        vm.expectRevert("!susd3");
-        usd3Strategy.claimYieldDistribution();
-
-        // Even management cannot claim
-        vm.prank(management);
-        vm.expectRevert("!susd3");
-        usd3Strategy.claimYieldDistribution();
-
-        // Only sUSD3 can claim
-        vm.prank(address(susd3Strategy));
-        uint256 claimed = usd3Strategy.claimYieldDistribution();
-        assertGt(claimed, 0, "sUSD3 should claim successfully");
+        // sUSD3 should automatically receive shares without claiming
+        uint256 finalSusd3Balance = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        assertGt(finalSusd3Balance, initialSusd3Balance, "sUSD3 should automatically receive shares");
     }
 
     // TODO: Fix this test - requires complex Morpho mocking to simulate losses
@@ -286,8 +288,9 @@ contract InterestDistribution is Setup {
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
 
-        // No yield distribution on losses
-        assertEq(usd3Strategy.pendingYieldDistribution(), 0, "Should not distribute on losses");
+        // On losses, sUSD3 shouldn't receive any new shares
+        uint256 susd3Shares = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        assertEq(susd3Shares, 3000e6, "sUSD3 shares should not increase on losses");
 
         // Total assets should reflect loss
         assertTrue(ITokenizedStrategy(address(usd3Strategy)).totalAssets() < initialTotal, "Should show loss");
@@ -314,9 +317,10 @@ contract InterestDistribution is Setup {
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
 
-        // 20% of 7 = 1.4, should round down to 1
-        uint256 pending = usd3Strategy.pendingYieldDistribution();
-        assertEq(pending, 1, "Should round down correctly");
+        // sUSD3 should receive shares even for small yields
+        uint256 initialSusd3Shares = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        uint256 susd3SharesAfterSmall = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        // May or may not mint shares for 7 units depending on rounding
 
         // Large yield to test maximum precision
         uint256 largeYield = 999999999999; // Nearly 1M USDC
@@ -325,14 +329,18 @@ contract InterestDistribution is Setup {
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
 
-        // Check precision is maintained (allowing for rounding)
-        uint256 expectedShare = (largeYield * INTEREST_SHARE_BPS) / 10000;
-        uint256 actualPending = usd3Strategy.pendingYieldDistribution();
-        // Allow 1 unit difference due to rounding
-        assertApproxEqAbs(actualPending - 1, expectedShare, 1, "Large amount precision");
+        // Check sUSD3 received appropriate shares
+        uint256 finalSusd3Shares = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        assertGt(finalSusd3Shares, susd3SharesAfterSmall, "sUSD3 should receive shares for large yield");
+
+        // Verify value is approximately correct
+        uint256 shareValue =
+            ITokenizedStrategy(address(usd3Strategy)).convertToAssets(finalSusd3Shares - initialSusd3Shares);
+        uint256 expectedValue = (largeYield * INTEREST_SHARE_BPS) / 10000;
+        assertApproxEqRel(shareValue, expectedValue, 0.01e18, "Share value should be close to expected");
     }
 
-    function test_claim_with_insufficient_liquidity() public {
+    function test_distribution_with_morpho_deployment() public {
         // Setup deposits
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), 10000e6);
@@ -351,22 +359,22 @@ contract InterestDistribution is Setup {
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
 
-        uint256 pendingYield = usd3Strategy.pendingYieldDistribution();
+        // Check sUSD3 received shares
+        uint256 susd3Shares = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        assertGt(susd3Shares, 3000e6, "sUSD3 should have received yield shares");
 
         // Deploy all funds to Morpho (simulate no idle liquidity)
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).tend();
 
-        // sUSD3 should still be able to claim (triggers withdrawal from Morpho)
+        // sUSD3 should still be able to withdraw their shares
         uint256 idleBefore = asset.balanceOf(address(usd3Strategy));
         assertEq(idleBefore, 0, "Should have no idle funds");
 
-        vm.prank(address(susd3Strategy));
-        uint256 claimed = usd3Strategy.claimYieldDistribution();
-        assertEq(claimed, pendingYield, "Should claim even without idle funds");
-
-        // Verify funds were withdrawn from Morpho
-        assertEq(asset.balanceOf(address(susd3Strategy)), pendingYield, "sUSD3 received yield");
+        // sUSD3 can still withdraw after cooldown
+        // Report to update sUSD3's assets
+        vm.prank(keeper);
+        ITokenizedStrategy(address(susd3Strategy)).report();
     }
 
     function test_interest_share_update() public {
@@ -387,25 +395,269 @@ contract InterestDistribution is Setup {
         airdrop(asset, address(usd3Strategy), 1000e6);
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
-        assertEq(usd3Strategy.pendingYieldDistribution(), 200e6, "20% share");
+        uint256 initialSusd3Shares = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        assertGt(initialSusd3Shares, 3000e6, "sUSD3 should have received shares for 20% of yield");
 
         // Update share to 30%
         vm.prank(management);
-        usd3Strategy.setInterestShareVariant(3000);
+        ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(uint16(3000));
 
         // Second yield with 30% share
         airdrop(asset, address(usd3Strategy), 1000e6);
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
-        // The calculation is more complex due to proportion of total assets
-        // so we just check it increased from 200e6
-        uint256 pendingAfterSecond = usd3Strategy.pendingYieldDistribution();
-        assertGt(pendingAfterSecond, 200e6, "Should have increased");
-        assertLt(pendingAfterSecond, 600e6, "Should be less than 200 + 30% of 1000 + extra");
 
-        // Claim all
-        vm.prank(address(susd3Strategy));
-        uint256 totalClaimed = usd3Strategy.claimYieldDistribution();
-        assertEq(totalClaimed, pendingAfterSecond, "Should claim all pending");
+        // sUSD3 should have more shares now (from both 20% and 30% distributions)
+        uint256 finalSusd3Shares = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        assertGt(finalSusd3Shares, initialSusd3Shares, "sUSD3 should have received more shares");
+
+        // Verify approximate value received
+        uint256 totalSharesReceived = finalSusd3Shares - 3000e6; // Subtract initial deposit
+        uint256 totalValue = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(totalSharesReceived);
+        // Should be roughly 200e6 (20% of 1000) + 300e6 (30% of 1000) = 500e6
+        assertApproxEqRel(totalValue, 500e6, 0.1e18, "Total value received should be approximately correct");
+    }
+
+    function test_high_yield_share_70_percent() public {
+        // Setup deposits
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 10000e6);
+        usd3Strategy.deposit(10000e6, alice);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        asset.approve(address(usd3Strategy), 10000e6);
+        usd3Strategy.deposit(10000e6, bob);
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 3000e6);
+        susd3Strategy.deposit(3000e6, bob);
+        vm.stopPrank();
+
+        // Set yield share to 70% using direct storage manipulation
+        vm.prank(management);
+        usd3Strategy.setYieldShare(uint16(7000)); // 70%
+
+        // Generate yield
+        uint256 yieldAmount = 1000e6;
+        airdrop(asset, address(usd3Strategy), yieldAmount);
+
+        // Track sUSD3 balance before report
+        uint256 susd3BalanceBefore = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+
+        // Report to distribute yield
+        vm.prank(keeper);
+        ITokenizedStrategy(address(usd3Strategy)).report();
+
+        // sUSD3 should have received 70% of yield
+        uint256 susd3BalanceAfter = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        uint256 sharesReceived = susd3BalanceAfter - susd3BalanceBefore;
+        uint256 valueReceived = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(sharesReceived);
+
+        uint256 expectedValue = (yieldAmount * 7000) / 10000; // 700e6
+        assertApproxEqAbs(valueReceived, expectedValue, 10e6, "sUSD3 should receive 70% of yield");
+    }
+
+    function test_maximum_yield_share_100_percent() public {
+        // Setup deposits
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 10000e6);
+        usd3Strategy.deposit(10000e6, alice);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        asset.approve(address(usd3Strategy), 10000e6);
+        usd3Strategy.deposit(10000e6, bob);
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 3000e6);
+        susd3Strategy.deposit(3000e6, bob);
+        vm.stopPrank();
+
+        // Set yield share to 100% using direct storage manipulation
+        vm.prank(management);
+        usd3Strategy.setYieldShare(uint16(10000)); // 100%
+
+        // Generate yield
+        uint256 yieldAmount = 1000e6;
+        airdrop(asset, address(usd3Strategy), yieldAmount);
+
+        // Track balances before report
+        uint256 susd3BalanceBefore = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        uint256 aliceBalanceBefore = IERC20(address(usd3Strategy)).balanceOf(alice);
+
+        // Report to distribute yield
+        vm.prank(keeper);
+        ITokenizedStrategy(address(usd3Strategy)).report();
+
+        // sUSD3 should have received 100% of yield
+        uint256 susd3BalanceAfter = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        uint256 sharesReceived = susd3BalanceAfter - susd3BalanceBefore;
+        uint256 valueReceived = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(sharesReceived);
+
+        // With 100% fee, all profit goes to sUSD3
+        assertApproxEqAbs(valueReceived, yieldAmount, 10e6, "sUSD3 should receive 100% of yield");
+
+        // Alice's shares should not have increased in value beyond the initial deposit
+        uint256 aliceBalanceAfter = IERC20(address(usd3Strategy)).balanceOf(alice);
+        assertEq(aliceBalanceAfter, aliceBalanceBefore, "Alice's shares should not change with 100% fee");
+    }
+
+    function test_yield_share_cannot_exceed_100_percent() public {
+        // Try to set yield share above 100%
+        vm.prank(management);
+        vm.expectRevert("Yield share > 100%");
+        usd3Strategy.setYieldShare(uint16(10001)); // 100.01%
+    }
+
+    function test_yield_share_updates_via_storage_manipulation() public {
+        // Set yield share to 80% using direct storage manipulation
+        vm.prank(management);
+        usd3Strategy.setYieldShare(uint16(8000));
+
+        // The performanceFee should now be 8000, but we can't directly read it
+        // We can verify it works by checking yield distribution
+        
+        // Setup deposits
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 10000e6);
+        usd3Strategy.deposit(10000e6, alice);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        asset.approve(address(usd3Strategy), 10000e6);
+        usd3Strategy.deposit(10000e6, bob);
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 3000e6);
+        susd3Strategy.deposit(3000e6, bob);
+        vm.stopPrank();
+
+        // Generate yield
+        uint256 yieldAmount = 1000e6;
+        airdrop(asset, address(usd3Strategy), yieldAmount);
+
+        uint256 susd3BalanceBefore = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+
+        // Report
+        vm.prank(keeper);
+        ITokenizedStrategy(address(usd3Strategy)).report();
+
+        // Verify 80% went to sUSD3
+        uint256 susd3BalanceAfter = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        uint256 sharesReceived = susd3BalanceAfter - susd3BalanceBefore;
+        uint256 valueReceived = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(sharesReceived);
+
+        uint256 expectedValue = (yieldAmount * 8000) / 10000; // 800e6
+        assertApproxEqAbs(valueReceived, expectedValue, 10e6, "sUSD3 should receive 80% of yield");
+    }
+
+    function test_loss_absorption_burns_susd3_shares() public {
+        // Setup deposits
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 10000e6);
+        usd3Strategy.deposit(10000e6, alice);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        asset.approve(address(usd3Strategy), 10000e6);
+        usd3Strategy.deposit(10000e6, bob);
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 3000e6);
+        susd3Strategy.deposit(3000e6, bob);
+        vm.stopPrank();
+
+        // Set performance fee for profit sharing
+        vm.prank(management);
+        ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(uint16(2000)); // 20%
+
+        // First generate some profit so sUSD3 has extra shares
+        airdrop(asset, address(usd3Strategy), 1000e6);
+        vm.prank(keeper);
+        ITokenizedStrategy(address(usd3Strategy)).report();
+
+        // Record balances before loss
+        uint256 susd3SharesBefore = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        uint256 totalSupplyBefore = IERC20(address(usd3Strategy)).totalSupply();
+        uint256 totalAssetsBefore = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
+
+        assertGt(susd3SharesBefore, 3000e6, "sUSD3 should have received profit shares");
+
+        // Simulate a loss by removing assets from the strategy
+        // This simulates a default/markdown in lending
+        // First get idle assets
+        uint256 idleAssets = asset.balanceOf(address(usd3Strategy));
+        uint256 lossAmount = 500e6; // 5% loss on initial deposits
+        
+        // If not enough idle, first withdraw from Morpho
+        if (idleAssets < lossAmount) {
+            vm.prank(keeper);
+            ITokenizedStrategy(address(usd3Strategy)).tend(); // This might help free some
+            idleAssets = asset.balanceOf(address(usd3Strategy));
+        }
+        
+        // Now simulate loss with what we have available (or less)
+        uint256 actualLoss = idleAssets < lossAmount ? idleAssets : lossAmount;
+        if (actualLoss > 0) {
+            vm.prank(address(usd3Strategy));
+            asset.transfer(address(1), actualLoss);
+        }
+
+        // Report the loss
+        vm.prank(keeper);
+        (uint256 profit, uint256 loss) = ITokenizedStrategy(address(usd3Strategy)).report();
+
+        // Verify loss was reported
+        assertEq(loss, actualLoss, "Loss should be reported");
+        assertEq(profit, 0, "No profit on loss");
+
+        // Check that sUSD3's shares were burned proportionally
+        uint256 susd3SharesAfter = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        uint256 totalSupplyAfter = IERC20(address(usd3Strategy)).totalSupply();
+
+        // sUSD3 should have lost shares if there was a loss
+        if (actualLoss > 0) {
+            assertLt(susd3SharesAfter, susd3SharesBefore, "sUSD3 shares should be burned");
+            
+            // Total supply should have decreased
+            assertLt(totalSupplyAfter, totalSupplyBefore, "Total supply should decrease");
+
+            // The burn amount should be proportional to the loss
+            // sUSD3 had roughly susd3SharesBefore/totalSupplyBefore of total shares
+            // So should bear that proportion of the loss
+            uint256 expectedSharesBurned = (actualLoss * susd3SharesBefore) / (totalAssetsBefore + actualLoss);
+            uint256 actualSharesBurned = susd3SharesBefore - susd3SharesAfter;
+            
+            assertApproxEqAbs(actualSharesBurned, expectedSharesBurned, 10e6, "Shares burned should be proportional to loss");
+        }
+    }
+
+    function test_no_share_burning_without_susd3() public {
+        // Only USD3 deposits, no sUSD3
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 10000e6);
+        usd3Strategy.deposit(10000e6, alice);
+        vm.stopPrank();
+
+        // Remove sUSD3 strategy link
+        vm.prank(management);
+        usd3Strategy.setSusd3Strategy(address(0));
+
+        uint256 totalSupplyBefore = IERC20(address(usd3Strategy)).totalSupply();
+
+        // Simulate a loss - get available idle assets first
+        uint256 idleAssets = asset.balanceOf(address(usd3Strategy));
+        uint256 desiredLoss = 500e6;
+        uint256 actualLoss = idleAssets < desiredLoss ? idleAssets : desiredLoss;
+        
+        if (actualLoss > 0) {
+            vm.prank(address(usd3Strategy));
+            asset.transfer(address(1), actualLoss);
+        }
+
+        // Report the loss
+        vm.prank(keeper);
+        (uint256 profit, uint256 loss) = ITokenizedStrategy(address(usd3Strategy)).report();
+
+        if (actualLoss > 0) {
+            assertEq(loss, actualLoss, "Loss should be reported");
+        }
+
+        // Total supply should remain the same (no burning)
+        uint256 totalSupplyAfter = IERC20(address(usd3Strategy)).totalSupply();
+        assertEq(totalSupplyAfter, totalSupplyBefore, "No shares should be burned without sUSD3");
     }
 }

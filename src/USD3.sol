@@ -12,6 +12,11 @@ import {SharesMathLib} from "@3jane-morpho-blue/libraries/SharesMathLib.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
+// Import sUSD3 interface for loss absorption
+interface sUSD3 {
+    function absorbLoss(uint256 amount) external;
+}
+
 contract USD3 is BaseHooksUpgradeable {
     using SafeERC20 for IERC20;
     using MorphoLib for IMorpho;
@@ -38,7 +43,6 @@ contract USD3 is BaseHooksUpgradeable {
     //////////////////////////////////////////////////////////////*/
     // Ratio Management
     uint256 public maxOnCredit; // MAX_ON_CREDIT in basis points (5000 = 50%)
-    uint256 public usd3MinRatio; // USD3_RATIO in basis points (8000 = 80%)
     address public susd3Strategy; // For ratio calculations
 
     // Access Control
@@ -48,20 +52,14 @@ contract USD3 is BaseHooksUpgradeable {
     uint256 public minCommitmentTime; // Optional commitment time in seconds
     mapping(address => uint256) public depositTimestamp; // Track deposit times
 
-    // Yield Sharing
-    uint256 public interestShareVariant; // Basis points for sUSD3 (2000 = 20%)
-    uint256 public pendingYieldDistribution; // Yield pending for sUSD3
 
     /*//////////////////////////////////////////////////////////////
                             EVENTS
     //////////////////////////////////////////////////////////////*/
     event MaxOnCreditUpdated(uint256 newMaxOnCredit);
-    event USD3MinRatioUpdated(uint256 newRatio);
     event SUSD3StrategyUpdated(address oldStrategy, address newStrategy);
     event WhitelistUpdated(address indexed user, bool allowed);
     event MinDepositUpdated(uint256 newMinDeposit);
-    event InterestShareUpdated(uint256 oldBps, uint256 newBps);
-    event YieldDistributed(address indexed recipient, uint256 valueDistributed, uint256 sharesIssued);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -78,7 +76,6 @@ contract USD3 is BaseHooksUpgradeable {
     ) external initializer {
         require(_morphoBlue != address(0), "!morpho");
 
-        // Set immutables as storage
         morphoBlue = IMorpho(_morphoBlue);
         loanToken = _params.loanToken;
         collateralToken = _params.collateralToken;
@@ -95,7 +92,6 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Set default values
         maxOnCredit = 10_000; // 100% by default (no restriction)
-        usd3MinRatio = 0; // No ratio enforcement by default
     }
 
     function symbol() external pure returns (string memory) {
@@ -207,20 +203,7 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 currentTotalAssets =
             morphoBlue.expectedSupplyAssets(params, address(this)) + IERC20(loanToken).balanceOf(address(this));
 
-        // Calculate profit for interest sharing
-        uint256 lastTotal = ITokenizedStrategy(address(this)).totalAssets();
-        if (currentTotalAssets > lastTotal && interestShareVariant > 0 && susd3Strategy != address(0)) {
-            uint256 profit = currentTotalAssets - lastTotal;
-            uint256 sUSD3ValueShare = (profit * interestShareVariant) / MAX_BPS;
-
-            if (sUSD3ValueShare > 0) {
-                // Accumulate yield for sUSD3 to claim
-                pendingYieldDistribution += sUSD3ValueShare;
-
-                // Reduce reported assets to account for the reserved yield
-                currentTotalAssets = currentTotalAssets - sUSD3ValueShare;
-            }
-        }
+        // Loss absorption is now handled in _postReportHook
 
         return currentTotalAssets;
     }
@@ -239,33 +222,9 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         // Get available liquidity
-        (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
+        (, uint256 assetsMax, uint256 liquidity) = getPosition();
         uint256 idle = IERC20(loanToken).balanceOf(address(this));
         uint256 availableLiquidity = idle + Math.min(liquidity, assetsMax);
-
-        // Account for pending yield distribution that's reserved for sUSD3
-        if (pendingYieldDistribution > 0) {
-            availableLiquidity =
-                availableLiquidity > pendingYieldDistribution ? availableLiquidity - pendingYieldDistribution : 0;
-        }
-
-        // Apply USD3 ratio constraint if configured
-        if (usd3MinRatio > 0 && susd3Strategy != address(0)) {
-            uint256 usd3Value = _totalAssets();
-            uint256 susd3Value = IERC20(susd3Strategy).totalSupply();
-            uint256 totalValue = usd3Value + susd3Value;
-
-            if (totalValue > 0) {
-                // Calculate max withdrawable while maintaining ratio
-                uint256 minUsd3Value = (totalValue * usd3MinRatio) / 10_000;
-                if (usd3Value > minUsd3Value) {
-                    uint256 maxWithdrawableForRatio = usd3Value - minUsd3Value;
-                    availableLiquidity = Math.min(availableLiquidity, maxWithdrawableForRatio);
-                } else {
-                    return 0; // Already at or below minimum ratio
-                }
-            }
-        }
 
         return availableLiquidity;
     }
@@ -302,14 +261,10 @@ contract USD3 is BaseHooksUpgradeable {
 
     /// @dev Pre-deposit hook to enforce minimum deposit and track commitment time
     function _preDepositHook(uint256 assets, uint256 shares, address receiver) internal override {
+        if (assets == 0 && shares > 0) {
+            assets = ITokenizedStrategy(address(this)).previewMint(shares);
+        }
         _enforceDepositRequirements(assets, receiver);
-    }
-
-    /// @dev Pre-mint hook - must match deposit hook to prevent bypass
-    function _preMintHook(uint256 assets, uint256 shares, address receiver) internal override {
-        // For mint(), we need to calculate the assets that will be deposited
-        uint256 assetsNeeded = ITokenizedStrategy(address(this)).previewMint(shares);
-        _enforceDepositRequirements(assetsNeeded, receiver);
     }
 
     /// @dev Clear commitment timestamp if user fully exited
@@ -319,19 +274,80 @@ contract USD3 is BaseHooksUpgradeable {
         }
     }
 
-    /// @dev Post-withdraw hook to clear commitment on full exit
-    function _postWithdrawHook(uint256 assets, uint256 shares, address owner) internal override {
+    /// @dev Post-withdraw hook to clear commitment on full exit (handles both withdraw and redeem)
+    function _postWithdrawHook(uint256 assets, uint256 shares, address receiver, address owner, uint256 maxLoss)
+        internal
+        override
+    {
         _clearCommitmentIfNeeded(owner);
     }
 
-    /// @dev Post-redeem hook to clear commitment on full exit
-    function _postRedeemHook(uint256 assets, uint256 shares, address owner) internal override {
-        _clearCommitmentIfNeeded(owner);
+    /// @dev Post-report hook to handle loss absorption by burning sUSD3's shares
+    function _postReportHook(uint256 profit, uint256 loss) internal override {
+        if (loss > 0 && susd3Strategy != address(0)) {
+            // Get sUSD3's current USD3 balance
+            uint256 susd3Balance = ITokenizedStrategy(address(this)).balanceOf(susd3Strategy);
+            
+            if (susd3Balance > 0) {
+                // Calculate how many shares to burn proportionally
+                // If we have a 10% loss, burn 10% of sUSD3's shares
+                uint256 totalSupply = ITokenizedStrategy(address(this)).totalSupply();
+                uint256 sharesToBurn = (loss * susd3Balance) / (ITokenizedStrategy(address(this)).totalAssets() + loss);
+                
+                // Cap at sUSD3's actual balance to be safe
+                if (sharesToBurn > susd3Balance) {
+                    sharesToBurn = susd3Balance;
+                }
+                
+                if (sharesToBurn > 0) {
+                    _burnSharesFromSusd3(sharesToBurn);
+                }
+            }
+        }
     }
 
     /*//////////////////////////////////////////////////////////////
                         INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
+
+    /// @dev Directly burn shares from sUSD3's balance using storage manipulation
+    function _burnSharesFromSusd3(uint256 amount) internal {
+        // Calculate storage slots
+        bytes32 baseSlot = bytes32(uint256(keccak256("yearn.base.strategy.storage")) - 1);
+        
+        // totalSupply is at slot 2 in the StrategyData struct
+        bytes32 totalSupplySlot = bytes32(uint256(baseSlot) + 2);
+        
+        // balances mapping is at slot 4
+        // For a mapping, the storage slot is keccak256(abi.encode(key, mappingSlot))
+        bytes32 balanceSlot = keccak256(abi.encode(susd3Strategy, uint256(baseSlot) + 4));
+        
+        // Read current values
+        uint256 currentBalance;
+        uint256 currentTotalSupply;
+        assembly {
+            currentBalance := sload(balanceSlot)
+            currentTotalSupply := sload(totalSupplySlot)
+        }
+        
+        // Ensure we don't burn more than available
+        uint256 actualBurn = amount;
+        if (actualBurn > currentBalance) {
+            actualBurn = currentBalance;
+        }
+        
+        // Update storage
+        assembly {
+            sstore(balanceSlot, sub(currentBalance, actualBurn))
+            sstore(totalSupplySlot, sub(currentTotalSupply, actualBurn))
+        }
+        
+        // Emit Transfer event to address(0) for transparency
+        emit Transfer(susd3Strategy, address(0), actualBurn);
+    }
+
+    // Event for ERC20 Transfer (when burning shares)
+    event Transfer(address indexed from, address indexed to, uint256 value);
 
     /*//////////////////////////////////////////////////////////////
                         MANAGEMENT FUNCTIONS
@@ -343,16 +359,14 @@ contract USD3 is BaseHooksUpgradeable {
         emit MaxOnCreditUpdated(_maxOnCredit);
     }
 
-    function setUsd3MinRatio(uint256 _usd3MinRatio) external onlyManagement {
-        require(_usd3MinRatio <= 10_000, "Invalid ratio");
-        usd3MinRatio = _usd3MinRatio;
-        emit USD3MinRatioUpdated(_usd3MinRatio);
-    }
-
     function setSusd3Strategy(address _susd3Strategy) external onlyManagement {
         address oldStrategy = susd3Strategy;
         susd3Strategy = _susd3Strategy;
         emit SUSD3StrategyUpdated(oldStrategy, _susd3Strategy);
+        
+        // NOTE: After calling this, management should also call:
+        // ITokenizedStrategy(usd3Address).setPerformanceFeeRecipient(_susd3Strategy)
+        // to ensure yield distribution goes to sUSD3
     }
 
     function setWhitelistEnabled(bool _enabled) external onlyManagement {
@@ -373,38 +387,52 @@ contract USD3 is BaseHooksUpgradeable {
         minCommitmentTime = _minCommitmentTime;
     }
 
-    function setInterestShareVariant(uint256 _interestShareVariant) external onlyManagement {
-        require(_interestShareVariant <= 10_000, "Invalid share");
-        uint256 oldShare = interestShareVariant;
-        interestShareVariant = _interestShareVariant;
-        emit InterestShareUpdated(oldShare, _interestShareVariant);
-    }
-
     /**
-     * @notice Allows sUSD3 to claim its pending yield distribution
-     * @dev Only callable by the configured sUSD3 strategy
-     * @return amount The amount of assets transferred to sUSD3
+     * @notice Set yield share percentage directly to bypass TokenizedStrategy's MAX_FEE limit
+     * @dev Uses direct storage manipulation to set performanceFee up to 100%
+     * @param _yieldShare The yield share in basis points (0-10000)
      */
-    function claimYieldDistribution() external returns (uint256 amount) {
-        require(msg.sender == susd3Strategy, "!susd3");
-        amount = pendingYieldDistribution;
-
-        if (amount > 0) {
-            pendingYieldDistribution = 0;
-
-            // Withdraw from MorphoCredit if needed
-            uint256 idle = IERC20(loanToken).balanceOf(address(this));
-            if (idle < amount) {
-                _freeFunds(amount - idle);
-            }
-
-            // Transfer assets to sUSD3
-            IERC20(IERC20(loanToken)).safeTransfer(susd3Strategy, amount);
-            emit YieldDistributed(susd3Strategy, amount, 0);
+    function setYieldShare(uint16 _yieldShare) external onlyManagement {
+        require(_yieldShare <= 10_000, "Yield share > 100%");
+        
+        // TokenizedStrategy storage slot calculation
+        bytes32 baseSlot = bytes32(uint256(keccak256("yearn.base.strategy.storage")) - 1);
+        
+        // performanceFee is in slot 8 of the struct, packed with other variables:
+        // Slot 8 layout (from right to left):
+        // - uint96 fullProfitUnlockDate (bits 0-95)
+        // - address keeper (bits 96-255)
+        // Slot 9 layout:
+        // - uint32 profitMaxUnlockTime (bits 0-31)
+        // - uint16 performanceFee (bits 32-47)
+        // - address performanceFeeRecipient (bits 48-207)
+        // - uint96 lastReport (bits 208-303)
+        
+        uint256 slot9Offset = 9;
+        bytes32 targetSlot = bytes32(uint256(baseSlot) + slot9Offset);
+        
+        // Read current slot value
+        uint256 currentSlotValue;
+        assembly {
+            currentSlotValue := sload(targetSlot)
         }
-
-        return amount;
+        
+        // Clear the performanceFee bits (32-47) and set new value
+        // Mask to clear bits 32-47: ~(0xFFFF << 32)
+        uint256 mask = ~(uint256(0xFFFF) << 32);
+        uint256 newSlotValue = (currentSlotValue & mask) | (uint256(_yieldShare) << 32);
+        
+        // Write back to storage
+        assembly {
+            sstore(targetSlot, newSlotValue)
+        }
+        
+        // Emit event for transparency
+        emit YieldShareUpdated(_yieldShare);
     }
+
+    event YieldShareUpdated(uint16 yieldShare);
+
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE GAP
@@ -415,5 +443,5 @@ contract USD3 is BaseHooksUpgradeable {
      * variables without shifting down storage in the inheritance chain.
      * See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
      */
-    uint256[36] private __gap;
+    uint256[39] private __gap;
 }

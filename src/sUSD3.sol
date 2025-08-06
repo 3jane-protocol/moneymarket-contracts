@@ -143,24 +143,13 @@ contract sUSD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @dev Harvest and report - account for any yield or losses
-     * @return Total assets held by the strategy
+     * @dev Harvest and report - USD3 shares are minted directly to us
+     * @return Total USD3 tokens held by the strategy
      */
     function _harvestAndReport() internal override returns (uint256) {
-        // First, try to claim any pending yield from USD3
-        if (usd3Strategy != address(0)) {
-            try USD3(usd3Strategy).claimYieldDistribution() returns (uint256 claimed) {
-                if (claimed > 0) {
-                    accumulatedYield += claimed;
-                    lastYieldUpdate = block.timestamp;
-                    emit YieldReceived(claimed, usd3Strategy);
-                }
-            } catch {
-                // Silently handle if claim fails
-            }
-        }
-
-        // Return total USD3 tokens held
+        // USD3 automatically mints shares to us during its report()
+        // We just need to return our current balance
+        // Any yield received is reflected in our USD3 token balance
         return IERC20(_asset).balanceOf(address(this));
     }
 
@@ -179,20 +168,13 @@ contract sUSD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @dev Pre-deposit hook to track lock period on first deposit
+     * @dev Pre-deposit hook to track lock period (handles both deposit and mint)
      */
     function _preDepositHook(uint256 assets, uint256 shares, address receiver) internal override {
+        if (assets == 0 && shares > 0) {
+            assets = ITokenizedStrategy(address(this)).previewMint(shares);
+        }
         _setInitialLockIfNeeded(receiver, assets, shares);
-    }
-
-    /**
-     * @dev Pre-mint hook to track lock period on first mint
-     * Must match deposit hook to prevent lock bypass
-     */
-    function _preMintHook(uint256 assets, uint256 shares, address receiver) internal override {
-        // For mint(), we need to calculate the assets that will be deposited
-        uint256 assetsNeeded = ITokenizedStrategy(address(this)).previewMint(shares);
-        _setInitialLockIfNeeded(receiver, assetsNeeded, shares);
     }
 
     /**
@@ -218,16 +200,12 @@ contract sUSD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @dev Post-withdraw hook to update cooldown after successful withdrawal
+     * @dev Post-withdraw hook to update cooldown after successful withdrawal or redemption
      */
-    function _postWithdrawHook(uint256 assets, uint256 shares, address owner) internal override {
-        _updateCooldownAfterWithdrawal(owner, shares, assets);
-    }
-
-    /**
-     * @dev Post-redeem hook to update cooldown after successful redemption
-     */
-    function _postRedeemHook(uint256 assets, uint256 shares, address owner) internal override {
+    function _postWithdrawHook(uint256 assets, uint256 shares, address receiver, address owner, uint256 maxLoss)
+        internal
+        override
+    {
         _updateCooldownAfterWithdrawal(owner, shares, assets);
     }
 
@@ -411,14 +389,9 @@ contract sUSD3 is BaseHooksUpgradeable {
      * @dev This would be called by USD3 or a keeper during markdown events
      */
     function absorbLoss(uint256 amount) external onlyKeepers {
-        require(amount > 0, "Invalid amount");
-
         totalLossesAbsorbed += amount;
         lastLossTime = block.timestamp;
-
         emit LossAbsorbed(amount, block.timestamp);
-
-        // In production, this would adjust share prices to reflect the loss
     }
 
     /*//////////////////////////////////////////////////////////////

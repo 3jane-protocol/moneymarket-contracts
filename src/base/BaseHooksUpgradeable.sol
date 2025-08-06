@@ -48,11 +48,11 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @return assets Amount of assets deposited
      */
     function mint(uint256 shares, address receiver) external virtual returns (uint256 assets) {
-        _preMintHook(assets, shares, receiver);
+        _preDepositHook(assets, shares, receiver);
         assets = abi.decode(
             _delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).mint, (shares, receiver))), (uint256)
         );
-        _postMintHook(assets, shares, receiver);
+        _postDepositHook(assets, shares, receiver);
     }
 
     /**
@@ -79,14 +79,14 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
         virtual
         returns (uint256 shares)
     {
-        _preWithdrawHook(assets, shares, owner, maxLoss);
+        _preWithdrawHook(assets, shares, receiver, owner, maxLoss);
         shares = abi.decode(
             _delegateCall(
                 abi.encodeWithSelector(ITokenizedStrategy.withdraw.selector, assets, receiver, owner, maxLoss)
             ),
             (uint256)
         );
-        _postWithdrawHook(assets, shares, owner);
+        _postWithdrawHook(assets, shares, receiver, owner, maxLoss);
     }
 
     /**
@@ -113,12 +113,12 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
         virtual
         returns (uint256 assets)
     {
-        _preRedeemHook(assets, shares, owner, maxLoss);
+        _preWithdrawHook(assets, shares, receiver, owner, maxLoss);
         assets = abi.decode(
             _delegateCall(abi.encodeWithSelector(ITokenizedStrategy.redeem.selector, shares, receiver, owner, maxLoss)),
             (uint256)
         );
-        _postRedeemHook(assets, shares, owner);
+        _postWithdrawHook(assets, shares, receiver, owner, maxLoss);
     }
 
     /**
@@ -131,7 +131,7 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
         _preTransferHook(msg.sender, to, amount);
         bool success =
             abi.decode(_delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).transfer, (to, amount))), (bool));
-        _postTransferHook(msg.sender, to, amount);
+        _postTransferHook(msg.sender, to, amount, success);
         return success;
     }
 
@@ -147,132 +147,19 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
         bool success = abi.decode(
             _delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).transferFrom, (from, to, amount))), (bool)
         );
-        _postTransferHook(from, to, amount);
+        _postTransferHook(from, to, amount, success);
         return success;
     }
 
-    /*//////////////////////////////////////////////////////////////
-                            HOOKS
-    //////////////////////////////////////////////////////////////*/
-
     /**
-     * @dev Can be used to adjust accounting for deposit options that change shares.
-     *
-     * If the preDepositHook would like to prevent the deposit from occurring it
-     * can revert within the hook.
-     *
-     * @param assets Amount of assets being deposited
-     * @param shares Expected shares to receive. 0 if not yet calculated.
-     * @param receiver The address receiving the shares
+     * @notice Report profit and loss
+     * @return profit Amount of profit generated
+     * @return loss Amount of loss incurred
      */
-    function _preDepositHook(uint256 assets, uint256 shares, address receiver) internal virtual override {}
-
-    /**
-     * @dev Can be used to adjust accounting after a deposit.
-     *
-     * If the postDepositHook would like to prevent the deposit from occurring it
-     * can revert within the hook.
-     *
-     * @param assets Amount of assets deposited
-     * @param shares Amount of shares minted
-     * @param receiver The address that received the shares
-     */
-    function _postDepositHook(uint256 assets, uint256 shares, address receiver) internal virtual override {}
-
-    /**
-     * @dev Can be used to adjust accounting for mint options that change assets.
-     *
-     * @param assets Expected assets to deposit. 0 if not yet calculated.
-     * @param shares Amount of shares being minted
-     * @param receiver The address receiving the shares
-     */
-    function _preMintHook(uint256 assets, uint256 shares, address receiver) internal virtual {}
-
-    /**
-     * @dev Can be used to adjust accounting after a mint.
-     *
-     * @param assets Amount of assets deposited
-     * @param shares Amount of shares minted
-     * @param receiver The address that received the shares
-     */
-    function _postMintHook(uint256 assets, uint256 shares, address receiver) internal virtual {}
-
-    /**
-     * @dev Can be used to adjust accounting for withdrawals.
-     *
-     * @param assets Amount of assets being withdrawn
-     * @param shares Expected shares to burn. 0 if not yet calculated.
-     * @param owner The address whose shares are being burned
-     * @param maxLoss Maximum acceptable loss in basis points
-     */
-    function _preWithdrawHook(uint256 assets, uint256 shares, address owner, uint256 maxLoss) internal virtual {}
-
-    /**
-     * @dev Can be used to adjust accounting after a withdrawal.
-     *
-     * @param assets Amount of assets withdrawn
-     * @param shares Amount of shares burned
-     * @param owner The address whose shares were burned
-     */
-    function _postWithdrawHook(uint256 assets, uint256 shares, address owner) internal virtual {}
-
-    /**
-     * @dev Can be used to adjust accounting for redemptions.
-     *
-     * @param assets Expected assets to withdraw. 0 if not yet calculated.
-     * @param shares Amount of shares being redeemed
-     * @param owner The address whose shares are being burned
-     * @param maxLoss Maximum acceptable loss in basis points
-     */
-    function _preRedeemHook(uint256 assets, uint256 shares, address owner, uint256 maxLoss) internal virtual {}
-
-    /**
-     * @dev Can be used to adjust accounting after a redemption.
-     *
-     * @param assets Amount of assets withdrawn
-     * @param shares Amount of shares burned
-     * @param owner The address whose shares were burned
-     */
-    function _postRedeemHook(uint256 assets, uint256 shares, address owner) internal virtual {}
-
-    /**
-     * @dev Can be used to adjust accounting for transfers.
-     *
-     * @param from The address sending the shares
-     * @param to The address receiving the shares
-     * @param amount The amount of shares being transferred
-     */
-    function _preTransferHook(address from, address to, uint256 amount) internal virtual override {}
-
-    /**
-     * @dev Can be used to adjust accounting after a transfer.
-     *
-     * @param from The address that sent the shares
-     * @param to The address that received the shares
-     * @param amount The amount of shares transferred
-     */
-    function _postTransferHook(address from, address to, uint256 amount) internal virtual {}
-
-    /**
-     * @dev Optional function for strategist to override that will
-     * allow management to manually withdraw deployed funds from the
-     * yield source if a strategy is shutdown.
-     *
-     * This should attempt to free `_amount`, noting that `_amount` may
-     * be more than is currently deployed.
-     *
-     * NOTE: This will not realize any profits or losses. A separate
-     * `report` will be needed in order to record any profit/loss. If
-     * a report may need to be called after a shutdown it is important
-     * to check if the strategy is shutdown during `_harvestAndReport`
-     * so that it does not simply re-deploy all funds that had been freed.
-     *
-     * EX:
-     *   if(isShutdown()) {
-     *       return;
-     *   }
-     *
-     * @param _amount The amount of asset to attempt to free.
-     */
-    function _emergencyWithdraw(uint256 _amount) internal virtual override {}
+    function report() external virtual returns (uint256 profit, uint256 loss) {
+        _preReportHook();
+        (profit, loss) =
+            abi.decode(_delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).report, ())), (uint256, uint256));
+        _postReportHook(profit, loss);
+    }
 }
