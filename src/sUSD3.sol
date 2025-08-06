@@ -198,7 +198,9 @@ contract sUSD3 is BaseHooksUpgradeable {
         uint256 shares,
         address receiver
     ) internal override {
-        _setInitialLockIfNeeded(receiver, assets, shares);
+        // For mint(), we need to calculate the assets that will be deposited
+        uint256 assetsNeeded = ITokenizedStrategy(address(this)).previewMint(shares);
+        _setInitialLockIfNeeded(receiver, assetsNeeded, shares);
     }
 
     /**
@@ -255,8 +257,8 @@ contract sUSD3 is BaseHooksUpgradeable {
      */
     function startCooldown(uint256 shares) external {
         require(shares > 0, "Invalid shares");
-        require(shares <= IERC20(address(this)).balanceOf(msg.sender), "Insufficient balance");
         require(block.timestamp >= lockedUntil[msg.sender], "Still in lock period");
+        // Note: Balance check will be enforced during actual withdrawal
         
         // Allow updating cooldown with new amount (overwrites previous)
         cooldowns[msg.sender] = UserCooldown({
@@ -296,6 +298,15 @@ contract sUSD3 is BaseHooksUpgradeable {
         if (usd3Strategy != address(0)) {
             uint256 usd3TotalAssets = IERC20(usd3Strategy).totalSupply();
             uint256 susd3TotalAssets = _totalAssets();
+            
+            // If no sUSD3 deposits yet, calculate max allowed based on USD3 supply
+            // sUSD3 can be max 15% of total, so sUSD3/(USD3+sUSD3) = 0.15
+            // Which means sUSD3 = 0.15/0.85 * USD3
+            if (susd3TotalAssets == 0 && usd3TotalAssets > 0) {
+                // This is approximately 17.65% of USD3 supply
+                return (usd3TotalAssets * MAX_SUBORDINATION_RATIO) / (MAX_BPS - MAX_SUBORDINATION_RATIO);
+            }
+            
             uint256 totalCombined = usd3TotalAssets + susd3TotalAssets;
             
             if (totalCombined > 0) {

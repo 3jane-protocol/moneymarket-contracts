@@ -103,7 +103,7 @@ contract USD3 is BaseHooksUpgradeable {
         usd3MinRatio = 0; // No ratio enforcement by default
     }
 
-    function symbol() external view returns (string memory) {
+    function symbol() external pure returns (string memory) {
         return "USD3";
     }
 
@@ -319,8 +319,9 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 shares,
         address receiver
     ) internal override {
-        // For mint(), assets is the preview amount needed
-        _enforceDepositRequirements(assets, receiver);
+        // For mint(), we need to calculate the assets that will be deposited
+        uint256 assetsNeeded = ITokenizedStrategy(address(this)).previewMint(shares);
+        _enforceDepositRequirements(assetsNeeded, receiver);
     }
 
     /// @dev Clear commitment timestamp if user fully exited
