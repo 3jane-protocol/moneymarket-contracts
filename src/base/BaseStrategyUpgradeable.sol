@@ -101,9 +101,17 @@ abstract contract BaseStrategyUpgradeable is Initializable {
     address internal _tokenizedStrategy;
 
     /**
+     * @dev This variable is set to ITokenizedStrategy(address(this)) during initialization.
+     *
+     * This provides a convenient way to call TokenizedStrategy functions
+     * using clean syntax like TokenizedStrategy.totalAssets()
+     */
+    ITokenizedStrategy internal TokenizedStrategy;
+
+    /**
      * @dev Storage gap for future upgrades
      */
-    uint256[48] private __gap;
+    uint256[47] private __gap;
 
     /*//////////////////////////////////////////////////////////////
                             INITIALIZATION
@@ -127,6 +135,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
     ) internal onlyInitializing {
         _asset = __asset;
         _tokenizedStrategy = address(this);
+        TokenizedStrategy = ITokenizedStrategy(address(this));
 
         // Initialize the strategy's storage variables via delegatecall.
         _delegateCall(

@@ -172,7 +172,7 @@ contract sUSD3 is BaseHooksUpgradeable {
      */
     function _preDepositHook(uint256 assets, uint256 shares, address receiver) internal override {
         if (assets == 0 && shares > 0) {
-            assets = ITokenizedStrategy(address(this)).previewMint(shares);
+            assets = TokenizedStrategy.previewMint(shares);
         }
         _setInitialLockIfNeeded(receiver, assets, shares);
     }
@@ -194,7 +194,7 @@ contract sUSD3 is BaseHooksUpgradeable {
         }
 
         // Clear lock timestamp if fully withdrawn
-        if (ITokenizedStrategy(address(this)).balanceOf(owner) == 0) {
+        if (TokenizedStrategy.balanceOf(owner) == 0) {
             delete lockedUntil[owner];
         }
     }
@@ -316,7 +316,7 @@ contract sUSD3 is BaseHooksUpgradeable {
         }
 
         // Within valid withdrawal window - return withdrawable amount in assets
-        return ITokenizedStrategy(address(this)).convertToAssets(cooldown.shares);
+        return TokenizedStrategy.convertToAssets(cooldown.shares);
     }
 
     /**

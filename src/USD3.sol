@@ -261,14 +261,14 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Pre-deposit hook to enforce minimum deposit and track commitment time
     function _preDepositHook(uint256 assets, uint256 shares, address receiver) internal override {
         if (assets == 0 && shares > 0) {
-            assets = ITokenizedStrategy(address(this)).previewMint(shares);
+            assets = TokenizedStrategy.previewMint(shares);
         }
         _enforceDepositRequirements(assets, receiver);
     }
 
     /// @dev Clear commitment timestamp if user fully exited
     function _clearCommitmentIfNeeded(address owner) private {
-        if (ITokenizedStrategy(address(this)).balanceOf(owner) == 0) {
+        if (TokenizedStrategy.balanceOf(owner) == 0) {
             delete depositTimestamp[owner];
         }
     }
@@ -285,15 +285,14 @@ contract USD3 is BaseHooksUpgradeable {
     function _postReportHook(uint256 profit, uint256 loss) internal override {
         if (loss > 0 && susd3Strategy != address(0)) {
             // Get sUSD3's current USD3 balance
-            uint256 susd3Balance = ITokenizedStrategy(address(this)).balanceOf(susd3Strategy);
+            uint256 susd3Balance = TokenizedStrategy.balanceOf(susd3Strategy);
 
             if (susd3Balance > 0) {
-                // Calculate how many shares to burn proportionally
-                // If we have a 10% loss, burn 10% of sUSD3's shares
-                uint256 totalSupply = ITokenizedStrategy(address(this)).totalSupply();
-                uint256 sharesToBurn = (loss * susd3Balance) / (ITokenizedStrategy(address(this)).totalAssets() + loss);
+                // Calculate how many shares are needed to cover the loss
+                // This ensures sUSD3 absorbs the actual loss amount, not just proportionally
+                uint256 sharesToBurn = TokenizedStrategy.convertToShares(loss);
 
-                // Cap at sUSD3's actual balance to be safe
+                // Cap at sUSD3's actual balance - they can't lose more than they have
                 if (sharesToBurn > susd3Balance) {
                     sharesToBurn = susd3Balance;
                 }

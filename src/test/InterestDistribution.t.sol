@@ -615,14 +615,17 @@ contract InterestDistribution is Setup {
             // Total supply should have decreased
             assertLt(totalSupplyAfter, totalSupplyBefore, "Total supply should decrease");
 
-            // The burn amount should be proportional to the loss
-            // sUSD3 had roughly susd3SharesBefore/totalSupplyBefore of total shares
-            // So should bear that proportion of the loss
-            uint256 expectedSharesBurned = (actualLoss * susd3SharesBefore) / (totalAssetsBefore + actualLoss);
+            // The burn amount should equal the shares needed to cover the loss
+            // sUSD3 should absorb the entire loss if they have enough shares
+            uint256 expectedSharesBurned = ITokenizedStrategy(address(usd3Strategy)).convertToShares(actualLoss);
+            // Cap at sUSD3's actual balance before the loss
+            if (expectedSharesBurned > susd3SharesBefore) {
+                expectedSharesBurned = susd3SharesBefore;
+            }
             uint256 actualSharesBurned = susd3SharesBefore - susd3SharesAfter;
 
             assertApproxEqAbs(
-                actualSharesBurned, expectedSharesBurned, 10e6, "Shares burned should be proportional to loss"
+                actualSharesBurned, expectedSharesBurned, 10e6, "Shares burned should cover the loss amount"
             );
         }
     }
