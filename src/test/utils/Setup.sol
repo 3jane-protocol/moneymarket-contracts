@@ -131,7 +131,7 @@ contract Setup is Test, IEvents {
 
         // Deploy proxy with initialization
         bytes memory usd3InitData = abi.encodeWithSelector(
-            USD3.initialize.selector, address(morpho), marketParams, "USD3", management, performanceFeeRecipient, keeper
+            USD3.initialize.selector, address(morpho), marketParams, "USD3", management, keeper
         );
 
         TransparentUpgradeableProxy usd3Proxy =

@@ -71,7 +71,6 @@ contract USD3 is BaseHooksUpgradeable {
         MarketParams memory _params,
         string memory _name,
         address _management,
-        address _performanceFeeRecipient,
         address _keeper
     ) external initializer {
         require(_morphoBlue != address(0), "!morpho");
@@ -84,8 +83,9 @@ contract USD3 is BaseHooksUpgradeable {
         lltv = _params.lltv;
         creditLine = _params.creditLine;
 
-        // Initialize BaseStrategy
-        __BaseStrategy_init(loanToken, _name, _management, _performanceFeeRecipient, _keeper);
+        // Initialize BaseStrategy with management as temporary performanceFeeRecipient
+        // It will be updated to sUSD3 address after sUSD3 is deployed
+        __BaseStrategy_init(loanToken, _name, _management, _management, _keeper);
 
         // Approve Morpho
         IERC20(loanToken).forceApprove(address(morphoBlue), type(uint256).max);

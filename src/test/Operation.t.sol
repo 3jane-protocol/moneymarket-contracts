@@ -41,7 +41,8 @@ contract OperationTest is Setup {
         assertTrue(address(0) != address(strategy));
         assertEq(strategy.asset(), address(asset));
         assertEq(strategy.management(), management);
-        assertEq(strategy.performanceFeeRecipient(), performanceFeeRecipient);
+        // performanceFeeRecipient is initially set to management, will be updated to sUSD3 later
+        assertEq(strategy.performanceFeeRecipient(), management);
         assertEq(strategy.keeper(), keeper);
         // TODO: add additional check on strat params
     }
@@ -163,7 +164,8 @@ contract OperationTest is Setup {
         // Get the expected fee
         uint256 expectedShares = (profit * 1_000) / MAX_BPS;
 
-        assertEq(strategy.balanceOf(performanceFeeRecipient), expectedShares);
+        // Performance fee goes to management initially (before sUSD3 is set)
+        assertEq(strategy.balanceOf(management), expectedShares);
 
         uint256 balanceBefore = asset.balanceOf(user);
         uint256 userShares = strategy.balanceOf(user);
@@ -174,12 +176,13 @@ contract OperationTest is Setup {
 
         assertGt(asset.balanceOf(user), balanceBefore, "!final balance");
 
-        vm.prank(performanceFeeRecipient);
-        strategy.redeem(expectedShares, performanceFeeRecipient, performanceFeeRecipient);
+        // Management redeems the performance fee
+        vm.prank(management);
+        strategy.redeem(expectedShares, management, management);
 
         checkStrategyTotals(strategy, 0, 0, 0);
 
-        assertGe(asset.balanceOf(performanceFeeRecipient), expectedShares, "!perf fee out");
+        assertGe(asset.balanceOf(management), expectedShares, "!perf fee out");
     }
 
     function test_tendTrigger(uint256 _amount) public {
