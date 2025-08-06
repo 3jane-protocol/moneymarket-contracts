@@ -12,8 +12,8 @@ import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrat
  * @author Modified from yearn.finance BaseStrategy for upgradeability
  * @notice
  *  BaseStrategyUpgradeable is a fork of Yearn V3's BaseStrategy that works
- *  with upgradeable proxy patterns. The main change is replacing the immutable
- *  TokenizedStrategy variable with proper delegatecall patterns.
+ *  with upgradeable proxy patterns. The main change is replacing immutable
+ *  variables with storage variables and constructor with initializer.
  *
  *  It maintains full compatibility with TokenizedStrategy singleton pattern
  *  while allowing the strategy to be deployed behind a proxy.
@@ -35,7 +35,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @dev Use to assure that the call is coming from the strategies management.
      */
     modifier onlyManagement() {
-        _requireManagement();
+        TokenizedStrategy.requireManagement(msg.sender);
         _;
     }
 
@@ -44,7 +44,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * management or the keeper.
      */
     modifier onlyKeepers() {
-        _requireKeeperOrManagement();
+        TokenizedStrategy.requireKeeperOrManagement(msg.sender);
         _;
     }
 
@@ -53,7 +53,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * management or the emergency admin.
      */
     modifier onlyEmergencyAuthorized() {
-        _requireEmergencyAuthorized();
+        TokenizedStrategy.requireEmergencyAuthorized(msg.sender);
         _;
     }
 
@@ -90,15 +90,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @dev Underlying asset the Strategy is earning yield on.
      * Stored here for cheap retrievals within the strategy.
      */
-    address internal _asset;
-
-    /**
-     * @dev This variable is set to address(this) during initialization.
-     *
-     * This is used for all calls to TokenizedStrategy to ensure proper
-     * context in the upgradeable pattern.
-     */
-    address internal _tokenizedStrategy;
+    ERC20 internal asset;
 
     /**
      * @dev This variable is set to ITokenizedStrategy(address(this)) during initialization.
@@ -111,7 +103,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
     /**
      * @dev Storage gap for future upgrades
      */
-    uint256[47] private __gap;
+    uint256[48] private __gap;
 
     /*//////////////////////////////////////////////////////////////
                             INITIALIZATION
@@ -120,129 +112,28 @@ abstract contract BaseStrategyUpgradeable is Initializable {
     /**
      * @notice Initialize the BaseStrategy.
      *
-     * @param __asset Address of the underlying asset.
+     * @param _asset Address of the underlying asset.
      * @param _name Name the strategy will use.
      * @param _management Address to set as management.
      * @param _performanceFeeRecipient Address to receive performance fees.
      * @param _keeper Address allowed to call tend() and report().
      */
     function __BaseStrategy_init(
-        address __asset,
+        address _asset,
         string memory _name,
         address _management,
         address _performanceFeeRecipient,
         address _keeper
     ) internal onlyInitializing {
-        _asset = __asset;
-        _tokenizedStrategy = address(this);
+        asset = ERC20(_asset);
         TokenizedStrategy = ITokenizedStrategy(address(this));
 
         // Initialize the strategy's storage variables via delegatecall.
         _delegateCall(
             abi.encodeCall(
-                ITokenizedStrategy.initialize, (__asset, _name, _management, _performanceFeeRecipient, _keeper)
+                ITokenizedStrategy.initialize, (_asset, _name, _management, _performanceFeeRecipient, _keeper)
             )
         );
-    }
-
-    /**
-     * @notice Initialize the BaseStrategy with defaults.
-     * @dev Uses msg.sender for all permissioned roles.
-     *
-     * @param __asset Address of the underlying asset.
-     * @param _name Name the strategy will use.
-     */
-    function __BaseStrategy_init_unchained(address __asset, string memory _name) internal onlyInitializing {
-        __BaseStrategy_init(__asset, _name, msg.sender, msg.sender, msg.sender);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                    INTERNAL MODIFIER LOGIC
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @dev Require that the caller is the management address.
-     */
-    function _requireManagement() internal view {
-        (bool success, bytes memory data) =
-            _tokenizedStrategy.staticcall(abi.encodeWithSignature("requireManagement(address)", msg.sender));
-        if (!success) {
-            assembly {
-                let dataSize := mload(data)
-                revert(add(data, 0x20), dataSize)
-            }
-        }
-    }
-
-    /**
-     * @dev Require that the caller is the keeper or management.
-     */
-    function _requireKeeperOrManagement() internal view {
-        (bool success, bytes memory data) =
-            _tokenizedStrategy.staticcall(abi.encodeWithSignature("requireKeeperOrManagement(address)", msg.sender));
-        if (!success) {
-            assembly {
-                let dataSize := mload(data)
-                revert(add(data, 0x20), dataSize)
-            }
-        }
-    }
-
-    /**
-     * @dev Require that the caller is the emergency admin or management.
-     */
-    function _requireEmergencyAuthorized() internal view {
-        (bool success, bytes memory data) =
-            _tokenizedStrategy.staticcall(abi.encodeWithSignature("requireEmergencyAuthorized(address)", msg.sender));
-        if (!success) {
-            assembly {
-                let dataSize := mload(data)
-                revert(add(data, 0x20), dataSize)
-            }
-        }
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                    TOKENIZEDSTRATEGY VIEW HELPERS
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @dev Helper to call TokenizedStrategy.totalAssets()
-     */
-    function _totalAssets() internal view returns (uint256) {
-        (bool success, bytes memory data) = _tokenizedStrategy.staticcall(abi.encodeWithSignature("totalAssets()"));
-        require(success, "totalAssets failed");
-        return abi.decode(data, (uint256));
-    }
-
-    /**
-     * @dev Helper to call TokenizedStrategy.isShutdown()
-     */
-    function _isShutdown() internal view returns (bool) {
-        (bool success, bytes memory data) = _tokenizedStrategy.staticcall(abi.encodeWithSignature("isShutdown()"));
-        require(success, "isShutdown failed");
-        return abi.decode(data, (bool));
-    }
-
-    /**
-     * @dev Helper to call TokenizedStrategy.previewMint()
-     */
-    function _previewMint(uint256 shares) internal view returns (uint256) {
-        (bool success, bytes memory data) =
-            _tokenizedStrategy.staticcall(abi.encodeWithSignature("previewMint(uint256)", shares));
-        require(success, "previewMint failed");
-        return abi.decode(data, (uint256));
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                            GETTERS
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Get the underlying asset.
-     */
-    function asset() public view returns (ERC20) {
-        return ERC20(_asset);
     }
 
     /*//////////////////////////////////////////////////////////////

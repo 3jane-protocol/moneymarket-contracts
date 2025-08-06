@@ -143,7 +143,7 @@ contract USD3 is BaseHooksUpgradeable {
             return;
         }
 
-        uint256 totalValue = _totalAssets();
+        uint256 totalValue = TokenizedStrategy.totalAssets();
         uint256 maxDeployable = (totalValue * maxOnCredit) / 10_000;
         uint256 currentlyDeployed = morphoBlue.expectedSupplyAssets(_marketParams(), address(this));
 
@@ -235,7 +235,7 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         // Check if strategy is shutdown
-        if (_isShutdown()) {
+        if (TokenizedStrategy.isShutdown()) {
             return 0;
         }
 

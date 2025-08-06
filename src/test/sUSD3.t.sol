@@ -76,7 +76,7 @@ contract sUSD3Test is Setup {
     //////////////////////////////////////////////////////////////*/
 
     function test_initialization() public {
-        assertEq(address(susd3Strategy.asset()), susd3Asset);
+        assertEq(IStrategyInterface(address(susd3Strategy)).asset(), susd3Asset);
         assertEq(susd3Strategy.symbol(), "sUSD3");
         assertEq(IStrategyInterface(address(susd3Strategy)).management(), management);
         assertEq(IStrategyInterface(address(susd3Strategy)).keeper(), keeper);

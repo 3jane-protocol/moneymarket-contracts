@@ -150,7 +150,7 @@ contract sUSD3 is BaseHooksUpgradeable {
         // USD3 automatically mints shares to us during its report()
         // We just need to return our current balance
         // Any yield received is reflected in our USD3 token balance
-        return IERC20(_asset).balanceOf(address(this));
+        return IERC20(address(asset)).balanceOf(address(this));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -251,14 +251,14 @@ contract sUSD3 is BaseHooksUpgradeable {
      * @return Maximum deposit amount allowed
      */
     function availableDepositLimit(address _owner) public view override returns (uint256) {
-        if (_isShutdown()) {
+        if (TokenizedStrategy.isShutdown()) {
             return 0;
         }
 
         // Check subordination ratio if USD3 strategy is set
         if (usd3Strategy != address(0)) {
             uint256 usd3TotalAssets = IERC20(usd3Strategy).totalSupply();
-            uint256 susd3TotalAssets = _totalAssets();
+            uint256 susd3TotalAssets = TokenizedStrategy.totalAssets();
 
             // If no sUSD3 deposits yet, calculate max allowed based on USD3 supply
             // sUSD3 can be max 15% of total, so sUSD3/(USD3+sUSD3) = 0.15
