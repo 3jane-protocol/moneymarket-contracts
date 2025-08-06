@@ -92,7 +92,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Approve Morpho
         IERC20(loanToken).forceApprove(address(morphoBlue), type(uint256).max);
-        
+
         // Set default values
         maxOnCredit = 10_000; // 100% by default (no restriction)
         usd3MinRatio = 0; // No ratio enforcement by default
@@ -141,25 +141,25 @@ contract USD3 is BaseHooksUpgradeable {
 
     function _deployFunds(uint256 _amount) internal override {
         if (_amount == 0) return;
-        
+
         if (maxOnCredit == 0 || maxOnCredit == 10_000) {
             // If not set or set to 100%, deploy everything
             morphoBlue.supply(_marketParams(), _amount, 0, address(this), hex"");
             return;
         }
-        
+
         uint256 totalValue = _totalAssets();
         uint256 maxDeployable = (totalValue * maxOnCredit) / 10_000;
         uint256 currentlyDeployed = morphoBlue.expectedSupplyAssets(_marketParams(), address(this));
-        
+
         if (currentlyDeployed >= maxDeployable) {
             // Already at max deployment
             return;
         }
-        
+
         uint256 deployableAmount = maxDeployable - currentlyDeployed;
         uint256 toDeploy = Math.min(_amount, deployableAmount);
-        
+
         if (toDeploy > 0) {
             morphoBlue.supply(_marketParams(), toDeploy, 0, address(this), hex"");
         }
@@ -167,19 +167,19 @@ contract USD3 is BaseHooksUpgradeable {
 
     function _freeFunds(uint256 amount) internal override {
         if (amount == 0) return;
-        
+
         morphoBlue.accrueInterest(_marketParams());
         (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
 
         // Calculate how much we can actually withdraw
         uint256 availableToWithdraw = assetsMax > liquidity ? liquidity : assetsMax;
-        
+
         // If we can't withdraw anything, return early
         if (availableToWithdraw == 0) return;
-        
+
         // Cap the requested amount to what's actually available
         uint256 actualAmount = amount > availableToWithdraw ? availableToWithdraw : amount;
-        
+
         if (actualAmount >= assetsMax) {
             // Withdraw all our shares
             morphoBlue.withdraw(_marketParams(), 0, shares, address(this), address(this));
@@ -187,7 +187,7 @@ contract USD3 is BaseHooksUpgradeable {
             // Withdraw specific amount
             morphoBlue.withdraw(_marketParams(), actualAmount, 0, address(this), address(this));
         }
-        
+
         // Verify we received the tokens (allow for small rounding differences)
         uint256 balance = IERC20(loanToken).balanceOf(address(this));
         require(balance > 0, "No tokens received from withdraw");
@@ -204,18 +204,19 @@ contract USD3 is BaseHooksUpgradeable {
             _tend(_totalIdle);
         }
 
-        uint256 currentTotalAssets = morphoBlue.expectedSupplyAssets(params, address(this)) + IERC20(loanToken).balanceOf(address(this));
-        
+        uint256 currentTotalAssets =
+            morphoBlue.expectedSupplyAssets(params, address(this)) + IERC20(loanToken).balanceOf(address(this));
+
         // Calculate profit for interest sharing
         uint256 lastTotal = ITokenizedStrategy(address(this)).totalAssets();
         if (currentTotalAssets > lastTotal && interestShareVariant > 0 && susd3Strategy != address(0)) {
             uint256 profit = currentTotalAssets - lastTotal;
             uint256 sUSD3ValueShare = (profit * interestShareVariant) / MAX_BPS;
-            
+
             if (sUSD3ValueShare > 0) {
                 // Accumulate yield for sUSD3 to claim
                 pendingYieldDistribution += sUSD3ValueShare;
-                
+
                 // Reduce reported assets to account for the reserved yield
                 currentTotalAssets = currentTotalAssets - sUSD3ValueShare;
             }
@@ -236,24 +237,24 @@ contract USD3 is BaseHooksUpgradeable {
                 return 0; // Commitment period not met
             }
         }
-        
+
         // Get available liquidity
         (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
         uint256 idle = IERC20(loanToken).balanceOf(address(this));
         uint256 availableLiquidity = idle + Math.min(liquidity, assetsMax);
-        
+
         // Account for pending yield distribution that's reserved for sUSD3
         if (pendingYieldDistribution > 0) {
-            availableLiquidity = availableLiquidity > pendingYieldDistribution ? 
-                availableLiquidity - pendingYieldDistribution : 0;
+            availableLiquidity =
+                availableLiquidity > pendingYieldDistribution ? availableLiquidity - pendingYieldDistribution : 0;
         }
-        
+
         // Apply USD3 ratio constraint if configured
         if (usd3MinRatio > 0 && susd3Strategy != address(0)) {
             uint256 usd3Value = _totalAssets();
             uint256 susd3Value = IERC20(susd3Strategy).totalSupply();
             uint256 totalValue = usd3Value + susd3Value;
-            
+
             if (totalValue > 0) {
                 // Calculate max withdrawable while maintaining ratio
                 uint256 minUsd3Value = (totalValue * usd3MinRatio) / 10_000;
@@ -265,7 +266,7 @@ contract USD3 is BaseHooksUpgradeable {
                 }
             }
         }
-        
+
         return availableLiquidity;
     }
 
@@ -274,13 +275,13 @@ contract USD3 is BaseHooksUpgradeable {
         if (whitelistEnabled && !whitelist[_owner]) {
             return 0;
         }
-        
+
         // Check if strategy is shutdown
         if (_isShutdown()) {
             return 0;
         }
-        
-        // Return max uint256 to indicate no limit 
+
+        // Return max uint256 to indicate no limit
         // (minDeposit will be checked in custom deposit/mint functions)
         return type(uint256).max;
     }
@@ -292,7 +293,7 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Enforce minimum deposit and set commitment time
     function _enforceDepositRequirements(uint256 assets, address receiver) private {
         require(assets >= minDeposit, "Below minimum deposit");
-        
+
         // Each deposit extends commitment for entire balance
         if (minCommitmentTime > 0) {
             depositTimestamp[receiver] = block.timestamp;
@@ -300,20 +301,12 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /// @dev Pre-deposit hook to enforce minimum deposit and track commitment time
-    function _preDepositHook(
-        uint256 assets,
-        uint256 shares,
-        address receiver
-    ) internal override {
+    function _preDepositHook(uint256 assets, uint256 shares, address receiver) internal override {
         _enforceDepositRequirements(assets, receiver);
     }
 
     /// @dev Pre-mint hook - must match deposit hook to prevent bypass
-    function _preMintHook(
-        uint256 assets,
-        uint256 shares,
-        address receiver
-    ) internal override {
+    function _preMintHook(uint256 assets, uint256 shares, address receiver) internal override {
         // For mint(), we need to calculate the assets that will be deposited
         uint256 assetsNeeded = ITokenizedStrategy(address(this)).previewMint(shares);
         _enforceDepositRequirements(assetsNeeded, receiver);
@@ -327,20 +320,12 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /// @dev Post-withdraw hook to clear commitment on full exit
-    function _postWithdrawHook(
-        uint256 assets,
-        uint256 shares,
-        address owner
-    ) internal override {
+    function _postWithdrawHook(uint256 assets, uint256 shares, address owner) internal override {
         _clearCommitmentIfNeeded(owner);
     }
 
     /// @dev Post-redeem hook to clear commitment on full exit
-    function _postRedeemHook(
-        uint256 assets,
-        uint256 shares,
-        address owner
-    ) internal override {
+    function _postRedeemHook(uint256 assets, uint256 shares, address owner) internal override {
         _clearCommitmentIfNeeded(owner);
     }
 
@@ -403,28 +388,28 @@ contract USD3 is BaseHooksUpgradeable {
     function claimYieldDistribution() external returns (uint256 amount) {
         require(msg.sender == susd3Strategy, "!susd3");
         amount = pendingYieldDistribution;
-        
+
         if (amount > 0) {
             pendingYieldDistribution = 0;
-            
+
             // Withdraw from MorphoCredit if needed
             uint256 idle = IERC20(loanToken).balanceOf(address(this));
             if (idle < amount) {
                 _freeFunds(amount - idle);
             }
-            
+
             // Transfer assets to sUSD3
             IERC20(IERC20(loanToken)).safeTransfer(susd3Strategy, amount);
             emit YieldDistributed(susd3Strategy, amount, 0);
         }
-        
+
         return amount;
     }
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE GAP
     //////////////////////////////////////////////////////////////*/
-    
+
     /**
      * @dev This empty reserved space is put in place to allow future versions to add new
      * variables without shifting down storage in the inheritance chain.

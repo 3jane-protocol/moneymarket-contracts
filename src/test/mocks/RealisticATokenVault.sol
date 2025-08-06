@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {ERC4626, ERC20, IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/extensions/ERC4626.sol";
+import {
+    ERC4626, ERC20, IERC20
+} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/extensions/ERC4626.sol";
 import {Math} from "../../../lib/openzeppelin-contracts/contracts/utils/math/Math.sol";
 import {Ownable} from "../../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 
@@ -18,14 +20,14 @@ contract RealisticATokenVault is ERC4626, Ownable {
     uint256 public fee; // Fee in basis points (10000 = 100%)
     uint256 public constant YIELD_RATE = 3e16; // 3% APY base rate
     uint256 public constant FEE_PRECISION = 10000;
-    
+
     // Simulate yield accrual over time
     uint256 private _accruedYield;
     uint256 private _totalDepositedAssets;
-    
+
     // Fee recipient
     address public feeRecipient;
-    
+
     event FeeUpdated(uint256 newFee);
     event FeeRecipientUpdated(address newFeeRecipient);
 
@@ -68,10 +70,10 @@ contract RealisticATokenVault is ERC4626, Ownable {
      */
     function _calculateAccruedYield(uint256 baseAssets) internal view returns (uint256) {
         if (baseAssets == 0) return 0;
-        
+
         uint256 timeElapsed = block.timestamp - lastUpdate;
         if (timeElapsed == 0) return _accruedYield;
-        
+
         // Simple compound interest calculation
         // yield = baseAssets * rate * time / (365 days)
         uint256 newYield = baseAssets.mulDiv(YIELD_RATE * timeElapsed, 365 days * 1e18);
@@ -92,10 +94,10 @@ contract RealisticATokenVault is ERC4626, Ownable {
      */
     function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal virtual override {
         _updateYield();
-        
+
         // Handle fee on yield before deposit
         _handleFeeOnYield();
-        
+
         super._deposit(caller, receiver, assets, shares);
         _totalDepositedAssets += assets;
     }
@@ -109,17 +111,17 @@ contract RealisticATokenVault is ERC4626, Ownable {
         override
     {
         _updateYield();
-        
+
         // Handle fee on yield before withdrawal
         _handleFeeOnYield();
-        
+
         super._withdraw(caller, receiver, owner, assets, shares);
-        
+
         // Update total deposited assets proportionally
         if (totalSupply() > 0) {
             uint256 proportionalDecrease = _totalDepositedAssets.mulDiv(shares, totalSupply() + shares);
-            _totalDepositedAssets = _totalDepositedAssets > proportionalDecrease ? 
-                _totalDepositedAssets - proportionalDecrease : 0;
+            _totalDepositedAssets =
+                _totalDepositedAssets > proportionalDecrease ? _totalDepositedAssets - proportionalDecrease : 0;
         }
     }
 

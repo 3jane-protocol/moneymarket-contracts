@@ -14,15 +14,15 @@ import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/
 contract USD3MorphoIntegrationTest is Setup {
     using MarketParamsLib for MarketParams;
     using MorphoBalancesLib for IMorpho;
-    
+
     USD3 public usd3Strategy;
     address public strategyManager;
     address public strategyKeeper;
-    
+
     // Test addresses
     address constant SUPPLIER = address(0x1111);
     address constant BORROWER = address(0x2222);
-    
+
     // MorphoCredit variables
     IMorpho public morpho;
     MarketParams public marketParams;
@@ -32,14 +32,13 @@ contract USD3MorphoIntegrationTest is Setup {
     function setUp() public override {
         super.setUp();
 
-
         // Setup strategy roles
         strategyManager = makeAddr("StrategyManager");
         strategyKeeper = makeAddr("StrategyKeeper");
 
         // Cast the strategy to USD3
         usd3Strategy = USD3(address(strategy));
-        
+
         // Get market params and morpho from the strategy
         marketParams = usd3Strategy.marketParams();
         morpho = IMorpho(usd3Strategy.morphoBlue());
@@ -52,12 +51,12 @@ contract USD3MorphoIntegrationTest is Setup {
 
         // Set loanToken to asset (USDC)
         loanToken = IERC20(address(asset));
-        
+
         // Fund supplier with tokens and approve
         deal(address(asset), SUPPLIER, 10000e6);
         vm.prank(SUPPLIER);
         asset.approve(address(usd3Strategy), type(uint256).max);
-        
+
         // Fund test contract for _triggerAccrual() calls
         deal(address(asset), address(this), 1000e6);
         asset.approve(address(morpho), type(uint256).max);
@@ -71,7 +70,7 @@ contract USD3MorphoIntegrationTest is Setup {
 
         // The borrower doesn't need to have assets - they borrow against credit line
         // The strategy should already have supplied liquidity for borrowing
-        
+
         // Execute borrow directly - borrower borrows assets from the strategy's supply
         vm.prank(borrower);
         morpho.borrow(marketParams, borrowAmount, 0, borrower, borrower);
@@ -103,7 +102,7 @@ contract USD3MorphoIntegrationTest is Setup {
 
         // Forward time to accrue interest
         _forward(365 days);
-        
+
         // Trigger accrual in Morpho
         _triggerAccrual();
 
@@ -111,22 +110,22 @@ contract USD3MorphoIntegrationTest is Setup {
         uint256 totalAssetsBefore = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
         uint256 morphoSupply = morpho.expectedSupplyAssets(marketParams, address(usd3Strategy));
         uint256 morphoBorrow = morpho.market(id).totalBorrowAssets;
-        
+
         console2.log("Total assets in strategy:", totalAssetsBefore);
         console2.log("Supply in Morpho:", morphoSupply);
         console2.log("Borrowed from Morpho:", morphoBorrow);
         console2.log("Expected interest (1 year at 10%):", borrowAmount / 10);
-        
+
         // Note: totalAssets won't show the accrued interest until after report()
         assertEq(totalAssetsBefore, supplyAmount, "Before report, totalAssets equals deposited amount");
 
         // The interest has accrued in Morpho, but totalAssets won't reflect it until after report()
         // This is expected behavior - report() updates the strategy's internal accounting
-        
+
         // Report harvest
         vm.prank(strategyKeeper);
         (uint256 profit, uint256 loss) = ITokenizedStrategy(address(usd3Strategy)).report();
-        
+
         uint256 totalAssetsAfter = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
         console2.log("Total assets after report:", totalAssetsAfter);
         console2.log("Profit reported:", profit);
@@ -149,7 +148,7 @@ contract USD3MorphoIntegrationTest is Setup {
 
         // Accrue interest
         _forward(365 days);
-        
+
         // Trigger interest accrual
         _triggerAccrual();
 
@@ -274,19 +273,19 @@ contract USD3MorphoIntegrationTest is Setup {
         // Report to update strategy accounting
         vm.prank(strategyKeeper);
         (uint256 profit, uint256 loss) = ITokenizedStrategy(address(usd3Strategy)).report();
-        
+
         console2.log("Profit from report:", profit);
         console2.log("Loss from report:", loss);
         console2.log("Total supply in Morpho:", morpho.market(id).totalSupplyAssets);
         console2.log("Total borrowed in Morpho:", morpho.market(id).totalBorrowAssets);
-        
+
         // Wait for profit to unlock
         skip(ITokenizedStrategy(address(usd3Strategy)).profitMaxUnlockTime());
 
         // Both should earn proportional interest
         uint256 assets1 = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(shares1);
         uint256 assets2 = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(shares2);
-        
+
         console2.log("Depositor 1 - Deposited:", amount1, "Current value:", assets1);
         console2.log("Depositor 2 - Deposited:", amount2, "Current value:", assets2);
 
@@ -294,18 +293,18 @@ contract USD3MorphoIntegrationTest is Setup {
         assertGt(assets2, amount2, "Depositor 2 should have earned interest");
         assertApproxEqRel(assets1 * amount2, assets2 * amount1, 1e15, "Interest should be proportional");
     }
-    
+
     // Helper functions
     function _forward(uint256 timeElapsed) internal {
         vm.warp(block.timestamp + timeElapsed);
         vm.roll(block.number + timeElapsed / 12);
     }
-    
+
     function _triggerAccrual() internal {
         // Trigger interest accrual in Morpho
         morpho.accrueInterest(marketParams);
     }
-    
+
     function _createPastObligation(address borrower, uint256 amount, uint256 endingBalance) internal {
         // This would interact with the repayment obligation system
         // For testing, we'll skip this as it's not implemented in the mock

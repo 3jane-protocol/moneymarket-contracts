@@ -16,7 +16,8 @@ import {IMorpho, MarketParams} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
 import {IrmMock} from "@3jane-morpho-blue/mocks/IrmMock.sol";
 import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {TransparentUpgradeableProxy} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {TransparentUpgradeableProxy} from
+    "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
 
 interface IFactory {
@@ -127,23 +128,14 @@ contract Setup is Test, IEvents {
 
         // Deploy proxy admin
         ProxyAdmin usd3ProxyAdmin = new ProxyAdmin(proxyAdminOwner);
-        
+
         // Deploy proxy with initialization
         bytes memory usd3InitData = abi.encodeWithSelector(
-            USD3.initialize.selector,
-            address(morpho),
-            marketParams,
-            "USD3",
-            management,
-            performanceFeeRecipient,
-            keeper
+            USD3.initialize.selector, address(morpho), marketParams, "USD3", management, performanceFeeRecipient, keeper
         );
-        
-        TransparentUpgradeableProxy usd3Proxy = new TransparentUpgradeableProxy(
-            address(usd3Implementation),
-            address(usd3ProxyAdmin),
-            usd3InitData
-        );
+
+        TransparentUpgradeableProxy usd3Proxy =
+            new TransparentUpgradeableProxy(address(usd3Implementation), address(usd3ProxyAdmin), usd3InitData);
 
         // Set emergency admin
         vm.prank(management);

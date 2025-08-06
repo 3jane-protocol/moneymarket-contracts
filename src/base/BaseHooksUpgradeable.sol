@@ -74,12 +74,11 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param maxLoss Maximum acceptable loss in basis points
      * @return shares Amount of shares burned
      */
-    function withdraw(
-        uint256 assets,
-        address receiver,
-        address owner,
-        uint256 maxLoss
-    ) public virtual returns (uint256 shares) {
+    function withdraw(uint256 assets, address receiver, address owner, uint256 maxLoss)
+        public
+        virtual
+        returns (uint256 shares)
+    {
         _preWithdrawHook(assets, shares, owner, maxLoss);
         shares = abi.decode(
             _delegateCall(
@@ -109,12 +108,11 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param maxLoss Maximum acceptable loss in basis points
      * @return assets Amount of assets withdrawn
      */
-    function redeem(
-        uint256 shares,
-        address receiver,
-        address owner,
-        uint256 maxLoss
-    ) public virtual returns (uint256 assets) {
+    function redeem(uint256 shares, address receiver, address owner, uint256 maxLoss)
+        public
+        virtual
+        returns (uint256 assets)
+    {
         _preRedeemHook(assets, shares, owner, maxLoss);
         assets = abi.decode(
             _delegateCall(abi.encodeWithSelector(ITokenizedStrategy.redeem.selector, shares, receiver, owner, maxLoss)),
@@ -131,9 +129,8 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      */
     function transfer(address to, uint256 amount) external virtual returns (bool) {
         _preTransferHook(msg.sender, to, amount);
-        bool success = abi.decode(
-            _delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).transfer, (to, amount))), (bool)
-        );
+        bool success =
+            abi.decode(_delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).transfer, (to, amount))), (bool));
         _postTransferHook(msg.sender, to, amount);
         return success;
     }

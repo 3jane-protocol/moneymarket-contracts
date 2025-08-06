@@ -12,7 +12,7 @@ import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IER
 
 contract OperationTest is Setup {
     using MorphoBalancesLib for IMorpho;
-    
+
     USD3 public usd3Strategy;
     IMorpho public morpho;
     ERC20 public aTokenVault;
@@ -68,7 +68,6 @@ contract OperationTest is Setup {
         // Earn Interest
         skip(1 days);
 
-
         // Report profit
         vm.prank(keeper);
         (uint256 profit, uint256 loss) = strategy.report();
@@ -112,7 +111,6 @@ contract OperationTest is Setup {
         uint256 toAirdrop = (_amount * _profitFactor) / MAX_BPS;
         airdrop(asset, address(strategy), toAirdrop);
 
-
         // Report profit
         vm.prank(keeper);
         (uint256 profit, uint256 loss) = strategy.report();
@@ -152,7 +150,6 @@ contract OperationTest is Setup {
         uint256 toAirdrop = (_amount * _profitFactor) / MAX_BPS;
         airdrop(asset, address(strategy), toAirdrop);
 
-
         // Report profit
         vm.prank(keeper);
         (uint256 profit, uint256 loss) = strategy.report();
@@ -187,10 +184,10 @@ contract OperationTest is Setup {
 
     function test_tendTrigger(uint256 _amount) public {
         _amount = bound(_amount, minFuzzAmount, maxFuzzAmount);
-        
+
         // Additional safety check to prevent overflow
         vm.assume(_amount <= 1e12 * 1e6); // Max 1 trillion USDC
-        
+
         // Further limit to reasonable amounts for this test
         _amount = bound(_amount, 1e6, 1_000_000e6); // Between 1 and 1M USDC
 
@@ -208,7 +205,6 @@ contract OperationTest is Setup {
 
         (trigger,) = strategy.tendTrigger();
         assertTrue(!trigger);
-
 
         vm.prank(keeper);
         strategy.report();
@@ -270,7 +266,6 @@ contract OperationTest is Setup {
         // Return early since we can't simulate markdown with real MorphoCredit
         return;
 
-
         // Report should show loss
         vm.prank(keeper);
         (uint256 profit, uint256 loss) = strategy.report();
@@ -285,10 +280,10 @@ contract OperationTest is Setup {
         // Just return early
         return;
     }
-    
+
     function test_tendTrigger_specific() public {
         uint256 _amount = 1000e6; // 1000 USDC
-        
+
         (bool trigger,) = strategy.tendTrigger();
         assertTrue(!trigger);
 
@@ -303,7 +298,6 @@ contract OperationTest is Setup {
 
         (trigger,) = strategy.tendTrigger();
         assertTrue(!trigger);
-
 
         vm.prank(keeper);
         strategy.report();

@@ -80,8 +80,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * This address should be the same for every strategy, never be adjusted
      * and always be checked before any integration with the Strategy.
      */
-    address public constant tokenizedStrategyAddress =
-        0xD377919FA87120584B21279a491F82D5265A139c;
+    address public constant tokenizedStrategyAddress = 0xD377919FA87120584B21279a491F82D5265A139c;
 
     /*//////////////////////////////////////////////////////////////
                             STORAGE
@@ -132,8 +131,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
         // Initialize the strategy's storage variables via delegatecall.
         _delegateCall(
             abi.encodeCall(
-                ITokenizedStrategy.initialize,
-                (__asset, _name, _management, _performanceFeeRecipient, _keeper)
+                ITokenizedStrategy.initialize, (__asset, _name, _management, _performanceFeeRecipient, _keeper)
             )
         );
     }
@@ -145,10 +143,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @param __asset Address of the underlying asset.
      * @param _name Name the strategy will use.
      */
-    function __BaseStrategy_init_unchained(
-        address __asset,
-        string memory _name
-    ) internal onlyInitializing {
+    function __BaseStrategy_init_unchained(address __asset, string memory _name) internal onlyInitializing {
         __BaseStrategy_init(__asset, _name, msg.sender, msg.sender, msg.sender);
     }
 
@@ -160,9 +155,8 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @dev Require that the caller is the management address.
      */
     function _requireManagement() internal view {
-        (bool success, bytes memory data) = _tokenizedStrategy.staticcall(
-            abi.encodeWithSignature("requireManagement(address)", msg.sender)
-        );
+        (bool success, bytes memory data) =
+            _tokenizedStrategy.staticcall(abi.encodeWithSignature("requireManagement(address)", msg.sender));
         if (!success) {
             assembly {
                 let dataSize := mload(data)
@@ -175,9 +169,8 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @dev Require that the caller is the keeper or management.
      */
     function _requireKeeperOrManagement() internal view {
-        (bool success, bytes memory data) = _tokenizedStrategy.staticcall(
-            abi.encodeWithSignature("requireKeeperOrManagement(address)", msg.sender)
-        );
+        (bool success, bytes memory data) =
+            _tokenizedStrategy.staticcall(abi.encodeWithSignature("requireKeeperOrManagement(address)", msg.sender));
         if (!success) {
             assembly {
                 let dataSize := mload(data)
@@ -190,9 +183,8 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @dev Require that the caller is the emergency admin or management.
      */
     function _requireEmergencyAuthorized() internal view {
-        (bool success, bytes memory data) = _tokenizedStrategy.staticcall(
-            abi.encodeWithSignature("requireEmergencyAuthorized(address)", msg.sender)
-        );
+        (bool success, bytes memory data) =
+            _tokenizedStrategy.staticcall(abi.encodeWithSignature("requireEmergencyAuthorized(address)", msg.sender));
         if (!success) {
             assembly {
                 let dataSize := mload(data)
@@ -209,9 +201,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @dev Helper to call TokenizedStrategy.totalAssets()
      */
     function _totalAssets() internal view returns (uint256) {
-        (bool success, bytes memory data) = _tokenizedStrategy.staticcall(
-            abi.encodeWithSignature("totalAssets()")
-        );
+        (bool success, bytes memory data) = _tokenizedStrategy.staticcall(abi.encodeWithSignature("totalAssets()"));
         require(success, "totalAssets failed");
         return abi.decode(data, (uint256));
     }
@@ -220,9 +210,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @dev Helper to call TokenizedStrategy.isShutdown()
      */
     function _isShutdown() internal view returns (bool) {
-        (bool success, bytes memory data) = _tokenizedStrategy.staticcall(
-            abi.encodeWithSignature("isShutdown()")
-        );
+        (bool success, bytes memory data) = _tokenizedStrategy.staticcall(abi.encodeWithSignature("isShutdown()"));
         require(success, "isShutdown failed");
         return abi.decode(data, (bool));
     }
@@ -231,9 +219,8 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @dev Helper to call TokenizedStrategy.previewMint()
      */
     function _previewMint(uint256 shares) internal view returns (uint256) {
-        (bool success, bytes memory data) = _tokenizedStrategy.staticcall(
-            abi.encodeWithSignature("previewMint(uint256)", shares)
-        );
+        (bool success, bytes memory data) =
+            _tokenizedStrategy.staticcall(abi.encodeWithSignature("previewMint(uint256)", shares));
         require(success, "previewMint failed");
         return abi.decode(data, (uint256));
     }
@@ -311,10 +298,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @return _totalAssets A trusted and accurate account for the total
      * amount of 'asset' the strategy currently holds including idle funds.
      */
-    function _harvestAndReport()
-        internal
-        virtual
-        returns (uint256 _totalAssets);
+    function _harvestAndReport() internal virtual returns (uint256 _totalAssets);
 
     /*//////////////////////////////////////////////////////////////
                     OPTIONAL TO OVERRIDE BY STRATEGIST
@@ -389,9 +373,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @param . The address that is depositing into the strategy.
      * @return . The available amount the `_owner` can deposit in terms of `asset`
      */
-    function availableDepositLimit(
-        address /*_owner*/
-    ) public view virtual returns (uint256) {
+    function availableDepositLimit(address /*_owner*/ ) public view virtual returns (uint256) {
         return type(uint256).max;
     }
 
@@ -413,9 +395,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @param . The address that is withdrawing from the strategy.
      * @return . The available amount that can be withdrawn in terms of `asset`
      */
-    function availableWithdrawLimit(
-        address /*_owner*/
-    ) public view virtual returns (uint256) {
+    function availableWithdrawLimit(address /*_owner*/ ) public view virtual returns (uint256) {
         return type(uint256).max;
     }
 
@@ -503,7 +483,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      *
      * We name the function `tendThis` so that `tend` calls are forwarded to
      * the TokenizedStrategy.
-
+     *
      * @param _totalIdle The amount of current idle funds that can be
      * deployed during the tend
      */
@@ -538,12 +518,9 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @param _calldata The abi encoded calldata to use in delegatecall.
      * @return . The return value if the call was successful in bytes.
      */
-    function _delegateCall(
-        bytes memory _calldata
-    ) internal returns (bytes memory) {
+    function _delegateCall(bytes memory _calldata) internal returns (bytes memory) {
         // Delegate call the tokenized strategy with provided calldata.
-        (bool success, bytes memory result) = tokenizedStrategyAddress
-            .delegatecall(_calldata);
+        (bool success, bytes memory result) = tokenizedStrategyAddress.delegatecall(_calldata);
 
         // If the call reverted. Return the error.
         if (!success) {
@@ -578,24 +555,13 @@ abstract contract BaseStrategyUpgradeable is Initializable {
             // Copy function selector and any arguments.
             calldatacopy(0, 0, calldatasize())
             // Execute function delegatecall.
-            let result := delegatecall(
-                gas(),
-                _tokenizedStrategyAddress,
-                0,
-                calldatasize(),
-                0,
-                0
-            )
+            let result := delegatecall(gas(), _tokenizedStrategyAddress, 0, calldatasize(), 0, 0)
             // Get any return value
             returndatacopy(0, 0, returndatasize())
             // Return any return value or error back to the caller
             switch result
-            case 0 {
-                revert(0, returndatasize())
-            }
-            default {
-                return(0, returndatasize())
-            }
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
         }
     }
 }
