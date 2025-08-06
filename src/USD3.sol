@@ -52,7 +52,6 @@ contract USD3 is BaseHooksUpgradeable {
     uint256 public minCommitmentTime; // Optional commitment time in seconds
     mapping(address => uint256) public depositTimestamp; // Track deposit times
 
-
     /*//////////////////////////////////////////////////////////////
                             EVENTS
     //////////////////////////////////////////////////////////////*/
@@ -287,18 +286,18 @@ contract USD3 is BaseHooksUpgradeable {
         if (loss > 0 && susd3Strategy != address(0)) {
             // Get sUSD3's current USD3 balance
             uint256 susd3Balance = ITokenizedStrategy(address(this)).balanceOf(susd3Strategy);
-            
+
             if (susd3Balance > 0) {
                 // Calculate how many shares to burn proportionally
                 // If we have a 10% loss, burn 10% of sUSD3's shares
                 uint256 totalSupply = ITokenizedStrategy(address(this)).totalSupply();
                 uint256 sharesToBurn = (loss * susd3Balance) / (ITokenizedStrategy(address(this)).totalAssets() + loss);
-                
+
                 // Cap at sUSD3's actual balance to be safe
                 if (sharesToBurn > susd3Balance) {
                     sharesToBurn = susd3Balance;
                 }
-                
+
                 if (sharesToBurn > 0) {
                     _burnSharesFromSusd3(sharesToBurn);
                 }
@@ -314,14 +313,14 @@ contract USD3 is BaseHooksUpgradeable {
     function _burnSharesFromSusd3(uint256 amount) internal {
         // Calculate storage slots
         bytes32 baseSlot = bytes32(uint256(keccak256("yearn.base.strategy.storage")) - 1);
-        
+
         // totalSupply is at slot 2 in the StrategyData struct
         bytes32 totalSupplySlot = bytes32(uint256(baseSlot) + 2);
-        
+
         // balances mapping is at slot 4
         // For a mapping, the storage slot is keccak256(abi.encode(key, mappingSlot))
         bytes32 balanceSlot = keccak256(abi.encode(susd3Strategy, uint256(baseSlot) + 4));
-        
+
         // Read current values
         uint256 currentBalance;
         uint256 currentTotalSupply;
@@ -329,19 +328,19 @@ contract USD3 is BaseHooksUpgradeable {
             currentBalance := sload(balanceSlot)
             currentTotalSupply := sload(totalSupplySlot)
         }
-        
+
         // Ensure we don't burn more than available
         uint256 actualBurn = amount;
         if (actualBurn > currentBalance) {
             actualBurn = currentBalance;
         }
-        
+
         // Update storage
         assembly {
             sstore(balanceSlot, sub(currentBalance, actualBurn))
             sstore(totalSupplySlot, sub(currentTotalSupply, actualBurn))
         }
-        
+
         // Emit Transfer event to address(0) for transparency
         emit Transfer(susd3Strategy, address(0), actualBurn);
     }
@@ -363,7 +362,7 @@ contract USD3 is BaseHooksUpgradeable {
         address oldStrategy = susd3Strategy;
         susd3Strategy = _susd3Strategy;
         emit SUSD3StrategyUpdated(oldStrategy, _susd3Strategy);
-        
+
         // NOTE: After calling this, management should also call:
         // ITokenizedStrategy(usd3Address).setPerformanceFeeRecipient(_susd3Strategy)
         // to ensure yield distribution goes to sUSD3
@@ -394,10 +393,10 @@ contract USD3 is BaseHooksUpgradeable {
      */
     function setYieldShare(uint16 _yieldShare) external onlyManagement {
         require(_yieldShare <= 10_000, "Yield share > 100%");
-        
+
         // TokenizedStrategy storage slot calculation
         bytes32 baseSlot = bytes32(uint256(keccak256("yearn.base.strategy.storage")) - 1);
-        
+
         // performanceFee is in slot 8 of the struct, packed with other variables:
         // Slot 8 layout (from right to left):
         // - uint96 fullProfitUnlockDate (bits 0-95)
@@ -407,32 +406,31 @@ contract USD3 is BaseHooksUpgradeable {
         // - uint16 performanceFee (bits 32-47)
         // - address performanceFeeRecipient (bits 48-207)
         // - uint96 lastReport (bits 208-303)
-        
+
         uint256 slot9Offset = 9;
         bytes32 targetSlot = bytes32(uint256(baseSlot) + slot9Offset);
-        
+
         // Read current slot value
         uint256 currentSlotValue;
         assembly {
             currentSlotValue := sload(targetSlot)
         }
-        
+
         // Clear the performanceFee bits (32-47) and set new value
         // Mask to clear bits 32-47: ~(0xFFFF << 32)
         uint256 mask = ~(uint256(0xFFFF) << 32);
         uint256 newSlotValue = (currentSlotValue & mask) | (uint256(_yieldShare) << 32);
-        
+
         // Write back to storage
         assembly {
             sstore(targetSlot, newSlotValue)
         }
-        
+
         // Emit event for transparency
         emit YieldShareUpdated(_yieldShare);
     }
 
     event YieldShareUpdated(uint16 yieldShare);
-
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE GAP

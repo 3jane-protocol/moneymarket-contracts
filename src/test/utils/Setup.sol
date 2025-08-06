@@ -130,9 +130,8 @@ contract Setup is Test, IEvents {
         ProxyAdmin usd3ProxyAdmin = new ProxyAdmin(proxyAdminOwner);
 
         // Deploy proxy with initialization
-        bytes memory usd3InitData = abi.encodeWithSelector(
-            USD3.initialize.selector, address(morpho), marketParams, "USD3", management, keeper
-        );
+        bytes memory usd3InitData =
+            abi.encodeWithSelector(USD3.initialize.selector, address(morpho), marketParams, "USD3", management, keeper);
 
         TransparentUpgradeableProxy usd3Proxy =
             new TransparentUpgradeableProxy(address(usd3Implementation), address(usd3ProxyAdmin), usd3InitData);

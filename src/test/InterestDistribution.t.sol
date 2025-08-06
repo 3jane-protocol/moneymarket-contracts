@@ -159,7 +159,7 @@ contract InterestDistribution is Setup {
 
         // Track sUSD3 balance before report
         uint256 susd3BalanceBefore = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
-        
+
         // Report
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();
@@ -513,7 +513,7 @@ contract InterestDistribution is Setup {
 
         // The performanceFee should now be 8000, but we can't directly read it
         // We can verify it works by checking yield distribution
-        
+
         // Setup deposits
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), 10000e6);
@@ -581,14 +581,14 @@ contract InterestDistribution is Setup {
         // First get idle assets
         uint256 idleAssets = asset.balanceOf(address(usd3Strategy));
         uint256 lossAmount = 500e6; // 5% loss on initial deposits
-        
+
         // If not enough idle, first withdraw from Morpho
         if (idleAssets < lossAmount) {
             vm.prank(keeper);
             ITokenizedStrategy(address(usd3Strategy)).tend(); // This might help free some
             idleAssets = asset.balanceOf(address(usd3Strategy));
         }
-        
+
         // Now simulate loss with what we have available (or less)
         uint256 actualLoss = idleAssets < lossAmount ? idleAssets : lossAmount;
         if (actualLoss > 0) {
@@ -611,7 +611,7 @@ contract InterestDistribution is Setup {
         // sUSD3 should have lost shares if there was a loss
         if (actualLoss > 0) {
             assertLt(susd3SharesAfter, susd3SharesBefore, "sUSD3 shares should be burned");
-            
+
             // Total supply should have decreased
             assertLt(totalSupplyAfter, totalSupplyBefore, "Total supply should decrease");
 
@@ -620,8 +620,10 @@ contract InterestDistribution is Setup {
             // So should bear that proportion of the loss
             uint256 expectedSharesBurned = (actualLoss * susd3SharesBefore) / (totalAssetsBefore + actualLoss);
             uint256 actualSharesBurned = susd3SharesBefore - susd3SharesAfter;
-            
-            assertApproxEqAbs(actualSharesBurned, expectedSharesBurned, 10e6, "Shares burned should be proportional to loss");
+
+            assertApproxEqAbs(
+                actualSharesBurned, expectedSharesBurned, 10e6, "Shares burned should be proportional to loss"
+            );
         }
     }
 
@@ -642,7 +644,7 @@ contract InterestDistribution is Setup {
         uint256 idleAssets = asset.balanceOf(address(usd3Strategy));
         uint256 desiredLoss = 500e6;
         uint256 actualLoss = idleAssets < desiredLoss ? idleAssets : desiredLoss;
-        
+
         if (actualLoss > 0) {
             vm.prank(address(usd3Strategy));
             asset.transfer(address(1), actualLoss);
