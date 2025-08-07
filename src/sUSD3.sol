@@ -36,11 +36,11 @@ contract sUSD3 is BaseHooksUpgradeable {
                             STRUCTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Tracks user cooldown state
+    /// @notice Tracks user cooldown state (packed into single storage slot)
     struct UserCooldown {
-        uint256 cooldownEnd; // When cooldown expires
-        uint256 windowEnd; // When withdrawal window closes
-        uint256 shares; // Shares locked for withdrawal
+        uint64 cooldownEnd; // When cooldown expires (8 bytes)
+        uint64 windowEnd; // When withdrawal window closes (8 bytes)
+        uint128 shares; // Shares locked for withdrawal (16 bytes)
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -212,7 +212,7 @@ contract sUSD3 is BaseHooksUpgradeable {
                 delete cooldowns[owner];
             } else {
                 // Partial withdrawal - reduce cooldown shares
-                cooldown.shares -= shares;
+                cooldown.shares -= uint128(shares);
             }
             emit WithdrawalCompleted(owner, shares, assets);
         }
@@ -244,9 +244,11 @@ contract sUSD3 is BaseHooksUpgradeable {
 
         // Allow updating cooldown with new amount (overwrites previous)
         cooldowns[msg.sender] = UserCooldown({
-            cooldownEnd: block.timestamp + cooldownPeriod,
-            windowEnd: block.timestamp + cooldownPeriod + withdrawalWindow,
-            shares: shares
+            cooldownEnd: uint64(block.timestamp + cooldownPeriod),
+            windowEnd: uint64(
+                block.timestamp + cooldownPeriod + withdrawalWindow
+            ),
+            shares: uint128(shares)
         });
 
         emit CooldownStarted(msg.sender, shares, block.timestamp);
