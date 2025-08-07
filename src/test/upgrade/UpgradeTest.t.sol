@@ -8,6 +8,8 @@ import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrat
 import {USD3} from "../../USD3.sol";
 import {sUSD3} from "../../sUSD3.sol";
 import {MarketParams, IMorpho} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
+import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
+import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
 
 /**
  * @title Upgrade Compatibility Test Suite
@@ -98,8 +100,21 @@ contract UpgradeTest is Setup {
             .totalAssets();
 
         // Simulate upgrade scenario: changing yield share parameters
-        vm.prank(management);
-        usd3Strategy.setYieldShare(4000); // 40% to sUSD3
+        // Setup yield sharing via protocol config
+        address morphoAddress = address(usd3Strategy.morphoBlue());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(
+            protocolConfigAddress
+        );
+
+        // Set the tranche share variant in protocol config
+        bytes32 TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
+        protocolConfig.setConfig(TRANCHE_SHARE_VARIANT, 4000); // 40% to sUSD3
+
+        // Sync the value to USD3 strategy as keeper
+        vm.prank(keeper);
+        usd3Strategy.syncTrancheShare();
 
         // Verify state is preserved after parameter changes
         assertEq(
@@ -221,8 +236,21 @@ contract UpgradeTest is Setup {
         );
 
         // Verify new management can perform operations
-        vm.prank(newManagement);
-        usd3Strategy.setYieldShare(2500); // 25% to sUSD3
+        // Update yield sharing via protocol config
+        address morphoAddress2 = address(usd3Strategy.morphoBlue());
+        address protocolConfigAddress2 = MorphoCredit(morphoAddress2)
+            .protocolConfig();
+        MockProtocolConfig protocolConfig2 = MockProtocolConfig(
+            protocolConfigAddress2
+        );
+
+        // Set the tranche share variant in protocol config
+        bytes32 TRANCHE_SHARE_VARIANT2 = keccak256("TRANCHE_SHARE_VARIANT");
+        protocolConfig2.setConfig(TRANCHE_SHARE_VARIANT2, 2500); // 25% to sUSD3
+
+        // Sync the value to USD3 strategy as keeper
+        vm.prank(keeper);
+        usd3Strategy.syncTrancheShare();
 
         assertEq(
             ITokenizedStrategy(address(usd3Strategy)).performanceFee(),

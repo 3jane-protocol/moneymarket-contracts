@@ -9,6 +9,8 @@ import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrat
 import {console2} from "forge-std/console2.sol";
 import {TransparentUpgradeableProxy} from "../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
+import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
+import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
 
 /**
  * @title InterestDistribution
@@ -23,6 +25,25 @@ contract InterestDistribution is Setup {
     address public charlie = makeAddr("charlie");
 
     uint256 constant INTEREST_SHARE_BPS = 2000; // 20% to sUSD3
+
+    // Helper function to set tranche share via protocol config
+    function _setTrancheShare(uint256 shareBps) internal {
+        // Get protocol config address from MorphoCredit
+        address morphoAddress = address(usd3Strategy.morphoBlue());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(
+            protocolConfigAddress
+        );
+
+        // Set the tranche share variant in protocol config
+        bytes32 TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
+        protocolConfig.setConfig(TRANCHE_SHARE_VARIANT, shareBps);
+
+        // Sync the value to USD3 strategy as keeper
+        vm.prank(keeper);
+        usd3Strategy.syncTrancheShare();
+    }
 
     function setUp() public override {
         super.setUp();
@@ -550,9 +571,8 @@ contract InterestDistribution is Setup {
         susd3Strategy.deposit(3000e6, bob);
         vm.stopPrank();
 
-        // Set yield share to 70% using direct storage manipulation
-        vm.prank(management);
-        usd3Strategy.setYieldShare(uint16(7000)); // 70%
+        // Set yield share to 70% using protocol config
+        _setTrancheShare(7000); // 70%
 
         // Generate yield
         uint256 yieldAmount = 1000e6;
@@ -598,9 +618,8 @@ contract InterestDistribution is Setup {
         susd3Strategy.deposit(3000e6, bob);
         vm.stopPrank();
 
-        // Set yield share to 100% using direct storage manipulation
-        vm.prank(management);
-        usd3Strategy.setYieldShare(uint16(10000)); // 100%
+        // Set yield share to 100% using protocol config
+        _setTrancheShare(10000); // 100%
 
         // Generate yield
         uint256 yieldAmount = 1000e6;
@@ -647,15 +666,27 @@ contract InterestDistribution is Setup {
 
     function test_yield_share_cannot_exceed_100_percent() public {
         // Try to set yield share above 100%
-        vm.prank(management);
-        vm.expectRevert("Yield share > 100%");
-        usd3Strategy.setYieldShare(uint16(10001)); // 100.01%
+        // Get protocol config
+        address morphoAddress = address(usd3Strategy.morphoBlue());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(
+            protocolConfigAddress
+        );
+
+        // Set invalid value in protocol config
+        bytes32 TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
+        protocolConfig.setConfig(TRANCHE_SHARE_VARIANT, 10001); // 100.01%
+
+        // Try to sync - should revert
+        vm.prank(keeper);
+        vm.expectRevert("Invalid tranche share");
+        usd3Strategy.syncTrancheShare();
     }
 
     function test_yield_share_updates_via_storage_manipulation() public {
-        // Set yield share to 80% using direct storage manipulation
-        vm.prank(management);
-        usd3Strategy.setYieldShare(uint16(8000));
+        // Set yield share to 80% using protocol config
+        _setTrancheShare(8000); // 80%
 
         // The performanceFee should now be 8000, but we can't directly read it
         // We can verify it works by checking yield distribution

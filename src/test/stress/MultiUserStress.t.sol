@@ -8,6 +8,8 @@ import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrat
 import {USD3} from "../../USD3.sol";
 import {sUSD3} from "../../sUSD3.sol";
 import {IMorpho, MarketParams} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
+import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
+import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
@@ -49,9 +51,21 @@ contract MultiUserStressTest is Setup {
         vm.prank(management);
         susd3Strategy.setUsd3Strategy(address(usd3Strategy));
 
-        // Setup yield sharing
-        vm.prank(management);
-        usd3Strategy.setYieldShare(3000); // 30% to sUSD3
+        // Setup yield sharing via protocol config
+        address morphoAddress = address(usd3Strategy.morphoBlue());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(
+            protocolConfigAddress
+        );
+
+        // Set the tranche share variant in protocol config
+        bytes32 TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
+        protocolConfig.setConfig(TRANCHE_SHARE_VARIANT, 3000); // 30% to sUSD3
+
+        // Sync the value to USD3 strategy as keeper
+        vm.prank(keeper);
+        usd3Strategy.syncTrancheShare();
 
         vm.prank(management);
         ITokenizedStrategy(address(usd3Strategy)).setPerformanceFeeRecipient(

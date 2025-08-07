@@ -9,6 +9,8 @@ import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrat
 import {TransparentUpgradeableProxy} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
 import {console2} from "forge-std/console2.sol";
+import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
+import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
 
 /**
  * @title BypassAttempts
@@ -62,8 +64,10 @@ contract BypassAttempts is Setup {
         vm.startPrank(management);
         usd3Strategy.setMinCommitmentTime(7 days);
         usd3Strategy.setMinDeposit(100e6);
-        susd3Strategy.setLockDuration(90 days);
         vm.stopPrank();
+
+        // Set lock duration via protocol config (90 days is already the default)
+        // No need to change it unless we want a different value
 
         // Setup test users
         airdrop(asset, alice, 10000e6);

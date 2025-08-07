@@ -8,6 +8,7 @@ import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrat
 import {IMorpho, MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
 import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
+import {HelperMock} from "@3jane-morpho-blue/mocks/HelperMock.sol";
 import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBalancesLib.sol";
 import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
@@ -79,9 +80,9 @@ contract USD3MorphoIntegrationTest is Setup {
         // The borrower doesn't need to have assets - they borrow against credit line
         // The strategy should already have supplied liquidity for borrowing
 
-        // Execute borrow directly - borrower borrows assets from the strategy's supply
+        // Execute borrow through helper - only helper is authorized to borrow
         vm.prank(borrower);
-        morpho.borrow(marketParams, borrowAmount, 0, borrower, borrower);
+        helper.borrow(marketParams, borrowAmount, 0, borrower, borrower);
     }
 
     function test_supplyToMorphoCredit() public {

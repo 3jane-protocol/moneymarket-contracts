@@ -9,6 +9,8 @@ import {USD3} from "../../USD3.sol";
 import {IMorpho, MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
 import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBalancesLib.sol";
+import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
+import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
 
 /**
  * @title MaxOnCredit Dynamic Test Suite
@@ -326,9 +328,21 @@ contract MaxOnCreditDynamicTest is Setup {
     function test_deploymentCalculationsWithFees() public {
         // Test deployment calculations when performance fees are taken
 
-        // Setup yield sharing
-        vm.prank(management);
-        usd3Strategy.setYieldShare(2000); // 20% to sUSD3
+        // Setup yield sharing via protocol config
+        address morphoAddress = address(usd3Strategy.morphoBlue());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(
+            protocolConfigAddress
+        );
+
+        // Set the tranche share variant in protocol config
+        bytes32 TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
+        protocolConfig.setConfig(TRANCHE_SHARE_VARIANT, 2000); // 20% to sUSD3
+
+        // Sync the value to USD3 strategy as keeper
+        vm.prank(keeper);
+        usd3Strategy.syncTrancheShare();
 
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), LARGE_DEPOSIT);

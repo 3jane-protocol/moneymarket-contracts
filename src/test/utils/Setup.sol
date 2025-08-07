@@ -15,9 +15,12 @@ import {USD3} from "../../USD3.sol";
 import {IMorpho, MarketParams} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
 import {IrmMock} from "@3jane-morpho-blue/mocks/IrmMock.sol";
+import {HelperMock} from "@3jane-morpho-blue/mocks/HelperMock.sol";
+import {CreditLineMock} from "@3jane-morpho-blue/mocks/CreditLineMock.sol";
 import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {TransparentUpgradeableProxy} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
+import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 
 interface IFactory {
     function governance() external view returns (address);
@@ -46,6 +49,9 @@ contract Setup is Test, IEvents {
 
     // Address of the real deployed Factory
     address public factory;
+
+    // Helper contract for MorphoCredit operations
+    HelperMock public helper;
 
     // Integer variables that will be used repeatedly.
     uint256 public decimals;
@@ -84,8 +90,11 @@ contract Setup is Test, IEvents {
     }
 
     function setUpStrategy() public returns (address) {
+        // Deploy MockProtocolConfig for testing
+        MockProtocolConfig protocolConfig = new MockProtocolConfig();
+
         // Deploy real MorphoCredit with proxy pattern
-        MorphoCredit morphoImpl = new MorphoCredit();
+        MorphoCredit morphoImpl = new MorphoCredit(address(protocolConfig));
 
         // Deploy proxy admin
         address morphoOwner = makeAddr("MorphoOwner");
@@ -111,6 +120,9 @@ contract Setup is Test, IEvents {
         // Deploy IRM mock for interest accrual
         IrmMock irm = new IrmMock();
 
+        // Deploy CreditLineMock for the market
+        CreditLineMock creditLineMock = new CreditLineMock(address(morpho));
+
         // Set up market params for credit-based lending
         MarketParams memory marketParams = MarketParams({
             loanToken: address(asset),
@@ -118,7 +130,7 @@ contract Setup is Test, IEvents {
             oracle: address(0), // Not needed for credit
             irm: address(irm), // Use the IRM mock
             lltv: 0, // Credit-based lending
-            creditLine: makeAddr("CreditLine")
+            creditLine: address(creditLineMock)
         });
 
         // Enable market parameters
@@ -155,6 +167,15 @@ contract Setup is Test, IEvents {
         IStrategyInterface(address(usd3Proxy)).setEmergencyAdmin(
             emergencyAdmin
         );
+
+        // Set USD3 address on MorphoCredit for access control
+        vm.prank(morphoOwner);
+        MorphoCredit(address(morpho)).setUsd3(address(usd3Proxy));
+
+        // Deploy and set helper for borrowing operations
+        helper = new HelperMock(address(morpho));
+        vm.prank(morphoOwner);
+        MorphoCredit(address(morpho)).setHelper(address(helper));
 
         return address(usd3Proxy);
     }

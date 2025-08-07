@@ -8,6 +8,8 @@ import {USD3} from "../USD3.sol";
 import {ISUSD3} from "../interfaces/ISUSD3.sol";
 import {TransparentUpgradeableProxy} from "../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
+import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
+import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
 
 contract sUSD3Test is Setup {
     sUSD3 public susd3Strategy;
@@ -99,8 +101,8 @@ contract sUSD3Test is Setup {
         );
 
         // Check default durations
-        assertEq(susd3Strategy.lockDuration(), 90 days);
-        assertEq(susd3Strategy.cooldownDuration(), 7 days);
+        assertEq(susd3Strategy.getLockDuration(), 90 days);
+        assertEq(susd3Strategy.getCooldownDuration(), 7 days);
         assertEq(susd3Strategy.withdrawalWindow(), 2 days);
     }
 
@@ -343,32 +345,49 @@ contract sUSD3Test is Setup {
     //////////////////////////////////////////////////////////////*/
 
     function test_setParameters() public {
-        // Set lock duration
-        vm.prank(management);
-        susd3Strategy.setLockDuration(60 days);
-        assertEq(susd3Strategy.lockDuration(), 60 days);
+        // Get protocol config to set lock and cooldown durations
+        address morphoAddress = address(usd3.morphoBlue());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(
+            protocolConfigAddress
+        );
 
-        // Set cooldown duration
-        vm.prank(management);
-        susd3Strategy.setCooldownDuration(14 days);
-        assertEq(susd3Strategy.cooldownDuration(), 14 days);
+        // Set lock duration via protocol config
+        bytes32 SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
+        protocolConfig.setConfig(SUSD3_LOCK_DURATION, 60 days);
+        assertEq(susd3Strategy.getLockDuration(), 60 days);
 
-        // Set withdrawal window
+        // Set cooldown duration via protocol config
+        bytes32 SUSD3_COOLDOWN_PERIOD = keccak256("SUSD3_COOLDOWN_PERIOD");
+        protocolConfig.setConfig(SUSD3_COOLDOWN_PERIOD, 14 days);
+        assertEq(susd3Strategy.getCooldownDuration(), 14 days);
+
+        // Set withdrawal window (locally managed)
         vm.prank(management);
         susd3Strategy.setWithdrawalWindow(3 days);
         assertEq(susd3Strategy.withdrawalWindow(), 3 days);
     }
 
     function test_setParameters_invalidValues() public {
-        // Lock duration too long
-        vm.prank(management);
-        vm.expectRevert("Lock too long");
-        susd3Strategy.setLockDuration(366 days);
+        // Get protocol config
+        address morphoAddress = address(usd3.morphoBlue());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(
+            protocolConfigAddress
+        );
 
-        // Cooldown too long
-        vm.prank(management);
-        vm.expectRevert("Cooldown too long");
-        susd3Strategy.setCooldownDuration(31 days);
+        // Test that extreme values can be set in protocol config (validation is elsewhere)
+        // Set very long lock duration - will be read directly
+        bytes32 SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
+        protocolConfig.setConfig(SUSD3_LOCK_DURATION, 366 days);
+        assertEq(susd3Strategy.getLockDuration(), 366 days);
+
+        // Set very long cooldown - will be read directly
+        bytes32 SUSD3_COOLDOWN_PERIOD = keccak256("SUSD3_COOLDOWN_PERIOD");
+        protocolConfig.setConfig(SUSD3_COOLDOWN_PERIOD, 31 days);
+        assertEq(susd3Strategy.getCooldownDuration(), 31 days);
 
         // Window too short
         vm.prank(management);
@@ -382,9 +401,10 @@ contract sUSD3Test is Setup {
     }
 
     function test_onlyManagement() public {
+        // Test that withdrawal window setter is still protected
         vm.prank(alice);
         vm.expectRevert();
-        susd3Strategy.setLockDuration(60 days);
+        susd3Strategy.setWithdrawalWindow(3 days);
 
         vm.prank(alice);
         vm.expectRevert();

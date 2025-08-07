@@ -11,10 +11,16 @@ import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBa
 import {SharesMathLib} from "@3jane-morpho-blue/libraries/SharesMathLib.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {TokenizedStrategyStorageLib} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
+import {IProtocolConfig} from "@3jane-morpho-blue/interfaces/IProtocolConfig.sol";
 
 // Import sUSD3 interface for loss absorption
 interface sUSD3 {
     function absorbLoss(uint256 amount) external;
+}
+
+// Interface to access protocolConfig from MorphoCredit
+interface IMorphoCredit is IMorpho {
+    function protocolConfig() external view returns (address);
 }
 
 contract USD3 is BaseHooksUpgradeable {
@@ -469,18 +475,21 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Set yield share percentage directly to bypass TokenizedStrategy's MAX_FEE limit
-     * @dev Uses direct storage manipulation to set performanceFee up to 100%
-     * @param _yieldShare The yield share in basis points (0-10000)
+     * @notice Sync the tranche share (performance fee) from ProtocolConfig
+     * @dev Reads TRANCHE_SHARE_VARIANT from ProtocolConfig and updates local storage
+     * @dev Only callable by keepers to ensure controlled updates
      */
-    function setYieldShare(uint16 _yieldShare) external onlyManagement {
-        require(_yieldShare <= 10_000, "Yield share > 100%");
+    function syncTrancheShare() external onlyKeepers {
+        // Get the protocol config through MorphoCredit
+        IProtocolConfig config = IProtocolConfig(
+            IMorphoCredit(address(morphoBlue)).protocolConfig()
+        );
 
-        // Get the slot for profitMaxUnlockTime, performanceFee, and performanceFeeRecipient (packed)
-        // This slot contains:
-        // - uint32 profitMaxUnlockTime (bits 0-31)
-        // - uint16 performanceFee (bits 32-47)
-        // - address performanceFeeRecipient (bits 48-207)
+        // Read the tranche share variant (yield share to sUSD3 in basis points)
+        uint256 trancheShare = config.getTrancheShareVariant();
+        require(trancheShare <= 10_000, "Invalid tranche share");
+
+        // Get the storage slot for performanceFee using the library
         bytes32 targetSlot = TokenizedStrategyStorageLib.profitConfigSlot();
 
         // Read current slot value
@@ -490,21 +499,19 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         // Clear the performanceFee bits (32-47) and set new value
-        // Mask to clear bits 32-47: ~(0xFFFF << 32)
         uint256 mask = ~(uint256(0xFFFF) << 32);
         uint256 newSlotValue = (currentSlotValue & mask) |
-            (uint256(_yieldShare) << 32);
+            (uint256(trancheShare) << 32);
 
         // Write back to storage
         assembly {
             sstore(targetSlot, newSlotValue)
         }
 
-        // Emit event for transparency
-        emit YieldShareUpdated(_yieldShare);
+        emit TrancheShareSynced(trancheShare);
     }
 
-    event YieldShareUpdated(uint16 yieldShare);
+    event TrancheShareSynced(uint256 trancheShare);
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE GAP

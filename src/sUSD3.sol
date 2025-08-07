@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
+import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IProtocolConfig} from "@3jane-morpho-blue/interfaces/IProtocolConfig.sol";
+import {IMorpho} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {USD3} from "./USD3.sol";
+
+// Interface to access protocolConfig from MorphoCredit
+interface IMorphoCredit is IMorpho {
+    function protocolConfig() external view returns (address);
+}
 
 /**
  * @title sUSD3
@@ -41,7 +48,6 @@ contract sUSD3 is BaseHooksUpgradeable {
     //////////////////////////////////////////////////////////////*/
 
     // MAX_BPS is inherited from BaseHooksUpgradeable
-    uint256 public constant MAX_SUBORDINATION_RATIO = 1500; // 15% in basis points
 
     /*//////////////////////////////////////////////////////////////
                             STORAGE
@@ -51,13 +57,12 @@ contract sUSD3 is BaseHooksUpgradeable {
     mapping(address => UserCooldown) public cooldowns;
     mapping(address => uint256) public lockedUntil; // Initial lock tracking
 
-    // Configurable parameters
-    uint256 public lockDuration; // Initial lock period (default 90 days)
-    uint256 public cooldownDuration; // Cooldown period (default 7 days)
+    // Configurable parameters (only withdrawalWindow is locally managed)
     uint256 public withdrawalWindow; // Window to complete withdrawal (default 2 days)
 
     // Subordination management
     address public usd3Strategy; // USD3 strategy address for ratio checks
+    address public morphoCredit; // MorphoCredit address to access protocol config
 
     // Yield tracking
     uint256 public accumulatedYield; // Yield received from USD3
@@ -85,8 +90,6 @@ contract sUSD3 is BaseHooksUpgradeable {
     event LossAbsorbed(uint256 amount, uint256 timestamp);
     event YieldReceived(uint256 amount, address indexed from);
     event USD3StrategyUpdated(address newStrategy);
-    event LockDurationUpdated(uint256 newDuration);
-    event CooldownDurationUpdated(uint256 newDuration);
     event WithdrawalWindowUpdated(uint256 newWindow);
 
     /*//////////////////////////////////////////////////////////////
@@ -121,9 +124,10 @@ contract sUSD3 is BaseHooksUpgradeable {
             _keeper
         );
 
-        // Set default durations
-        lockDuration = 90 days;
-        cooldownDuration = 7 days;
+        // Get MorphoCredit address from USD3 strategy
+        morphoCredit = address(USD3(_usd3Token).morphoBlue());
+
+        // Set default withdrawal window (locally managed)
         withdrawalWindow = 2 days;
 
         // Note: usd3Strategy will be set by management after both contracts are deployed
@@ -180,6 +184,8 @@ contract sUSD3 is BaseHooksUpgradeable {
     ) private {
         // Each deposit extends lock period for entire balance
         if (assets > 0 || shares > 0) {
+            // Read lock duration from ProtocolConfig
+            uint256 lockDuration = _getLockDuration();
             lockedUntil[receiver] = block.timestamp + lockDuration;
         }
     }
@@ -253,6 +259,9 @@ contract sUSD3 is BaseHooksUpgradeable {
         );
         // Note: Balance check will be enforced during actual withdrawal
 
+        // Read cooldown duration from ProtocolConfig
+        uint256 cooldownDuration = _getCooldownDuration();
+
         // Allow updating cooldown with new amount (overwrites previous)
         cooldowns[msg.sender] = UserCooldown({
             cooldownEnd: block.timestamp + cooldownDuration,
@@ -293,22 +302,25 @@ contract sUSD3 is BaseHooksUpgradeable {
             uint256 usd3TotalAssets = IERC20(usd3Strategy).totalSupply();
             uint256 susd3TotalAssets = TokenizedStrategy.totalAssets();
 
+            // Get max subordination ratio from ProtocolConfig
+            uint256 maxSubordinationRatio = getMaxSubordinationRatio();
+
             // If no sUSD3 deposits yet, calculate max allowed based on USD3 supply
-            // sUSD3 can be max 15% of total, so sUSD3/(USD3+sUSD3) = 0.15
-            // Which means sUSD3 = 0.15/0.85 * USD3
+            // sUSD3 can be max X% of total, so sUSD3/(USD3+sUSD3) = X/100
+            // Which means sUSD3 = X/(100-X) * USD3
             if (susd3TotalAssets == 0 && usd3TotalAssets > 0) {
-                // This is approximately 17.65% of USD3 supply
+                // This is approximately 17.65% of USD3 supply for 15% subordination
                 return
-                    (usd3TotalAssets * MAX_SUBORDINATION_RATIO) /
-                    (MAX_BPS - MAX_SUBORDINATION_RATIO);
+                    (usd3TotalAssets * maxSubordinationRatio) /
+                    (MAX_BPS - maxSubordinationRatio);
             }
 
             uint256 totalCombined = usd3TotalAssets + susd3TotalAssets;
 
             if (totalCombined > 0) {
-                // Calculate max sUSD3 allowed (15% of total)
+                // Calculate max sUSD3 allowed (X% of total)
                 uint256 maxSusd3Allowed = (totalCombined *
-                    MAX_SUBORDINATION_RATIO) / MAX_BPS;
+                    maxSubordinationRatio) / MAX_BPS;
 
                 if (susd3TotalAssets >= maxSusd3Allowed) {
                     return 0; // Already at max subordination
@@ -390,31 +402,72 @@ contract sUSD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Update lock duration for new deposits
-     * @param _lockDuration New lock duration in seconds
+     * @notice Get lock duration from ProtocolConfig
+     * @return Lock duration in seconds
      */
-    function setLockDuration(uint256 _lockDuration) external onlyManagement {
-        require(_lockDuration <= 365 days, "Lock too long");
-        lockDuration = _lockDuration;
-        emit LockDurationUpdated(_lockDuration);
+    function _getLockDuration() private view returns (uint256) {
+        if (morphoCredit == address(0)) {
+            return 90 days; // Default if not configured
+        }
+
+        IProtocolConfig config = IProtocolConfig(
+            IMorphoCredit(morphoCredit).protocolConfig()
+        );
+
+        uint256 lockDuration = config.getSusd3LockDuration();
+        return lockDuration > 0 ? lockDuration : 90 days; // Default to 90 days if not set
     }
 
     /**
-     * @notice Update cooldown duration
-     * @param _cooldownDuration New cooldown duration in seconds
+     * @notice Get cooldown duration from ProtocolConfig
+     * @return Cooldown duration in seconds
      */
-    function setCooldownDuration(
-        uint256 _cooldownDuration
-    ) external onlyManagement {
-        require(_cooldownDuration <= 30 days, "Cooldown too long");
-        cooldownDuration = _cooldownDuration;
-        emit CooldownDurationUpdated(_cooldownDuration);
+    function _getCooldownDuration() private view returns (uint256) {
+        if (morphoCredit == address(0)) {
+            return 7 days; // Default if not configured
+        }
+
+        IProtocolConfig config = IProtocolConfig(
+            IMorphoCredit(morphoCredit).protocolConfig()
+        );
+
+        uint256 cooldownDuration = config.getSusd3CooldownPeriod();
+        return cooldownDuration > 0 ? cooldownDuration : 7 days; // Default to 7 days if not set
     }
 
     /**
-     * @notice Update withdrawal window
-     * @param _withdrawalWindow New withdrawal window in seconds
+     * @notice Get the maximum subordination ratio from ProtocolConfig
+     * @return Maximum subordination ratio in basis points
      */
+    function getMaxSubordinationRatio() public view returns (uint256) {
+        if (morphoCredit == address(0)) {
+            return 1500; // Default 15% if not configured
+        }
+
+        IProtocolConfig config = IProtocolConfig(
+            IMorphoCredit(morphoCredit).protocolConfig()
+        );
+
+        uint256 ratio = config.getTrancheRatio();
+        return ratio > 0 ? ratio : 1500; // Default to 15% if not set
+    }
+
+    /**
+     * @notice Get the lock duration from ProtocolConfig
+     * @return Lock duration in seconds
+     */
+    function getLockDuration() public view returns (uint256) {
+        return _getLockDuration();
+    }
+
+    /**
+     * @notice Get the cooldown duration from ProtocolConfig
+     * @return Cooldown duration in seconds
+     */
+    function getCooldownDuration() public view returns (uint256) {
+        return _getCooldownDuration();
+    }
+
     function setWithdrawalWindow(
         uint256 _withdrawalWindow
     ) external onlyManagement {

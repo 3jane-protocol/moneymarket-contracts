@@ -25,9 +25,15 @@ contract MockMorphoCredit is IMorpho {
     address public owner;
     address public feeRecipient;
     uint256 public fee;
+    address public protocolConfig; // Added for USD3/sUSD3 integration
 
     constructor() {
         owner = msg.sender;
+    }
+
+    // Set protocol config for testing
+    function setProtocolConfig(address _protocolConfig) external {
+        protocolConfig = _protocolConfig;
     }
 
     // Core supply/withdraw functions
