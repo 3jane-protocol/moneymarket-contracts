@@ -36,9 +36,17 @@ contract ShutdownTest is Setup {
         address strategyAsset = strategy.asset();
         if (strategyAsset != address(asset)) {
             // Strategy uses aTokenVault, check aToken balance
-            assertGe(ERC20(strategyAsset).balanceOf(user), _amount, "!final balance");
+            assertGe(
+                ERC20(strategyAsset).balanceOf(user),
+                _amount,
+                "!final balance"
+            );
         } else {
-            assertGe(asset.balanceOf(user), balanceBefore + _amount, "!final balance");
+            assertGe(
+                asset.balanceOf(user),
+                balanceBefore + _amount,
+                "!final balance"
+            );
         }
     }
 
@@ -74,9 +82,17 @@ contract ShutdownTest is Setup {
         address strategyAsset = strategy.asset();
         if (strategyAsset != address(asset)) {
             // Strategy uses aTokenVault, check aToken balance
-            assertGe(ERC20(strategyAsset).balanceOf(user), _amount, "!final balance");
+            assertGe(
+                ERC20(strategyAsset).balanceOf(user),
+                _amount,
+                "!final balance"
+            );
         } else {
-            assertGe(asset.balanceOf(user), balanceBefore + _amount, "!final balance");
+            assertGe(
+                asset.balanceOf(user),
+                balanceBefore + _amount,
+                "!final balance"
+            );
         }
     }
 

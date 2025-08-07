@@ -1,15 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {
-    IMorpho,
-    MarketParams,
-    Id,
-    Position,
-    Market,
-    Authorization,
-    Signature
-} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
+import {IMorpho, MarketParams, Id, Position, Market, Authorization, Signature} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {SharesMathLib} from "@3jane-morpho-blue/libraries/SharesMathLib.sol";
 import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
 import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
@@ -40,10 +32,13 @@ contract MockMorphoCredit is IMorpho {
 
     // Core supply/withdraw functions
 
-    function supply(MarketParams memory marketParams, uint256 assets, uint256 shares, address onBehalf, bytes memory)
-        external
-        returns (uint256 assetsSupplied, uint256 sharesSupplied)
-    {
+    function supply(
+        MarketParams memory marketParams,
+        uint256 assets,
+        uint256 shares,
+        address onBehalf,
+        bytes memory
+    ) external returns (uint256 assetsSupplied, uint256 sharesSupplied) {
         Id id = marketParams.id();
         Market storage m = markets[id];
 
@@ -56,22 +51,33 @@ contract MockMorphoCredit is IMorpho {
         if (m.totalSupplyShares == 0) {
             sharesSupplied = assets * SharesMathLib.VIRTUAL_SHARES;
         } else {
-            sharesSupplied = assets.toSharesDown(m.totalSupplyAssets, m.totalSupplyShares);
+            sharesSupplied = assets.toSharesDown(
+                m.totalSupplyAssets,
+                m.totalSupplyShares
+            );
         }
 
         assetsSupplied = assets;
 
         // Update market state
         m.totalSupplyAssets = uint128(uint256(m.totalSupplyAssets) + assets);
-        m.totalSupplyShares = uint128(uint256(m.totalSupplyShares) + sharesSupplied);
+        m.totalSupplyShares = uint128(
+            uint256(m.totalSupplyShares) + sharesSupplied
+        );
         m.lastUpdate = uint128(block.timestamp);
 
         // Update position
-        positions[id][onBehalf].supplyShares = uint128(uint256(positions[id][onBehalf].supplyShares) + sharesSupplied);
+        positions[id][onBehalf].supplyShares = uint128(
+            uint256(positions[id][onBehalf].supplyShares) + sharesSupplied
+        );
 
         // Transfer tokens only if assets > 0
         if (assets > 0) {
-            IERC20(marketParams.loanToken).transferFrom(msg.sender, address(this), assets);
+            IERC20(marketParams.loanToken).transferFrom(
+                msg.sender,
+                address(this),
+                assets
+            );
         }
 
         return (assetsSupplied, sharesSupplied);
@@ -90,11 +96,17 @@ contract MockMorphoCredit is IMorpho {
 
         // Calculate withdrawal
         if (shares > 0) {
-            assetsWithdrawn = shares.toAssetsDown(m.totalSupplyAssets, m.totalSupplyShares);
+            assetsWithdrawn = shares.toAssetsDown(
+                m.totalSupplyAssets,
+                m.totalSupplyShares
+            );
             sharesWithdrawn = shares;
         } else {
             assetsWithdrawn = assets;
-            sharesWithdrawn = assets.toSharesUp(m.totalSupplyAssets, m.totalSupplyShares);
+            sharesWithdrawn = assets.toSharesUp(
+                m.totalSupplyAssets,
+                m.totalSupplyShares
+            );
         }
 
         // Update market state
@@ -125,10 +137,15 @@ contract MockMorphoCredit is IMorpho {
         Position storage p = positions[id][onBehalf];
 
         // Check credit limit
-        require(p.borrowShares + assets <= p.collateral, "exceeds credit limit");
+        require(
+            p.borrowShares + assets <= p.collateral,
+            "exceeds credit limit"
+        );
 
         // Check liquidity
-        uint256 available = IERC20(marketParams.loanToken).balanceOf(address(this));
+        uint256 available = IERC20(marketParams.loanToken).balanceOf(
+            address(this)
+        );
         require(available >= assets, "insufficient liquidity");
 
         // Update position
@@ -144,10 +161,13 @@ contract MockMorphoCredit is IMorpho {
         return (assets, assets);
     }
 
-    function repay(MarketParams memory marketParams, uint256 assets, uint256 shares, address onBehalf, bytes memory)
-        external
-        returns (uint256, uint256)
-    {
+    function repay(
+        MarketParams memory marketParams,
+        uint256 assets,
+        uint256 shares,
+        address onBehalf,
+        bytes memory
+    ) external returns (uint256, uint256) {
         Id id = marketParams.id();
         Market storage m = markets[id];
         Position storage p = positions[id][onBehalf];
@@ -160,14 +180,21 @@ contract MockMorphoCredit is IMorpho {
         m.totalBorrowShares -= uint128(assets); // Simplified 1:1
 
         // Transfer tokens
-        IERC20(marketParams.loanToken).transferFrom(msg.sender, address(this), assets);
+        IERC20(marketParams.loanToken).transferFrom(
+            msg.sender,
+            address(this),
+            assets
+        );
 
         return (assets, assets);
     }
 
     // View functions
 
-    function expectedSupplyAssets(MarketParams memory marketParams, address user) external view returns (uint256) {
+    function expectedSupplyAssets(
+        MarketParams memory marketParams,
+        address user
+    ) external view returns (uint256) {
         Id id = marketParams.id();
         Market storage m = markets[id];
         Position storage p = positions[id][user];
@@ -177,16 +204,25 @@ contract MockMorphoCredit is IMorpho {
             return 0;
         }
 
-        return uint256(p.supplyShares).toAssetsDown(m.totalSupplyAssets, m.totalSupplyShares);
+        return
+            uint256(p.supplyShares).toAssetsDown(
+                m.totalSupplyAssets,
+                m.totalSupplyShares
+            );
     }
 
-    function expectedBorrowAssets(MarketParams memory marketParams, address user) external view returns (uint256) {
+    function expectedBorrowAssets(
+        MarketParams memory marketParams,
+        address user
+    ) external view returns (uint256) {
         Id id = marketParams.id();
         Position storage p = positions[id][user];
         return p.borrowShares; // Simplified 1:1
     }
 
-    function expectedMarketBalances(MarketParams memory marketParams)
+    function expectedMarketBalances(
+        MarketParams memory marketParams
+    )
         external
         view
         returns (
@@ -199,7 +235,12 @@ contract MockMorphoCredit is IMorpho {
         Id id = marketParams.id();
         Market storage m = markets[id];
 
-        return (m.totalSupplyAssets, m.totalSupplyShares, m.totalBorrowAssets, m.totalBorrowShares);
+        return (
+            m.totalSupplyAssets,
+            m.totalSupplyShares,
+            m.totalBorrowAssets,
+            m.totalBorrowShares
+        );
     }
 
     function supplyShares(Id id, address user) external view returns (uint256) {
@@ -269,12 +310,18 @@ contract MockMorphoCredit is IMorpho {
 
     // Authorization
 
-    function setAuthorization(address authorized, bool newIsAuthorized) external {
+    function setAuthorization(
+        address authorized,
+        bool newIsAuthorized
+    ) external {
         // Simplified: store globally instead of per-user
         authorizations[Id.wrap(0)][authorized] = newIsAuthorized;
     }
 
-    function setAuthorizationWithSig(Authorization memory, Signature memory) external {
+    function setAuthorizationWithSig(
+        Authorization memory,
+        Signature memory
+    ) external {
         revert("not implemented");
     }
 
@@ -288,11 +335,13 @@ contract MockMorphoCredit is IMorpho {
 
     // Liquidation stubs
 
-    function liquidate(MarketParams memory, address, uint256, uint256, bytes memory)
-        external
-        pure
-        returns (uint256, uint256)
-    {
+    function liquidate(
+        MarketParams memory,
+        address,
+        uint256,
+        uint256,
+        bytes memory
+    ) external pure returns (uint256, uint256) {
         revert("not implemented");
     }
 
@@ -308,7 +357,9 @@ contract MockMorphoCredit is IMorpho {
         return bytes32(0);
     }
 
-    function idToMarketParams(Id id) external view returns (MarketParams memory) {
+    function idToMarketParams(
+        Id id
+    ) external view returns (MarketParams memory) {
         return _marketParams[id];
     }
 
@@ -316,17 +367,30 @@ contract MockMorphoCredit is IMorpho {
         return markets[id];
     }
 
-    function position(Id id, address user) external view returns (Position memory) {
+    function position(
+        Id id,
+        address user
+    ) external view returns (Position memory) {
         return positions[id][user];
     }
 
     // Supply/withdraw collateral stubs
 
-    function supplyCollateral(MarketParams memory, uint256, address, bytes memory) external pure {
+    function supplyCollateral(
+        MarketParams memory,
+        uint256,
+        address,
+        bytes memory
+    ) external pure {
         revert("not implemented");
     }
 
-    function withdrawCollateral(MarketParams memory, uint256, address, address) external pure {
+    function withdrawCollateral(
+        MarketParams memory,
+        uint256,
+        address,
+        address
+    ) external pure {
         revert("not implemented");
     }
 
@@ -338,7 +402,9 @@ contract MockMorphoCredit is IMorpho {
         markets[id].lastUpdate = uint128(block.timestamp);
     }
 
-    function extSloads(bytes32[] memory slots) external view returns (bytes32[] memory values) {
+    function extSloads(
+        bytes32[] memory slots
+    ) external view returns (bytes32[] memory values) {
         values = new bytes32[](slots.length);
         // Return zero values for all slots in this mock
         for (uint256 i = 0; i < slots.length; i++) {
@@ -354,7 +420,12 @@ contract MockMorphoCredit is IMorpho {
     }
 
     // Mock setCreditLine for testing
-    function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external {
+    function setCreditLine(
+        Id id,
+        address borrower,
+        uint256 credit,
+        uint128 premiumRate
+    ) external {
         // Check caller is creditLine (must get market params first)
         MarketParams memory params = _marketParams[id];
         require(msg.sender == params.creditLine, "NotCreditLine()");

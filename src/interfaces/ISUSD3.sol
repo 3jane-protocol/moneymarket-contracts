@@ -12,9 +12,17 @@ interface ISUSD3 is IERC20 {
     }
 
     // Events
-    event CooldownStarted(address indexed user, uint256 shares, uint256 timestamp);
+    event CooldownStarted(
+        address indexed user,
+        uint256 shares,
+        uint256 timestamp
+    );
     event CooldownCancelled(address indexed user);
-    event WithdrawalCompleted(address indexed user, uint256 shares, uint256 assets);
+    event WithdrawalCompleted(
+        address indexed user,
+        uint256 shares,
+        uint256 assets
+    );
     event LossAbsorbed(uint256 amount, uint256 timestamp);
     event YieldReceived(uint256 amount, address indexed from);
 
@@ -24,11 +32,15 @@ interface ISUSD3 is IERC20 {
     function withdraw() external returns (uint256 assets);
 
     // View functions
-    function getCooldownStatus(address user)
+    function getCooldownStatus(
+        address user
+    )
         external
         view
         returns (uint256 cooldownEnd, uint256 windowEnd, uint256 shares);
-    function cooldowns(address user) external view returns (UserCooldown memory);
+    function cooldowns(
+        address user
+    ) external view returns (UserCooldown memory);
     function lockedUntil(address user) external view returns (uint256);
 
     // Parameters

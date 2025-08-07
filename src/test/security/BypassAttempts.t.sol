@@ -6,8 +6,7 @@ import {USD3} from "../../USD3.sol";
 import {sUSD3} from "../../sUSD3.sol";
 import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {TransparentUpgradeableProxy} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
 import {console2} from "forge-std/console2.sol";
 
@@ -37,11 +36,18 @@ contract BypassAttempts is Setup {
 
         // Deploy proxy with initialization
         bytes memory susd3InitData = abi.encodeWithSelector(
-            sUSD3.initialize.selector, address(usd3Strategy), "sUSD3", management, performanceFeeRecipient, keeper
+            sUSD3.initialize.selector,
+            address(usd3Strategy),
+            "sUSD3",
+            management,
+            keeper
         );
 
-        TransparentUpgradeableProxy susd3Proxy =
-            new TransparentUpgradeableProxy(address(susd3Implementation), address(susd3ProxyAdmin), susd3InitData);
+        TransparentUpgradeableProxy susd3Proxy = new TransparentUpgradeableProxy(
+                address(susd3Implementation),
+                address(susd3ProxyAdmin),
+                susd3InitData
+            );
 
         susd3Strategy = sUSD3(address(susd3Proxy));
 
@@ -81,7 +87,8 @@ contract BypassAttempts is Setup {
         // Bob tries to bypass using mint()
         vm.startPrank(bob);
         asset.approve(address(usd3Strategy), 1000e6);
-        uint256 sharesToMint = ITokenizedStrategy(address(usd3Strategy)).previewDeposit(1000e6);
+        uint256 sharesToMint = ITokenizedStrategy(address(usd3Strategy))
+            .previewDeposit(1000e6);
         usd3Strategy.mint(sharesToMint, bob);
 
         // Bob also cannot withdraw before commitment period
@@ -169,7 +176,10 @@ contract BypassAttempts is Setup {
         vm.startPrank(alice);
         uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
         // Need to approve the strategy to burn shares
-        IERC20(address(usd3Strategy)).approve(address(usd3Strategy), aliceShares);
+        IERC20(address(usd3Strategy)).approve(
+            address(usd3Strategy),
+            aliceShares
+        );
         usd3Strategy.redeem(aliceShares, alice, alice);
         vm.stopPrank();
 
@@ -211,8 +221,12 @@ contract BypassAttempts is Setup {
 
         // Use smaller amount that fits within limit
         uint256 depositAmount = availableLimit > 10e6 ? 10e6 : availableLimit;
-        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), depositAmount);
-        uint256 sharesToMint = ITokenizedStrategy(address(susd3Strategy)).previewDeposit(depositAmount);
+        IERC20(address(usd3Strategy)).approve(
+            address(susd3Strategy),
+            depositAmount
+        );
+        uint256 sharesToMint = ITokenizedStrategy(address(susd3Strategy))
+            .previewDeposit(depositAmount);
         susd3Strategy.mint(sharesToMint, bob);
 
         // Bob also cannot start cooldown before lock period
@@ -277,7 +291,11 @@ contract BypassAttempts is Setup {
         vm.stopPrank();
 
         // Check cooldown was set
-        (uint256 cooldownEnd, uint256 windowEnd, uint256 cooldownShares) = susd3Strategy.getCooldownStatus(alice);
+        (
+            uint256 cooldownEnd,
+            uint256 windowEnd,
+            uint256 cooldownShares
+        ) = susd3Strategy.getCooldownStatus(alice);
         console2.log("Cooldown end:", cooldownEnd);
         console2.log("Window end:", windowEnd);
         console2.log("Cooldown shares:", cooldownShares);
@@ -288,7 +306,10 @@ contract BypassAttempts is Setup {
         // Withdraw everything
         vm.startPrank(alice);
         // Need to approve the strategy to burn shares
-        IERC20(address(susd3Strategy)).approve(address(susd3Strategy), aliceShares);
+        IERC20(address(susd3Strategy)).approve(
+            address(susd3Strategy),
+            aliceShares
+        );
         susd3Strategy.redeem(aliceShares, alice, alice);
         vm.stopPrank();
 
@@ -352,7 +373,11 @@ contract BypassAttempts is Setup {
         vm.prank(alice);
         uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(alice);
         console2.log("Available withdraw limit:", withdrawLimit);
-        (uint256 cooldownEnd, uint256 windowEnd, uint256 cooldownShares) = susd3Strategy.getCooldownStatus(alice);
+        (
+            uint256 cooldownEnd,
+            uint256 windowEnd,
+            uint256 cooldownShares
+        ) = susd3Strategy.getCooldownStatus(alice);
         console2.log("Cooldown end:", cooldownEnd);
         console2.log("Window end:", windowEnd);
         console2.log("Current time:", block.timestamp);
@@ -363,7 +388,10 @@ contract BypassAttempts is Setup {
         uint256 sharesToRedeem = totalShares / 4; // Redeem a quarter of total shares
         // Need to approve the strategy to burn shares on behalf of alice
         vm.startPrank(alice);
-        IERC20(address(susd3Strategy)).approve(address(susd3Strategy), sharesToRedeem);
+        IERC20(address(susd3Strategy)).approve(
+            address(susd3Strategy),
+            sharesToRedeem
+        );
         susd3Strategy.redeem(sharesToRedeem, alice, alice);
         vm.stopPrank();
 
@@ -371,7 +399,9 @@ contract BypassAttempts is Setup {
         assertGt(susd3Strategy.lockedUntil(alice), 0);
 
         // Cooldown should be reduced but not cleared
-        (,, uint256 remainingCooldownShares) = susd3Strategy.getCooldownStatus(alice);
+        (, , uint256 remainingCooldownShares) = susd3Strategy.getCooldownStatus(
+            alice
+        );
         assertEq(remainingCooldownShares, totalShares / 4); // Half minus quarter
     }
 
@@ -412,7 +442,8 @@ contract BypassAttempts is Setup {
         usd3Strategy.deposit(50e6, alice); // Below 100e6 minimum
 
         // Try to bypass via mint()
-        uint256 sharesToMint = ITokenizedStrategy(address(usd3Strategy)).previewDeposit(50e6);
+        uint256 sharesToMint = ITokenizedStrategy(address(usd3Strategy))
+            .previewDeposit(50e6);
         vm.expectRevert("Below minimum deposit");
         usd3Strategy.mint(sharesToMint, alice);
         vm.stopPrank();

@@ -6,8 +6,7 @@ import {USD3} from "../../USD3.sol";
 import {sUSD3} from "../../sUSD3.sol";
 import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {TransparentUpgradeableProxy} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
 
 /**
@@ -38,11 +37,18 @@ contract ReentrancyTest is Setup {
 
         // Deploy proxy with initialization
         bytes memory susd3InitData = abi.encodeWithSelector(
-            sUSD3.initialize.selector, address(usd3Strategy), "sUSD3", management, performanceFeeRecipient, keeper
+            sUSD3.initialize.selector,
+            address(usd3Strategy),
+            "sUSD3",
+            management,
+            keeper
         );
 
-        TransparentUpgradeableProxy susd3Proxy =
-            new TransparentUpgradeableProxy(address(susd3Implementation), address(susd3ProxyAdmin), susd3InitData);
+        TransparentUpgradeableProxy susd3Proxy = new TransparentUpgradeableProxy(
+                address(susd3Implementation),
+                address(susd3ProxyAdmin),
+                susd3InitData
+            );
 
         susd3Strategy = sUSD3(address(susd3Proxy));
 
@@ -58,7 +64,11 @@ contract ReentrancyTest is Setup {
         airdrop(asset, bob, 10000e6);
 
         // Deploy attacker contract
-        attacker = new MaliciousReentrant(address(usd3Strategy), address(susd3Strategy), address(asset));
+        attacker = new MaliciousReentrant(
+            address(usd3Strategy),
+            address(susd3Strategy),
+            address(asset)
+        );
     }
 
     function test_deposit_reentrancy_protection() public {
@@ -72,7 +82,10 @@ contract ReentrancyTest is Setup {
         attacker.attackDeposit(100e6);
 
         // Verify only one deposit occurred
-        assertEq(IERC20(address(usd3Strategy)).balanceOf(address(attacker)), 100e6);
+        assertEq(
+            IERC20(address(usd3Strategy)).balanceOf(address(attacker)),
+            100e6
+        );
     }
 
     function test_withdraw_reentrancy_protection() public {
@@ -94,7 +107,10 @@ contract ReentrancyTest is Setup {
         attacker.attackWithdraw(50e6);
 
         // Verify only one withdrawal occurred
-        assertLt(IERC20(address(usd3Strategy)).balanceOf(address(attacker)), 100e6);
+        assertLt(
+            IERC20(address(usd3Strategy)).balanceOf(address(attacker)),
+            100e6
+        );
     }
 
     function test_mint_reentrancy_protection() public {
@@ -128,7 +144,10 @@ contract ReentrancyTest is Setup {
         attacker.attackRedeem(50e6);
 
         // Verify only expected redemption occurred
-        assertEq(IERC20(address(usd3Strategy)).balanceOf(address(attacker)), 50e6);
+        assertEq(
+            IERC20(address(usd3Strategy)).balanceOf(address(attacker)),
+            50e6
+        );
     }
 
     function test_yield_distribution_no_reentrancy() public {
@@ -139,14 +158,20 @@ contract ReentrancyTest is Setup {
         vm.stopPrank();
 
         // Deploy malicious sUSD3 that might try reentrancy
-        MaliciousSUSD3 maliciousSUSD3 = new MaliciousSUSD3(address(usd3Strategy));
+        MaliciousSUSD3 maliciousSUSD3 = new MaliciousSUSD3(
+            address(usd3Strategy)
+        );
 
         // Set malicious contract as sUSD3
         vm.startPrank(management);
         usd3Strategy.setSusd3Strategy(address(maliciousSUSD3));
         // Set performance fee to distribute yield to malicious sUSD3
-        ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(uint16(2000)); // 20%
-        ITokenizedStrategy(address(usd3Strategy)).setPerformanceFeeRecipient(address(maliciousSUSD3));
+        ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(
+            uint16(2000)
+        ); // 20%
+        ITokenizedStrategy(address(usd3Strategy)).setPerformanceFeeRecipient(
+            address(maliciousSUSD3)
+        );
         vm.stopPrank();
 
         // Simulate some yield
@@ -158,7 +183,9 @@ contract ReentrancyTest is Setup {
         ITokenizedStrategy(address(usd3Strategy)).report();
 
         // Verify malicious contract received shares
-        uint256 maliciousBalance = IERC20(address(usd3Strategy)).balanceOf(address(maliciousSUSD3));
+        uint256 maliciousBalance = IERC20(address(usd3Strategy)).balanceOf(
+            address(maliciousSUSD3)
+        );
         assertGt(maliciousBalance, 0, "Should have received shares");
 
         // No reentrancy possible since minting is atomic
@@ -187,7 +214,9 @@ contract ReentrancyTest is Setup {
         attacker.attackCrossContract(50e6);
 
         // Verify cooldown was started
-        (,, uint256 cooldownShares) = susd3Strategy.getCooldownStatus(address(attacker));
+        (, , uint256 cooldownShares) = susd3Strategy.getCooldownStatus(
+            address(attacker)
+        );
         assertEq(cooldownShares, 50e6);
     }
 }
@@ -252,7 +281,12 @@ contract MaliciousReentrant {
     }
 
     // ERC20 hooks for reentrancy attempts
-    function onERC20Received(address, address, uint256, bytes calldata) external returns (bytes4) {
+    function onERC20Received(
+        address,
+        address,
+        uint256,
+        bytes calldata
+    ) external returns (bytes4) {
         if (attacking && attackCount < 2) {
             attackCount++;
             // Try to reenter during token transfer

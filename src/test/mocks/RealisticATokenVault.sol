@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {
-    ERC4626, ERC20, IERC20
-} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/extensions/ERC4626.sol";
+import {ERC4626, ERC20, IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/extensions/ERC4626.sol";
 import {Math} from "../../../lib/openzeppelin-contracts/contracts/utils/math/Math.sol";
 import {Ownable} from "../../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 
@@ -48,7 +46,9 @@ contract RealisticATokenVault is ERC4626, Ownable {
      * @dev Override decimals to handle assets without decimals function
      */
     function decimals() public view virtual override(ERC4626) returns (uint8) {
-        (bool success, bytes memory result) = asset().staticcall(abi.encodeWithSignature("decimals()"));
+        (bool success, bytes memory result) = asset().staticcall(
+            abi.encodeWithSignature("decimals()")
+        );
         if (success && result.length >= 32) {
             return abi.decode(result, (uint8));
         }
@@ -68,7 +68,9 @@ contract RealisticATokenVault is ERC4626, Ownable {
     /**
      * @dev Calculate accrued yield based on time elapsed
      */
-    function _calculateAccruedYield(uint256 baseAssets) internal view returns (uint256) {
+    function _calculateAccruedYield(
+        uint256 baseAssets
+    ) internal view returns (uint256) {
         if (baseAssets == 0) return 0;
 
         uint256 timeElapsed = block.timestamp - lastUpdate;
@@ -76,7 +78,10 @@ contract RealisticATokenVault is ERC4626, Ownable {
 
         // Simple compound interest calculation
         // yield = baseAssets * rate * time / (365 days)
-        uint256 newYield = baseAssets.mulDiv(YIELD_RATE * timeElapsed, 365 days * 1e18);
+        uint256 newYield = baseAssets.mulDiv(
+            YIELD_RATE * timeElapsed,
+            365 days * 1e18
+        );
         return _accruedYield + newYield;
     }
 
@@ -92,7 +97,12 @@ contract RealisticATokenVault is ERC4626, Ownable {
     /**
      * @dev Override deposit to update yield
      */
-    function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal virtual override {
+    function _deposit(
+        address caller,
+        address receiver,
+        uint256 assets,
+        uint256 shares
+    ) internal virtual override {
         _updateYield();
 
         // Handle fee on yield before deposit
@@ -105,11 +115,13 @@ contract RealisticATokenVault is ERC4626, Ownable {
     /**
      * @dev Override withdraw to update yield
      */
-    function _withdraw(address caller, address receiver, address owner, uint256 assets, uint256 shares)
-        internal
-        virtual
-        override
-    {
+    function _withdraw(
+        address caller,
+        address receiver,
+        address owner,
+        uint256 assets,
+        uint256 shares
+    ) internal virtual override {
         _updateYield();
 
         // Handle fee on yield before withdrawal
@@ -119,9 +131,13 @@ contract RealisticATokenVault is ERC4626, Ownable {
 
         // Update total deposited assets proportionally
         if (totalSupply() > 0) {
-            uint256 proportionalDecrease = _totalDepositedAssets.mulDiv(shares, totalSupply() + shares);
-            _totalDepositedAssets =
-                _totalDepositedAssets > proportionalDecrease ? _totalDepositedAssets - proportionalDecrease : 0;
+            uint256 proportionalDecrease = _totalDepositedAssets.mulDiv(
+                shares,
+                totalSupply() + shares
+            );
+            _totalDepositedAssets = _totalDepositedAssets > proportionalDecrease
+                ? _totalDepositedAssets - proportionalDecrease
+                : 0;
         }
     }
 
@@ -137,7 +153,9 @@ contract RealisticATokenVault is ERC4626, Ownable {
                 if (feeShares > 0) {
                     _mint(feeRecipient, feeShares);
                 }
-                _accruedYield = _accruedYield > feeAmount ? _accruedYield - feeAmount : 0;
+                _accruedYield = _accruedYield > feeAmount
+                    ? _accruedYield - feeAmount
+                    : 0;
             }
         }
     }

@@ -16,8 +16,7 @@ import {IMorpho, MarketParams} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
 import {IrmMock} from "@3jane-morpho-blue/mocks/IrmMock.sol";
 import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {TransparentUpgradeableProxy} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
 
 interface IFactory {
@@ -94,9 +93,15 @@ contract Setup is Test, IEvents {
         ProxyAdmin proxyAdmin = new ProxyAdmin(proxyAdminOwner);
 
         // Deploy proxy with initialization
-        bytes memory initData = abi.encodeWithSelector(MorphoCredit.initialize.selector, morphoOwner);
-        TransparentUpgradeableProxy morphoProxy =
-            new TransparentUpgradeableProxy(address(morphoImpl), address(proxyAdmin), initData);
+        bytes memory initData = abi.encodeWithSelector(
+            MorphoCredit.initialize.selector,
+            morphoOwner
+        );
+        TransparentUpgradeableProxy morphoProxy = new TransparentUpgradeableProxy(
+                address(morphoImpl),
+                address(proxyAdmin),
+                initData
+            );
 
         IMorpho morpho = IMorpho(address(morphoProxy));
 
@@ -130,20 +135,35 @@ contract Setup is Test, IEvents {
         ProxyAdmin usd3ProxyAdmin = new ProxyAdmin(proxyAdminOwner);
 
         // Deploy proxy with initialization
-        bytes memory usd3InitData =
-            abi.encodeWithSelector(USD3.initialize.selector, address(morpho), marketParams, "USD3", management, keeper);
+        bytes memory usd3InitData = abi.encodeWithSelector(
+            USD3.initialize.selector,
+            address(morpho),
+            marketParams,
+            "USD3",
+            management,
+            keeper
+        );
 
-        TransparentUpgradeableProxy usd3Proxy =
-            new TransparentUpgradeableProxy(address(usd3Implementation), address(usd3ProxyAdmin), usd3InitData);
+        TransparentUpgradeableProxy usd3Proxy = new TransparentUpgradeableProxy(
+            address(usd3Implementation),
+            address(usd3ProxyAdmin),
+            usd3InitData
+        );
 
         // Set emergency admin
         vm.prank(management);
-        IStrategyInterface(address(usd3Proxy)).setEmergencyAdmin(emergencyAdmin);
+        IStrategyInterface(address(usd3Proxy)).setEmergencyAdmin(
+            emergencyAdmin
+        );
 
         return address(usd3Proxy);
     }
 
-    function depositIntoStrategy(IStrategyInterface _strategy, address _user, uint256 _amount) public {
+    function depositIntoStrategy(
+        IStrategyInterface _strategy,
+        address _user,
+        uint256 _amount
+    ) public {
         vm.prank(_user);
         asset.approve(address(_strategy), _amount);
 
@@ -151,7 +171,11 @@ contract Setup is Test, IEvents {
         _strategy.deposit(_amount, _user);
     }
 
-    function mintAndDepositIntoStrategy(IStrategyInterface _strategy, address _user, uint256 _amount) public {
+    function mintAndDepositIntoStrategy(
+        IStrategyInterface _strategy,
+        address _user,
+        uint256 _amount
+    ) public {
         // Mint asset (USDC) to user
         airdrop(asset, _user, _amount);
 
@@ -171,7 +195,9 @@ contract Setup is Test, IEvents {
         uint256 _totalIdle
     ) public {
         uint256 _assets = _strategy.totalAssets();
-        uint256 _balance = ERC20(_strategy.asset()).balanceOf(address(_strategy));
+        uint256 _balance = ERC20(_strategy.asset()).balanceOf(
+            address(_strategy)
+        );
         uint256 _idle = _balance > _assets ? _assets : _balance;
         uint256 _debt = _assets - _idle;
         assertEq(_assets, _totalAssets, "!totalAssets");

@@ -59,7 +59,10 @@ contract OperationTest is Setup {
         assertGt(totalAssetsBefore, 0, "!totalAssets");
 
         // Check morpho position
-        uint256 morphoPosition = morpho.expectedSupplyAssets(marketParams, address(strategy));
+        uint256 morphoPosition = morpho.expectedSupplyAssets(
+            marketParams,
+            address(strategy)
+        );
         uint256 idleBalance = asset.balanceOf(address(strategy));
 
         console2.log("Total assets before report:", totalAssetsBefore);
@@ -74,7 +77,10 @@ contract OperationTest is Setup {
         (uint256 profit, uint256 loss) = strategy.report();
 
         uint256 totalAssetsAfter = strategy.totalAssets();
-        uint256 morphoPositionAfter = morpho.expectedSupplyAssets(marketParams, address(strategy));
+        uint256 morphoPositionAfter = morpho.expectedSupplyAssets(
+            marketParams,
+            address(strategy)
+        );
         console2.log("Total assets after report:", totalAssetsAfter);
         console2.log("Morpho position after report:", morphoPositionAfter);
         console2.log("Profit:", profit);
@@ -96,7 +102,10 @@ contract OperationTest is Setup {
         assertGt(asset.balanceOf(user), balanceBefore, "!final balance");
     }
 
-    function test_profitableReport(uint256 _amount, uint16 _profitFactor) public {
+    function test_profitableReport(
+        uint256 _amount,
+        uint16 _profitFactor
+    ) public {
         _amount = bound(_amount, minFuzzAmount, maxFuzzAmount);
         _profitFactor = uint16(bound(uint256(_profitFactor), 10, MAX_BPS));
 
@@ -132,7 +141,10 @@ contract OperationTest is Setup {
         assertGt(asset.balanceOf(user), balanceBefore, "!final balance");
     }
 
-    function test_profitableReport_withFees(uint256 _amount, uint16 _profitFactor) public {
+    function test_profitableReport_withFees(
+        uint256 _amount,
+        uint16 _profitFactor
+    ) public {
         _amount = bound(_amount, minFuzzAmount, maxFuzzAmount);
         _profitFactor = uint16(bound(uint256(_profitFactor), 10, MAX_BPS));
 
@@ -194,31 +206,31 @@ contract OperationTest is Setup {
         // Further limit to reasonable amounts for this test
         _amount = bound(_amount, 1e6, 1_000_000e6); // Between 1 and 1M USDC
 
-        (bool trigger,) = strategy.tendTrigger();
+        (bool trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
 
         // Deposit into strategy
         mintAndDepositIntoStrategy(strategy, user, _amount);
 
-        (trigger,) = strategy.tendTrigger();
+        (trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
 
         // Skip some time
         skip(1 days);
 
-        (trigger,) = strategy.tendTrigger();
+        (trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
 
         vm.prank(keeper);
         strategy.report();
 
-        (trigger,) = strategy.tendTrigger();
+        (trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
 
         // Unlock Profits
         skip(strategy.profitMaxUnlockTime());
 
-        (trigger,) = strategy.tendTrigger();
+        (trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
 
         uint256 userShares = strategy.balanceOf(user);
@@ -227,7 +239,7 @@ contract OperationTest is Setup {
         vm.prank(user);
         strategy.redeem(userShares, user, user);
 
-        (trigger,) = strategy.tendTrigger();
+        (trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
     }
 
@@ -250,7 +262,10 @@ contract OperationTest is Setup {
         assertGt(strategyBalance, 0, "Strategy should have assets");
 
         // Check that strategy supplied to Morpho
-        assertEq(morpho.expectedSupplyAssets(marketParams, address(strategy)), strategyBalance);
+        assertEq(
+            morpho.expectedSupplyAssets(marketParams, address(strategy)),
+            strategyBalance
+        );
     }
 
     function test_markdownScenario(uint256 _amount) public {
@@ -275,7 +290,12 @@ contract OperationTest is Setup {
 
         assertEq(profit, 0, "Should not have profit during markdown");
         assertGt(loss, 0, "Should report loss from markdown");
-        assertApproxEqAbs(loss, totalAssetsBefore / 10, 1, "Loss should be ~10%");
+        assertApproxEqAbs(
+            loss,
+            totalAssetsBefore / 10,
+            1,
+            "Loss should be ~10%"
+        );
     }
 
     function test_withdrawDuringMarkdown(uint256 _amount) public {
@@ -287,31 +307,31 @@ contract OperationTest is Setup {
     function test_tendTrigger_specific() public {
         uint256 _amount = 1000e6; // 1000 USDC
 
-        (bool trigger,) = strategy.tendTrigger();
+        (bool trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
 
         // Deposit into strategy
         mintAndDepositIntoStrategy(strategy, user, _amount);
 
-        (trigger,) = strategy.tendTrigger();
+        (trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
 
         // Skip some time
         skip(1 days);
 
-        (trigger,) = strategy.tendTrigger();
+        (trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
 
         vm.prank(keeper);
         strategy.report();
 
-        (trigger,) = strategy.tendTrigger();
+        (trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
 
         // Unlock Profits
         skip(strategy.profitMaxUnlockTime());
 
-        (trigger,) = strategy.tendTrigger();
+        (trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
 
         uint256 userShares = strategy.balanceOf(user);
@@ -320,7 +340,7 @@ contract OperationTest is Setup {
         vm.prank(user);
         strategy.redeem(userShares, user, user);
 
-        (trigger,) = strategy.tendTrigger();
+        (trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
     }
 }

@@ -33,10 +33,19 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param receiver Address to receive the shares
      * @return shares Amount of shares minted
      */
-    function deposit(uint256 assets, address receiver) external virtual returns (uint256 shares) {
+    function deposit(
+        uint256 assets,
+        address receiver
+    ) external virtual returns (uint256 shares) {
         _preDepositHook(assets, shares, receiver);
         shares = abi.decode(
-            _delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).deposit, (assets, receiver))), (uint256)
+            _delegateCall(
+                abi.encodeCall(
+                    ITokenizedStrategy(address(this)).deposit,
+                    (assets, receiver)
+                )
+            ),
+            (uint256)
         );
         _postDepositHook(assets, shares, receiver);
     }
@@ -47,10 +56,19 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param receiver Address to receive the shares
      * @return assets Amount of assets deposited
      */
-    function mint(uint256 shares, address receiver) external virtual returns (uint256 assets) {
+    function mint(
+        uint256 shares,
+        address receiver
+    ) external virtual returns (uint256 assets) {
         _preDepositHook(assets, shares, receiver);
         assets = abi.decode(
-            _delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).mint, (shares, receiver))), (uint256)
+            _delegateCall(
+                abi.encodeCall(
+                    ITokenizedStrategy(address(this)).mint,
+                    (shares, receiver)
+                )
+            ),
+            (uint256)
         );
         _postDepositHook(assets, shares, receiver);
     }
@@ -62,7 +80,11 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param owner Address whose shares are burned
      * @return shares Amount of shares burned
      */
-    function withdraw(uint256 assets, address receiver, address owner) external virtual returns (uint256 shares) {
+    function withdraw(
+        uint256 assets,
+        address receiver,
+        address owner
+    ) external virtual returns (uint256 shares) {
         return withdraw(assets, receiver, owner, 0);
     }
 
@@ -74,15 +96,22 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param maxLoss Maximum acceptable loss in basis points
      * @return shares Amount of shares burned
      */
-    function withdraw(uint256 assets, address receiver, address owner, uint256 maxLoss)
-        public
-        virtual
-        returns (uint256 shares)
-    {
+    function withdraw(
+        uint256 assets,
+        address receiver,
+        address owner,
+        uint256 maxLoss
+    ) public virtual returns (uint256 shares) {
         _preWithdrawHook(assets, shares, receiver, owner, maxLoss);
         shares = abi.decode(
             _delegateCall(
-                abi.encodeWithSelector(ITokenizedStrategy.withdraw.selector, assets, receiver, owner, maxLoss)
+                abi.encodeWithSelector(
+                    ITokenizedStrategy.withdraw.selector,
+                    assets,
+                    receiver,
+                    owner,
+                    maxLoss
+                )
             ),
             (uint256)
         );
@@ -96,7 +125,11 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param owner Address whose shares are burned
      * @return assets Amount of assets withdrawn
      */
-    function redeem(uint256 shares, address receiver, address owner) external virtual returns (uint256 assets) {
+    function redeem(
+        uint256 shares,
+        address receiver,
+        address owner
+    ) external virtual returns (uint256 assets) {
         return redeem(shares, receiver, owner, MAX_BPS);
     }
 
@@ -108,14 +141,23 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param maxLoss Maximum acceptable loss in basis points
      * @return assets Amount of assets withdrawn
      */
-    function redeem(uint256 shares, address receiver, address owner, uint256 maxLoss)
-        public
-        virtual
-        returns (uint256 assets)
-    {
+    function redeem(
+        uint256 shares,
+        address receiver,
+        address owner,
+        uint256 maxLoss
+    ) public virtual returns (uint256 assets) {
         _preWithdrawHook(assets, shares, receiver, owner, maxLoss);
         assets = abi.decode(
-            _delegateCall(abi.encodeWithSelector(ITokenizedStrategy.redeem.selector, shares, receiver, owner, maxLoss)),
+            _delegateCall(
+                abi.encodeWithSelector(
+                    ITokenizedStrategy.redeem.selector,
+                    shares,
+                    receiver,
+                    owner,
+                    maxLoss
+                )
+            ),
             (uint256)
         );
         _postWithdrawHook(assets, shares, receiver, owner, maxLoss);
@@ -127,10 +169,20 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param amount Amount of shares to transfer
      * @return success Whether the transfer succeeded
      */
-    function transfer(address to, uint256 amount) external virtual returns (bool) {
+    function transfer(
+        address to,
+        uint256 amount
+    ) external virtual returns (bool) {
         _preTransferHook(msg.sender, to, amount);
-        bool success =
-            abi.decode(_delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).transfer, (to, amount))), (bool));
+        bool success = abi.decode(
+            _delegateCall(
+                abi.encodeCall(
+                    ITokenizedStrategy(address(this)).transfer,
+                    (to, amount)
+                )
+            ),
+            (bool)
+        );
         _postTransferHook(msg.sender, to, amount, success);
         return success;
     }
@@ -142,10 +194,20 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param amount Amount of shares to transfer
      * @return success Whether the transfer succeeded
      */
-    function transferFrom(address from, address to, uint256 amount) external virtual returns (bool) {
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external virtual returns (bool) {
         _preTransferHook(from, to, amount);
         bool success = abi.decode(
-            _delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).transferFrom, (from, to, amount))), (bool)
+            _delegateCall(
+                abi.encodeCall(
+                    ITokenizedStrategy(address(this)).transferFrom,
+                    (from, to, amount)
+                )
+            ),
+            (bool)
         );
         _postTransferHook(from, to, amount, success);
         return success;
@@ -158,8 +220,12 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      */
     function report() external virtual returns (uint256 profit, uint256 loss) {
         _preReportHook();
-        (profit, loss) =
-            abi.decode(_delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).report, ())), (uint256, uint256));
+        (profit, loss) = abi.decode(
+            _delegateCall(
+                abi.encodeCall(ITokenizedStrategy(address(this)).report, ())
+            ),
+            (uint256, uint256)
+        );
         _postReportHook(profit, loss);
     }
 }

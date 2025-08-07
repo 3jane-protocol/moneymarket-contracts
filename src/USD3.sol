@@ -31,7 +31,6 @@ contract USD3 is BaseHooksUpgradeable {
     IMorpho public morphoBlue;
 
     // these internal vars can be accessed externally via marketParams()
-    address internal loanToken;
     address internal collateralToken;
     address internal oracle;
     address internal irm;
@@ -75,7 +74,6 @@ contract USD3 is BaseHooksUpgradeable {
         require(_morphoBlue != address(0), "!morpho");
 
         morphoBlue = IMorpho(_morphoBlue);
-        loanToken = _params.loanToken;
         collateralToken = _params.collateralToken;
         oracle = _params.oracle;
         irm = _params.irm;
@@ -84,10 +82,16 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Initialize BaseStrategy with management as temporary performanceFeeRecipient
         // It will be updated to sUSD3 address after sUSD3 is deployed
-        __BaseStrategy_init(loanToken, _name, _management, _management, _keeper);
+        __BaseStrategy_init(
+            _params.loanToken,
+            _name,
+            _management,
+            _management,
+            _keeper
+        );
 
         // Approve Morpho
-        IERC20(loanToken).forceApprove(address(morphoBlue), type(uint256).max);
+        IERC20(asset).forceApprove(address(morphoBlue), type(uint256).max);
 
         // Set default values
         maxOnCredit = 10_000; // 100% by default (no restriction)
@@ -106,46 +110,71 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     function _marketParams() internal view returns (MarketParams memory) {
-        return MarketParams({
-            loanToken: loanToken,
-            collateralToken: collateralToken,
-            oracle: oracle,
-            irm: irm,
-            lltv: lltv,
-            creditLine: creditLine
-        });
+        return
+            MarketParams({
+                loanToken: address(asset),
+                collateralToken: collateralToken,
+                oracle: oracle,
+                irm: irm,
+                lltv: lltv,
+                creditLine: creditLine
+            });
     }
 
     function getMarketLiquidity()
         internal
         view
-        returns (uint256 totalSupplyAssets, uint256 totalShares, uint256 totalBorrowAssets, uint256 liquidity)
+        returns (
+            uint256 totalSupplyAssets,
+            uint256 totalShares,
+            uint256 totalBorrowAssets,
+            uint256 liquidity
+        )
     {
-        (totalSupplyAssets, totalShares, totalBorrowAssets,) = morphoBlue.expectedMarketBalances(_marketParams());
+        (totalSupplyAssets, totalShares, totalBorrowAssets, ) = morphoBlue
+            .expectedMarketBalances(_marketParams());
         liquidity = totalSupplyAssets - totalBorrowAssets;
     }
 
-    function getPosition() internal view returns (uint256 shares, uint256 assetsMax, uint256 liquidity) {
+    function getPosition()
+        internal
+        view
+        returns (uint256 shares, uint256 assetsMax, uint256 liquidity)
+    {
         Id id = _marketParams().id();
         shares = morphoBlue.position(id, address(this)).supplyShares;
         uint256 totalSupplyAssets;
         uint256 totalShares;
-        (totalSupplyAssets, totalShares,, liquidity) = getMarketLiquidity();
+        (totalSupplyAssets, totalShares, , liquidity) = getMarketLiquidity();
         assetsMax = shares.toAssetsDown(totalSupplyAssets, totalShares);
     }
 
     function _deployFunds(uint256 _amount) internal override {
         if (_amount == 0) return;
 
-        if (maxOnCredit == 0 || maxOnCredit == 10_000) {
-            // If not set or set to 100%, deploy everything
-            morphoBlue.supply(_marketParams(), _amount, 0, address(this), hex"");
+        if (maxOnCredit == 0) {
+            // Don't deploy anything when set to 0%
+            return;
+        }
+
+        if (maxOnCredit == 10_000) {
+            // Deploy everything when set to 100%
+            morphoBlue.supply(
+                _marketParams(),
+                _amount,
+                0,
+                address(this),
+                hex""
+            );
             return;
         }
 
         uint256 totalValue = TokenizedStrategy.totalAssets();
         uint256 maxDeployable = (totalValue * maxOnCredit) / 10_000;
-        uint256 currentlyDeployed = morphoBlue.expectedSupplyAssets(_marketParams(), address(this));
+        uint256 currentlyDeployed = morphoBlue.expectedSupplyAssets(
+            _marketParams(),
+            address(this)
+        );
 
         if (currentlyDeployed >= maxDeployable) {
             // Already at max deployment
@@ -156,7 +185,13 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 toDeploy = Math.min(_amount, deployableAmount);
 
         if (toDeploy > 0) {
-            morphoBlue.supply(_marketParams(), toDeploy, 0, address(this), hex"");
+            morphoBlue.supply(
+                _marketParams(),
+                toDeploy,
+                0,
+                address(this),
+                hex""
+            );
         }
     }
 
@@ -167,24 +202,40 @@ contract USD3 is BaseHooksUpgradeable {
         (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
 
         // Calculate how much we can actually withdraw
-        uint256 availableToWithdraw = assetsMax > liquidity ? liquidity : assetsMax;
+        uint256 availableToWithdraw = assetsMax > liquidity
+            ? liquidity
+            : assetsMax;
 
         // If we can't withdraw anything, return early
         if (availableToWithdraw == 0) return;
 
         // Cap the requested amount to what's actually available
-        uint256 actualAmount = amount > availableToWithdraw ? availableToWithdraw : amount;
+        uint256 actualAmount = amount > availableToWithdraw
+            ? availableToWithdraw
+            : amount;
 
         if (actualAmount >= assetsMax) {
             // Withdraw all our shares
-            morphoBlue.withdraw(_marketParams(), 0, shares, address(this), address(this));
+            morphoBlue.withdraw(
+                _marketParams(),
+                0,
+                shares,
+                address(this),
+                address(this)
+            );
         } else {
             // Withdraw specific amount
-            morphoBlue.withdraw(_marketParams(), actualAmount, 0, address(this), address(this));
+            morphoBlue.withdraw(
+                _marketParams(),
+                actualAmount,
+                0,
+                address(this),
+                address(this)
+            );
         }
 
         // Verify we received the tokens (allow for small rounding differences)
-        uint256 balance = IERC20(loanToken).balanceOf(address(this));
+        uint256 balance = asset.balanceOf(address(this));
         require(balance > 0, "No tokens received from withdraw");
     }
 
@@ -193,14 +244,14 @@ contract USD3 is BaseHooksUpgradeable {
 
         morphoBlue.accrueInterest(params);
 
-        // An airdrop might have cause asset to be available, deposit!
-        uint256 _totalIdle = IERC20(loanToken).balanceOf(address(this));
-        if (_totalIdle > 0) {
-            _tend(_totalIdle);
-        }
+        // Always tend to maintain proper deployment ratio
+        uint256 _totalIdle = asset.balanceOf(address(this));
+        _tend(_totalIdle);
 
-        uint256 currentTotalAssets =
-            morphoBlue.expectedSupplyAssets(params, address(this)) + IERC20(loanToken).balanceOf(address(this));
+        uint256 currentTotalAssets = morphoBlue.expectedSupplyAssets(
+            params,
+            address(this)
+        ) + asset.balanceOf(address(this));
 
         // Loss absorption is now handled in _postReportHook
 
@@ -208,27 +259,48 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     function _tend(uint256 _totalIdle) internal virtual override {
-        _deployFunds(_totalIdle);
+        uint256 totalValue = TokenizedStrategy.totalAssets();
+        uint256 targetDeployment = (totalValue * maxOnCredit) / 10_000;
+        uint256 currentlyDeployed = morphoBlue.expectedSupplyAssets(
+            _marketParams(),
+            address(this)
+        );
+
+        if (currentlyDeployed > targetDeployment) {
+            // Withdraw excess to maintain target ratio
+            uint256 toWithdraw = currentlyDeployed - targetDeployment;
+            _freeFunds(toWithdraw);
+        } else {
+            // Deploy more if under target (reuses existing logic)
+            _deployFunds(_totalIdle);
+        }
     }
 
-    function availableWithdrawLimit(address _owner) public view override returns (uint256) {
+    function availableWithdrawLimit(
+        address _owner
+    ) public view override returns (uint256) {
         // Check commitment time first
         if (minCommitmentTime > 0) {
             uint256 depositTime = depositTimestamp[_owner];
-            if (depositTime > 0 && block.timestamp < depositTime + minCommitmentTime) {
+            if (
+                depositTime > 0 &&
+                block.timestamp < depositTime + minCommitmentTime
+            ) {
                 return 0; // Commitment period not met
             }
         }
 
         // Get available liquidity
         (, uint256 assetsMax, uint256 liquidity) = getPosition();
-        uint256 idle = IERC20(loanToken).balanceOf(address(this));
+        uint256 idle = asset.balanceOf(address(this));
         uint256 availableLiquidity = idle + Math.min(liquidity, assetsMax);
 
         return availableLiquidity;
     }
 
-    function availableDepositLimit(address _owner) public view override returns (uint256) {
+    function availableDepositLimit(
+        address _owner
+    ) public view override returns (uint256) {
         // Check whitelist if enabled
         if (whitelistEnabled && !whitelist[_owner]) {
             return 0;
@@ -249,7 +321,10 @@ contract USD3 is BaseHooksUpgradeable {
     //////////////////////////////////////////////////////////////*/
 
     /// @dev Enforce minimum deposit and set commitment time
-    function _enforceDepositRequirements(uint256 assets, address receiver) private {
+    function _enforceDepositRequirements(
+        uint256 assets,
+        address receiver
+    ) private {
         require(assets >= minDeposit, "Below minimum deposit");
 
         // Each deposit extends commitment for entire balance
@@ -259,7 +334,11 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /// @dev Pre-deposit hook to enforce minimum deposit and track commitment time
-    function _preDepositHook(uint256 assets, uint256 shares, address receiver) internal override {
+    function _preDepositHook(
+        uint256 assets,
+        uint256 shares,
+        address receiver
+    ) internal override {
         if (assets == 0 && shares > 0) {
             assets = TokenizedStrategy.previewMint(shares);
         }
@@ -274,10 +353,13 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /// @dev Post-withdraw hook to clear commitment on full exit (handles both withdraw and redeem)
-    function _postWithdrawHook(uint256 assets, uint256 shares, address receiver, address owner, uint256 maxLoss)
-        internal
-        override
-    {
+    function _postWithdrawHook(
+        uint256 assets,
+        uint256 shares,
+        address receiver,
+        address owner,
+        uint256 maxLoss
+    ) internal override {
         _clearCommitmentIfNeeded(owner);
     }
 
@@ -311,14 +393,18 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Directly burn shares from sUSD3's balance using storage manipulation
     function _burnSharesFromSusd3(uint256 amount) internal {
         // Calculate storage slots
-        bytes32 baseSlot = bytes32(uint256(keccak256("yearn.base.strategy.storage")) - 1);
+        bytes32 baseSlot = bytes32(
+            uint256(keccak256("yearn.base.strategy.storage")) - 1
+        );
 
         // totalSupply is at slot 2 in the StrategyData struct
         bytes32 totalSupplySlot = bytes32(uint256(baseSlot) + 2);
 
         // balances mapping is at slot 4
         // For a mapping, the storage slot is keccak256(abi.encode(key, mappingSlot))
-        bytes32 balanceSlot = keccak256(abi.encode(susd3Strategy, uint256(baseSlot) + 4));
+        bytes32 balanceSlot = keccak256(
+            abi.encode(susd3Strategy, uint256(baseSlot) + 4)
+        );
 
         // Read current values
         uint256 currentBalance;
@@ -371,7 +457,10 @@ contract USD3 is BaseHooksUpgradeable {
         whitelistEnabled = _enabled;
     }
 
-    function setWhitelist(address _user, bool _allowed) external onlyManagement {
+    function setWhitelist(
+        address _user,
+        bool _allowed
+    ) external onlyManagement {
         whitelist[_user] = _allowed;
         emit WhitelistUpdated(_user, _allowed);
     }
@@ -381,7 +470,9 @@ contract USD3 is BaseHooksUpgradeable {
         emit MinDepositUpdated(_minDeposit);
     }
 
-    function setMinCommitmentTime(uint256 _minCommitmentTime) external onlyManagement {
+    function setMinCommitmentTime(
+        uint256 _minCommitmentTime
+    ) external onlyManagement {
         minCommitmentTime = _minCommitmentTime;
     }
 
@@ -394,7 +485,9 @@ contract USD3 is BaseHooksUpgradeable {
         require(_yieldShare <= 10_000, "Yield share > 100%");
 
         // TokenizedStrategy storage slot calculation
-        bytes32 baseSlot = bytes32(uint256(keccak256("yearn.base.strategy.storage")) - 1);
+        bytes32 baseSlot = bytes32(
+            uint256(keccak256("yearn.base.strategy.storage")) - 1
+        );
 
         // performanceFee is in slot 8 of the struct, packed with other variables:
         // Slot 8 layout (from right to left):
@@ -418,7 +511,8 @@ contract USD3 is BaseHooksUpgradeable {
         // Clear the performanceFee bits (32-47) and set new value
         // Mask to clear bits 32-47: ~(0xFFFF << 32)
         uint256 mask = ~(uint256(0xFFFF) << 32);
-        uint256 newSlotValue = (currentSlotValue & mask) | (uint256(_yieldShare) << 32);
+        uint256 newSlotValue = (currentSlotValue & mask) |
+            (uint256(_yieldShare) << 32);
 
         // Write back to storage
         assembly {
@@ -440,5 +534,5 @@ contract USD3 is BaseHooksUpgradeable {
      * variables without shifting down storage in the inheritance chain.
      * See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
      */
-    uint256[39] private __gap;
+    uint256[40] private __gap;
 }

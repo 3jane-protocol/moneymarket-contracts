@@ -6,8 +6,7 @@ import {Setup, ERC20, IStrategyInterface} from "./utils/Setup.sol";
 import {sUSD3} from "../sUSD3.sol";
 import {USD3} from "../USD3.sol";
 import {ISUSD3} from "../interfaces/ISUSD3.sol";
-import {TransparentUpgradeableProxy} from
-    "../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {TransparentUpgradeableProxy} from "../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
 
 contract sUSD3Test is Setup {
@@ -34,11 +33,18 @@ contract sUSD3Test is Setup {
 
         // Deploy proxy with initialization
         bytes memory susd3InitData = abi.encodeWithSelector(
-            sUSD3.initialize.selector, susd3Asset, "sUSD3", management, performanceFeeRecipient, keeper
+            sUSD3.initialize.selector,
+            susd3Asset,
+            "sUSD3",
+            management,
+            keeper
         );
 
-        TransparentUpgradeableProxy susd3Proxy =
-            new TransparentUpgradeableProxy(address(susd3Implementation), address(susd3ProxyAdmin), susd3InitData);
+        TransparentUpgradeableProxy susd3Proxy = new TransparentUpgradeableProxy(
+                address(susd3Implementation),
+                address(susd3ProxyAdmin),
+                susd3InitData
+            );
 
         susd3Strategy = sUSD3(address(susd3Proxy));
 
@@ -76,11 +82,21 @@ contract sUSD3Test is Setup {
     //////////////////////////////////////////////////////////////*/
 
     function test_initialization() public {
-        assertEq(IStrategyInterface(address(susd3Strategy)).asset(), susd3Asset);
+        assertEq(
+            IStrategyInterface(address(susd3Strategy)).asset(),
+            susd3Asset
+        );
         assertEq(susd3Strategy.symbol(), "sUSD3");
-        assertEq(IStrategyInterface(address(susd3Strategy)).management(), management);
+        assertEq(
+            IStrategyInterface(address(susd3Strategy)).management(),
+            management
+        );
         assertEq(IStrategyInterface(address(susd3Strategy)).keeper(), keeper);
-        assertEq(IStrategyInterface(address(susd3Strategy)).performanceFeeRecipient(), performanceFeeRecipient);
+        assertEq(
+            IStrategyInterface(address(susd3Strategy))
+                .performanceFeeRecipient(),
+            management
+        );
 
         // Check default durations
         assertEq(susd3Strategy.lockDuration(), 90 days);
@@ -99,7 +115,10 @@ contract sUSD3Test is Setup {
 
         // Check balances
         assertEq(ERC20(address(susd3Strategy)).balanceOf(alice), shares);
-        assertEq(ERC20(address(usd3)).balanceOf(address(susd3Strategy)), depositAmount);
+        assertEq(
+            ERC20(address(usd3)).balanceOf(address(susd3Strategy)),
+            depositAmount
+        );
 
         // Check lock period was set
         assertEq(susd3Strategy.lockedUntil(alice), block.timestamp + 90 days);
@@ -125,7 +144,11 @@ contract sUSD3Test is Setup {
         susd3Strategy.startCooldown(shares);
 
         // Check cooldown state
-        (uint256 cooldownEnd, uint256 windowEnd, uint256 cooldownShares) = susd3Strategy.getCooldownStatus(alice);
+        (
+            uint256 cooldownEnd,
+            uint256 windowEnd,
+            uint256 cooldownShares
+        ) = susd3Strategy.getCooldownStatus(alice);
         assertEq(cooldownEnd, block.timestamp + 7 days);
         assertEq(windowEnd, block.timestamp + 7 days + 2 days);
         assertEq(cooldownShares, shares);
@@ -162,7 +185,7 @@ contract sUSD3Test is Setup {
         susd3Strategy.startCooldown(cooldownAmount);
 
         // Check cooldown state
-        (,, uint256 cooldownShares) = susd3Strategy.getCooldownStatus(alice);
+        (, , uint256 cooldownShares) = susd3Strategy.getCooldownStatus(alice);
         assertEq(cooldownShares, cooldownAmount);
     }
 
@@ -187,7 +210,8 @@ contract sUSD3Test is Setup {
         susd3Strategy.startCooldown(shares);
 
         // Check cooldown state - should be the new one
-        (uint256 cooldownEnd,, uint256 cooldownShares) = susd3Strategy.getCooldownStatus(alice);
+        (uint256 cooldownEnd, , uint256 cooldownShares) = susd3Strategy
+            .getCooldownStatus(alice);
         assertEq(cooldownEnd, block.timestamp + 7 days);
         assertEq(cooldownShares, shares);
     }
@@ -225,7 +249,7 @@ contract sUSD3Test is Setup {
         assertEq(assets, depositAmount); // Should get back full amount
 
         // Check cooldown cleared
-        (,, uint256 cooldownShares) = susd3Strategy.getCooldownStatus(alice);
+        (, , uint256 cooldownShares) = susd3Strategy.getCooldownStatus(alice);
         assertEq(cooldownShares, 0);
     }
 
@@ -408,7 +432,7 @@ contract sUSD3Test is Setup {
         susd3Strategy.cancelCooldown();
 
         // Check cooldown cleared
-        (,, uint256 cooldownShares) = susd3Strategy.getCooldownStatus(alice);
+        (, , uint256 cooldownShares) = susd3Strategy.getCooldownStatus(alice);
         assertEq(cooldownShares, 0);
 
         // Cannot withdraw anymore (availableWithdrawLimit will return 0)
@@ -452,7 +476,11 @@ contract sUSD3Test is Setup {
         susd3Strategy.deposit(firstDeposit, alice);
 
         uint256 firstLock = susd3Strategy.lockedUntil(alice);
-        assertEq(firstLock, block.timestamp + 90 days, "First lock should be 90 days");
+        assertEq(
+            firstLock,
+            block.timestamp + 90 days,
+            "First lock should be 90 days"
+        );
 
         // Fast forward 30 days
         skip(30 days);
@@ -462,8 +490,16 @@ contract sUSD3Test is Setup {
         susd3Strategy.deposit(secondDeposit, alice);
 
         uint256 secondLock = susd3Strategy.lockedUntil(alice);
-        assertEq(secondLock, block.timestamp + 90 days, "Lock should be extended to 90 days from now");
-        assertGt(secondLock, firstLock, "Second lock should be later than first");
+        assertEq(
+            secondLock,
+            block.timestamp + 90 days,
+            "Lock should be extended to 90 days from now"
+        );
+        assertGt(
+            secondLock,
+            firstLock,
+            "Second lock should be later than first"
+        );
 
         // Verify cannot withdraw before new lock expires
         vm.expectRevert(); // Still locked
@@ -503,13 +539,25 @@ contract sUSD3Test is Setup {
         susd3Strategy.redeem(shares, alice, alice);
 
         // Verify lock is cleared
-        assertEq(susd3Strategy.lockedUntil(alice), 0, "Lock should be cleared after full withdrawal");
-        assertEq(ERC20(address(susd3Strategy)).balanceOf(alice), 0, "Balance should be 0");
+        assertEq(
+            susd3Strategy.lockedUntil(alice),
+            0,
+            "Lock should be cleared after full withdrawal"
+        );
+        assertEq(
+            ERC20(address(susd3Strategy)).balanceOf(alice),
+            0,
+            "Balance should be 0"
+        );
 
         // New deposit should set fresh lock
         susd3Strategy.deposit(100e6, alice);
         uint256 newLock = susd3Strategy.lockedUntil(alice);
-        assertEq(newLock, block.timestamp + 90 days, "New lock should be 90 days from now");
+        assertEq(
+            newLock,
+            block.timestamp + 90 days,
+            "New lock should be 90 days from now"
+        );
         vm.stopPrank();
     }
 
@@ -524,8 +572,16 @@ contract sUSD3Test is Setup {
         vm.stopPrank();
 
         // Check that lock period was set
-        assertGt(susd3Strategy.lockedUntil(alice), block.timestamp, "Lock period should be set via mint");
-        assertEq(susd3Strategy.lockedUntil(alice), block.timestamp + 90 days, "Lock should be 90 days");
+        assertGt(
+            susd3Strategy.lockedUntil(alice),
+            block.timestamp,
+            "Lock period should be set via mint"
+        );
+        assertEq(
+            susd3Strategy.lockedUntil(alice),
+            block.timestamp + 90 days,
+            "Lock should be 90 days"
+        );
 
         // Verify cannot withdraw before lock expires
         vm.prank(alice);
@@ -540,7 +596,11 @@ contract sUSD3Test is Setup {
         skip(7 days + 1);
         vm.prank(alice);
         uint256 assets = susd3Strategy.redeem(sharesToMint, alice, alice);
-        assertGt(assets, 0, "Should be able to withdraw after lock and cooldown");
+        assertGt(
+            assets,
+            0,
+            "Should be able to withdraw after lock and cooldown"
+        );
     }
 
     function test_partialWithdrawal() public {
@@ -560,22 +620,38 @@ contract sUSD3Test is Setup {
         skip(7 days + 1);
 
         // Withdraw only 30% of shares
-        uint256 partialShares = totalShares * 30 / 100;
+        uint256 partialShares = (totalShares * 30) / 100;
         vm.prank(alice);
-        uint256 assetsWithdrawn = susd3Strategy.redeem(partialShares, alice, alice);
+        uint256 assetsWithdrawn = susd3Strategy.redeem(
+            partialShares,
+            alice,
+            alice
+        );
 
         // Check cooldown still exists with remaining shares
-        (,, uint256 remainingCooldownShares) = susd3Strategy.getCooldownStatus(alice);
-        assertEq(remainingCooldownShares, totalShares - partialShares, "Cooldown should have remaining shares");
+        (, , uint256 remainingCooldownShares) = susd3Strategy.getCooldownStatus(
+            alice
+        );
+        assertEq(
+            remainingCooldownShares,
+            totalShares - partialShares,
+            "Cooldown should have remaining shares"
+        );
 
         // Can withdraw more within same window
-        uint256 moreShares = totalShares * 20 / 100;
+        uint256 moreShares = (totalShares * 20) / 100;
         vm.prank(alice);
         susd3Strategy.redeem(moreShares, alice, alice);
 
         // Check cooldown updated again
-        (,, uint256 finalCooldownShares) = susd3Strategy.getCooldownStatus(alice);
-        assertEq(finalCooldownShares, totalShares - partialShares - moreShares, "Cooldown should be reduced");
+        (, , uint256 finalCooldownShares) = susd3Strategy.getCooldownStatus(
+            alice
+        );
+        assertEq(
+            finalCooldownShares,
+            totalShares - partialShares - moreShares,
+            "Cooldown should be reduced"
+        );
     }
 
     function test_multipleUsers() public {
@@ -589,7 +665,10 @@ contract sUSD3Test is Setup {
         uint256 aliceDeposit = aliceBalance > 100e6 ? 100e6 : aliceBalance;
         uint256 bobDeposit = bobBalance > 200e6 ? 200e6 : bobBalance;
 
-        require(aliceDeposit > 0 && bobDeposit > 0, "Test users need USD3 balance");
+        require(
+            aliceDeposit > 0 && bobDeposit > 0,
+            "Test users need USD3 balance"
+        );
 
         // Both users deposit their USD3
         vm.startPrank(alice);
@@ -619,11 +698,17 @@ contract sUSD3Test is Setup {
         susd3Strategy.startCooldown(bobShares);
 
         // Check both have independent cooldowns
-        (,, uint256 aliceCooldownShares) = susd3Strategy.getCooldownStatus(alice);
-        (,, uint256 bobCooldownShares) = susd3Strategy.getCooldownStatus(bob);
+        (, , uint256 aliceCooldownShares) = susd3Strategy.getCooldownStatus(
+            alice
+        );
+        (, , uint256 bobCooldownShares) = susd3Strategy.getCooldownStatus(bob);
 
         assertEq(aliceCooldownShares, aliceShares);
         assertEq(bobCooldownShares, bobShares);
-        assertNotEq(aliceShares, bobShares, "Different deposits should result in different shares");
+        assertNotEq(
+            aliceShares,
+            bobShares,
+            "Different deposits should result in different shares"
+        );
     }
 }

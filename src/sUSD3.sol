@@ -71,9 +71,17 @@ contract sUSD3 is BaseHooksUpgradeable {
                             EVENTS
     //////////////////////////////////////////////////////////////*/
 
-    event CooldownStarted(address indexed user, uint256 shares, uint256 timestamp);
+    event CooldownStarted(
+        address indexed user,
+        uint256 shares,
+        uint256 timestamp
+    );
     event CooldownCancelled(address indexed user);
-    event WithdrawalCompleted(address indexed user, uint256 shares, uint256 assets);
+    event WithdrawalCompleted(
+        address indexed user,
+        uint256 shares,
+        uint256 assets
+    );
     event LossAbsorbed(uint256 amount, uint256 timestamp);
     event YieldReceived(uint256 amount, address indexed from);
     event USD3StrategyUpdated(address newStrategy);
@@ -95,18 +103,23 @@ contract sUSD3 is BaseHooksUpgradeable {
      * @param _usd3Token Address of USD3 token (the asset)
      * @param _name Name for the strategy token
      * @param _management Management address
-     * @param _performanceFeeRecipient Performance fee recipient
      * @param _keeper Keeper address
      */
     function initialize(
         address _usd3Token,
         string memory _name,
         address _management,
-        address _performanceFeeRecipient,
         address _keeper
     ) external initializer {
         // Initialize BaseStrategy with USD3 as the asset
-        __BaseStrategy_init(_usd3Token, _name, _management, _performanceFeeRecipient, _keeper);
+        // Use management as performance fee recipient (fees will never be charged)
+        __BaseStrategy_init(
+            _usd3Token,
+            _name,
+            _management,
+            _management,
+            _keeper
+        );
 
         // Set default durations
         lockDuration = 90 days;
@@ -150,7 +163,7 @@ contract sUSD3 is BaseHooksUpgradeable {
         // USD3 automatically mints shares to us during its report()
         // We just need to return our current balance
         // Any yield received is reflected in our USD3 token balance
-        return IERC20(address(asset)).balanceOf(address(this));
+        return asset.balanceOf(address(this));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -160,7 +173,11 @@ contract sUSD3 is BaseHooksUpgradeable {
     /**
      * @dev Set/extend lock period on each deposit
      */
-    function _setInitialLockIfNeeded(address receiver, uint256 assets, uint256 shares) private {
+    function _setInitialLockIfNeeded(
+        address receiver,
+        uint256 assets,
+        uint256 shares
+    ) private {
         // Each deposit extends lock period for entire balance
         if (assets > 0 || shares > 0) {
             lockedUntil[receiver] = block.timestamp + lockDuration;
@@ -170,7 +187,11 @@ contract sUSD3 is BaseHooksUpgradeable {
     /**
      * @dev Pre-deposit hook to track lock period (handles both deposit and mint)
      */
-    function _preDepositHook(uint256 assets, uint256 shares, address receiver) internal override {
+    function _preDepositHook(
+        uint256 assets,
+        uint256 shares,
+        address receiver
+    ) internal override {
         if (assets == 0 && shares > 0) {
             assets = TokenizedStrategy.previewMint(shares);
         }
@@ -180,7 +201,11 @@ contract sUSD3 is BaseHooksUpgradeable {
     /**
      * @dev Update cooldown after successful withdrawal/redemption
      */
-    function _updateCooldownAfterWithdrawal(address owner, uint256 shares, uint256 assets) private {
+    function _updateCooldownAfterWithdrawal(
+        address owner,
+        uint256 shares,
+        uint256 assets
+    ) private {
         UserCooldown storage cooldown = cooldowns[owner];
         if (cooldown.shares > 0) {
             if (shares >= cooldown.shares) {
@@ -202,10 +227,13 @@ contract sUSD3 is BaseHooksUpgradeable {
     /**
      * @dev Post-withdraw hook to update cooldown after successful withdrawal or redemption
      */
-    function _postWithdrawHook(uint256 assets, uint256 shares, address receiver, address owner, uint256 maxLoss)
-        internal
-        override
-    {
+    function _postWithdrawHook(
+        uint256 assets,
+        uint256 shares,
+        address receiver,
+        address owner,
+        uint256 maxLoss
+    ) internal override {
         _updateCooldownAfterWithdrawal(owner, shares, assets);
     }
 
@@ -219,7 +247,10 @@ contract sUSD3 is BaseHooksUpgradeable {
      */
     function startCooldown(uint256 shares) external {
         require(shares > 0, "Invalid shares");
-        require(block.timestamp >= lockedUntil[msg.sender], "Still in lock period");
+        require(
+            block.timestamp >= lockedUntil[msg.sender],
+            "Still in lock period"
+        );
         // Note: Balance check will be enforced during actual withdrawal
 
         // Allow updating cooldown with new amount (overwrites previous)
@@ -250,7 +281,9 @@ contract sUSD3 is BaseHooksUpgradeable {
      * @param _owner Address to check limit for
      * @return Maximum deposit amount allowed
      */
-    function availableDepositLimit(address _owner) public view override returns (uint256) {
+    function availableDepositLimit(
+        address _owner
+    ) public view override returns (uint256) {
         if (TokenizedStrategy.isShutdown()) {
             return 0;
         }
@@ -265,14 +298,17 @@ contract sUSD3 is BaseHooksUpgradeable {
             // Which means sUSD3 = 0.15/0.85 * USD3
             if (susd3TotalAssets == 0 && usd3TotalAssets > 0) {
                 // This is approximately 17.65% of USD3 supply
-                return (usd3TotalAssets * MAX_SUBORDINATION_RATIO) / (MAX_BPS - MAX_SUBORDINATION_RATIO);
+                return
+                    (usd3TotalAssets * MAX_SUBORDINATION_RATIO) /
+                    (MAX_BPS - MAX_SUBORDINATION_RATIO);
             }
 
             uint256 totalCombined = usd3TotalAssets + susd3TotalAssets;
 
             if (totalCombined > 0) {
                 // Calculate max sUSD3 allowed (15% of total)
-                uint256 maxSusd3Allowed = (totalCombined * MAX_SUBORDINATION_RATIO) / MAX_BPS;
+                uint256 maxSusd3Allowed = (totalCombined *
+                    MAX_SUBORDINATION_RATIO) / MAX_BPS;
 
                 if (susd3TotalAssets >= maxSusd3Allowed) {
                     return 0; // Already at max subordination
@@ -292,7 +328,9 @@ contract sUSD3 is BaseHooksUpgradeable {
      * @param _owner Address to check limit for
      * @return Maximum withdrawal amount allowed in assets
      */
-    function availableWithdrawLimit(address _owner) public view override returns (uint256) {
+    function availableWithdrawLimit(
+        address _owner
+    ) public view override returns (uint256) {
         // Check initial lock period
         if (block.timestamp < lockedUntil[_owner]) {
             return 0;
@@ -326,7 +364,9 @@ contract sUSD3 is BaseHooksUpgradeable {
      * @return windowEnd When withdrawal window closes
      * @return shares Number of shares in cooldown
      */
-    function getCooldownStatus(address user)
+    function getCooldownStatus(
+        address user
+    )
         external
         view
         returns (uint256 cooldownEnd, uint256 windowEnd, uint256 shares)
@@ -363,7 +403,9 @@ contract sUSD3 is BaseHooksUpgradeable {
      * @notice Update cooldown duration
      * @param _cooldownDuration New cooldown duration in seconds
      */
-    function setCooldownDuration(uint256 _cooldownDuration) external onlyManagement {
+    function setCooldownDuration(
+        uint256 _cooldownDuration
+    ) external onlyManagement {
         require(_cooldownDuration <= 30 days, "Cooldown too long");
         cooldownDuration = _cooldownDuration;
         emit CooldownDurationUpdated(_cooldownDuration);
@@ -373,8 +415,13 @@ contract sUSD3 is BaseHooksUpgradeable {
      * @notice Update withdrawal window
      * @param _withdrawalWindow New withdrawal window in seconds
      */
-    function setWithdrawalWindow(uint256 _withdrawalWindow) external onlyManagement {
-        require(_withdrawalWindow >= 1 days && _withdrawalWindow <= 7 days, "Invalid window");
+    function setWithdrawalWindow(
+        uint256 _withdrawalWindow
+    ) external onlyManagement {
+        require(
+            _withdrawalWindow >= 1 days && _withdrawalWindow <= 7 days,
+            "Invalid window"
+        );
         withdrawalWindow = _withdrawalWindow;
         emit WithdrawalWindowUpdated(_withdrawalWindow);
     }
