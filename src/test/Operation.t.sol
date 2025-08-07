@@ -25,7 +25,7 @@ contract OperationTest is Setup {
         // Get references from base setUp
         // The base setUp already deployed everything we need
         usd3Strategy = USD3(address(strategy));
-        morpho = IMorpho(address(usd3Strategy.morphoBlue()));
+        morpho = IMorpho(address(usd3Strategy.morphoCredit()));
         aTokenVault = ERC20(address(asset));
         marketParams = usd3Strategy.marketParams();
         creditLineAddress = marketParams.creditLine;
@@ -248,7 +248,7 @@ contract OperationTest is Setup {
     function test_creditMarketParams() public {
         assertEq(usd3Strategy.marketParams().creditLine, creditLineAddress);
         assertEq(usd3Strategy.marketParams().lltv, 0);
-        assertEq(address(usd3Strategy.morphoBlue()), address(morpho));
+        assertEq(address(usd3Strategy.morphoCredit()), address(morpho));
     }
 
     function test_supplyToMorpho() public {

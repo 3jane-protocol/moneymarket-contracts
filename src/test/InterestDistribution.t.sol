@@ -29,7 +29,7 @@ contract InterestDistribution is Setup {
     // Helper function to set tranche share via protocol config
     function _setTrancheShare(uint256 shareBps) internal {
         // Get protocol config address from MorphoCredit
-        address morphoAddress = address(usd3Strategy.morphoBlue());
+        address morphoAddress = address(usd3Strategy.morphoCredit());
         address protocolConfigAddress = MorphoCredit(morphoAddress)
             .protocolConfig();
         MockProtocolConfig protocolConfig = MockProtocolConfig(
@@ -667,7 +667,7 @@ contract InterestDistribution is Setup {
     function test_yield_share_cannot_exceed_100_percent() public {
         // Try to set yield share above 100%
         // Get protocol config
-        address morphoAddress = address(usd3Strategy.morphoBlue());
+        address morphoAddress = address(usd3Strategy.morphoCredit());
         address protocolConfigAddress = MorphoCredit(morphoAddress)
             .protocolConfig();
         MockProtocolConfig protocolConfig = MockProtocolConfig(

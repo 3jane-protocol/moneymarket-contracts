@@ -626,7 +626,7 @@ contract LossAbsorptionStressTest is Setup {
         // We'll access the Morpho contract and modify the market state to reflect a loss
 
         USD3 usd3 = USD3(address(strategy));
-        IMorpho morpho = usd3.morphoBlue();
+        IMorpho morpho = usd3.morphoCredit();
         MarketParams memory marketParams = usd3.marketParams();
 
         // Calculate the market ID

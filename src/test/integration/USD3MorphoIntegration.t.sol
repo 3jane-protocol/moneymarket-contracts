@@ -42,7 +42,7 @@ contract USD3MorphoIntegrationTest is Setup {
 
         // Get market params and morpho from the strategy
         marketParams = usd3Strategy.marketParams();
-        morpho = IMorpho(usd3Strategy.morphoBlue());
+        morpho = IMorpho(usd3Strategy.morphoCredit());
         id = usd3Strategy.marketId();
 
         // The strategy is already set up with management and keeper from parent setUp()

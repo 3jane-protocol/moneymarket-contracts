@@ -125,7 +125,7 @@ contract sUSD3 is BaseHooksUpgradeable {
         );
 
         // Get MorphoCredit address from USD3 strategy
-        morphoCredit = address(USD3(_usd3Token).morphoBlue());
+        morphoCredit = address(USD3(_usd3Token).morphoCredit());
 
         // Set default withdrawal window (locally managed)
         withdrawalWindow = 2 days;
@@ -175,22 +175,6 @@ contract sUSD3 is BaseHooksUpgradeable {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @dev Set/extend lock period on each deposit
-     */
-    function _setInitialLockIfNeeded(
-        address receiver,
-        uint256 assets,
-        uint256 shares
-    ) private {
-        // Each deposit extends lock period for entire balance
-        if (assets > 0 || shares > 0) {
-            // Read lock duration from ProtocolConfig
-            uint256 lockDuration = _getLockDuration();
-            lockedUntil[receiver] = block.timestamp + lockDuration;
-        }
-    }
-
-    /**
      * @dev Pre-deposit hook to track lock period (handles both deposit and mint)
      */
     function _preDepositHook(
@@ -201,17 +185,26 @@ contract sUSD3 is BaseHooksUpgradeable {
         if (assets == 0 && shares > 0) {
             assets = TokenizedStrategy.previewMint(shares);
         }
-        _setInitialLockIfNeeded(receiver, assets, shares);
+
+        // Each deposit extends lock period for entire balance
+        if (assets > 0 || shares > 0) {
+            // Read lock duration from ProtocolConfig
+            uint256 duration = lockDuration();
+            lockedUntil[receiver] = block.timestamp + duration;
+        }
     }
 
     /**
-     * @dev Update cooldown after successful withdrawal/redemption
+     * @dev Post-withdraw hook to update cooldown after successful withdrawal or redemption
      */
-    function _updateCooldownAfterWithdrawal(
-        address owner,
+    function _postWithdrawHook(
+        uint256 assets,
         uint256 shares,
-        uint256 assets
-    ) private {
+        address receiver,
+        address owner,
+        uint256 maxLoss
+    ) internal override {
+        // Update cooldown after successful withdrawal
         UserCooldown storage cooldown = cooldowns[owner];
         if (cooldown.shares > 0) {
             if (shares >= cooldown.shares) {
@@ -228,19 +221,6 @@ contract sUSD3 is BaseHooksUpgradeable {
         if (TokenizedStrategy.balanceOf(owner) == 0) {
             delete lockedUntil[owner];
         }
-    }
-
-    /**
-     * @dev Post-withdraw hook to update cooldown after successful withdrawal or redemption
-     */
-    function _postWithdrawHook(
-        uint256 assets,
-        uint256 shares,
-        address receiver,
-        address owner,
-        uint256 maxLoss
-    ) internal override {
-        _updateCooldownAfterWithdrawal(owner, shares, assets);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -260,12 +240,12 @@ contract sUSD3 is BaseHooksUpgradeable {
         // Note: Balance check will be enforced during actual withdrawal
 
         // Read cooldown duration from ProtocolConfig
-        uint256 cooldownDuration = _getCooldownDuration();
+        uint256 cooldownPeriod = cooldownDuration();
 
         // Allow updating cooldown with new amount (overwrites previous)
         cooldowns[msg.sender] = UserCooldown({
-            cooldownEnd: block.timestamp + cooldownDuration,
-            windowEnd: block.timestamp + cooldownDuration + withdrawalWindow,
+            cooldownEnd: block.timestamp + cooldownPeriod,
+            windowEnd: block.timestamp + cooldownPeriod + withdrawalWindow,
             shares: shares
         });
 
@@ -402,48 +382,10 @@ contract sUSD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Get lock duration from ProtocolConfig
-     * @return Lock duration in seconds
-     */
-    function _getLockDuration() private view returns (uint256) {
-        if (morphoCredit == address(0)) {
-            return 90 days; // Default if not configured
-        }
-
-        IProtocolConfig config = IProtocolConfig(
-            IMorphoCredit(morphoCredit).protocolConfig()
-        );
-
-        uint256 lockDuration = config.getSusd3LockDuration();
-        return lockDuration > 0 ? lockDuration : 90 days; // Default to 90 days if not set
-    }
-
-    /**
-     * @notice Get cooldown duration from ProtocolConfig
-     * @return Cooldown duration in seconds
-     */
-    function _getCooldownDuration() private view returns (uint256) {
-        if (morphoCredit == address(0)) {
-            return 7 days; // Default if not configured
-        }
-
-        IProtocolConfig config = IProtocolConfig(
-            IMorphoCredit(morphoCredit).protocolConfig()
-        );
-
-        uint256 cooldownDuration = config.getSusd3CooldownPeriod();
-        return cooldownDuration > 0 ? cooldownDuration : 7 days; // Default to 7 days if not set
-    }
-
-    /**
      * @notice Get the maximum subordination ratio from ProtocolConfig
      * @return Maximum subordination ratio in basis points
      */
     function getMaxSubordinationRatio() public view returns (uint256) {
-        if (morphoCredit == address(0)) {
-            return 1500; // Default 15% if not configured
-        }
-
         IProtocolConfig config = IProtocolConfig(
             IMorphoCredit(morphoCredit).protocolConfig()
         );
@@ -456,16 +398,26 @@ contract sUSD3 is BaseHooksUpgradeable {
      * @notice Get the lock duration from ProtocolConfig
      * @return Lock duration in seconds
      */
-    function getLockDuration() public view returns (uint256) {
-        return _getLockDuration();
+    function lockDuration() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(
+            IMorphoCredit(morphoCredit).protocolConfig()
+        );
+
+        uint256 duration = config.getSusd3LockDuration();
+        return duration > 0 ? duration : 90 days; // Default to 90 days if not set
     }
 
     /**
      * @notice Get the cooldown duration from ProtocolConfig
      * @return Cooldown duration in seconds
      */
-    function getCooldownDuration() public view returns (uint256) {
-        return _getCooldownDuration();
+    function cooldownDuration() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(
+            IMorphoCredit(morphoCredit).protocolConfig()
+        );
+
+        uint256 duration = config.getSusd3CooldownPeriod();
+        return duration > 0 ? duration : 7 days; // Default to 7 days if not set
     }
 
     function setWithdrawalWindow(

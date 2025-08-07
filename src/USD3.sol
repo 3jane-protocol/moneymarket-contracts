@@ -33,8 +33,8 @@ contract USD3 is BaseHooksUpgradeable {
     /*//////////////////////////////////////////////////////////////
                         STORAGE - MORPHO PARAMETERS
     //////////////////////////////////////////////////////////////*/
-    /// @notice Address for the Morpho contract.
-    IMorpho public morphoBlue;
+    /// @notice Address for the MorphoCredit contract.
+    IMorpho public morphoCredit;
 
     // these internal vars can be accessed externally via marketParams()
     address internal collateralToken;
@@ -71,15 +71,15 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     function initialize(
-        address _morphoBlue,
+        address _morphoCredit,
         MarketParams memory _params,
         string memory _name,
         address _management,
         address _keeper
     ) external initializer {
-        require(_morphoBlue != address(0), "!morpho");
+        require(_morphoCredit != address(0), "!morpho");
 
-        morphoBlue = IMorpho(_morphoBlue);
+        morphoCredit = IMorpho(_morphoCredit);
         collateralToken = _params.collateralToken;
         oracle = _params.oracle;
         irm = _params.irm;
@@ -97,7 +97,7 @@ contract USD3 is BaseHooksUpgradeable {
         );
 
         // Approve Morpho
-        IERC20(asset).forceApprove(address(morphoBlue), type(uint256).max);
+        IERC20(asset).forceApprove(address(morphoCredit), type(uint256).max);
 
         // Set default values
         maxOnCredit = 10_000; // 100% by default (no restriction)
@@ -137,7 +137,7 @@ contract USD3 is BaseHooksUpgradeable {
             uint256 liquidity
         )
     {
-        (totalSupplyAssets, totalShares, totalBorrowAssets, ) = morphoBlue
+        (totalSupplyAssets, totalShares, totalBorrowAssets, ) = morphoCredit
             .expectedMarketBalances(_marketParams());
         liquidity = totalSupplyAssets - totalBorrowAssets;
     }
@@ -148,7 +148,7 @@ contract USD3 is BaseHooksUpgradeable {
         returns (uint256 shares, uint256 assetsMax, uint256 liquidity)
     {
         Id id = _marketParams().id();
-        shares = morphoBlue.position(id, address(this)).supplyShares;
+        shares = morphoCredit.position(id, address(this)).supplyShares;
         uint256 totalSupplyAssets;
         uint256 totalShares;
         (totalSupplyAssets, totalShares, , liquidity) = getMarketLiquidity();
@@ -165,7 +165,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         if (maxOnCredit == 10_000) {
             // Deploy everything when set to 100%
-            morphoBlue.supply(
+            morphoCredit.supply(
                 _marketParams(),
                 _amount,
                 0,
@@ -177,7 +177,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         uint256 totalValue = TokenizedStrategy.totalAssets();
         uint256 maxDeployable = (totalValue * maxOnCredit) / 10_000;
-        uint256 currentlyDeployed = morphoBlue.expectedSupplyAssets(
+        uint256 currentlyDeployed = morphoCredit.expectedSupplyAssets(
             _marketParams(),
             address(this)
         );
@@ -191,7 +191,7 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 toDeploy = Math.min(_amount, deployableAmount);
 
         if (toDeploy > 0) {
-            morphoBlue.supply(
+            morphoCredit.supply(
                 _marketParams(),
                 toDeploy,
                 0,
@@ -204,7 +204,7 @@ contract USD3 is BaseHooksUpgradeable {
     function _freeFunds(uint256 amount) internal override {
         if (amount == 0) return;
 
-        morphoBlue.accrueInterest(_marketParams());
+        morphoCredit.accrueInterest(_marketParams());
         (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
 
         // Calculate how much we can actually withdraw
@@ -222,7 +222,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         if (actualAmount >= assetsMax) {
             // Withdraw all our shares
-            morphoBlue.withdraw(
+            morphoCredit.withdraw(
                 _marketParams(),
                 0,
                 shares,
@@ -231,7 +231,7 @@ contract USD3 is BaseHooksUpgradeable {
             );
         } else {
             // Withdraw specific amount
-            morphoBlue.withdraw(
+            morphoCredit.withdraw(
                 _marketParams(),
                 actualAmount,
                 0,
@@ -248,13 +248,13 @@ contract USD3 is BaseHooksUpgradeable {
     function _harvestAndReport() internal override returns (uint256) {
         MarketParams memory params = _marketParams();
 
-        morphoBlue.accrueInterest(params);
+        morphoCredit.accrueInterest(params);
 
         // Always tend to maintain proper deployment ratio
         uint256 _totalIdle = asset.balanceOf(address(this));
         _tend(_totalIdle);
 
-        uint256 currentTotalAssets = morphoBlue.expectedSupplyAssets(
+        uint256 currentTotalAssets = morphoCredit.expectedSupplyAssets(
             params,
             address(this)
         ) + asset.balanceOf(address(this));
@@ -267,7 +267,7 @@ contract USD3 is BaseHooksUpgradeable {
     function _tend(uint256 _totalIdle) internal virtual override {
         uint256 totalValue = TokenizedStrategy.totalAssets();
         uint256 targetDeployment = (totalValue * maxOnCredit) / 10_000;
-        uint256 currentlyDeployed = morphoBlue.expectedSupplyAssets(
+        uint256 currentlyDeployed = morphoCredit.expectedSupplyAssets(
             _marketParams(),
             address(this)
         );
@@ -326,19 +326,6 @@ contract USD3 is BaseHooksUpgradeable {
                         HOOKS IMPLEMENTATION
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Enforce minimum deposit and set commitment time
-    function _enforceDepositRequirements(
-        uint256 assets,
-        address receiver
-    ) private {
-        require(assets >= minDeposit, "Below minimum deposit");
-
-        // Each deposit extends commitment for entire balance
-        if (minCommitmentTime > 0) {
-            depositTimestamp[receiver] = block.timestamp;
-        }
-    }
-
     /// @dev Pre-deposit hook to enforce minimum deposit and track commitment time
     function _preDepositHook(
         uint256 assets,
@@ -348,13 +335,13 @@ contract USD3 is BaseHooksUpgradeable {
         if (assets == 0 && shares > 0) {
             assets = TokenizedStrategy.previewMint(shares);
         }
-        _enforceDepositRequirements(assets, receiver);
-    }
 
-    /// @dev Clear commitment timestamp if user fully exited
-    function _clearCommitmentIfNeeded(address owner) private {
-        if (TokenizedStrategy.balanceOf(owner) == 0) {
-            delete depositTimestamp[owner];
+        // Enforce minimum deposit
+        require(assets >= minDeposit, "Below minimum deposit");
+
+        // Each deposit extends commitment for entire balance
+        if (minCommitmentTime > 0) {
+            depositTimestamp[receiver] = block.timestamp;
         }
     }
 
@@ -366,7 +353,10 @@ contract USD3 is BaseHooksUpgradeable {
         address owner,
         uint256 maxLoss
     ) internal override {
-        _clearCommitmentIfNeeded(owner);
+        // Clear commitment timestamp if user fully exited
+        if (TokenizedStrategy.balanceOf(owner) == 0) {
+            delete depositTimestamp[owner];
+        }
     }
 
     /// @dev Post-report hook to handle loss absorption by burning sUSD3's shares
@@ -482,7 +472,7 @@ contract USD3 is BaseHooksUpgradeable {
     function syncTrancheShare() external onlyKeepers {
         // Get the protocol config through MorphoCredit
         IProtocolConfig config = IProtocolConfig(
-            IMorphoCredit(address(morphoBlue)).protocolConfig()
+            IMorphoCredit(address(morphoCredit)).protocolConfig()
         );
 
         // Read the tranche share variant (yield share to sUSD3 in basis points)

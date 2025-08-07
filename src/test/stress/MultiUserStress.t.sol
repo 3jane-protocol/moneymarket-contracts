@@ -52,7 +52,7 @@ contract MultiUserStressTest is Setup {
         susd3Strategy.setUsd3Strategy(address(usd3Strategy));
 
         // Setup yield sharing via protocol config
-        address morphoAddress = address(usd3Strategy.morphoBlue());
+        address morphoAddress = address(usd3Strategy.morphoCredit());
         address protocolConfigAddress = MorphoCredit(morphoAddress)
             .protocolConfig();
         MockProtocolConfig protocolConfig = MockProtocolConfig(
@@ -118,7 +118,7 @@ contract MultiUserStressTest is Setup {
     function _simulateLoss(uint256 lossAmount) internal {
         // Simulate loss by directly manipulating MorphoCredit's state
         USD3 usd3 = USD3(address(usd3Strategy));
-        IMorpho morpho = usd3.morphoBlue();
+        IMorpho morpho = usd3.morphoCredit();
         MarketParams memory marketParams = usd3.marketParams();
 
         // Calculate the market ID

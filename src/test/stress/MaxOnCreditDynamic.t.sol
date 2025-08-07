@@ -51,7 +51,7 @@ contract MaxOnCreditDynamicTest is Setup {
         super.setUp();
 
         usd3Strategy = USD3(address(strategy));
-        morpho = IMorpho(usd3Strategy.morphoBlue());
+        morpho = IMorpho(usd3Strategy.morphoCredit());
         marketParams = usd3Strategy.marketParams();
         marketId = marketParams.id();
 
@@ -329,7 +329,7 @@ contract MaxOnCreditDynamicTest is Setup {
         // Test deployment calculations when performance fees are taken
 
         // Setup yield sharing via protocol config
-        address morphoAddress = address(usd3Strategy.morphoBlue());
+        address morphoAddress = address(usd3Strategy.morphoCredit());
         address protocolConfigAddress = MorphoCredit(morphoAddress)
             .protocolConfig();
         MockProtocolConfig protocolConfig = MockProtocolConfig(

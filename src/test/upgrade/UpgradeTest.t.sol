@@ -101,7 +101,7 @@ contract UpgradeTest is Setup {
 
         // Simulate upgrade scenario: changing yield share parameters
         // Setup yield sharing via protocol config
-        address morphoAddress = address(usd3Strategy.morphoBlue());
+        address morphoAddress = address(usd3Strategy.morphoCredit());
         address protocolConfigAddress = MorphoCredit(morphoAddress)
             .protocolConfig();
         MockProtocolConfig protocolConfig = MockProtocolConfig(
@@ -237,7 +237,7 @@ contract UpgradeTest is Setup {
 
         // Verify new management can perform operations
         // Update yield sharing via protocol config
-        address morphoAddress2 = address(usd3Strategy.morphoBlue());
+        address morphoAddress2 = address(usd3Strategy.morphoCredit());
         address protocolConfigAddress2 = MorphoCredit(morphoAddress2)
             .protocolConfig();
         MockProtocolConfig protocolConfig2 = MockProtocolConfig(
@@ -398,7 +398,7 @@ contract UpgradeTest is Setup {
             .totalAssets();
         uint256 totalSupply = ITokenizedStrategy(address(usd3Strategy))
             .totalSupply();
-        address morphoBlue = address(usd3Strategy.morphoBlue());
+        address morphoBlue = address(usd3Strategy.morphoCredit());
         MarketParams memory marketParams = usd3Strategy.marketParams();
 
         // These values should remain stable and accessible

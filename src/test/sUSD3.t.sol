@@ -101,8 +101,8 @@ contract sUSD3Test is Setup {
         );
 
         // Check default durations
-        assertEq(susd3Strategy.getLockDuration(), 90 days);
-        assertEq(susd3Strategy.getCooldownDuration(), 7 days);
+        assertEq(susd3Strategy.lockDuration(), 90 days);
+        assertEq(susd3Strategy.cooldownDuration(), 7 days);
         assertEq(susd3Strategy.withdrawalWindow(), 2 days);
     }
 
@@ -346,7 +346,7 @@ contract sUSD3Test is Setup {
 
     function test_setParameters() public {
         // Get protocol config to set lock and cooldown durations
-        address morphoAddress = address(usd3.morphoBlue());
+        address morphoAddress = address(usd3.morphoCredit());
         address protocolConfigAddress = MorphoCredit(morphoAddress)
             .protocolConfig();
         MockProtocolConfig protocolConfig = MockProtocolConfig(
@@ -356,12 +356,12 @@ contract sUSD3Test is Setup {
         // Set lock duration via protocol config
         bytes32 SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
         protocolConfig.setConfig(SUSD3_LOCK_DURATION, 60 days);
-        assertEq(susd3Strategy.getLockDuration(), 60 days);
+        assertEq(susd3Strategy.lockDuration(), 60 days);
 
         // Set cooldown duration via protocol config
         bytes32 SUSD3_COOLDOWN_PERIOD = keccak256("SUSD3_COOLDOWN_PERIOD");
         protocolConfig.setConfig(SUSD3_COOLDOWN_PERIOD, 14 days);
-        assertEq(susd3Strategy.getCooldownDuration(), 14 days);
+        assertEq(susd3Strategy.cooldownDuration(), 14 days);
 
         // Set withdrawal window (locally managed)
         vm.prank(management);
@@ -371,7 +371,7 @@ contract sUSD3Test is Setup {
 
     function test_setParameters_invalidValues() public {
         // Get protocol config
-        address morphoAddress = address(usd3.morphoBlue());
+        address morphoAddress = address(usd3.morphoCredit());
         address protocolConfigAddress = MorphoCredit(morphoAddress)
             .protocolConfig();
         MockProtocolConfig protocolConfig = MockProtocolConfig(
@@ -382,12 +382,12 @@ contract sUSD3Test is Setup {
         // Set very long lock duration - will be read directly
         bytes32 SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
         protocolConfig.setConfig(SUSD3_LOCK_DURATION, 366 days);
-        assertEq(susd3Strategy.getLockDuration(), 366 days);
+        assertEq(susd3Strategy.lockDuration(), 366 days);
 
         // Set very long cooldown - will be read directly
         bytes32 SUSD3_COOLDOWN_PERIOD = keccak256("SUSD3_COOLDOWN_PERIOD");
         protocolConfig.setConfig(SUSD3_COOLDOWN_PERIOD, 31 days);
-        assertEq(susd3Strategy.getCooldownDuration(), 31 days);
+        assertEq(susd3Strategy.cooldownDuration(), 31 days);
 
         // Window too short
         vm.prank(management);
