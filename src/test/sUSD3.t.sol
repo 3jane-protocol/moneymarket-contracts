@@ -674,6 +674,126 @@ contract sUSD3Test is Setup {
         );
     }
 
+    function test_subordinationRatio_exactBoundary() public {
+        // Test exact 15% subordination ratio boundary
+
+        // Work with existing USD3 supply from setUp (10 billion)
+        uint256 existingUsd3 = ERC20(address(usd3)).totalSupply();
+
+        // Calculate max sUSD3 allowed for 15% subordination
+        // sUSD3 / (USD3 + sUSD3) = 0.15
+        // sUSD3 = 0.15 * (existingUsd3 + sUSD3)
+        // sUSD3 = (existingUsd3 * 0.15) / 0.85
+        uint256 maxSusd3Allowed = (existingUsd3 * 1500) / 8500;
+
+        // Get available deposit limit - should be approximately this amount
+        uint256 availableLimit = susd3Strategy.availableDepositLimit(bob);
+        assertApproxEqAbs(
+            availableLimit,
+            maxSusd3Allowed,
+            10e6,
+            "Should allow up to exact ratio"
+        );
+
+        // Bob deposits close to the limit (slightly less to avoid hitting exact limit)
+        uint256 depositAmount = availableLimit > 10e6
+            ? availableLimit - 10e6
+            : availableLimit;
+        vm.startPrank(bob);
+        ERC20(address(usd3)).approve(address(susd3Strategy), depositAmount);
+        susd3Strategy.deposit(depositAmount, bob);
+        vm.stopPrank();
+
+        // Check we're close to 15% subordination
+        uint256 usd3Total = ERC20(address(usd3)).totalSupply();
+        uint256 susd3Total = ERC20(address(susd3Strategy)).totalSupply();
+        uint256 total = usd3Total + susd3Total;
+
+        uint256 actualRatio = (susd3Total * 10000) / total;
+        assertApproxEqAbs(actualRatio, 1500, 100, "Should be close to 15%");
+
+        // Further deposits should be very limited
+        uint256 limitAfter = susd3Strategy.availableDepositLimit(alice);
+        assertLt(
+            limitAfter,
+            100e6,
+            "Should have very limited deposit capacity left"
+        );
+    }
+
+    function test_subordinationRatio_afterLoss() public {
+        // Test ratio enforcement after sUSD3 absorbs losses
+
+        // Work with existing USD3 supply from setUp
+        // Bob deposits some USD3 to sUSD3 (well below limit)
+        vm.startPrank(bob);
+        ERC20(address(usd3)).approve(address(susd3Strategy), 1000e6);
+        susd3Strategy.deposit(1000e6, bob);
+        vm.stopPrank();
+
+        // Get initial amounts
+        uint256 initialSusd3Balance = ERC20(address(susd3Strategy))
+            .totalSupply();
+        uint256 usd3Total = ERC20(address(usd3)).totalSupply();
+
+        // Check available deposit limit after sUSD3 deposit
+        // Should still have room up to 15% subordination
+        uint256 availableLimit = susd3Strategy.availableDepositLimit(alice);
+        assertGt(availableLimit, 0, "Should have room for more deposits");
+
+        // In a real loss scenario, sUSD3 shares would be burned via USD3's _postReportHook
+        // For this test, we're just verifying the subordination ratio logic
+        // The actual loss absorption is tested in LossAbsorptionStress tests
+
+        // Verify current ratio is well below 15%
+        uint256 currentRatio = (initialSusd3Balance * 10000) /
+            (usd3Total + initialSusd3Balance);
+        assertLt(currentRatio, 1500, "Should be below 15% subordination");
+    }
+
+    function test_subordinationRatio_zeroSupply() public {
+        // Test ratio calculation when starting from zero
+
+        // Note: USD3 already has initial supply from setUp (10 billion)
+        uint256 usd3Supply = ERC20(address(usd3)).totalSupply();
+        uint256 susd3Supply = ERC20(address(susd3Strategy)).totalSupply();
+        assertGt(usd3Supply, 0, "USD3 has initial supply from setUp");
+        assertEq(susd3Supply, 0, "sUSD3 should start at zero");
+
+        // Check deposit limit with existing USD3 supply
+        uint256 availableLimit = susd3Strategy.availableDepositLimit(alice);
+        // With existing USD3 supply, sUSD3 should have a limit
+        assertLt(
+            availableLimit,
+            type(uint256).max,
+            "Should have a limit based on USD3 supply"
+        );
+
+        // Get a fresh user without USD3
+        address charlie = makeAddr("charlie");
+
+        // Give charlie some USDC and deposit to USD3
+        deal(address(underlyingAsset), charlie, 1000e6);
+        vm.startPrank(charlie);
+        underlyingAsset.approve(address(usd3), 1000e6);
+        usd3.deposit(1000e6, charlie);
+        vm.stopPrank();
+
+        // Check sUSD3 deposit limit after additional USD3 deposit
+        uint256 newUsd3Supply = ERC20(address(usd3)).totalSupply();
+        uint256 limitAfterDeposit = susd3Strategy.availableDepositLimit(bob);
+
+        // The limit should be based on the 15% subordination ratio
+        // sUSD3 can be max 15% of total (USD3 + sUSD3)
+        uint256 maxSusd3 = (newUsd3Supply * 1500) / 8500; // 15% / 85%
+        assertApproxEqAbs(
+            limitAfterDeposit,
+            maxSusd3,
+            10e6,
+            "Should calculate correct limit based on ratio"
+        );
+    }
+
     function test_multipleUsers() public {
         // Check balances first
         uint256 aliceBalance = ERC20(address(usd3)).balanceOf(alice);

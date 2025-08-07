@@ -9,6 +9,9 @@ import {MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
 import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBalancesLib.sol";
 import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
+import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
+import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 
 contract OperationTest is Setup {
     using MorphoBalancesLib for IMorpho;
@@ -343,4 +346,101 @@ contract OperationTest is Setup {
         (trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                    SYNC TRANCHE SHARE TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_syncTrancheShare_onlyKeeper() public {
+        // Test that only keepers can call syncTrancheShare
+        vm.prank(user);
+        vm.expectRevert();
+        usd3Strategy.syncTrancheShare();
+
+        // Keeper should succeed
+        vm.prank(keeper);
+        usd3Strategy.syncTrancheShare();
+    }
+
+    function test_syncTrancheShare_invalidValues() public {
+        // Get protocol config and set invalid value
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(
+            protocolConfigAddress
+        );
+
+        // Set invalid tranche share (> 100%)
+        bytes32 TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
+        protocolConfig.setConfig(TRANCHE_SHARE_VARIANT, 10_001); // 100.01%
+
+        // Should revert with invalid share
+        vm.prank(keeper);
+        vm.expectRevert("Invalid tranche share");
+        usd3Strategy.syncTrancheShare();
+    }
+
+    function test_syncTrancheShare_eventEmission() public {
+        // Get protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(
+            protocolConfigAddress
+        );
+
+        // Set a valid tranche share
+        bytes32 TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
+        uint256 newShare = 3000; // 30%
+        protocolConfig.setConfig(TRANCHE_SHARE_VARIANT, newShare);
+
+        // Expect event emission
+        vm.expectEmit(true, true, true, true);
+        emit TrancheShareSynced(newShare);
+
+        vm.prank(keeper);
+        usd3Strategy.syncTrancheShare();
+
+        // Verify the performance fee was updated
+        assertEq(
+            ITokenizedStrategy(address(usd3Strategy)).performanceFee(),
+            newShare
+        );
+    }
+
+    function test_syncTrancheShare_duringActiveOperations() public {
+        // Setup: User deposits
+        uint256 depositAmount = 1000e6;
+        mintAndDepositIntoStrategy(strategy, user, depositAmount);
+
+        // Get protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(
+            protocolConfigAddress
+        );
+
+        // Change tranche share during active positions
+        bytes32 TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
+        protocolConfig.setConfig(TRANCHE_SHARE_VARIANT, 3000); // 30% instead of 50%
+
+        // Sync should work without disrupting positions
+        vm.prank(keeper);
+        usd3Strategy.syncTrancheShare();
+
+        // Verify the performance fee was updated
+        assertEq(
+            ITokenizedStrategy(address(usd3Strategy)).performanceFee(),
+            3000
+        );
+
+        // Basic operation test - user should still have their shares
+        uint256 userBalance = strategy.balanceOf(user);
+        assertGt(userBalance, 0, "User should still have shares after sync");
+    }
+
+    // Event definition for testing
+    event TrancheShareSynced(uint256 trancheShare);
 }

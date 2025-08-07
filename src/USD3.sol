@@ -317,10 +317,9 @@ contract USD3 is BaseHooksUpgradeable {
 
         _tend(asset.balanceOf(address(this)));
 
-       return morphoCredit.expectedSupplyAssets(
-            params,
-            address(this)
-        ) + asset.balanceOf(address(this));
+        return
+            morphoCredit.expectedSupplyAssets(params, address(this)) +
+            asset.balanceOf(address(this));
     }
 
     /// @dev Rebalances between idle and deployed funds to maintain maxOnCredit ratio
