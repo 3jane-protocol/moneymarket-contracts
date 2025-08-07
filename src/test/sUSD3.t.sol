@@ -2,7 +2,7 @@
 pragma solidity ^0.8.18;
 
 import "forge-std/console2.sol";
-import {Setup, ERC20, IStrategyInterface} from "./utils/Setup.sol";
+import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
 import {sUSD3} from "../sUSD3.sol";
 import {USD3} from "../USD3.sol";
 import {ISUSD3} from "../interfaces/ISUSD3.sol";
@@ -84,19 +84,12 @@ contract sUSD3Test is Setup {
     //////////////////////////////////////////////////////////////*/
 
     function test_initialization() public {
-        assertEq(
-            IStrategyInterface(address(susd3Strategy)).asset(),
-            susd3Asset
-        );
+        assertEq(IUSD3(address(susd3Strategy)).asset(), susd3Asset);
         assertEq(susd3Strategy.symbol(), "sUSD3");
+        assertEq(IUSD3(address(susd3Strategy)).management(), management);
+        assertEq(IUSD3(address(susd3Strategy)).keeper(), keeper);
         assertEq(
-            IStrategyInterface(address(susd3Strategy)).management(),
-            management
-        );
-        assertEq(IStrategyInterface(address(susd3Strategy)).keeper(), keeper);
-        assertEq(
-            IStrategyInterface(address(susd3Strategy))
-                .performanceFeeRecipient(),
+            IUSD3(address(susd3Strategy)).performanceFeeRecipient(),
             management
         );
 

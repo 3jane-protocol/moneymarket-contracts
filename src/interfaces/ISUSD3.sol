@@ -23,6 +23,8 @@ interface ISUSD3 is IERC20 {
         uint256 shares,
         uint256 assets
     );
+    event USD3StrategyUpdated(address newStrategy);
+    event WithdrawalWindowUpdated(uint256 newWindow);
 
     // Core functions
     function startCooldown(uint256 shares) external;
@@ -45,4 +47,12 @@ interface ISUSD3 is IERC20 {
     function lockDuration() external view returns (uint256);
     function cooldownDuration() external view returns (uint256);
     function withdrawalWindow() external view returns (uint256);
+    function usd3Strategy() external view returns (address);
+    function morphoCredit() external view returns (address);
+    function getMaxSubordinationRatio() external view returns (uint256);
+    function symbol() external pure returns (string memory);
+
+    // Management functions
+    function setUsd3Strategy(address _usd3Strategy) external;
+    function setWithdrawalWindow(uint256 _withdrawalWindow) external;
 }

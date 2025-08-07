@@ -2,7 +2,7 @@
 pragma solidity ^0.8.18;
 
 import "forge-std/console2.sol";
-import {Setup, ERC20, IStrategyInterface} from "./utils/Setup.sol";
+import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
 import {USD3} from "../USD3.sol";
 import {IMorpho} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";

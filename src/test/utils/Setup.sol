@@ -5,7 +5,7 @@ import "forge-std/console2.sol";
 import {Test} from "forge-std/Test.sol";
 
 import {ERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
-import {IStrategyInterface} from "../../interfaces/IStrategyInterface.sol";
+import {IUSD3} from "../../interfaces/IUSD3.sol";
 
 // Inherit the events so they can be checked if desired.
 import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
@@ -34,7 +34,7 @@ contract Setup is Test, IEvents {
     // Contract instances that we will use repeatedly.
     ERC20 public asset;
     ERC20 public underlyingAsset;
-    IStrategyInterface public strategy;
+    IUSD3 public strategy;
 
     // StrategyFactory not used in this test setup
 
@@ -72,7 +72,7 @@ contract Setup is Test, IEvents {
         // StrategyFactory not used in this test setup
 
         // Deploy strategy and set variables
-        strategy = IStrategyInterface(setUpStrategy());
+        strategy = IUSD3(setUpStrategy());
 
         factory = strategy.FACTORY();
 
@@ -164,9 +164,7 @@ contract Setup is Test, IEvents {
 
         // Set emergency admin
         vm.prank(management);
-        IStrategyInterface(address(usd3Proxy)).setEmergencyAdmin(
-            emergencyAdmin
-        );
+        IUSD3(address(usd3Proxy)).setEmergencyAdmin(emergencyAdmin);
 
         // Set USD3 address on MorphoCredit for access control
         vm.prank(morphoOwner);
@@ -181,7 +179,7 @@ contract Setup is Test, IEvents {
     }
 
     function depositIntoStrategy(
-        IStrategyInterface _strategy,
+        IUSD3 _strategy,
         address _user,
         uint256 _amount
     ) public {
@@ -193,7 +191,7 @@ contract Setup is Test, IEvents {
     }
 
     function mintAndDepositIntoStrategy(
-        IStrategyInterface _strategy,
+        IUSD3 _strategy,
         address _user,
         uint256 _amount
     ) public {
@@ -210,7 +208,7 @@ contract Setup is Test, IEvents {
 
     // For checking the amounts in the strategy
     function checkStrategyTotals(
-        IStrategyInterface _strategy,
+        IUSD3 _strategy,
         uint256 _totalAssets,
         uint256 _totalDebt,
         uint256 _totalIdle
