@@ -412,26 +412,6 @@ contract sUSD3Test is Setup {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        LOSS ABSORPTION TESTS
-    //////////////////////////////////////////////////////////////*/
-
-    function test_absorbLoss() public {
-        uint256 lossAmount = 100e6;
-
-        vm.prank(keeper);
-        susd3Strategy.absorbLoss(lossAmount);
-
-        assertEq(susd3Strategy.totalLossesAbsorbed(), lossAmount);
-        assertEq(susd3Strategy.lastLossTime(), block.timestamp);
-    }
-
-    function test_absorbLoss_onlyKeeper() public {
-        vm.prank(alice);
-        vm.expectRevert();
-        susd3Strategy.absorbLoss(100e6);
-    }
-
-    /*//////////////////////////////////////////////////////////////
                         EDGE CASE TESTS
     //////////////////////////////////////////////////////////////*/
 

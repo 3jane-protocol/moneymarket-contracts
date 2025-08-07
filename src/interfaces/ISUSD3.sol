@@ -6,9 +6,9 @@ import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IER
 interface ISUSD3 is IERC20 {
     // Structs
     struct UserCooldown {
-        uint256 cooldownEnd;
-        uint256 windowEnd;
-        uint256 shares;
+        uint64 cooldownEnd;
+        uint64 windowEnd;
+        uint128 shares;
     }
 
     // Events
@@ -23,8 +23,6 @@ interface ISUSD3 is IERC20 {
         uint256 shares,
         uint256 assets
     );
-    event LossAbsorbed(uint256 amount, uint256 timestamp);
-    event YieldReceived(uint256 amount, address indexed from);
 
     // Core functions
     function startCooldown(uint256 shares) external;
@@ -47,8 +45,4 @@ interface ISUSD3 is IERC20 {
     function lockDuration() external view returns (uint256);
     function cooldownDuration() external view returns (uint256);
     function withdrawalWindow() external view returns (uint256);
-
-    // Loss tracking
-    function totalLossesAbsorbed() external view returns (uint256);
-    function absorbLoss(uint256 amount) external;
 }

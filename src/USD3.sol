@@ -13,11 +13,6 @@ import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrat
 import {TokenizedStrategyStorageLib} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "@3jane-morpho-blue/interfaces/IProtocolConfig.sol";
 
-// Import sUSD3 interface for loss absorption
-interface sUSD3 {
-    function absorbLoss(uint256 amount) external;
-}
-
 // Interface to access protocolConfig from MorphoCredit
 interface IMorphoCredit is IMorpho {
     function protocolConfig() external view returns (address);

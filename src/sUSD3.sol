@@ -64,13 +64,7 @@ contract sUSD3 is BaseHooksUpgradeable {
     address public usd3Strategy; // USD3 strategy address for ratio checks
     address public morphoCredit; // MorphoCredit address to access protocol config
 
-    // Yield tracking
-    uint256 public accumulatedYield; // Yield received from USD3
-    uint256 public lastYieldUpdate; // Last time yield was updated
-
-    // Loss tracking
-    uint256 public totalLossesAbsorbed; // Total losses absorbed by sUSD3
-    uint256 public lastLossTime; // Last time losses were absorbed
+    // Reserved for future use
 
     /*//////////////////////////////////////////////////////////////
                             EVENTS
@@ -87,8 +81,6 @@ contract sUSD3 is BaseHooksUpgradeable {
         uint256 shares,
         uint256 assets
     );
-    event LossAbsorbed(uint256 amount, uint256 timestamp);
-    event YieldReceived(uint256 amount, address indexed from);
     event USD3StrategyUpdated(address newStrategy);
     event WithdrawalWindowUpdated(uint256 newWindow);
 
@@ -427,21 +419,6 @@ contract sUSD3 is BaseHooksUpgradeable {
         );
         withdrawalWindow = _withdrawalWindow;
         emit WithdrawalWindowUpdated(_withdrawalWindow);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        LOSS ABSORPTION
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Absorb losses from USD3 markdowns
-     * @param amount Amount of losses to absorb
-     * @dev This would be called by USD3 or a keeper during markdown events
-     */
-    function absorbLoss(uint256 amount) external onlyKeepers {
-        totalLossesAbsorbed += amount;
-        lastLossTime = block.timestamp;
-        emit LossAbsorbed(amount, block.timestamp);
     }
 
     /*//////////////////////////////////////////////////////////////
