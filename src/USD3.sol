@@ -315,18 +315,12 @@ contract USD3 is BaseHooksUpgradeable {
 
         morphoCredit.accrueInterest(params);
 
-        // Always tend to maintain proper deployment ratio
-        uint256 _totalIdle = asset.balanceOf(address(this));
-        _tend(_totalIdle);
+        _tend(asset.balanceOf(address(this)));
 
-        uint256 currentTotalAssets = morphoCredit.expectedSupplyAssets(
+       return morphoCredit.expectedSupplyAssets(
             params,
             address(this)
         ) + asset.balanceOf(address(this));
-
-        // Loss absorption is now handled in _postReportHook
-
-        return currentTotalAssets;
     }
 
     /// @dev Rebalances between idle and deployed funds to maintain maxOnCredit ratio
