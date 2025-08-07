@@ -2,7 +2,7 @@
 pragma solidity ^0.8.18;
 
 import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IMorpho, MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
@@ -10,7 +10,7 @@ import {MorphoLib} from "@3jane-morpho-blue/libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBalancesLib.sol";
 import {SharesMathLib} from "@3jane-morpho-blue/libraries/SharesMathLib.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {TokenizedStrategyStorageLib} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 
 // Import sUSD3 interface for loss absorption
 interface sUSD3 {
@@ -392,18 +392,10 @@ contract USD3 is BaseHooksUpgradeable {
 
     /// @dev Directly burn shares from sUSD3's balance using storage manipulation
     function _burnSharesFromSusd3(uint256 amount) internal {
-        // Calculate storage slots
-        bytes32 baseSlot = bytes32(
-            uint256(keccak256("yearn.base.strategy.storage")) - 1
-        );
-
-        // totalSupply is at slot 2 in the StrategyData struct
-        bytes32 totalSupplySlot = bytes32(uint256(baseSlot) + 2);
-
-        // balances mapping is at slot 4
-        // For a mapping, the storage slot is keccak256(abi.encode(key, mappingSlot))
-        bytes32 balanceSlot = keccak256(
-            abi.encode(susd3Strategy, uint256(baseSlot) + 4)
+        // Calculate storage slots using the library
+        bytes32 totalSupplySlot = TokenizedStrategyStorageLib.totalSupplySlot();
+        bytes32 balanceSlot = TokenizedStrategyStorageLib.balancesSlot(
+            susd3Strategy
         );
 
         // Read current values
@@ -484,23 +476,12 @@ contract USD3 is BaseHooksUpgradeable {
     function setYieldShare(uint16 _yieldShare) external onlyManagement {
         require(_yieldShare <= 10_000, "Yield share > 100%");
 
-        // TokenizedStrategy storage slot calculation
-        bytes32 baseSlot = bytes32(
-            uint256(keccak256("yearn.base.strategy.storage")) - 1
-        );
-
-        // performanceFee is in slot 8 of the struct, packed with other variables:
-        // Slot 8 layout (from right to left):
-        // - uint96 fullProfitUnlockDate (bits 0-95)
-        // - address keeper (bits 96-255)
-        // Slot 9 layout:
+        // Get the slot for profitMaxUnlockTime, performanceFee, and performanceFeeRecipient (packed)
+        // This slot contains:
         // - uint32 profitMaxUnlockTime (bits 0-31)
         // - uint16 performanceFee (bits 32-47)
         // - address performanceFeeRecipient (bits 48-207)
-        // - uint96 lastReport (bits 208-303)
-
-        uint256 slot9Offset = 9;
-        bytes32 targetSlot = bytes32(uint256(baseSlot) + slot9Offset);
+        bytes32 targetSlot = TokenizedStrategyStorageLib.profitConfigSlot();
 
         // Read current slot value
         uint256 currentSlotValue;
