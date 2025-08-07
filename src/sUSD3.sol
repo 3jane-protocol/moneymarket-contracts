@@ -133,6 +133,10 @@ contract sUSD3 is BaseHooksUpgradeable {
         // Note: usd3Strategy will be set by management after both contracts are deployed
     }
 
+    /**
+     * @notice Get the symbol for the sUSD3 token
+     * @return Symbol string "sUSD3"
+     */
     function symbol() external pure returns (string memory) {
         return "sUSD3";
     }
@@ -141,28 +145,22 @@ contract sUSD3 is BaseHooksUpgradeable {
                         CORE STRATEGY FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @dev Deploy funds - for sUSD3, we keep USD3 tokens in the strategy
-     * @param _amount Amount to deploy (not used as we don't deploy elsewhere)
-     */
+    /// @dev sUSD3 holds USD3 tokens directly without deploying elsewhere
+    /// @param _amount Amount to deploy (unused)
     function _deployFunds(uint256 _amount) internal override {
         // USD3 tokens stay in strategy (not deployed elsewhere)
         // Lock tracking is handled in deposit/mint overrides
     }
 
-    /**
-     * @dev Free funds - for sUSD3, funds are already available
-     * @param _amount Amount to free (not used as funds are already free)
-     */
+    /// @dev Funds are always available as USD3 tokens are held directly
+    /// @param _amount Amount to free (unused)
     function _freeFunds(uint256 _amount) internal override {
         // Funds are already in the strategy, nothing to do
         // This is called during withdrawals but cooldown is enforced elsewhere
     }
 
-    /**
-     * @dev Harvest and report - USD3 shares are minted directly to us
-     * @return Total USD3 tokens held by the strategy
-     */
+    /// @dev Returns USD3 balance; yield is automatically received as USD3 mints shares to us
+    /// @return Total USD3 tokens held by the strategy
     function _harvestAndReport() internal override returns (uint256) {
         // USD3 automatically mints shares to us during its report()
         // We just need to return our current balance
@@ -174,9 +172,7 @@ contract sUSD3 is BaseHooksUpgradeable {
                         HOOKS IMPLEMENTATION
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @dev Pre-deposit hook to track lock period (handles both deposit and mint)
-     */
+    /// @dev Pre-deposit hook to track lock period (handles both deposit and mint)
     function _preDepositHook(
         uint256 assets,
         uint256 shares,
@@ -194,9 +190,7 @@ contract sUSD3 is BaseHooksUpgradeable {
         }
     }
 
-    /**
-     * @dev Post-withdraw hook to update cooldown after successful withdrawal or redemption
-     */
+    /// @dev Post-withdraw hook to update cooldown after successful withdrawal
     function _postWithdrawHook(
         uint256 assets,
         uint256 shares,
@@ -256,6 +250,7 @@ contract sUSD3 is BaseHooksUpgradeable {
 
     /**
      * @notice Cancel active cooldown
+     * @dev Resets cooldown state, requiring user to start new cooldown to withdraw
      */
     function cancelCooldown() external {
         require(cooldowns[msg.sender].shares > 0, "No active cooldown");
@@ -267,11 +262,9 @@ contract sUSD3 is BaseHooksUpgradeable {
                         VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @notice Check available deposit limit based on subordination ratio
-     * @param _owner Address to check limit for
-     * @return Maximum deposit amount allowed
-     */
+    /// @dev Enforces maximum 15% subordination ratio relative to USD3
+    /// @param _owner Address to check limit for
+    /// @return Maximum deposit amount allowed
     function availableDepositLimit(
         address _owner
     ) public view override returns (uint256) {
@@ -317,11 +310,9 @@ contract sUSD3 is BaseHooksUpgradeable {
         return type(uint256).max;
     }
 
-    /**
-     * @notice Check available withdraw limit (considers cooldowns)
-     * @param _owner Address to check limit for
-     * @return Maximum withdrawal amount allowed in assets
-     */
+    /// @dev Enforces lock period, cooldown, and withdrawal window requirements
+    /// @param _owner Address to check limit for
+    /// @return Maximum withdrawal amount allowed in assets
     function availableWithdrawLimit(
         address _owner
     ) public view override returns (uint256) {
@@ -422,6 +413,11 @@ contract sUSD3 is BaseHooksUpgradeable {
         return duration > 0 ? duration : 7 days; // Default to 7 days if not set
     }
 
+    /**
+     * @notice Set the withdrawal window duration
+     * @param _withdrawalWindow Window duration in seconds (1-7 days)
+     * @dev Only callable by management
+     */
     function setWithdrawalWindow(
         uint256 _withdrawalWindow
     ) external onlyManagement {

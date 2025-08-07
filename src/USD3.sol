@@ -23,6 +23,15 @@ interface IMorphoCredit is IMorpho {
     function protocolConfig() external view returns (address);
 }
 
+/**
+ * @title USD3
+ * @author 3Jane Protocol
+ * @notice Senior tranche strategy for USDC-based lending on 3Jane's credit markets
+ * @dev Implements Yearn V3 tokenized strategy pattern for unsecured lending via MorphoCredit.
+ * Deploys USDC capital to 3Jane's modified Morpho Blue markets that use credit-based
+ * underwriting instead of collateral. Features first-loss protection through sUSD3
+ * subordinate tranche absorption.
+ */
 contract USD3 is BaseHooksUpgradeable {
     using SafeERC20 for IERC20;
     using MorphoLib for IMorpho;
@@ -33,10 +42,10 @@ contract USD3 is BaseHooksUpgradeable {
     /*//////////////////////////////////////////////////////////////
                         STORAGE - MORPHO PARAMETERS
     //////////////////////////////////////////////////////////////*/
-    /// @notice Address for the MorphoCredit contract.
+    /// @notice MorphoCredit contract for lending operations
     IMorpho public morphoCredit;
 
-    // these internal vars can be accessed externally via marketParams()
+    /// @dev Market parameters - accessed externally via marketParams()
     address internal collateralToken;
     address internal oracle;
     address internal irm;
@@ -46,16 +55,29 @@ contract USD3 is BaseHooksUpgradeable {
     /*//////////////////////////////////////////////////////////////
                         UPGRADEABLE STORAGE
     //////////////////////////////////////////////////////////////*/
-    // Ratio Management
-    uint256 public maxOnCredit; // MAX_ON_CREDIT in basis points (5000 = 50%)
-    address public susd3Strategy; // For ratio calculations
+    /// @notice Maximum percentage of funds to deploy to credit markets (basis points)
+    /// @dev 10000 = 100%, 5000 = 50%. Controls exposure to credit risk
+    uint256 public maxOnCredit;
 
-    // Access Control
+    /// @notice Address of the subordinate sUSD3 strategy
+    /// @dev Used for loss absorption and yield distribution
+    address public susd3Strategy;
+
+    /// @notice Whether whitelist is enforced for deposits
     bool public whitelistEnabled;
+
+    /// @notice Whitelist status for addresses
     mapping(address => bool) public whitelist;
+
+    /// @notice Minimum deposit amount required
     uint256 public minDeposit;
-    uint256 public minCommitmentTime; // Optional commitment time in seconds
-    mapping(address => uint256) public depositTimestamp; // Track deposit times
+
+    /// @notice Minimum time funds must remain deposited (seconds)
+    uint256 public minCommitmentTime;
+
+    /// @notice Timestamp of last deposit for each user
+    /// @dev Used to enforce commitment periods
+    mapping(address => uint256) public depositTimestamp;
 
     /*//////////////////////////////////////////////////////////////
                             EVENTS
@@ -70,6 +92,14 @@ contract USD3 is BaseHooksUpgradeable {
         _disableInitializers();
     }
 
+    /**
+     * @notice Initialize the USD3 strategy
+     * @param _morphoCredit Address of the MorphoCredit lending contract
+     * @param _params Market parameters for the lending market
+     * @param _name Name for the strategy token
+     * @param _management Management address for the strategy
+     * @param _keeper Keeper address for automated operations
+     */
     function initialize(
         address _morphoCredit,
         MarketParams memory _params,
@@ -103,18 +133,34 @@ contract USD3 is BaseHooksUpgradeable {
         maxOnCredit = 10_000; // 100% by default (no restriction)
     }
 
+    /**
+     * @notice Get the symbol for the USD3 token
+     * @return Symbol string "USD3"
+     */
     function symbol() external pure returns (string memory) {
         return "USD3";
     }
 
+    /**
+     * @notice Get the ID of the MorphoCredit market
+     * @return Id The unique identifier for the market
+     */
     function marketId() external view returns (Id) {
         return _marketParams().id();
     }
 
+    /**
+     * @notice Get the full market parameters
+     * @return MarketParams structure with all market configuration
+     */
     function marketParams() external view returns (MarketParams memory) {
         return _marketParams();
     }
 
+    /**
+     * @dev Construct market parameters structure
+     * @return Market parameters for the lending market
+     */
     function _marketParams() internal view returns (MarketParams memory) {
         return
             MarketParams({
@@ -127,6 +173,13 @@ contract USD3 is BaseHooksUpgradeable {
             });
     }
 
+    /**
+     * @dev Get current market liquidity information
+     * @return totalSupplyAssets Total assets supplied to the market
+     * @return totalShares Total supply shares in the market
+     * @return totalBorrowAssets Total assets borrowed from the market
+     * @return liquidity Available liquidity in the market
+     */
     function getMarketLiquidity()
         internal
         view
@@ -142,6 +195,12 @@ contract USD3 is BaseHooksUpgradeable {
         liquidity = totalSupplyAssets - totalBorrowAssets;
     }
 
+    /**
+     * @dev Get strategy's position in the market
+     * @return shares Number of supply shares held
+     * @return assetsMax Maximum assets that can be withdrawn
+     * @return liquidity Available market liquidity
+     */
     function getPosition()
         internal
         view
@@ -155,6 +214,8 @@ contract USD3 is BaseHooksUpgradeable {
         assetsMax = shares.toAssetsDown(totalSupplyAssets, totalShares);
     }
 
+    /// @dev Deploy funds to MorphoCredit market respecting maxOnCredit ratio
+    /// @param _amount Amount of asset to deploy
     function _deployFunds(uint256 _amount) internal override {
         if (_amount == 0) return;
 
@@ -201,6 +262,8 @@ contract USD3 is BaseHooksUpgradeable {
         }
     }
 
+    /// @dev Withdraw funds from MorphoCredit market
+    /// @param amount Amount of asset to free up
     function _freeFunds(uint256 amount) internal override {
         if (amount == 0) return;
 
@@ -245,6 +308,8 @@ contract USD3 is BaseHooksUpgradeable {
         require(balance > 0, "No tokens received from withdraw");
     }
 
+    /// @dev Harvest interest from MorphoCredit and report total assets
+    /// @return Total assets held by the strategy
     function _harvestAndReport() internal override returns (uint256) {
         MarketParams memory params = _marketParams();
 
@@ -264,6 +329,8 @@ contract USD3 is BaseHooksUpgradeable {
         return currentTotalAssets;
     }
 
+    /// @dev Rebalances between idle and deployed funds to maintain maxOnCredit ratio
+    /// @param _totalIdle Current idle funds available
     function _tend(uint256 _totalIdle) internal virtual override {
         uint256 totalValue = TokenizedStrategy.totalAssets();
         uint256 targetDeployment = (totalValue * maxOnCredit) / 10_000;
@@ -282,6 +349,9 @@ contract USD3 is BaseHooksUpgradeable {
         }
     }
 
+    /// @dev Returns available withdraw limit, enforcing commitment time restrictions
+    /// @param _owner Address to check limit for
+    /// @return Maximum amount that can be withdrawn
     function availableWithdrawLimit(
         address _owner
     ) public view override returns (uint256) {
@@ -304,6 +374,9 @@ contract USD3 is BaseHooksUpgradeable {
         return availableLiquidity;
     }
 
+    /// @dev Returns available deposit limit, enforcing whitelist if enabled
+    /// @param _owner Address to check limit for
+    /// @return Maximum amount that can be deposited
     function availableDepositLimit(
         address _owner
     ) public view override returns (uint256) {
@@ -345,7 +418,7 @@ contract USD3 is BaseHooksUpgradeable {
         }
     }
 
-    /// @dev Post-withdraw hook to clear commitment on full exit (handles both withdraw and redeem)
+    /// @dev Post-withdraw hook to clear commitment on full exit
     function _postWithdrawHook(
         uint256 assets,
         uint256 shares,
@@ -386,7 +459,10 @@ contract USD3 is BaseHooksUpgradeable {
                         INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Directly burn shares from sUSD3's balance using storage manipulation
+    /**
+     * @dev Directly burn shares from sUSD3's balance using storage manipulation
+     * @param amount Number of shares to burn from sUSD3
+     */
     function _burnSharesFromSusd3(uint256 amount) internal {
         // Calculate storage slots using the library
         bytes32 totalSupplySlot = TokenizedStrategyStorageLib.totalSupplySlot();
@@ -425,12 +501,22 @@ contract USD3 is BaseHooksUpgradeable {
                         MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Set the maximum percentage of funds to deploy to credit markets
+     * @param _maxOnCredit Percentage in basis points (10000 = 100%)
+     * @dev Only callable by management
+     */
     function setMaxOnCredit(uint256 _maxOnCredit) external onlyManagement {
         require(_maxOnCredit <= 10_000, "Invalid ratio");
         maxOnCredit = _maxOnCredit;
         emit MaxOnCreditUpdated(_maxOnCredit);
     }
 
+    /**
+     * @notice Set the sUSD3 subordinate strategy address
+     * @param _susd3Strategy Address of the sUSD3 strategy
+     * @dev Only callable by management. After calling, also set performance fee recipient.
+     */
     function setSusd3Strategy(address _susd3Strategy) external onlyManagement {
         address oldStrategy = susd3Strategy;
         susd3Strategy = _susd3Strategy;
@@ -441,10 +527,19 @@ contract USD3 is BaseHooksUpgradeable {
         // to ensure yield distribution goes to sUSD3
     }
 
+    /**
+     * @notice Enable or disable whitelist requirement
+     * @param _enabled True to enable whitelist, false to disable
+     */
     function setWhitelistEnabled(bool _enabled) external onlyManagement {
         whitelistEnabled = _enabled;
     }
 
+    /**
+     * @notice Update whitelist status for an address
+     * @param _user Address to update
+     * @param _allowed True to whitelist, false to remove from whitelist
+     */
     function setWhitelist(
         address _user,
         bool _allowed
@@ -453,11 +548,19 @@ contract USD3 is BaseHooksUpgradeable {
         emit WhitelistUpdated(_user, _allowed);
     }
 
+    /**
+     * @notice Set minimum deposit amount
+     * @param _minDeposit Minimum amount required for deposits
+     */
     function setMinDeposit(uint256 _minDeposit) external onlyManagement {
         minDeposit = _minDeposit;
         emit MinDepositUpdated(_minDeposit);
     }
 
+    /**
+     * @notice Set minimum commitment time for deposits
+     * @param _minCommitmentTime Time in seconds funds must remain deposited
+     */
     function setMinCommitmentTime(
         uint256 _minCommitmentTime
     ) external onlyManagement {
