@@ -49,7 +49,7 @@ interface ISUSD3 is IERC20 {
     function withdrawalWindow() external view returns (uint256);
     function usd3Strategy() external view returns (address);
     function morphoCredit() external view returns (address);
-    function getMaxSubordinationRatio() external view returns (uint256);
+    function maxSubordinationRatio() external view returns (uint256);
     function symbol() external pure returns (string memory);
 
     // Management functions

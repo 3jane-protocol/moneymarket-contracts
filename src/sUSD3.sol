@@ -270,11 +270,10 @@ contract sUSD3 is BaseHooksUpgradeable {
         uint256 susd3Usd3Holdings = asset.balanceOf(address(this));
 
         // Get max subordination ratio from ProtocolConfig
-        uint256 maxSubordinationRatio = getMaxSubordinationRatio();
+        uint256 maxRatio = maxSubordinationRatio();
 
         // Calculate max USD3 that sUSD3 can hold (15% of USD3 total supply)
-        uint256 maxUsd3Allowed = (usd3TotalSupply * maxSubordinationRatio) /
-            MAX_BPS;
+        uint256 maxUsd3Allowed = (usd3TotalSupply * maxRatio) / MAX_BPS;
 
         if (susd3Usd3Holdings >= maxUsd3Allowed) {
             return 0; // Already at max subordination
@@ -348,7 +347,7 @@ contract sUSD3 is BaseHooksUpgradeable {
      * @notice Get the maximum subordination ratio from ProtocolConfig
      * @return Maximum subordination ratio in basis points
      */
-    function getMaxSubordinationRatio() public view returns (uint256) {
+    function maxSubordinationRatio() public view returns (uint256) {
         IProtocolConfig config = IProtocolConfig(
             IMorphoCredit(morphoCredit).protocolConfig()
         );
