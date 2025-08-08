@@ -490,4 +490,81 @@ contract CooldownEdgeCasesTest is Setup {
         uint256 withdrawn = susd3Strategy.redeem(shares, alice, alice);
         assertGt(withdrawn, 0, "Should withdraw after rapid cycles");
     }
+
+    /**
+     * @notice Test shutdown with pending cooldowns
+     * @dev Ensures pending cooldowns are bypassed during shutdown
+     */
+    function test_shutdown_pending_cooldowns() public {
+        // Alice and Bob deposit USD3 into sUSD3
+        vm.startPrank(alice);
+        ERC20(address(usd3Strategy)).approve(address(susd3Strategy), 5000e6);
+        uint256 aliceShares = susd3Strategy.deposit(5000e6, alice);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        ERC20(address(usd3Strategy)).approve(address(susd3Strategy), 5000e6);
+        uint256 bobShares = susd3Strategy.deposit(5000e6, bob);
+        vm.stopPrank();
+
+        // Skip lock period
+        skip(90 days + 1);
+
+        // Alice starts cooldown
+        vm.prank(alice);
+        susd3Strategy.startCooldown(aliceShares);
+
+        // Bob starts cooldown later
+        skip(3 days);
+        vm.prank(bob);
+        susd3Strategy.startCooldown(bobShares);
+
+        // Alice is mid-cooldown, Bob just started
+        skip(2 days); // Alice at 5 days, Bob at 2 days
+
+        // Emergency shutdown
+        vm.prank(management);
+        ITokenizedStrategy(address(susd3Strategy)).shutdownStrategy();
+
+        // Both should be able to withdraw immediately
+        vm.prank(alice);
+        uint256 aliceWithdrawn = susd3Strategy.redeem(
+            aliceShares,
+            alice,
+            alice
+        );
+        assertGt(aliceWithdrawn, 0, "Alice withdraws despite pending cooldown");
+
+        vm.prank(bob);
+        uint256 bobWithdrawn = susd3Strategy.redeem(bobShares, bob, bob);
+        assertGt(bobWithdrawn, 0, "Bob withdraws despite pending cooldown");
+    }
+
+    /**
+     * @notice Test emergency admin permissions during shutdown
+     * @dev Verifies emergency admin capabilities and limitations
+     */
+    function test_emergency_admin_shutdown_powers() public {
+        // Alice deposits
+        vm.startPrank(alice);
+        ERC20(address(usd3Strategy)).approve(address(susd3Strategy), 5000e6);
+        uint256 shares = susd3Strategy.deposit(5000e6, alice);
+        vm.stopPrank();
+
+        // Management can shutdown sUSD3
+        vm.prank(management);
+        ITokenizedStrategy(address(susd3Strategy)).shutdownStrategy();
+
+        assertTrue(
+            ITokenizedStrategy(address(susd3Strategy)).isShutdown(),
+            "sUSD3 should be shutdown"
+        );
+
+        // Alice can withdraw during shutdown
+        vm.prank(alice);
+        uint256 withdrawn = susd3Strategy.redeem(shares, alice, alice);
+        assertGt(withdrawn, 0, "Should withdraw during shutdown");
+
+        // Shutdown is permanent - no toggle functionality exists
+    }
 }

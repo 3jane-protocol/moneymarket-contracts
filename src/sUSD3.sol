@@ -260,10 +260,6 @@ contract sUSD3 is BaseHooksUpgradeable {
     function availableDepositLimit(
         address _owner
     ) public view override returns (uint256) {
-        if (TokenizedStrategy.isShutdown()) {
-            return 0;
-        }
-
         // Check subordination ratio based on USD3 total supply
         uint256 usd3TotalSupply = IERC20(asset).totalSupply();
 

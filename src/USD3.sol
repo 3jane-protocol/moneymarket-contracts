@@ -378,11 +378,6 @@ contract USD3 is BaseHooksUpgradeable {
             return 0;
         }
 
-        // Check if strategy is shutdown
-        if (TokenizedStrategy.isShutdown()) {
-            return 0;
-        }
-
         // Return max uint256 to indicate no limit
         // (minDeposit will be checked in custom deposit/mint functions)
         return type(uint256).max;

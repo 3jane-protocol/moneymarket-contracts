@@ -380,4 +380,90 @@ contract CommitmentEdgeCasesTest is Setup {
         assertGt(withdrawn, 0, "Should withdraw with max loss");
         vm.stopPrank();
     }
+
+    /**
+     * @notice Test minimum deposit after share transfers
+     * @dev Ensures minimum deposit logic works correctly after receiving transferred shares
+     */
+    function test_minimum_deposit_after_transfer() public {
+        // Enable minimum deposit
+        vm.prank(management);
+        usd3Strategy.setMinDeposit(100e6);
+
+        // Alice deposits at minimum
+        vm.startPrank(alice);
+        underlyingAsset.approve(address(usd3Strategy), 100e6);
+        uint256 aliceShares = usd3Strategy.deposit(100e6, alice);
+        vm.stopPrank();
+
+        // Alice transfers shares to Bob (who hasn't deposited)
+        vm.prank(alice);
+        ERC20(address(usd3Strategy)).transfer(bob, aliceShares);
+
+        // Bob now has shares but hasn't made a deposit
+        assertEq(ERC20(address(usd3Strategy)).balanceOf(bob), aliceShares);
+        assertEq(usd3Strategy.depositTimestamp(bob), 0);
+
+        // Bob now has shares from transfer, so minimum deposit doesn't apply
+        // This is expected behavior - minimum only applies to first-time depositors
+        // with zero balance
+        vm.startPrank(bob);
+        underlyingAsset.approve(address(usd3Strategy), 200e6);
+
+        // Bob can deposit any amount since he already has shares
+        uint256 bobShares = usd3Strategy.deposit(50e6, bob);
+        assertGt(
+            bobShares,
+            0,
+            "Bob can deposit small amount with existing shares"
+        );
+
+        // Can continue depositing any amount
+        uint256 moreShares = usd3Strategy.deposit(10e6, bob);
+        assertGt(moreShares, 0, "Bob can deposit more small amounts");
+        vm.stopPrank();
+    }
+
+    /**
+     * @notice Test commitment with multiple simultaneous first deposits
+     * @dev Tests race conditions with multiple users making first deposits
+     */
+    function test_multiple_simultaneous_first_deposits() public {
+        // Enable minimum deposit
+        vm.prank(management);
+        usd3Strategy.setMinDeposit(100e6);
+
+        // Multiple users attempt first deposits simultaneously
+        address[] memory users = new address[](3);
+        users[0] = alice;
+        users[1] = bob;
+        users[2] = charlie;
+
+        for (uint256 i = 0; i < users.length; i++) {
+            vm.startPrank(users[i]);
+            underlyingAsset.approve(address(usd3Strategy), 200e6);
+
+            // All must meet minimum for first deposit
+            vm.expectRevert("Below minimum deposit");
+            usd3Strategy.deposit(50e6, users[i]);
+
+            // Deposit at minimum
+            uint256 shares = usd3Strategy.deposit(100e6, users[i]);
+            assertGt(shares, 0, "User receives shares");
+
+            // Can now deposit small amounts
+            uint256 smallShares = usd3Strategy.deposit(5e6, users[i]);
+            assertGt(smallShares, 0, "Small subsequent deposit");
+            vm.stopPrank();
+        }
+
+        // Verify all have commitment timestamps
+        for (uint256 i = 0; i < users.length; i++) {
+            assertGt(
+                usd3Strategy.depositTimestamp(users[i]),
+                0,
+                "Has commitment timestamp"
+            );
+        }
+    }
 }
