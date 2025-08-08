@@ -56,9 +56,6 @@ contract ReentrancyTest is Setup {
         vm.prank(management);
         usd3Strategy.setSusd3Strategy(address(susd3Strategy));
 
-        vm.prank(management);
-        susd3Strategy.setUsd3Strategy(address(usd3Strategy));
-
         // Setup test users
         airdrop(asset, alice, 10000e6);
         airdrop(asset, bob, 10000e6);

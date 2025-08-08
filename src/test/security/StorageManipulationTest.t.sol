@@ -52,9 +52,6 @@ contract StorageManipulationTest is Setup {
         vm.prank(management);
         usd3Strategy.setSusd3Strategy(address(susd3Strategy));
 
-        vm.prank(management);
-        susd3Strategy.setUsd3Strategy(address(usd3Strategy));
-
         // Setup yield sharing via protocol config
         address morphoAddress = address(usd3Strategy.morphoCredit());
         address protocolConfigAddress = MorphoCredit(morphoAddress)

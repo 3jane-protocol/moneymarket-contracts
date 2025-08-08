@@ -70,9 +70,6 @@ contract UpgradeTest is Setup {
         // Link strategies
         vm.prank(management);
         usd3Strategy.setSusd3Strategy(address(susd3Strategy));
-
-        vm.prank(management);
-        susd3Strategy.setUsd3Strategy(address(usd3Strategy));
     }
 
     /*//////////////////////////////////////////////////////////////

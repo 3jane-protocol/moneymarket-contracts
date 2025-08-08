@@ -60,9 +60,6 @@ contract InvariantsTest is Setup {
         vm.prank(management);
         usd3Strategy.setSusd3Strategy(address(susd3Strategy));
 
-        vm.prank(management);
-        susd3Strategy.setUsd3Strategy(address(usd3Strategy));
-
         // Setup test actors
         _setupActors();
 
@@ -174,39 +171,56 @@ contract InvariantsTest is Setup {
     }
 
     /**
-     * @notice Invariant: Subordination ratio is enforced on deposits only
-     * @dev sUSD3's USD3 holdings / USD3 totalSupply <= 0.15 enforced only on deposits
-     * @dev The ratio can temporarily exceed 15% due to USD3 withdrawals between tends
-     * @dev This is expected behavior - we only block sUSD3 deposits, not USD3 withdrawals
+     * @notice Invariant: Subordination deposit limit is correctly enforced
+     * @dev Verifies that sUSD3 deposit limits are properly enforced based on the subordination ratio
+     * @dev The ratio can exceed 15% due to USD3 withdrawals, but new deposits must be blocked when ratio >= 15%
      */
-    function invariant_subordinationRatioLimit() public {
+    function invariant_subordinationDepositEnforcement() public {
         uint256 usd3TotalSupply = ERC20(address(usd3Strategy)).totalSupply();
-        uint256 susd3Usd3Holdings = ERC20(address(usd3Strategy)).balanceOf(
-            address(susd3Strategy)
-        );
 
         if (usd3TotalSupply == 0) {
-            // If USD3 has no supply, sUSD3 shouldn't hold any USD3
+            // When USD3 has no supply, sUSD3 should not allow deposits
+            uint256 depositLimit = susd3Strategy.availableDepositLimit(
+                address(this)
+            );
             assertEq(
-                susd3Usd3Holdings,
+                depositLimit,
                 0,
-                "sUSD3 should hold no USD3 when USD3 supply is zero"
+                "Should not allow deposits when USD3 supply is zero"
             );
             return;
         }
 
-        // Calculate ratio in basis points for precision
-        // sUSD3's USD3 holdings / USD3 totalSupply
+        uint256 susd3Usd3Holdings = ERC20(address(usd3Strategy)).balanceOf(
+            address(susd3Strategy)
+        );
         uint256 ratioBps = (susd3Usd3Holdings * 10_000) / usd3TotalSupply;
 
-        // Allow temporary violations up to 30% (3000 bps) due to USD3 withdrawals
-        // The 15% limit is only enforced on sUSD3 deposits, not USD3 withdrawals
-        // Withdrawals can push the ratio significantly higher temporarily
-        assertLe(
-            ratioBps,
-            3000, // 30% in basis points - allows for temporary violations from withdrawals
-            "Subordination ratio exceeds reasonable bounds (30%)"
+        uint256 depositLimit = susd3Strategy.availableDepositLimit(
+            address(this)
         );
+
+        if (ratioBps >= 1500) {
+            // 15% or higher
+            assertEq(
+                depositLimit,
+                0,
+                "Should not allow deposits when ratio >= 15%"
+            );
+        } else {
+            assertGt(depositLimit, 0, "Should allow deposits when ratio < 15%");
+
+            // Additionally verify the limit is calculated correctly
+            uint256 maxAllowed = (usd3TotalSupply * 1500) / 10_000;
+            uint256 expectedLimit = maxAllowed > susd3Usd3Holdings
+                ? maxAllowed - susd3Usd3Holdings
+                : 0;
+            assertEq(
+                depositLimit,
+                expectedLimit,
+                "Deposit limit calculation incorrect"
+            );
+        }
     }
 
     /**

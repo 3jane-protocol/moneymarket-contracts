@@ -46,9 +46,6 @@ contract PackedStructTest is Setup {
         vm.prank(management);
         usd3.setSusd3Strategy(address(susd3Strategy));
 
-        vm.prank(management);
-        susd3Strategy.setUsd3Strategy(address(usd3));
-
         // Give test users USD3 tokens
         // Reduced amounts to fit within subordination limits
         deal(address(underlyingAsset), alice, 10_000e6);

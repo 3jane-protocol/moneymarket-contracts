@@ -54,9 +54,6 @@ contract sUSD3Test is Setup {
         vm.prank(management);
         usd3.setSusd3Strategy(address(susd3Strategy));
 
-        vm.prank(management);
-        susd3Strategy.setUsd3Strategy(address(usd3));
-
         // Give test users some USD3 tokens
         // First give them USDC
         deal(address(underlyingAsset), alice, 10_000e6);
@@ -398,10 +395,6 @@ contract sUSD3Test is Setup {
         vm.prank(alice);
         vm.expectRevert();
         susd3Strategy.setWithdrawalWindow(3 days);
-
-        vm.prank(alice);
-        vm.expectRevert();
-        susd3Strategy.setUsd3Strategy(address(0));
     }
 
     /*//////////////////////////////////////////////////////////////

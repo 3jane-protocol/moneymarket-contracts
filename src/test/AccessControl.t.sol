@@ -50,9 +50,6 @@ contract AccessControlTest is Setup {
         vm.prank(management);
         usd3Strategy.setSusd3Strategy(address(susd3Strategy));
 
-        vm.prank(management);
-        susd3Strategy.setUsd3Strategy(address(usd3Strategy));
-
         // Give users some funds
         deal(address(underlyingAsset), alice, 10_000e6);
         deal(address(underlyingAsset), bob, 10_000e6);
@@ -193,29 +190,6 @@ contract AccessControlTest is Setup {
     /*//////////////////////////////////////////////////////////////
                     sUSD3 MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-
-    function test_setUsd3Strategy_onlyManagement_sUSD3() public {
-        address newUsd3 = makeAddr("newUsd3");
-
-        // Unauthorized user cannot set
-        vm.prank(unauthorizedUser);
-        vm.expectRevert();
-        susd3Strategy.setUsd3Strategy(newUsd3);
-
-        // Keeper cannot set
-        vm.prank(keeper);
-        vm.expectRevert();
-        susd3Strategy.setUsd3Strategy(newUsd3);
-
-        // Management can set
-        vm.prank(management);
-        susd3Strategy.setUsd3Strategy(newUsd3);
-        assertEq(
-            susd3Strategy.usd3Strategy(),
-            newUsd3,
-            "USD3 strategy should be updated"
-        );
-    }
 
     function test_setWithdrawalWindow_onlyManagement() public {
         // Unauthorized user cannot set

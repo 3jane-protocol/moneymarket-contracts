@@ -84,7 +84,6 @@ contract InterestDistribution is Setup {
         ITokenizedStrategy(address(usd3Strategy)).setPerformanceFeeRecipient(
             address(susd3Strategy)
         );
-        susd3Strategy.setUsd3Strategy(address(usd3Strategy));
         vm.stopPrank();
 
         // Setup test users with USDC

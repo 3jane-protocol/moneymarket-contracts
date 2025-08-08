@@ -61,7 +61,6 @@ contract sUSD3 is BaseHooksUpgradeable {
     uint256 public withdrawalWindow; // Window to complete withdrawal (default 2 days)
 
     // Subordination management
-    address public usd3Strategy; // USD3 strategy address for ratio checks
     address public morphoCredit; // MorphoCredit address to access protocol config
 
     // Reserved for future use
@@ -81,7 +80,6 @@ contract sUSD3 is BaseHooksUpgradeable {
         uint256 shares,
         uint256 assets
     );
-    event USD3StrategyUpdated(address newStrategy);
     event WithdrawalWindowUpdated(uint256 newWindow);
 
     /*//////////////////////////////////////////////////////////////
@@ -121,8 +119,6 @@ contract sUSD3 is BaseHooksUpgradeable {
 
         // Set default withdrawal window (locally managed)
         withdrawalWindow = 2 days;
-
-        // Note: usd3Strategy will be set by management after both contracts are deployed
     }
 
     /**
@@ -264,35 +260,30 @@ contract sUSD3 is BaseHooksUpgradeable {
             return 0;
         }
 
-        // Check subordination ratio if USD3 strategy is set
-        if (usd3Strategy != address(0)) {
-            uint256 usd3TotalSupply = IERC20(usd3Strategy).totalSupply();
+        // Check subordination ratio based on USD3 total supply
+        uint256 usd3TotalSupply = IERC20(asset).totalSupply();
 
-            // If USD3 has no supply, no deposits allowed
-            if (usd3TotalSupply == 0) {
-                return 0;
-            }
-
-            // Get current USD3 holdings by this sUSD3 contract
-            uint256 susd3Usd3Holdings = asset.balanceOf(address(this));
-
-            // Get max subordination ratio from ProtocolConfig
-            uint256 maxSubordinationRatio = getMaxSubordinationRatio();
-
-            // Calculate max USD3 that sUSD3 can hold (15% of USD3 total supply)
-            uint256 maxUsd3Allowed = (usd3TotalSupply * maxSubordinationRatio) /
-                MAX_BPS;
-
-            if (susd3Usd3Holdings >= maxUsd3Allowed) {
-                return 0; // Already at max subordination
-            }
-
-            // Return remaining capacity (in USD3 tokens)
-            return maxUsd3Allowed - susd3Usd3Holdings;
+        // If USD3 has no supply, no deposits allowed
+        if (usd3TotalSupply == 0) {
+            return 0;
         }
 
-        // If no USD3 strategy set, return max
-        return type(uint256).max;
+        // Get current USD3 holdings by this sUSD3 contract
+        uint256 susd3Usd3Holdings = asset.balanceOf(address(this));
+
+        // Get max subordination ratio from ProtocolConfig
+        uint256 maxSubordinationRatio = getMaxSubordinationRatio();
+
+        // Calculate max USD3 that sUSD3 can hold (15% of USD3 total supply)
+        uint256 maxUsd3Allowed = (usd3TotalSupply * maxSubordinationRatio) /
+            MAX_BPS;
+
+        if (susd3Usd3Holdings >= maxUsd3Allowed) {
+            return 0; // Already at max subordination
+        }
+
+        // Return remaining capacity (in USD3 tokens)
+        return maxUsd3Allowed - susd3Usd3Holdings;
     }
 
     /// @dev Enforces lock period, cooldown, and withdrawal window requirements
@@ -348,16 +339,6 @@ contract sUSD3 is BaseHooksUpgradeable {
     /*//////////////////////////////////////////////////////////////
                         MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Set USD3 strategy address for ratio calculations
-     * @param _usd3Strategy Address of USD3 strategy
-     */
-    function setUsd3Strategy(address _usd3Strategy) external onlyManagement {
-        require(_usd3Strategy != address(0), "Invalid address");
-        usd3Strategy = _usd3Strategy;
-        emit USD3StrategyUpdated(_usd3Strategy);
-    }
 
     /**
      * @notice Get the maximum subordination ratio from ProtocolConfig
