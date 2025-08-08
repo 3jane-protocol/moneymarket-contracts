@@ -26,6 +26,27 @@ interface IMorphoCredit is IMorpho {
  * Deploys USDC capital to 3Jane's modified Morpho Blue markets that use credit-based
  * underwriting instead of collateral. Features first-loss protection through sUSD3
  * subordinate tranche absorption.
+ *
+ * Key features:
+ * - Senior tranche with first-loss protection from sUSD3 holders
+ * - Configurable deployment ratio to credit markets (maxOnCredit)
+ * - Automatic yield distribution to sUSD3 via performance fees
+ * - Loss absorption through direct share burning of sUSD3 holdings
+ * - Commitment period enforcement for deposits
+ * - Optional whitelist for controlled access
+ * - Dynamic fee adjustment via ProtocolConfig integration
+ *
+ * Yield Distribution Mechanism:
+ * - Tranche share distributed to sUSD3 holders via TokenizedStrategy's performance fee
+ * - Performance fee can be set from 0-100% through syncTrancheShare()
+ * - Direct storage manipulation bypasses TokenizedStrategy's 50% fee limit
+ * - Keeper-controlled updates ensure protocol-wide consistency
+ *
+ * Loss Absorption Mechanism:
+ * - When losses occur, sUSD3 shares are burned first (subordination)
+ * - Direct storage manipulation used to burn shares without asset transfers
+ * - USD3 holders protected up to total sUSD3 holdings
+ * - Losses exceeding sUSD3 balance shared proportionally among USD3 holders
  */
 contract USD3 is BaseHooksUpgradeable {
     using SafeERC20 for IERC20;
@@ -561,6 +582,18 @@ contract USD3 is BaseHooksUpgradeable {
     /**
      * @notice Sync the tranche share (performance fee) from ProtocolConfig
      * @dev Reads TRANCHE_SHARE_VARIANT from ProtocolConfig and updates local storage
+     *
+     * IMPORTANT: Direct storage manipulation is necessary here because TokenizedStrategy's
+     * setPerformanceFee() function has a hardcoded MAX_FEE limit of 5000 (50%). Since we
+     * need to support higher fee distributions to sUSD3 (potentially up to 100% for full
+     * subordination scenarios), we must bypass this restriction by directly modifying the
+     * storage slot.
+     *
+     * Storage layout in TokenizedStrategy (slot 9):
+     * - Bits 0-31: profitMaxUnlockTime (uint32)
+     * - Bits 32-47: performanceFee (uint16) <- We modify this
+     * - Bits 48-207: performanceFeeRecipient (address)
+     *
      * @dev Only callable by keepers to ensure controlled updates
      */
     function syncTrancheShare() external onlyKeepers {
