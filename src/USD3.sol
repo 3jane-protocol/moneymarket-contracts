@@ -452,6 +452,14 @@ contract USD3 is BaseHooksUpgradeable {
 
     /**
      * @dev Directly burn shares from sUSD3's balance using storage manipulation
+     *
+     * IMPORTANT: Direct storage manipulation is necessary here because TokenizedStrategy
+     * does not expose a public burn function. The only ways to burn shares in
+     * TokenizedStrategy are through withdraw/redeem (which require asset transfers)
+     * or internal profit/loss accounting. Since we need to burn sUSD3's shares
+     * without triggering asset transfers, direct storage manipulation is the only
+     * viable approach.
+     *
      * @param amount Number of shares to burn from sUSD3
      */
     function _burnSharesFromSusd3(uint256 amount) internal {
