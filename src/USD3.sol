@@ -219,13 +219,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         if (maxOnCredit == 10_000) {
             // Deploy everything when set to 100%
-            morphoCredit.supply(
-                _marketParams(),
-                _amount,
-                0,
-                address(this),
-                hex""
-            );
+            morphoCredit.supply(_marketParams(), _amount, 0, address(this), "");
             return;
         }
 
@@ -250,7 +244,7 @@ contract USD3 is BaseHooksUpgradeable {
                 toDeploy,
                 0,
                 address(this),
-                hex""
+                ""
             );
         }
     }
