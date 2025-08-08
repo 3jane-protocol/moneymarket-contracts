@@ -254,7 +254,7 @@ contract sUSD3 is BaseHooksUpgradeable {
                         VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Enforces maximum 15% subordination ratio relative to USD3
+    /// @dev Enforces maximum 15% subordination ratio (sUSD3's USD3 holdings relative to USD3 total supply)
     /// @param _owner Address to check limit for
     /// @return Maximum deposit amount allowed
     function availableDepositLimit(
@@ -266,39 +266,32 @@ contract sUSD3 is BaseHooksUpgradeable {
 
         // Check subordination ratio if USD3 strategy is set
         if (usd3Strategy != address(0)) {
-            uint256 usd3TotalAssets = IERC20(usd3Strategy).totalSupply();
-            uint256 susd3TotalAssets = TokenizedStrategy.totalAssets();
+            uint256 usd3TotalSupply = IERC20(usd3Strategy).totalSupply();
+
+            // If USD3 has no supply, no deposits allowed
+            if (usd3TotalSupply == 0) {
+                return 0;
+            }
+
+            // Get current USD3 holdings by this sUSD3 contract
+            uint256 susd3Usd3Holdings = asset.balanceOf(address(this));
 
             // Get max subordination ratio from ProtocolConfig
             uint256 maxSubordinationRatio = getMaxSubordinationRatio();
 
-            // If no sUSD3 deposits yet, calculate max allowed based on USD3 supply
-            // sUSD3 can be max X% of total, so sUSD3/(USD3+sUSD3) = X/100
-            // Which means sUSD3 = X/(100-X) * USD3
-            if (susd3TotalAssets == 0 && usd3TotalAssets > 0) {
-                // This is approximately 17.65% of USD3 supply for 15% subordination
-                return
-                    (usd3TotalAssets * maxSubordinationRatio) /
-                    (MAX_BPS - maxSubordinationRatio);
+            // Calculate max USD3 that sUSD3 can hold (15% of USD3 total supply)
+            uint256 maxUsd3Allowed = (usd3TotalSupply * maxSubordinationRatio) /
+                MAX_BPS;
+
+            if (susd3Usd3Holdings >= maxUsd3Allowed) {
+                return 0; // Already at max subordination
             }
 
-            uint256 totalCombined = usd3TotalAssets + susd3TotalAssets;
-
-            if (totalCombined > 0) {
-                // Calculate max sUSD3 allowed (X% of total)
-                uint256 maxSusd3Allowed = (totalCombined *
-                    maxSubordinationRatio) / MAX_BPS;
-
-                if (susd3TotalAssets >= maxSusd3Allowed) {
-                    return 0; // Already at max subordination
-                }
-
-                // Return remaining capacity
-                return maxSusd3Allowed - susd3TotalAssets;
-            }
+            // Return remaining capacity (in USD3 tokens)
+            return maxUsd3Allowed - susd3Usd3Holdings;
         }
 
-        // If no USD3 strategy set or no deposits yet, return max
+        // If no USD3 strategy set, return max
         return type(uint256).max;
     }
 

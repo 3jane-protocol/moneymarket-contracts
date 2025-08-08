@@ -207,10 +207,11 @@ contract BypassAttempts is Setup {
         vm.stopPrank();
 
         // Alice deposits USD3 into sUSD3 using deposit()
-        // With 2000e6 USD3, max sUSD3 is ~353e6 (15% of combined)
+        // With 2000e6 USD3, max sUSD3 is 300e6 (15% of USD3 supply)
+        // Alice deposits less than max to leave room for Bob
         vm.startPrank(alice);
-        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 300e6);
-        susd3Strategy.deposit(300e6, alice);
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 200e6);
+        susd3Strategy.deposit(200e6, alice);
 
         // Alice cannot start cooldown before lock period
         vm.expectRevert("Still in lock period");

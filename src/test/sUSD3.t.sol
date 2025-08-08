@@ -653,11 +653,9 @@ contract sUSD3Test is Setup {
         // Work with existing USD3 supply from setUp (10 billion)
         uint256 existingUsd3 = ERC20(address(usd3)).totalSupply();
 
-        // Calculate max sUSD3 allowed for 15% subordination
-        // sUSD3 / (USD3 + sUSD3) = 0.15
-        // sUSD3 = 0.15 * (existingUsd3 + sUSD3)
-        // sUSD3 = (existingUsd3 * 0.15) / 0.85
-        uint256 maxSusd3Allowed = (existingUsd3 * 1500) / 8500;
+        // Calculate max USD3 that sUSD3 can hold (15% of USD3 total supply)
+        // Ratio is: sUSD3's USD3 holdings / USD3 totalSupply <= 15%
+        uint256 maxSusd3Allowed = (existingUsd3 * 1500) / 10000; // 15% of USD3 supply
 
         // Get available deposit limit - should be approximately this amount
         uint256 availableLimit = susd3Strategy.availableDepositLimit(bob);
@@ -678,11 +676,13 @@ contract sUSD3Test is Setup {
         vm.stopPrank();
 
         // Check we're close to 15% subordination
+        // sUSD3's USD3 holdings / USD3 totalSupply
         uint256 usd3Total = ERC20(address(usd3)).totalSupply();
-        uint256 susd3Total = ERC20(address(susd3Strategy)).totalSupply();
-        uint256 total = usd3Total + susd3Total;
+        uint256 susd3Usd3Holdings = ERC20(address(usd3)).balanceOf(
+            address(susd3Strategy)
+        );
 
-        uint256 actualRatio = (susd3Total * 10000) / total;
+        uint256 actualRatio = (susd3Usd3Holdings * 10000) / usd3Total;
         assertApproxEqAbs(actualRatio, 1500, 100, "Should be close to 15%");
 
         // Further deposits should be very limited
@@ -757,8 +757,8 @@ contract sUSD3Test is Setup {
         uint256 limitAfterDeposit = susd3Strategy.availableDepositLimit(bob);
 
         // The limit should be based on the 15% subordination ratio
-        // sUSD3 can be max 15% of total (USD3 + sUSD3)
-        uint256 maxSusd3 = (newUsd3Supply * 1500) / 8500; // 15% / 85%
+        // sUSD3 can hold max 15% of USD3 total supply
+        uint256 maxSusd3 = (newUsd3Supply * 1500) / 10000; // 15% of USD3 supply
         assertApproxEqAbs(
             limitAfterDeposit,
             maxSusd3,

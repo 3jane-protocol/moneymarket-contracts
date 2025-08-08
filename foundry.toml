@@ -8,6 +8,11 @@ optimizer_runs = 999999
 bytecode_hash = "none"
 evm_version = "shanghai"
 
+[invariant]
+runs = 20
+depth = 5
+fail_on_revert = false
+
 
 
 [profile.default.fmt]
