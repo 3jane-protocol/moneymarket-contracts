@@ -288,7 +288,7 @@ contract WhitelistTest is Setup {
         usd3Strategy.setWhitelist(alice, true);
         vm.stopPrank();
 
-        // Alice (whitelisted) cannot deposit below minimum
+        // Alice (whitelisted) cannot deposit below minimum for first deposit
         vm.prank(alice);
         vm.expectRevert("Below minimum deposit");
         strategy.deposit(25e6, alice);
@@ -297,6 +297,15 @@ contract WhitelistTest is Setup {
         vm.prank(alice);
         uint256 shares = strategy.deposit(50e6, alice);
         assertGt(shares, 0, "Alice should receive shares");
+
+        // Alice can now deposit any amount as existing depositor
+        vm.prank(alice);
+        uint256 moreShares = strategy.deposit(10e6, alice); // Below minimum but allowed
+        assertGt(
+            moreShares,
+            0,
+            "Alice should be able to deposit any amount after first deposit"
+        );
 
         // Bob (not whitelisted) cannot deposit even above minimum
         vm.prank(bob);

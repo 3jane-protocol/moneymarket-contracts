@@ -343,7 +343,17 @@ contract USD3 is BaseHooksUpgradeable {
     function availableWithdrawLimit(
         address _owner
     ) public view override returns (uint256) {
-        // Check commitment time first
+        // Get available liquidity first
+        (, uint256 assetsMax, uint256 liquidity) = getPosition();
+        uint256 idle = asset.balanceOf(address(this));
+        uint256 availableLiquidity = idle + Math.min(liquidity, assetsMax);
+
+        // During shutdown, bypass commitment checks but still respect liquidity
+        if (TokenizedStrategy.isShutdown()) {
+            return availableLiquidity;
+        }
+
+        // Check commitment time
         if (minCommitmentTime > 0) {
             uint256 depositTime = depositTimestamp[_owner];
             if (
@@ -353,11 +363,6 @@ contract USD3 is BaseHooksUpgradeable {
                 return 0; // Commitment period not met
             }
         }
-
-        // Get available liquidity
-        (, uint256 assetsMax, uint256 liquidity) = getPosition();
-        uint256 idle = asset.balanceOf(address(this));
-        uint256 availableLiquidity = idle + Math.min(liquidity, assetsMax);
 
         return availableLiquidity;
     }
@@ -397,8 +402,11 @@ contract USD3 is BaseHooksUpgradeable {
             assets = TokenizedStrategy.previewMint(shares);
         }
 
-        // Enforce minimum deposit
-        require(assets >= minDeposit, "Below minimum deposit");
+        // Enforce minimum deposit only for first-time depositors
+        uint256 currentBalance = TokenizedStrategy.balanceOf(receiver);
+        if (currentBalance == 0) {
+            require(assets >= minDeposit, "Below minimum deposit");
+        }
 
         // Each deposit extends commitment for entire balance
         if (minCommitmentTime > 0) {

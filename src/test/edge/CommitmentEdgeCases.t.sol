@@ -273,6 +273,31 @@ contract CommitmentEdgeCasesTest is Setup {
     }
 
     /**
+     * @notice Test shutdown bypasses commitment period
+     */
+    function test_shutdownBypassesCommitment() public {
+        // Alice deposits with commitment period
+        vm.startPrank(alice);
+        underlyingAsset.approve(address(usd3Strategy), 1000e6);
+        uint256 shares = usd3Strategy.deposit(1000e6, alice);
+        vm.stopPrank();
+
+        // Immediately try to withdraw - should fail due to commitment
+        vm.prank(alice);
+        vm.expectRevert();
+        usd3Strategy.redeem(shares, alice, alice);
+
+        // Shutdown the strategy
+        vm.prank(emergencyAdmin);
+        ITokenizedStrategy(address(usd3Strategy)).shutdownStrategy();
+
+        // Now should be able to withdraw immediately
+        vm.prank(alice);
+        uint256 withdrawn = usd3Strategy.redeem(shares, alice, alice);
+        assertGt(withdrawn, 0, "Should withdraw immediately after shutdown");
+    }
+
+    /**
      * @notice Test commitment with transfer between users
      */
     function test_commitmentWithTransfer() public {

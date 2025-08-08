@@ -138,22 +138,13 @@ contract CooldownEdgeCasesTest is Setup {
         vm.prank(management);
         ITokenizedStrategy(address(susd3Strategy)).shutdownStrategy();
 
-        // Should still need to wait for cooldown
-        vm.startPrank(alice);
-        vm.expectRevert();
-        susd3Strategy.redeem(shares, alice, alice);
-        vm.stopPrank();
-
-        // Skip remaining cooldown
-        skip(4 days);
-
-        // Now should be able to withdraw
+        // After shutdown, should be able to withdraw immediately despite cooldown not finished
         vm.prank(alice);
         uint256 withdrawn = susd3Strategy.redeem(shares, alice, alice);
         assertGt(
             withdrawn,
             0,
-            "Should withdraw after cooldown even in shutdown"
+            "Should withdraw immediately after shutdown, bypassing cooldown"
         );
     }
 
@@ -430,6 +421,38 @@ contract CooldownEdgeCasesTest is Setup {
         vm.prank(bob);
         vm.expectRevert();
         susd3Strategy.redeem(bobShares, bob, bob);
+    }
+
+    /**
+     * @notice Test shutdown bypasses all restrictions (lock and cooldown)
+     */
+    function test_shutdownBypassesAllRestrictions() public {
+        // Alice deposits USD3 into sUSD3
+        vm.startPrank(alice);
+        ERC20(address(usd3Strategy)).approve(address(susd3Strategy), 5000e6);
+        uint256 shares = susd3Strategy.deposit(5000e6, alice);
+        vm.stopPrank();
+
+        // Still in lock period (not 90 days yet)
+        skip(30 days);
+
+        // Try to withdraw - should fail due to lock period
+        vm.prank(alice);
+        vm.expectRevert();
+        susd3Strategy.redeem(shares, alice, alice);
+
+        // Shutdown the strategy
+        vm.prank(management);
+        ITokenizedStrategy(address(susd3Strategy)).shutdownStrategy();
+
+        // Now should be able to withdraw immediately despite lock period
+        vm.prank(alice);
+        uint256 withdrawn = susd3Strategy.redeem(shares, alice, alice);
+        assertGt(
+            withdrawn,
+            0,
+            "Should withdraw immediately after shutdown despite lock"
+        );
     }
 
     /**

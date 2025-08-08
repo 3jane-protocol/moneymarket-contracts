@@ -296,6 +296,12 @@ contract sUSD3 is BaseHooksUpgradeable {
     function availableWithdrawLimit(
         address _owner
     ) public view override returns (uint256) {
+        // During shutdown, bypass all checks and return available assets
+        if (TokenizedStrategy.isShutdown()) {
+            // Return all available USD3 (entire balance since sUSD3 holds USD3 directly)
+            return asset.balanceOf(address(this));
+        }
+
         // Check initial lock period
         if (block.timestamp < lockedUntil[_owner]) {
             return 0;

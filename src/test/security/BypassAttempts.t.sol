@@ -437,7 +437,7 @@ contract BypassAttempts is Setup {
     }
 
     function test_cannot_bypass_minimum_deposit() public {
-        // Try to deposit below minimum via deposit()
+        // Try to deposit below minimum via deposit() as first deposit
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), 1000e6);
         vm.expectRevert("Below minimum deposit");
@@ -450,9 +450,14 @@ contract BypassAttempts is Setup {
         usd3Strategy.mint(sharesToMint, alice);
         vm.stopPrank();
 
-        // Verify minimum is enforced for both paths
+        // Verify minimum is enforced for first deposit
         vm.prank(alice);
         usd3Strategy.deposit(100e6, alice); // Should work at minimum
         assertGt(IERC20(address(usd3Strategy)).balanceOf(alice), 0);
+
+        // After first deposit, Alice can deposit any amount
+        vm.prank(alice);
+        uint256 shares = usd3Strategy.deposit(10e6, alice); // Below minimum but should work
+        assertGt(shares, 0, "Subsequent deposits should allow any amount");
     }
 }

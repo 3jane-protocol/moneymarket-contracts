@@ -50,6 +50,49 @@ contract OperationTest is Setup {
         // TODO: add additional check on strat params
     }
 
+    function test_minimumDepositOnlyFirstDeposit() public {
+        // Set minimum deposit
+        vm.prank(management);
+        usd3Strategy.setMinDeposit(100e6);
+
+        address alice = makeAddr("alice");
+        address bob = makeAddr("bob");
+
+        // Give users USDC
+        deal(address(underlyingAsset), alice, 1000e6);
+        deal(address(underlyingAsset), bob, 1000e6);
+
+        // Alice tries to deposit below minimum as first deposit - should fail
+        vm.startPrank(alice);
+        underlyingAsset.approve(address(usd3Strategy), type(uint256).max);
+        vm.expectRevert("Below minimum deposit");
+        usd3Strategy.deposit(50e6, alice);
+
+        // Alice deposits at minimum - should work
+        uint256 shares = usd3Strategy.deposit(100e6, alice);
+        assertGt(shares, 0, "Alice should receive shares");
+
+        // Alice can now deposit any amount as existing depositor
+        uint256 moreShares = usd3Strategy.deposit(10e6, alice);
+        assertGt(
+            moreShares,
+            0,
+            "Alice should be able to deposit small amounts after first deposit"
+        );
+        vm.stopPrank();
+
+        // Bob tries to deposit below minimum as first deposit - should fail
+        vm.startPrank(bob);
+        underlyingAsset.approve(address(usd3Strategy), type(uint256).max);
+        vm.expectRevert("Below minimum deposit");
+        usd3Strategy.deposit(50e6, bob);
+
+        // Bob deposits at minimum - should work
+        uint256 bobShares = usd3Strategy.deposit(100e6, bob);
+        assertGt(bobShares, 0, "Bob should receive shares");
+        vm.stopPrank();
+    }
+
     function test_operation(uint256 _amount) public {
         _amount = bound(_amount, minFuzzAmount, maxFuzzAmount);
 
