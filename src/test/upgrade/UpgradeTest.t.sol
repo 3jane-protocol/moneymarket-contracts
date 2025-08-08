@@ -62,7 +62,6 @@ contract UpgradeTest is Setup {
         // Initialize sUSD3 with USD3 as asset
         susd3Strategy.initialize(
             address(usd3Strategy), // sUSD3 accepts USD3 tokens
-            "sUSD3",
             management,
             keeper
         );

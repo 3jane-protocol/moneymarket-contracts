@@ -37,7 +37,6 @@ contract sUSD3Test is Setup {
         bytes memory susd3InitData = abi.encodeWithSelector(
             sUSD3.initialize.selector,
             susd3Asset,
-            "sUSD3",
             management,
             keeper
         );

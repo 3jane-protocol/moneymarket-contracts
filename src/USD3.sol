@@ -91,14 +91,12 @@ contract USD3 is BaseHooksUpgradeable {
      * @notice Initialize the USD3 strategy
      * @param _morphoCredit Address of the MorphoCredit lending contract
      * @param _params Market parameters for the lending market
-     * @param _name Name for the strategy token
      * @param _management Management address for the strategy
      * @param _keeper Keeper address for automated operations
      */
     function initialize(
         address _morphoCredit,
         MarketParams memory _params,
-        string memory _name,
         address _management,
         address _keeper
     ) external initializer {
@@ -115,7 +113,7 @@ contract USD3 is BaseHooksUpgradeable {
         // It will be updated to sUSD3 address after sUSD3 is deployed
         __BaseStrategy_init(
             _params.loanToken,
-            _name,
+            "USD3",
             _management,
             _management,
             _keeper

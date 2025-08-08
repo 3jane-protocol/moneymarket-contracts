@@ -62,7 +62,6 @@ contract LossAbsorptionStressTest is Setup {
         // Initialize sUSD3 normally
         susd3Implementation.initialize(
             address(usd3Strategy),
-            "sUSD3",
             management,
             keeper
         );

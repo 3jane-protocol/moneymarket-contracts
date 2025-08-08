@@ -29,7 +29,6 @@ contract PackedStructTest is Setup {
         bytes memory susd3InitData = abi.encodeWithSelector(
             sUSD3.initialize.selector,
             address(usd3),
-            "sUSD3",
             management,
             keeper
         );

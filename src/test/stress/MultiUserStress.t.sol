@@ -84,7 +84,6 @@ contract MultiUserStressTest is Setup {
         bytes memory susd3InitData = abi.encodeWithSelector(
             sUSD3.initialize.selector,
             address(usd3Strategy),
-            "sUSD3",
             management,
             keeper
         );

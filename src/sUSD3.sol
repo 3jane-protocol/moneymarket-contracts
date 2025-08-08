@@ -98,13 +98,11 @@ contract sUSD3 is BaseHooksUpgradeable {
     /**
      * @notice Initialize the sUSD3 strategy
      * @param _usd3Token Address of USD3 token (the asset)
-     * @param _name Name for the strategy token
      * @param _management Management address
      * @param _keeper Keeper address
      */
     function initialize(
         address _usd3Token,
-        string memory _name,
         address _management,
         address _keeper
     ) external initializer {
@@ -112,7 +110,7 @@ contract sUSD3 is BaseHooksUpgradeable {
         // Use management as performance fee recipient (fees will never be charged)
         __BaseStrategy_init(
             _usd3Token,
-            _name,
+            "sUSD3",
             _management,
             _management,
             _keeper

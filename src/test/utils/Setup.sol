@@ -151,7 +151,6 @@ contract Setup is Test, IEvents {
             USD3.initialize.selector,
             address(morpho),
             marketParams,
-            "USD3",
             management,
             keeper
         );
