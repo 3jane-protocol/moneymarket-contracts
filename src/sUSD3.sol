@@ -22,11 +22,15 @@ interface IMorphoCredit is IMorpho {
  * @dev Inherits from BaseHooksUpgradeable to maintain consistency with USD3 architecture
  *
  * Key features:
- * - 90-day initial lock period for new deposits
- * - 7-day cooldown + 2-day withdrawal window
- * - Partial cooldown support (better UX than all-or-nothing)
- * - First-loss absorption for USD3 protection
- * - Maximum 15% subordination ratio enforcement
+ * - Configurable lock period for new deposits (via ProtocolConfig)
+ * - Configurable cooldown period (via ProtocolConfig) + withdrawal window (local management)
+ * - Partial cooldown support for flexible withdrawals
+ * - Cooldown updates overwrite previous settings
+ * - First-loss absorption protects USD3 holders
+ * - Maximum subordination ratio enforcement (via ProtocolConfig)
+ * - Automatic yield distribution from USD3 strategy
+ * - Dynamic parameter management through ProtocolConfig integration
+ * - Full withdrawal clears both lock and cooldown states
  */
 contract sUSD3 is BaseHooksUpgradeable {
     using SafeERC20 for ERC20;

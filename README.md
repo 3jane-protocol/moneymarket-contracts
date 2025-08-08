@@ -1,139 +1,232 @@
-# Tokenized Strategy Mix for Yearn V3 strategies
+# USD3 & sUSD3 - 3Jane Protocol Yield Strategies
 
-This repo will allow you to write, test and deploy V3 "Tokenized Strategies" using [Foundry](https://book.getfoundry.sh/).
+## Overview
 
-You will only need to override the three functions in Strategy.sol of `_deployFunds`, `_freeFunds` and `_harvestAndReport`. With the option to also override `_tend`, `_tendTrigger`, `availableDepositLimit`, `availableWithdrawLimit` and `_emergencyWithdraw` if desired.
+USD3 and sUSD3 are tokenized yield strategies built on Yearn V3's architecture for the 3Jane Protocol. These strategies enable unsecured lending through 3Jane's credit-based lending markets (modified Morpho Blue) that use borrower creditworthiness assessment instead of traditional collateral requirements.
 
-For a more complete overview of how the Tokenized Strategies work please visit the [TokenizedStrategy Repo](https://github.com/yearn/tokenized-strategy).
+## Architecture
 
-## How to start
+### Two-Tier Structure
+
+- **USD3 (Senior Tranche)**: Accepts USDC deposits and deploys capital to 3Jane's MorphoCredit lending markets
+- **sUSD3 (Subordinate Tranche)**: Accepts USD3 deposits, provides first-loss protection, and earns levered yield
+
+### Key Features
+
+#### USD3 Strategy
+- Direct USDC deposits with automatic deployment to credit markets
+- Configurable commitment periods (locally managed by governance)
+- Dynamic deployment ratio to MorphoCredit (0-100% via locally managed `maxOnCredit`)
+- Protected from losses through sUSD3 first-loss absorption
+- Whitelist support for permissioned access (locally managed)
+- Emergency withdrawal capabilities
+
+#### sUSD3 Strategy  
+- Accepts USD3 tokens to provide subordinate capital
+- Configurable lock period for stability (via ProtocolConfig, default 90 days)
+- Configurable cooldown period (via ProtocolConfig, default 7 days) + withdrawal window (local, default 2 days)
+- Partial cooldown support for better UX
+- First-loss absorption protects USD3 holders
+- Maximum subordination ratio enforcement (via ProtocolConfig, default 15%)
+- Automatic yield distribution from USD3
+- Dynamic parameter updates without contract upgrades
+
+### Risk Management
+
+The protocol implements multiple risk controls:
+- **Subordination Ratio**: sUSD3 holdings limited by configurable ratio (via ProtocolConfig)
+- **Commitment Periods**: Prevent deposit/withdrawal gaming
+- **Lock & Cooldown**: Ensure stable liquidity for lending
+- **Loss Absorption**: sUSD3 bears losses first, protecting USD3 holders
+- **Dynamic Parameters**: Key risk parameters centrally managed via ProtocolConfig, operational parameters locally managed
+
+## Installation
 
 ### Requirements
 
-- First you will need to install [Foundry](https://book.getfoundry.sh/getting-started/installation).
-NOTE: If you are on a windows machine it is recommended to use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install)
-- Install [Node.js](https://nodejs.org/en/download/package-manager/)
+- [Foundry](https://book.getfoundry.sh/getting-started/installation)
+- [Node.js](https://nodejs.org/en/download/package-manager/)
+- Unix-like environment (macOS, Linux, or WSL for Windows)
 
-### Clone this repository
+### Setup
 
-```sh
-git clone --recursive https://github.com/yearn/tokenized-strategy-foundry-mix
+```bash
+# Clone repository
+git clone --recursive https://github.com/3jane/usd3-strategies
+cd usd3-strategies
 
-cd tokenized-strategy-foundry-mix
-
+# Install dependencies
 yarn
+
+# Copy and configure environment
+cp .env.example .env
+# Add your ETH_RPC_URL and other required variables
 ```
 
-### Set your environment Variables
+## Building and Testing
 
-Use the `.env.example` template to create a `.env` file and store the environement variables. You will need to populate the `RPC_URL` for the desired network(s). RPC url can be obtained from various providers, including [Ankr](https://www.ankr.com/rpc/) (no sign-up required) and [Infura](https://infura.io/).
+### Build Commands
 
-Use .env file
-
-1. Make a copy of `.env.example`
-2. Add the value for `ETH_RPC_URL` and other example vars
-     NOTE: If you set up a global environment variable, that will take precedence.
-
-### Build the project
-
-```sh
+```bash
+# Build contracts
 make build
+
+# Check contract sizes
+make size
+
+# Format code
+make fmt
 ```
 
-Run tests
+### Testing
 
-```sh
+All tests run in a forked environment. Ensure your `.env` file has valid RPC URLs configured.
+
+```bash
+# Run all tests
 make test
-```
 
-## Strategy Writing
-
-For a complete guide to creating a Tokenized Strategy please visit: https://docs.yearn.fi/developers/v3/strategy_writing_guide
-
-NOTE: Compiler defaults to 8.23 but it can be adjusted in the foundry toml.
-
-## Testing
-
-Due to the nature of the BaseStrategy utilizing an external contract for the majority of its logic, the default interface for any tokenized strategy will not allow proper testing of all functions. Testing of your Strategy should utilize the pre-built [IStrategyInterface](https://github.com/yearn/tokenized-strategy-foundry-mix/blob/master/src/interfaces/IStrategyInterface.sol) to cast any deployed strategy through for testing, as seen in the Setup example. You can add any external functions that you add for your specific strategy to this interface to be able to test all functions with one variable.
-
-Example:
-
-```solidity
-Strategy _strategy = new Strategy(asset, name);
-IStrategyInterface strategy =  IStrategyInterface(address(_strategy));
-```
-
-Due to the permissionless nature of the tokenized Strategies, all tests are written without integration with any meta vault funding it. While those tests can be added, all V3 vaults utilize the ERC-4626 standard for deposit/withdraw and accounting, so they can be plugged in easily to any number of different vaults with the same `asset.`
-
-Tests run in fork environment, you need to complete the full installation and setup to be able to run these commands.
-
-```sh
-make test
-```
-
-Run tests with traces (very useful)
-
-```sh
+# Run with traces (recommended for debugging)
 make trace
+
+# Run with maximum verbosity
+make trace-max
+
+# Test specific contract
+make test-contract contract=USD3Test
+
+# Test specific function
+make test-test test=test_subordinationRatio
+
+# Generate gas report
+make gas
 ```
-
-Run specific test contract (e.g. `test/StrategyOperation.t.sol`)
-
-```sh
-make test-contract contract=StrategyOperationsTest
-```
-
-Run specific test contract with traces (e.g. `test/StrategyOperation.t.sol`)
-
-```sh
-make trace-contract contract=StrategyOperationsTest
-```
-
-See here for some tips on testing [`Testing Tips`](https://book.getfoundry.sh/forge/tests.html)
-
-When testing on chains other than mainnet you will need to make sure a valid `CHAIN_RPC_URL` for that chain is set in your .env. You will then need to simply adjust the variable that RPC_URL is set to in the Makefile to match your chain.
-
-To update to a new API version of the TokenizeStrategy you will need to simply remove and reinstall the dependency.
-
-### Test Coverage
-
-Run the following command to generate a test coverage:
-
-```sh
-make coverage
-```
-
-To generate test coverage report in HTML, you need to have installed [`lcov`](https://github.com/linux-test-project/lcov) and run:
-
-```sh
-make coverage-html
-```
-
-The generated report will be in `coverage-report/index.html`.
-
-### Deployment
-
-#### Contract Verification
-
-Once the Strategy is fully deployed and verified, you will need to verify the TokenizedStrategy functions. To do this, navigate to the /#code page on Etherscan.
-
-1. Click on the `More Options` drop-down menu
-2. Click "is this a proxy?"
-3. Click the "Verify" button
-4. Click "Save"
-
-This should add all of the external `TokenizedStrategy` functions to the contract interface on Etherscan.
-
-## CI
-
-This repo uses [GitHub Actions](.github/workflows) for CI. There are three workflows: lint, test and slither for static analysis.
-
-To enable test workflow you need to add the `ETH_RPC_URL` secret to your repo. For more info see [GitHub Actions docs](https://docs.github.com/en/codespaces/managing-codespaces-for-your-organization/managing-encrypted-secrets-for-your-repository-and-organization-for-github-codespaces#adding-secrets-for-a-repository).
-
-If the slither finds some issues that you want to suppress, before the issue add comment: `//slither-disable-next-line DETECTOR_NAME`. For more info about detectors see [Slither docs](https://github.com/crytic/slither/wiki/Detector-Documentation).
 
 ### Coverage
 
-If you want to use [`coverage.yml`](.github/workflows/coverage.yml) workflow on other chains than mainnet, you need to add the additional `CHAIN_RPC_URL` secret.
+```bash
+# Generate coverage report
+make coverage
 
-Coverage workflow will generate coverage summary and attach it to PR as a comment. To enable this feature you need to add the [`GH_TOKEN`](.github/workflows/coverage.yml#L53) secret to your Github repo. Token must have permission to "Read and Write access to pull requests". To generate token go to [Github settings page](https://github.com/settings/tokens?type=beta). For more info see [GitHub Access Tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+# Generate HTML coverage report (requires lcov)
+make coverage-html
+# View at coverage-report/index.html
+```
+
+## Strategy Development
+
+### USD3 Implementation
+
+USD3 inherits from `BaseHooksUpgradeable` and implements three core methods:
+
+```solidity
+// Deploy USDC to MorphoCredit
+function _deployFunds(uint256 _amount) internal override
+
+// Withdraw from lending positions  
+function _freeFunds(uint256 _amount) internal override
+
+// Calculate total assets including interest
+function _harvestAndReport() internal override returns (uint256)
+```
+
+### sUSD3 Implementation
+
+sUSD3 also inherits from `BaseHooksUpgradeable` but holds USD3 directly:
+
+```solidity
+// USD3 tokens stay in strategy (no deployment)
+function _deployFunds(uint256 _amount) internal override
+
+// Funds already available (no freeing needed)
+function _freeFunds(uint256 _amount) internal override  
+
+// Return USD3 balance (yield auto-received)
+function _harvestAndReport() internal override returns (uint256)
+```
+
+### Hooks System
+
+Both strategies use hooks for additional logic:
+- `_preDepositHook`: Track commitment/lock periods
+- `_postWithdrawHook`: Update cooldown states
+- `availableDepositLimit`: Enforce subordination ratio
+- `availableWithdrawLimit`: Enforce time restrictions
+
+## Deployment
+
+Strategies use the proxy pattern for upgradeability:
+
+1. Deploy implementation contracts
+2. Deploy TransparentUpgradeableProxy with initialization
+3. Configure parameters via ProtocolConfig
+4. Link strategies (USD3 ↔ sUSD3)
+5. Set up access controls and whitelists
+
+### Verification
+
+After deployment, verify proxy functions on Etherscan:
+1. Navigate to contract's `#code` page
+2. Click "More Options" → "Is this a proxy?"
+3. Click "Verify" → "Save"
+
+## Testing Structure
+
+```
+src/test/
+├── USD3.t.sol              # Core USD3 tests
+├── sUSD3.t.sol             # Core sUSD3 tests  
+├── InterestDistribution.t.sol # Yield distribution tests
+├── LossAbsorption.t.sol   # Loss handling tests
+├── Invariants.t.sol        # Property-based tests
+├── edge/                   # Edge case tests
+│   ├── CommitmentEdgeCases.t.sol
+│   └── CooldownEdgeCases.t.sol
+├── security/               # Security tests
+│   ├── ReentrancyTest.t.sol
+│   └── BypassAttempts.t.sol
+└── stress/                 # Stress tests
+    └── MultiUserStress.t.sol
+```
+
+## Integration with 3Jane Protocol
+
+### MorphoCredit Markets
+- USD3 supplies USDC to credit-based lending markets
+- Interest accrues from unsecured loans to verified borrowers
+- Per-borrower risk premiums provide additional yield
+
+### ProtocolConfig Integration
+
+Centrally managed parameters (with defaults):
+- **sUSD3 Parameters**:
+  - Subordination ratio (default 15%)
+  - Lock duration (default 90 days)
+  - Cooldown period (default 7 days)
+  - Interest distribution share
+
+Locally managed parameters:
+- **USD3 Parameters**:
+  - Commitment period (setMinCommitmentTime)
+  - Max deployment ratio (setMaxOnCredit)
+  - Whitelist settings
+- **sUSD3 Parameters**:
+  - Withdrawal window duration (setWithdrawalWindow)
+
+## Security Considerations
+
+- Contracts are upgradeable - ensure proper access controls
+- Emergency admin can shutdown strategies
+- Whitelist enforcement available for both strategies
+- Reentrancy protection on all external calls
+- Comprehensive test coverage including invariant testing
+
+## License
+
+AGPL-3.0
+
+## Links
+
+- [3Jane Protocol Documentation](https://docs.3jane.com)
+- [Yearn V3 Strategy Guide](https://docs.yearn.fi/developers/v3/strategy_writing_guide)
+- [Morpho Blue Documentation](https://docs.morpho.org)
