@@ -180,11 +180,11 @@ contract InvariantsTest is Setup {
 
         if (usd3TotalSupply == 0) {
             // When USD3 has no supply, sUSD3 should not allow deposits
-            uint256 depositLimit = susd3Strategy.availableDepositLimit(
+            uint256 limitWhenZero = susd3Strategy.availableDepositLimit(
                 address(this)
             );
             assertEq(
-                depositLimit,
+                limitWhenZero,
                 0,
                 "Should not allow deposits when USD3 supply is zero"
             );
