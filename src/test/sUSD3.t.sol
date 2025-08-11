@@ -10,11 +10,17 @@ import {TransparentUpgradeableProxy} from "../../lib/openzeppelin-contracts/cont
 import {ProxyAdmin} from "../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
 import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
+import {MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
+import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
 
 contract sUSD3Test is Setup {
+    using MarketParamsLib for MarketParams;
+
     sUSD3 public susd3Strategy;
     USD3 public usd3;
     address public susd3Asset; // USD3 token address
+    address public morpho;
+    MarketParams public marketParams;
 
     // Test users
     address public alice = makeAddr("alice");
@@ -26,6 +32,10 @@ contract sUSD3Test is Setup {
         // USD3 is already deployed in Setup as 'strategy'
         usd3 = USD3(address(strategy));
         susd3Asset = address(usd3); // sUSD3's asset is USD3 tokens
+
+        // Get morpho and market params from USD3
+        morpho = address(usd3.morphoCredit());
+        marketParams = usd3.marketParams();
 
         // Deploy sUSD3 implementation
         sUSD3 susd3Implementation = new sUSD3();
