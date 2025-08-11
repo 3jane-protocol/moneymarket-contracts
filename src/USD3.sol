@@ -5,11 +5,9 @@ import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
 import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IMorpho, IMorphoCredit, MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
-import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
 import {MorphoLib} from "@3jane-morpho-blue/libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBalancesLib.sol";
 import {SharesMathLib} from "@3jane-morpho-blue/libraries/SharesMathLib.sol";
-import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {TokenizedStrategyStorageLib} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "@3jane-morpho-blue/interfaces/IProtocolConfig.sol";
 
@@ -47,7 +45,6 @@ contract USD3 is BaseHooksUpgradeable {
     using SafeERC20 for IERC20;
     using MorphoLib for IMorpho;
     using MorphoBalancesLib for IMorpho;
-    using MarketParamsLib for MarketParams;
     using SharesMathLib for uint256;
 
     /*//////////////////////////////////////////////////////////////
@@ -56,12 +53,11 @@ contract USD3 is BaseHooksUpgradeable {
     /// @notice MorphoCredit contract for lending operations
     IMorpho public morphoCredit;
 
-    /// @dev Market parameters - accessed externally via marketParams()
-    address internal collateralToken;
-    address internal oracle;
-    address internal irm;
-    uint256 internal lltv;
-    address internal creditLine;
+    /// @notice Market ID for the lending market this strategy uses
+    Id public marketId;
+
+    /// @notice Market parameters for the lending market
+    MarketParams internal _marketParams;
 
     /*//////////////////////////////////////////////////////////////
                         UPGRADEABLE STORAGE
@@ -102,29 +98,30 @@ contract USD3 is BaseHooksUpgradeable {
     /**
      * @notice Initialize the USD3 strategy
      * @param _morphoCredit Address of the MorphoCredit lending contract
-     * @param _params Market parameters for the lending market
+     * @param _marketId Market ID for the lending market
      * @param _management Management address for the strategy
      * @param _keeper Keeper address for automated operations
      */
     function initialize(
         address _morphoCredit,
-        MarketParams memory _params,
+        Id _marketId,
         address _management,
         address _keeper
     ) external initializer {
         require(_morphoCredit != address(0), "!morpho");
 
         morphoCredit = IMorpho(_morphoCredit);
-        collateralToken = _params.collateralToken;
-        oracle = _params.oracle;
-        irm = _params.irm;
-        lltv = _params.lltv;
-        creditLine = _params.creditLine;
+        marketId = _marketId;
+
+        // Get and cache market params
+        MarketParams memory params = morphoCredit.idToMarketParams(_marketId);
+        require(params.loanToken != address(0), "Invalid market");
+        _marketParams = params;
 
         // Initialize BaseStrategy with management as temporary performanceFeeRecipient
         // It will be updated to sUSD3 address after sUSD3 is deployed
         __BaseStrategy_init(
-            _params.loanToken,
+            params.loanToken,
             "USD3",
             _management,
             _management,
@@ -148,40 +145,16 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Get the ID of the MorphoCredit market
-     * @return Id The unique identifier for the market
-     */
-    function marketId() external view returns (Id) {
-        return _marketParams().id();
-    }
-
-    /**
-     * @notice Get the full market parameters
-     * @return MarketParams structure with all market configuration
+     * @notice Get the market parameters for this strategy
+     * @return MarketParams struct containing lending market configuration
      */
     function marketParams() external view returns (MarketParams memory) {
-        return _marketParams();
+        return _marketParams;
     }
 
     /*//////////////////////////////////////////////////////////////
                         INTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @dev Construct market parameters structure
-     * @return Market parameters for the lending market
-     */
-    function _marketParams() internal view returns (MarketParams memory) {
-        return
-            MarketParams({
-                loanToken: address(asset),
-                collateralToken: collateralToken,
-                oracle: oracle,
-                irm: irm,
-                lltv: lltv,
-                creditLine: creditLine
-            });
-    }
 
     /**
      * @dev Get current market liquidity information
@@ -201,7 +174,7 @@ contract USD3 is BaseHooksUpgradeable {
         )
     {
         (totalSupplyAssets, totalShares, totalBorrowAssets, ) = morphoCredit
-            .expectedMarketBalances(_marketParams());
+            .expectedMarketBalances(_marketParams);
         liquidity = totalSupplyAssets - totalBorrowAssets;
     }
 
@@ -216,8 +189,7 @@ contract USD3 is BaseHooksUpgradeable {
         view
         returns (uint256 shares, uint256 assetsMax, uint256 liquidity)
     {
-        Id id = _marketParams().id();
-        shares = morphoCredit.position(id, address(this)).supplyShares;
+        shares = morphoCredit.position(marketId, address(this)).supplyShares;
         uint256 totalSupplyAssets;
         uint256 totalShares;
         (totalSupplyAssets, totalShares, , liquidity) = getMarketLiquidity();
@@ -242,14 +214,14 @@ contract USD3 is BaseHooksUpgradeable {
 
         if (maxOnCreditRatio == 10_000) {
             // Deploy everything when set to 100%
-            morphoCredit.supply(_marketParams(), _amount, 0, address(this), "");
+            morphoCredit.supply(_marketParams, _amount, 0, address(this), "");
             return;
         }
 
         uint256 totalValue = TokenizedStrategy.totalAssets();
         uint256 maxDeployable = (totalValue * maxOnCreditRatio) / 10_000;
         uint256 currentlyDeployed = morphoCredit.expectedSupplyAssets(
-            _marketParams(),
+            _marketParams,
             address(this)
         );
 
@@ -262,13 +234,7 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 toDeploy = Math.min(_amount, deployableAmount);
 
         if (toDeploy > 0) {
-            morphoCredit.supply(
-                _marketParams(),
-                toDeploy,
-                0,
-                address(this),
-                ""
-            );
+            morphoCredit.supply(_marketParams, toDeploy, 0, address(this), "");
         }
     }
 
@@ -277,7 +243,7 @@ contract USD3 is BaseHooksUpgradeable {
     function _freeFunds(uint256 amount) internal override {
         if (amount == 0) return;
 
-        morphoCredit.accrueInterest(_marketParams());
+        morphoCredit.accrueInterest(_marketParams);
         (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
 
         // Calculate how much we can actually withdraw
@@ -296,7 +262,7 @@ contract USD3 is BaseHooksUpgradeable {
         if (actualAmount >= assetsMax) {
             // Withdraw all our shares
             morphoCredit.withdraw(
-                _marketParams(),
+                _marketParams,
                 0,
                 shares,
                 address(this),
@@ -305,7 +271,7 @@ contract USD3 is BaseHooksUpgradeable {
         } else {
             // Withdraw specific amount
             morphoCredit.withdraw(
-                _marketParams(),
+                _marketParams,
                 actualAmount,
                 0,
                 address(this),
@@ -329,7 +295,7 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Harvest interest from MorphoCredit and report total assets
     /// @return Total assets held by the strategy
     function _harvestAndReport() internal override returns (uint256) {
-        MarketParams memory params = _marketParams();
+        MarketParams memory params = _marketParams;
 
         morphoCredit.accrueInterest(params);
 
@@ -346,7 +312,7 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 totalValue = TokenizedStrategy.totalAssets();
         uint256 targetDeployment = (totalValue * maxOnCredit()) / 10_000;
         uint256 currentlyDeployed = morphoCredit.expectedSupplyAssets(
-            _marketParams(),
+            _marketParams,
             address(this)
         );
 

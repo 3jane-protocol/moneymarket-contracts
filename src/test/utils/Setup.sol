@@ -12,7 +12,8 @@ import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
 
 // Add imports for USD3 testing
 import {USD3} from "../../USD3.sol";
-import {IMorpho, MarketParams} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
+import {IMorpho, MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
+import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
 import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
 import {IrmMock} from "@3jane-morpho-blue/mocks/IrmMock.sol";
 import {HelperMock} from "@3jane-morpho-blue/mocks/HelperMock.sol";
@@ -150,7 +151,7 @@ contract Setup is Test, IEvents {
         bytes memory usd3InitData = abi.encodeWithSelector(
             USD3.initialize.selector,
             address(morpho),
-            marketParams,
+            MarketParamsLib.id(marketParams),
             management,
             keeper
         );
