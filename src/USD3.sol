@@ -316,6 +316,14 @@ contract USD3 is BaseHooksUpgradeable {
         require(balance > 0, "No tokens received from withdraw");
     }
 
+    /// @dev Emergency withdraw function to free funds from MorphoCredit
+    /// @param amount The amount to withdraw (use type(uint256).max for all)
+    function _emergencyWithdraw(uint256 amount) internal override {
+        // This is called during shutdown to free funds from Morpho
+        // Use _freeFunds which already handles the withdrawal logic
+        _freeFunds(amount);
+    }
+
     /// @dev Harvest interest from MorphoCredit and report total assets
     /// @return Total assets held by the strategy
     function _harvestAndReport() internal override returns (uint256) {
