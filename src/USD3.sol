@@ -139,6 +139,10 @@ contract USD3 is BaseHooksUpgradeable {
         IERC20(asset).forceApprove(address(morphoCredit), type(uint256).max);
     }
 
+    /*//////////////////////////////////////////////////////////////
+                        EXTERNAL VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
     /**
      * @notice Get the symbol for the USD3 token
      * @return Symbol string "USD3"
@@ -162,6 +166,10 @@ contract USD3 is BaseHooksUpgradeable {
     function marketParams() external view returns (MarketParams memory) {
         return _marketParams();
     }
+
+    /*//////////////////////////////////////////////////////////////
+                        INTERNAL VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
     /**
      * @dev Construct market parameters structure
@@ -219,6 +227,10 @@ contract USD3 is BaseHooksUpgradeable {
         (totalSupplyAssets, totalShares, , liquidity) = getMarketLiquidity();
         assetsMax = shares.toAssetsDown(totalSupplyAssets, totalShares);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                    INTERNAL STRATEGY FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
     /// @dev Deploy funds to MorphoCredit market respecting maxOnCredit ratio
     /// @param _amount Amount of asset to deploy
@@ -351,6 +363,10 @@ contract USD3 is BaseHooksUpgradeable {
             _deployFunds(_totalIdle);
         }
     }
+
+    /*//////////////////////////////////////////////////////////////
+                    PUBLIC VIEW FUNCTIONS (OVERRIDES)
+    //////////////////////////////////////////////////////////////*/
 
     /// @dev Returns available withdraw limit, enforcing commitment time restrictions and subordination ratio
     /// @param _owner Address to check limit for
@@ -493,7 +509,7 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        INTERNAL FUNCTIONS
+                    INTERNAL HELPER FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
@@ -543,7 +559,7 @@ contract USD3 is BaseHooksUpgradeable {
     event Transfer(address indexed from, address indexed to, uint256 value);
 
     /*//////////////////////////////////////////////////////////////
-                        MANAGEMENT FUNCTIONS
+                        PUBLIC VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
@@ -560,6 +576,22 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /**
+     * @notice Get the maximum subordination ratio from ProtocolConfig
+     * @return Maximum subordination ratio in basis points
+     */
+    function maxSubordinationRatio() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(
+            IMorphoCredit(address(morphoCredit)).protocolConfig()
+        );
+        uint256 ratio = config.getTrancheRatio();
+        return ratio > 0 ? ratio : 1500; // Default to 15% if not set
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        MANAGEMENT FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
      * @notice Set the sUSD3 subordinate strategy address
      * @param _susd3Strategy Address of the sUSD3 strategy
      * @dev Only callable by management. After calling, also set performance fee recipient.
@@ -574,18 +606,6 @@ contract USD3 is BaseHooksUpgradeable {
         // NOTE: After calling this, management should also call:
         // ITokenizedStrategy(usd3Address).setPerformanceFeeRecipient(_susd3Strategy)
         // to ensure yield distribution goes to sUSD3
-    }
-
-    /**
-     * @notice Get the maximum subordination ratio from ProtocolConfig
-     * @return Maximum subordination ratio in basis points
-     */
-    function maxSubordinationRatio() public view returns (uint256) {
-        IProtocolConfig config = IProtocolConfig(
-            IMorphoCredit(address(morphoCredit)).protocolConfig()
-        );
-        uint256 ratio = config.getTrancheRatio();
-        return ratio > 0 ? ratio : 1500; // Default to 15% if not set
     }
 
     /**
@@ -627,6 +647,10 @@ contract USD3 is BaseHooksUpgradeable {
     ) external onlyManagement {
         minCommitmentTime = _minCommitmentTime;
     }
+
+    /*//////////////////////////////////////////////////////////////
+                        KEEPER FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
     /**
      * @notice Sync the tranche share (performance fee) from ProtocolConfig
