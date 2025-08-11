@@ -92,6 +92,7 @@ contract USD3 is BaseHooksUpgradeable {
     event SUSD3StrategyUpdated(address oldStrategy, address newStrategy);
     event WhitelistUpdated(address indexed user, bool allowed);
     event MinDepositUpdated(uint256 newMinDeposit);
+    event TrancheShareSynced(uint256 trancheShare);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -690,8 +691,6 @@ contract USD3 is BaseHooksUpgradeable {
 
         emit TrancheShareSynced(trancheShare);
     }
-
-    event TrancheShareSynced(uint256 trancheShare);
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE GAP
