@@ -162,16 +162,24 @@ contract UpgradeTest is Setup {
         uint256 usd3Shares = usd3Strategy.deposit(DEPOSIT_AMOUNT, bob);
         vm.stopPrank();
 
-        // Simulate emergency scenario: change max on credit
+        // Simulate emergency scenario: change max on credit via ProtocolConfig
         uint256 originalMaxOnCredit = usd3Strategy.maxOnCredit();
 
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(5000); // Reduce to 50%
+        // Get protocol config and update maxOnCredit
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(
+            protocolConfigAddress
+        );
+
+        bytes32 MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
+        protocolConfig.setConfig(MAX_ON_CREDIT, 5000); // Reduce to 50%
 
         assertEq(
             usd3Strategy.maxOnCredit(),
             5000,
-            "Emergency parameter change applied"
+            "Emergency parameter change applied via ProtocolConfig"
         );
 
         // Test that USD3 operations still work after parameter change
@@ -185,9 +193,8 @@ contract UpgradeTest is Setup {
             "Emergency parameter change should not break existing operations"
         );
 
-        // Restore original parameter
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(originalMaxOnCredit);
+        // Restore original parameter via ProtocolConfig
+        protocolConfig.setConfig(MAX_ON_CREDIT, originalMaxOnCredit);
     }
 
     function test_managementTransferPreservesState() public {
@@ -469,7 +476,11 @@ contract UpgradeTest is Setup {
             10_000,
             "Yield share should be within valid range"
         );
-        assertEq(maxOnCredit, 10_000, "Default max on credit should be 100%");
+        // maxOnCredit is now from ProtocolConfig, 0 if not configured
+        assertTrue(
+            maxOnCredit == 0 || maxOnCredit <= 10_000,
+            "Max on credit should be valid"
+        );
         // sUSD3 strategy may be unset initially
         assertTrue(
             susd3StrategyAddr == address(0) || susd3StrategyAddr != address(0),

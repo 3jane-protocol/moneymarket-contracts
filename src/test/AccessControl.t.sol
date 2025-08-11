@@ -61,25 +61,17 @@ contract AccessControlTest is Setup {
                     USD3 MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    function test_setMaxOnCredit_onlyManagement() public {
-        // Unauthorized user cannot set
-        vm.prank(unauthorizedUser);
-        vm.expectRevert();
-        usd3Strategy.setMaxOnCredit(5000);
-
-        // Keeper cannot set
-        vm.prank(keeper);
-        vm.expectRevert();
-        usd3Strategy.setMaxOnCredit(5000);
-
-        // Management can set
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(5000);
+    function test_maxOnCredit_readsFromProtocolConfig() public {
+        // maxOnCredit should now read from ProtocolConfig, not be settable
+        // MockProtocolConfig sets default to 10000 (100%)
         assertEq(
             usd3Strategy.maxOnCredit(),
-            5000,
-            "MaxOnCredit should be updated"
+            10_000,
+            "Default maxOnCredit from MockProtocolConfig should be 100%"
         );
+
+        // Note: To change maxOnCredit, it must now be done through ProtocolConfig
+        // not directly on USD3 strategy
     }
 
     function test_setSusd3Strategy_onlyManagement() public {
@@ -501,7 +493,7 @@ contract AccessControlTest is Setup {
         vm.startPrank(management);
         ITokenizedStrategy(address(usd3Strategy)).setKeeper(newKeeper);
         ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(500);
-        usd3Strategy.setMaxOnCredit(7500);
+        // maxOnCredit is now managed through ProtocolConfig, not directly
         vm.stopPrank();
 
         // New keeper has limited privileges

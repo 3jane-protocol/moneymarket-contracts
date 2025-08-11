@@ -9,7 +9,6 @@ interface IUSD3 is IStrategy {
                             EVENTS
     //////////////////////////////////////////////////////////////*/
 
-    event MaxOnCreditUpdated(uint256 newMaxOnCredit);
     event SUSD3StrategyUpdated(address oldStrategy, address newStrategy);
     event WhitelistUpdated(address indexed user, bool allowed);
     event MinDepositUpdated(uint256 newMinDeposit);
@@ -39,7 +38,6 @@ interface IUSD3 is IStrategy {
                     MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    function setMaxOnCredit(uint256 _maxOnCredit) external;
     function setSusd3Strategy(address _susd3Strategy) external;
     function setWhitelistEnabled(bool _enabled) external;
     function setWhitelist(address _user, bool _allowed) external;

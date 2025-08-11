@@ -25,6 +25,7 @@ contract MaxOnCreditDynamicTest is Setup {
     IMorpho public morpho;
     MarketParams public marketParams;
     Id public marketId;
+    MockProtocolConfig public protocolConfig;
 
     // Test users (different from management which is address(1))
     address public alice = address(0x1001);
@@ -43,7 +44,6 @@ contract MaxOnCreditDynamicTest is Setup {
     uint256 public constant MAX_ON_CREDIT_75 = 7500; // 75%
     uint256 public constant MAX_ON_CREDIT_100 = 10000; // 100%
 
-    event MaxOnCreditUpdated(uint256 newValue);
     event FundsDeployed(uint256 amount);
     event FundsFreed(uint256 amount);
 
@@ -55,14 +55,20 @@ contract MaxOnCreditDynamicTest is Setup {
         marketParams = usd3Strategy.marketParams();
         marketId = marketParams.id();
 
+        // Get protocol config from MorphoCredit
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        protocolConfig = MockProtocolConfig(protocolConfigAddress);
+
         // Fund test users
         airdrop(asset, alice, LARGE_DEPOSIT * 2);
         airdrop(asset, bob, LARGE_DEPOSIT * 2);
         airdrop(asset, charlie, LARGE_DEPOSIT * 2);
 
-        // Set initial MaxOnCredit to 50%
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(MAX_ON_CREDIT_50);
+        // Set initial MaxOnCredit to 50% via ProtocolConfig
+        bytes32 MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
+        protocolConfig.setConfig(MAX_ON_CREDIT, MAX_ON_CREDIT_50);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -97,8 +103,8 @@ contract MaxOnCreditDynamicTest is Setup {
         );
 
         // Decrease MaxOnCredit to 25% - should not immediately rebalance
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(MAX_ON_CREDIT_25);
+        bytes32 MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
+        protocolConfig.setConfig(MAX_ON_CREDIT, MAX_ON_CREDIT_25);
 
         // Deployment should remain the same until next deposit/report
         uint256 morphoPositionAssetsAfterDecrease = morpho.expectedSupplyAssets(
@@ -134,8 +140,8 @@ contract MaxOnCreditDynamicTest is Setup {
 
     function test_increaseMaxOnCreditTriggersDeployment() public {
         // Setup with 25% MaxOnCredit
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(MAX_ON_CREDIT_25);
+        bytes32 MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
+        protocolConfig.setConfig(MAX_ON_CREDIT, MAX_ON_CREDIT_25);
 
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), LARGE_DEPOSIT);
@@ -162,8 +168,7 @@ contract MaxOnCreditDynamicTest is Setup {
         );
 
         // Increase MaxOnCredit to 75%
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(MAX_ON_CREDIT_75);
+        protocolConfig.setConfig(MAX_ON_CREDIT, MAX_ON_CREDIT_75);
 
         // Trigger rebalancing via report to deploy existing funds up to new limit
         vm.prank(keeper);
@@ -203,8 +208,8 @@ contract MaxOnCreditDynamicTest is Setup {
 
     function test_maxOnCreditZeroToNonZero() public {
         // Start with MaxOnCredit = 0 (no deployment)
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(MAX_ON_CREDIT_0);
+        bytes32 MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
+        protocolConfig.setConfig(MAX_ON_CREDIT, MAX_ON_CREDIT_0);
 
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), LARGE_DEPOSIT);
@@ -227,8 +232,7 @@ contract MaxOnCreditDynamicTest is Setup {
         );
 
         // Increase to 50%
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(MAX_ON_CREDIT_50);
+        protocolConfig.setConfig(MAX_ON_CREDIT, MAX_ON_CREDIT_50);
 
         // New deposit with Bob
         vm.startPrank(bob);
@@ -260,8 +264,8 @@ contract MaxOnCreditDynamicTest is Setup {
 
     function test_maxOnCreditToOneHundredPercent() public {
         // Test extreme case of 100% deployment
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(MAX_ON_CREDIT_100);
+        bytes32 MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
+        protocolConfig.setConfig(MAX_ON_CREDIT, MAX_ON_CREDIT_100);
 
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), LARGE_DEPOSIT);
@@ -329,13 +333,6 @@ contract MaxOnCreditDynamicTest is Setup {
         // Test deployment calculations when performance fees are taken
 
         // Setup yield sharing via protocol config
-        address morphoAddress = address(usd3Strategy.morphoCredit());
-        address protocolConfigAddress = MorphoCredit(morphoAddress)
-            .protocolConfig();
-        MockProtocolConfig protocolConfig = MockProtocolConfig(
-            protocolConfigAddress
-        );
-
         // Set the tranche share variant in protocol config
         bytes32 TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
         protocolConfig.setConfig(TRANCHE_SHARE_VARIANT, 2000); // 20% to sUSD3
@@ -507,20 +504,17 @@ contract MaxOnCreditDynamicTest is Setup {
     //////////////////////////////////////////////////////////////*/
 
     function test_maxOnCreditBoundaryValidation() public {
-        // Test setting MaxOnCredit to maximum allowed value
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(MAX_ON_CREDIT_100);
-
+        // Should not revert with 100%
+        bytes32 MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
+        protocolConfig.setConfig(MAX_ON_CREDIT, MAX_ON_CREDIT_100);
         assertEq(
             usd3Strategy.maxOnCredit(),
             MAX_ON_CREDIT_100,
             "Should accept 100%"
         );
 
-        // Test setting to 0
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(MAX_ON_CREDIT_0);
-
+        // Should not revert with 0%
+        protocolConfig.setConfig(MAX_ON_CREDIT, MAX_ON_CREDIT_0);
         assertEq(
             usd3Strategy.maxOnCredit(),
             MAX_ON_CREDIT_0,
@@ -618,34 +612,47 @@ contract MaxOnCreditDynamicTest is Setup {
                         ERROR HANDLING
     //////////////////////////////////////////////////////////////*/
 
-    function test_unauthorizedMaxOnCreditChange() public {
-        // Only management should be able to change MaxOnCredit
-        vm.expectRevert();
-        vm.prank(alice);
-        usd3Strategy.setMaxOnCredit(MAX_ON_CREDIT_75);
+    function test_maxOnCreditFromProtocolConfig() public {
+        // MaxOnCredit is now managed through ProtocolConfig
+        bytes32 MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
 
-        vm.expectRevert();
-        vm.prank(keeper);
-        usd3Strategy.setMaxOnCredit(MAX_ON_CREDIT_75);
+        // Update via ProtocolConfig
+        protocolConfig.setConfig(MAX_ON_CREDIT, MAX_ON_CREDIT_75);
 
-        // Management should succeed
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(MAX_ON_CREDIT_75);
-
+        // USD3 should read the new value
         assertEq(
             usd3Strategy.maxOnCredit(),
             MAX_ON_CREDIT_75,
-            "Management should be able to change"
+            "Should read maxOnCredit from ProtocolConfig"
         );
     }
 
-    function test_maxOnCreditChangeEvents() public {
-        // Test that MaxOnCredit changes emit proper events
+    function test_maxOnCreditProtocolConfigIntegration() public {
+        // Test that maxOnCredit correctly reads from ProtocolConfig
+        bytes32 MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
 
-        vm.expectEmit(true, true, true, true);
-        emit MaxOnCreditUpdated(MAX_ON_CREDIT_75);
+        // When set to 0, should return 0 (no deployment)
+        protocolConfig.setConfig(MAX_ON_CREDIT, 0);
+        assertEq(
+            usd3Strategy.maxOnCredit(),
+            0,
+            "Should return 0 when set to 0"
+        );
 
-        vm.prank(management);
-        usd3Strategy.setMaxOnCredit(MAX_ON_CREDIT_75);
+        // When set to a value, should use the configured value
+        protocolConfig.setConfig(MAX_ON_CREDIT, MAX_ON_CREDIT_75);
+        assertEq(
+            usd3Strategy.maxOnCredit(),
+            MAX_ON_CREDIT_75,
+            "Should use configured value"
+        );
+
+        // When set to 100%, should allow full deployment
+        protocolConfig.setConfig(MAX_ON_CREDIT, MAX_ON_CREDIT_100);
+        assertEq(
+            usd3Strategy.maxOnCredit(),
+            MAX_ON_CREDIT_100,
+            "Should return 100% when set to 100%"
+        );
     }
 }

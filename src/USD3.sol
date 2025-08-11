@@ -71,10 +71,6 @@ contract USD3 is BaseHooksUpgradeable {
     /*//////////////////////////////////////////////////////////////
                         UPGRADEABLE STORAGE
     //////////////////////////////////////////////////////////////*/
-    /// @notice Maximum percentage of funds to deploy to credit markets (basis points)
-    /// @dev 10000 = 100%, 5000 = 50%. Controls exposure to credit risk
-    uint256 public maxOnCredit;
-
     /// @notice Address of the subordinate sUSD3 strategy
     /// @dev Used for loss absorption and yield distribution
     address public susd3Strategy;
@@ -98,7 +94,6 @@ contract USD3 is BaseHooksUpgradeable {
     /*//////////////////////////////////////////////////////////////
                             EVENTS
     //////////////////////////////////////////////////////////////*/
-    event MaxOnCreditUpdated(uint256 newMaxOnCredit);
     event SUSD3StrategyUpdated(address oldStrategy, address newStrategy);
     event WhitelistUpdated(address indexed user, bool allowed);
     event MinDepositUpdated(uint256 newMinDeposit);
@@ -142,9 +137,6 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Approve Morpho
         IERC20(asset).forceApprove(address(morphoCredit), type(uint256).max);
-
-        // Set default values
-        maxOnCredit = 10_000; // 100% by default (no restriction)
     }
 
     /**
@@ -233,19 +225,21 @@ contract USD3 is BaseHooksUpgradeable {
     function _deployFunds(uint256 _amount) internal override {
         if (_amount == 0) return;
 
-        if (maxOnCredit == 0) {
+        uint256 maxOnCreditRatio = maxOnCredit();
+
+        if (maxOnCreditRatio == 0) {
             // Don't deploy anything when set to 0%
             return;
         }
 
-        if (maxOnCredit == 10_000) {
+        if (maxOnCreditRatio == 10_000) {
             // Deploy everything when set to 100%
             morphoCredit.supply(_marketParams(), _amount, 0, address(this), "");
             return;
         }
 
         uint256 totalValue = TokenizedStrategy.totalAssets();
-        uint256 maxDeployable = (totalValue * maxOnCredit) / 10_000;
+        uint256 maxDeployable = (totalValue * maxOnCreditRatio) / 10_000;
         uint256 currentlyDeployed = morphoCredit.expectedSupplyAssets(
             _marketParams(),
             address(this)
@@ -342,7 +336,7 @@ contract USD3 is BaseHooksUpgradeable {
     /// @param _totalIdle Current idle funds available
     function _tend(uint256 _totalIdle) internal virtual override {
         uint256 totalValue = TokenizedStrategy.totalAssets();
-        uint256 targetDeployment = (totalValue * maxOnCredit) / 10_000;
+        uint256 targetDeployment = (totalValue * maxOnCredit()) / 10_000;
         uint256 currentlyDeployed = morphoCredit.expectedSupplyAssets(
             _marketParams(),
             address(this)
@@ -553,14 +547,16 @@ contract USD3 is BaseHooksUpgradeable {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Set the maximum percentage of funds to deploy to credit markets
-     * @param _maxOnCredit Percentage in basis points (10000 = 100%)
-     * @dev Only callable by management
+     * @notice Get the maximum percentage of funds to deploy to credit markets from ProtocolConfig
+     * @return Maximum deployment ratio in basis points (10000 = 100%)
+     * @dev Returns the value from ProtocolConfig directly. If not configured in ProtocolConfig,
+     *      it returns 0, effectively preventing deployment until explicitly configured.
      */
-    function setMaxOnCredit(uint256 _maxOnCredit) external onlyManagement {
-        require(_maxOnCredit <= 10_000, "Invalid ratio");
-        maxOnCredit = _maxOnCredit;
-        emit MaxOnCreditUpdated(_maxOnCredit);
+    function maxOnCredit() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(
+            IMorphoCredit(address(morphoCredit)).protocolConfig()
+        );
+        return config.getMaxOnCredit();
     }
 
     /**
