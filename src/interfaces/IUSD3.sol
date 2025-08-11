@@ -33,6 +33,7 @@ interface IUSD3 is IStrategy {
     function minDeposit() external view returns (uint256);
     function minCommitmentTime() external view returns (uint256);
     function depositTimestamp(address user) external view returns (uint256);
+    function maxSubordinationRatio() external view returns (uint256);
 
     /*//////////////////////////////////////////////////////////////
                     MANAGEMENT FUNCTIONS

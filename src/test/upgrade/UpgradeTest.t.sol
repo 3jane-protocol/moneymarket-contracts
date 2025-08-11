@@ -4,6 +4,7 @@ pragma solidity ^0.8.18;
 import "forge-std/Test.sol";
 import {Setup} from "../utils/Setup.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {USD3} from "../../USD3.sol";
 import {sUSD3} from "../../sUSD3.sol";
@@ -283,35 +284,70 @@ contract UpgradeTest is Setup {
         uint256 bobShares = usd3Strategy.deposit(DEPOSIT_AMOUNT, bob);
         vm.stopPrank();
 
-        // Test setting/unsetting sUSD3 strategy link
+        // Test that sUSD3 strategy link is stable (one-time only)
         address originalSusd3 = usd3Strategy.susd3Strategy();
 
+        if (originalSusd3 == address(0)) {
+            // If not set, set it first
+            address newSusd3 = makeAddr("testSusd3");
+            vm.prank(management);
+            usd3Strategy.setSusd3Strategy(newSusd3);
+            originalSusd3 = newSusd3;
+        }
+
+        assertNotEq(originalSusd3, address(0), "sUSD3 should be linked");
+
+        // Test that it cannot be changed once set (use a valid address)
+        address anotherSusd3 = makeAddr("anotherSusd3");
         vm.prank(management);
-        usd3Strategy.setSusd3Strategy(address(0));
+        vm.expectRevert("sUSD3 already set");
+        usd3Strategy.setSusd3Strategy(anotherSusd3);
 
-        assertEq(usd3Strategy.susd3Strategy(), address(0), "Strategy unlinked");
-
-        // Test that USD3 operations still work without sUSD3 link
-        vm.startPrank(alice);
-        uint256 aliceAssets = usd3Strategy.redeem(
-            aliceShares / 2,
-            alice,
-            alice
+        // Verify link remains unchanged
+        assertEq(
+            usd3Strategy.susd3Strategy(),
+            originalSusd3,
+            "Strategy link stable"
         );
+
+        // Test that USD3 operations still work with sUSD3 link
+        vm.startPrank(alice);
+        uint256 desiredRedeem = aliceShares / 2;
+        uint256 maxRedeemable = ITokenizedStrategy(address(usd3Strategy))
+            .maxRedeem(alice);
+        uint256 redeemAmount = desiredRedeem > maxRedeemable
+            ? maxRedeemable
+            : desiredRedeem;
+
+        if (redeemAmount > 0) {
+            IERC20(address(usd3Strategy)).approve(
+                address(usd3Strategy),
+                redeemAmount
+            );
+            uint256 aliceAssets = usd3Strategy.redeem(
+                redeemAmount,
+                alice,
+                alice
+            );
+            assertGt(aliceAssets, 0, "Should receive assets");
+        } else {
+            // If no withdrawal possible due to subordination, that's still valid
+            assertEq(maxRedeemable, 0, "Withdrawal blocked by subordination");
+        }
         vm.stopPrank();
 
-        assertGt(
-            aliceAssets,
-            0,
-            "USD3 operations should work without sUSD3 link"
-        );
-
-        // Set a new address (could be future sUSD3)
-        address newSusd3 = address(0x123);
+        // Test that even with a new address, it cannot be changed
+        address yetAnotherSusd3 = address(0x123);
         vm.prank(management);
-        usd3Strategy.setSusd3Strategy(newSusd3);
+        vm.expectRevert("sUSD3 already set");
+        usd3Strategy.setSusd3Strategy(yetAnotherSusd3);
 
-        assertEq(usd3Strategy.susd3Strategy(), newSusd3, "New strategy linked");
+        // Verify original link still intact
+        assertEq(
+            usd3Strategy.susd3Strategy(),
+            originalSusd3,
+            "Original strategy still linked"
+        );
     }
 
     function test_emergencyShutdownAndRecovery() public {

@@ -187,22 +187,32 @@ contract MultiUserStressTest is Setup {
         uint256 totalAssetsBefore = ITokenizedStrategy(address(usd3Strategy))
             .totalAssets();
 
-        // All users withdraw 50% simultaneously
+        // All users withdraw 50% simultaneously (respecting subordination limits)
         for (uint256 i = 0; i < NUM_USERS; i++) {
             address user = users[i];
-            uint256 withdrawShares = shares[i] / 2;
+            uint256 desiredWithdrawShares = shares[i] / 2;
 
-            vm.startPrank(user);
-            uint256 assetsReceived = ITokenizedStrategy(address(usd3Strategy))
-                .redeem(withdrawShares, user, user);
-            vm.stopPrank();
+            // Check max redeemable due to subordination limits
+            uint256 maxRedeemable = ITokenizedStrategy(address(usd3Strategy))
+                .maxRedeem(user);
+            uint256 actualWithdrawShares = desiredWithdrawShares > maxRedeemable
+                ? maxRedeemable
+                : desiredWithdrawShares;
 
-            assertGt(
-                assetsReceived,
-                0,
-                "User should receive assets on withdrawal"
-            );
-            emit UserAction(user, "withdraw", assetsReceived);
+            if (actualWithdrawShares > 0) {
+                vm.startPrank(user);
+                uint256 assetsReceived = ITokenizedStrategy(
+                    address(usd3Strategy)
+                ).redeem(actualWithdrawShares, user, user);
+                vm.stopPrank();
+
+                assertGt(
+                    assetsReceived,
+                    0,
+                    "User should receive assets on withdrawal"
+                );
+                emit UserAction(user, "withdraw", assetsReceived);
+            }
         }
 
         // Verify proportional reduction in total assets
@@ -548,16 +558,28 @@ contract MultiUserStressTest is Setup {
                 .balanceOf(user);
 
             if (usd3Balance > 0) {
-                vm.startPrank(user);
-                uint256 withdrawn = ITokenizedStrategy(address(usd3Strategy))
-                    .redeem(usd3Balance / 10, user, user); // Withdraw 10%
-                vm.stopPrank();
+                // Check max redeemable due to subordination limits
+                uint256 desiredRedeem = usd3Balance / 10; // Want to withdraw 10%
+                uint256 maxRedeemable = ITokenizedStrategy(
+                    address(usd3Strategy)
+                ).maxRedeem(user);
+                uint256 actualRedeem = desiredRedeem > maxRedeemable
+                    ? maxRedeemable
+                    : desiredRedeem;
 
-                assertGt(
-                    withdrawn,
-                    0,
-                    "User should be able to withdraw after yield distribution"
-                );
+                if (actualRedeem > 0) {
+                    vm.startPrank(user);
+                    uint256 withdrawn = ITokenizedStrategy(
+                        address(usd3Strategy)
+                    ).redeem(actualRedeem, user, user);
+                    vm.stopPrank();
+
+                    assertGt(
+                        withdrawn,
+                        0,
+                        "User should be able to withdraw after yield distribution"
+                    );
+                }
             }
         }
     }

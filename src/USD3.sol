@@ -358,7 +358,7 @@ contract USD3 is BaseHooksUpgradeable {
         }
     }
 
-    /// @dev Returns available withdraw limit, enforcing commitment time restrictions
+    /// @dev Returns available withdraw limit, enforcing commitment time restrictions and subordination ratio
     /// @param _owner Address to check limit for
     /// @return Maximum amount that can be withdrawn
     function availableWithdrawLimit(
@@ -369,9 +369,40 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 idle = asset.balanceOf(address(this));
         uint256 availableLiquidity = idle + Math.min(liquidity, assetsMax);
 
-        // During shutdown, bypass commitment checks but still respect liquidity
+        // During shutdown, bypass all checks
         if (TokenizedStrategy.isShutdown()) {
             return availableLiquidity;
+        }
+
+        // Check subordination ratio constraint
+        // Prevent withdrawals that would leave USD3 below minimum ratio
+        if (susd3Strategy != address(0)) {
+            uint256 usd3TotalSupply = TokenizedStrategy.totalSupply();
+
+            // sUSD3 holds USD3 tokens, so we check USD3 balance of sUSD3
+            uint256 susd3Holdings = TokenizedStrategy.balanceOf(susd3Strategy);
+
+            // Get max subordination ratio from ProtocolConfig
+            uint256 maxSubRatio = maxSubordinationRatio();
+
+            // If maxSubRatio = 1500 (15%), then minUSD3Ratio = 8500 (85%)
+            uint256 minUSD3Ratio = MAX_BPS - maxSubRatio;
+
+            // USD3 circulating (not held by sUSD3) must be at least minUSD3Ratio of total
+            uint256 usd3Circulating = usd3TotalSupply - susd3Holdings;
+            uint256 minUSD3Required = (usd3TotalSupply * minUSD3Ratio) /
+                MAX_BPS;
+
+            // Prevent withdrawals that would drop circulating USD3 below minimum
+            if (usd3Circulating <= minUSD3Required) {
+                availableLiquidity = 0; // No withdrawals allowed
+            } else {
+                uint256 maxWithdrawable = usd3Circulating - minUSD3Required;
+                availableLiquidity = Math.min(
+                    availableLiquidity,
+                    maxWithdrawable
+                );
+            }
         }
 
         // Check commitment time
@@ -538,13 +569,27 @@ contract USD3 is BaseHooksUpgradeable {
      * @dev Only callable by management. After calling, also set performance fee recipient.
      */
     function setSusd3Strategy(address _susd3Strategy) external onlyManagement {
-        address oldStrategy = susd3Strategy;
+        require(susd3Strategy == address(0), "sUSD3 already set");
+        require(_susd3Strategy != address(0), "Invalid address");
+
         susd3Strategy = _susd3Strategy;
-        emit SUSD3StrategyUpdated(oldStrategy, _susd3Strategy);
+        emit SUSD3StrategyUpdated(address(0), _susd3Strategy);
 
         // NOTE: After calling this, management should also call:
         // ITokenizedStrategy(usd3Address).setPerformanceFeeRecipient(_susd3Strategy)
         // to ensure yield distribution goes to sUSD3
+    }
+
+    /**
+     * @notice Get the maximum subordination ratio from ProtocolConfig
+     * @return Maximum subordination ratio in basis points
+     */
+    function maxSubordinationRatio() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(
+            IMorphoCredit(address(morphoCredit)).protocolConfig()
+        );
+        uint256 ratio = config.getTrancheRatio();
+        return ratio > 0 ? ratio : 1500; // Default to 15% if not set
     }
 
     /**

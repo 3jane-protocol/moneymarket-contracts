@@ -83,25 +83,42 @@ contract AccessControlTest is Setup {
     }
 
     function test_setSusd3Strategy_onlyManagement() public {
+        // sUSD3 is already set in setUp, so we test that it can't be set again
         address newSusd3 = makeAddr("newSusd3");
 
-        // Unauthorized user cannot set
-        vm.prank(unauthorizedUser);
-        vm.expectRevert();
-        usd3Strategy.setSusd3Strategy(newSusd3);
-
-        // Keeper cannot set
-        vm.prank(keeper);
-        vm.expectRevert();
-        usd3Strategy.setSusd3Strategy(newSusd3);
-
-        // Management can set
+        // Even management cannot set it again (one-time only)
         vm.prank(management);
+        vm.expectRevert("sUSD3 already set");
         usd3Strategy.setSusd3Strategy(newSusd3);
+
+        // Verify the original is still set
         assertEq(
             usd3Strategy.susd3Strategy(),
-            newSusd3,
-            "sUSD3 strategy should be updated"
+            address(susd3Strategy),
+            "sUSD3 strategy should remain unchanged"
+        );
+    }
+
+    function test_setSusd3Strategy_initialSet() public {
+        // This test validates that sUSD3 can only be set once
+        // The main usd3Strategy already has sUSD3 set in setUp,
+        // so we test that it cannot be changed
+
+        address currentSusd3 = usd3Strategy.susd3Strategy();
+        assertEq(currentSusd3, address(susd3Strategy), "sUSD3 should be set");
+
+        address newSusd3 = makeAddr("newSusd3");
+
+        // Even management cannot change it once set
+        vm.prank(management);
+        vm.expectRevert("sUSD3 already set");
+        usd3Strategy.setSusd3Strategy(newSusd3);
+
+        // Verify it hasn't changed
+        assertEq(
+            usd3Strategy.susd3Strategy(),
+            currentSusd3,
+            "sUSD3 should remain unchanged"
         );
     }
 

@@ -153,18 +153,19 @@ contract ReentrancyTest is Setup {
         usd3Strategy.deposit(1000e6, alice);
         vm.stopPrank();
 
-        // Deploy malicious sUSD3 that might try reentrancy
+        // Deploy malicious contract that could try reentrancy
         MaliciousSUSD3 maliciousSUSD3 = new MaliciousSUSD3(
             address(usd3Strategy)
         );
 
-        // Set malicious contract as sUSD3
+        // Since sUSD3 is already set and cannot be changed,
+        // we test by setting the malicious contract as performance fee recipient
         vm.startPrank(management);
-        usd3Strategy.setSusd3Strategy(address(maliciousSUSD3));
-        // Set performance fee to distribute yield to malicious sUSD3
+        // Set performance fee to distribute yield
         ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(
             uint16(2000)
         ); // 20%
+        // Set malicious contract as recipient (not as sUSD3 itself)
         ITokenizedStrategy(address(usd3Strategy)).setPerformanceFeeRecipient(
             address(maliciousSUSD3)
         );

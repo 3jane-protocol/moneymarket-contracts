@@ -526,13 +526,18 @@ contract BaseStrategyCoverage is Setup {
      * @dev Verifies access control modifiers work correctly
      */
     function test_accessControlModifiers() public {
-        // Test onlyManagement
+        // Test onlyManagement - sUSD3 is already set so test that it cannot be changed
+        address newSusd3 = makeAddr("newSusd3");
+
+        // Non-management cannot set sUSD3
         vm.prank(alice);
         vm.expectRevert();
-        usd3Strategy.setSusd3Strategy(address(0));
+        usd3Strategy.setSusd3Strategy(newSusd3);
 
+        // Even management cannot change it once set (one-time only)
         vm.prank(management);
-        usd3Strategy.setSusd3Strategy(address(0)); // Should succeed
+        vm.expectRevert("sUSD3 already set");
+        usd3Strategy.setSusd3Strategy(newSusd3);
 
         // Test onlyKeepers (syncTrancheShare)
         vm.prank(alice);

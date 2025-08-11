@@ -223,6 +223,104 @@ contract InvariantsTest is Setup {
     }
 
     /**
+     * @notice Invariant: USD3 withdrawals respect subordination ratio
+     * @dev Ensures USD3 holders cannot withdraw if it would violate minimum ratio
+     */
+    function invariant_subordinationWithdrawalEnforcement() public {
+        uint256 usd3TotalSupply = ERC20(address(usd3Strategy)).totalSupply();
+
+        // Skip if no supply or sUSD3 not set
+        if (
+            usd3TotalSupply == 0 || usd3Strategy.susd3Strategy() == address(0)
+        ) {
+            return;
+        }
+
+        uint256 susd3Holdings = ERC20(address(usd3Strategy)).balanceOf(
+            usd3Strategy.susd3Strategy()
+        );
+
+        // Get the max subordination ratio from USD3
+        uint256 maxSubRatio = usd3Strategy.maxSubordinationRatio();
+        uint256 minUSD3Ratio = 10_000 - maxSubRatio; // e.g., 8500 for 85%
+
+        // Calculate what the circulating USD3 would be after a withdrawal
+        uint256 usd3Circulating = usd3TotalSupply - susd3Holdings;
+        uint256 minUSD3Required = (usd3TotalSupply * minUSD3Ratio) / 10_000;
+
+        // Check withdrawal limits for a test actor
+        address testActor = actors.length > 0 ? actors[0] : address(this);
+        uint256 withdrawLimit = usd3Strategy.availableWithdrawLimit(testActor);
+
+        // During shutdown, limits should not apply
+        if (ITokenizedStrategy(address(usd3Strategy)).isShutdown()) {
+            return;
+        }
+
+        // If we're at or below minimum ratio, no withdrawals should be allowed
+        if (usd3Circulating <= minUSD3Required) {
+            assertEq(
+                withdrawLimit,
+                0,
+                "Should not allow withdrawals when at minimum USD3 ratio"
+            );
+        } else {
+            // If withdrawals are allowed, they shouldn't exceed what would break the ratio
+            uint256 maxAllowedWithdrawal = usd3Circulating - minUSD3Required;
+
+            // Account for commitment time restrictions which might further limit withdrawals
+            if (withdrawLimit > 0) {
+                assertLe(
+                    withdrawLimit,
+                    maxAllowedWithdrawal,
+                    "Withdrawal limit exceeds subordination constraint"
+                );
+            }
+        }
+    }
+
+    /**
+     * @notice Invariant: Combined subordination ratio is always maintained
+     * @dev Verifies the total system maintains proper senior/subordinate balance
+     */
+    function invariant_totalSubordinationRatio() public {
+        uint256 usd3TotalSupply = ERC20(address(usd3Strategy)).totalSupply();
+
+        if (
+            usd3TotalSupply == 0 || usd3Strategy.susd3Strategy() == address(0)
+        ) {
+            return;
+        }
+
+        uint256 susd3Holdings = ERC20(address(usd3Strategy)).balanceOf(
+            usd3Strategy.susd3Strategy()
+        );
+
+        uint256 maxSubRatio = usd3Strategy.maxSubordinationRatio();
+
+        // The ratio of sUSD3's USD3 holdings to total USD3 supply should never exceed maxSubRatio
+        uint256 actualRatioBps = (susd3Holdings * 10_000) / usd3TotalSupply;
+
+        assertLe(
+            actualRatioBps,
+            maxSubRatio,
+            "Subordination ratio exceeded maximum allowed"
+        );
+
+        // Also verify that USD3 circulating maintains minimum ratio
+        uint256 minUSD3Ratio = 10_000 - maxSubRatio;
+        uint256 usd3Circulating = usd3TotalSupply - susd3Holdings;
+        uint256 circulatingRatioBps = (usd3Circulating * 10_000) /
+            usd3TotalSupply;
+
+        assertGe(
+            circulatingRatioBps,
+            minUSD3Ratio,
+            "USD3 circulating ratio below minimum required"
+        );
+    }
+
+    /**
      * @notice Invariant: USD3 total assets >= total supply (no losses without sUSD3 absorption)
      * @dev If sUSD3 exists, it should absorb losses first
      */
