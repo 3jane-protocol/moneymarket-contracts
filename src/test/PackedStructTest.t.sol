@@ -43,7 +43,7 @@ contract PackedStructTest is Setup {
 
         // Link strategies
         vm.prank(management);
-        usd3.setSusd3Strategy(address(susd3Strategy));
+        usd3.setSUSD3(address(susd3Strategy));
 
         // Give test users USD3 tokens
         // Reduced amounts to fit within subordination limits

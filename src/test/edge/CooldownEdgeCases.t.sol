@@ -50,7 +50,7 @@ contract CooldownEdgeCasesTest is Setup {
 
         // Link strategies
         vm.prank(management);
-        usd3Strategy.setSusd3Strategy(address(susd3Strategy));
+        usd3Strategy.setSUSD3(address(susd3Strategy));
 
         // Give users USDC and get USD3
         deal(address(underlyingAsset), alice, 100_000e6);

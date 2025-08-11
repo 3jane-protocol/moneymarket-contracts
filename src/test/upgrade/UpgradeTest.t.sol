@@ -69,7 +69,7 @@ contract UpgradeTest is Setup {
 
         // Link strategies
         vm.prank(management);
-        usd3Strategy.setSusd3Strategy(address(susd3Strategy));
+        usd3Strategy.setSUSD3(address(susd3Strategy));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -292,13 +292,13 @@ contract UpgradeTest is Setup {
         vm.stopPrank();
 
         // Test that sUSD3 strategy link is stable (one-time only)
-        address originalSusd3 = usd3Strategy.susd3Strategy();
+        address originalSusd3 = usd3Strategy.sUSD3();
 
         if (originalSusd3 == address(0)) {
             // If not set, set it first
             address newSusd3 = makeAddr("testSusd3");
             vm.prank(management);
-            usd3Strategy.setSusd3Strategy(newSusd3);
+            usd3Strategy.setSUSD3(newSusd3);
             originalSusd3 = newSusd3;
         }
 
@@ -308,14 +308,10 @@ contract UpgradeTest is Setup {
         address anotherSusd3 = makeAddr("anotherSusd3");
         vm.prank(management);
         vm.expectRevert("sUSD3 already set");
-        usd3Strategy.setSusd3Strategy(anotherSusd3);
+        usd3Strategy.setSUSD3(anotherSusd3);
 
         // Verify link remains unchanged
-        assertEq(
-            usd3Strategy.susd3Strategy(),
-            originalSusd3,
-            "Strategy link stable"
-        );
+        assertEq(usd3Strategy.sUSD3(), originalSusd3, "Strategy link stable");
 
         // Test that USD3 operations still work with sUSD3 link
         vm.startPrank(alice);
@@ -347,11 +343,11 @@ contract UpgradeTest is Setup {
         address yetAnotherSusd3 = address(0x123);
         vm.prank(management);
         vm.expectRevert("sUSD3 already set");
-        usd3Strategy.setSusd3Strategy(yetAnotherSusd3);
+        usd3Strategy.setSUSD3(yetAnotherSusd3);
 
         // Verify original link still intact
         assertEq(
-            usd3Strategy.susd3Strategy(),
+            usd3Strategy.sUSD3(),
             originalSusd3,
             "Original strategy still linked"
         );
@@ -467,7 +463,7 @@ contract UpgradeTest is Setup {
         uint256 yieldShare = ITokenizedStrategy(address(usd3Strategy))
             .performanceFee();
         uint256 maxOnCredit = usd3Strategy.maxOnCredit();
-        address susd3StrategyAddr = usd3Strategy.susd3Strategy();
+        address susd3StrategyAddr = usd3Strategy.sUSD3();
 
         // Note: performanceFee may be set to a default value (e.g., 1000 = 10%)
         // This is acceptable as long as it's within valid range

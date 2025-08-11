@@ -75,7 +75,7 @@ contract InterestDistribution is Setup {
 
         // Link strategies and configure interest sharing
         vm.startPrank(management);
-        usd3Strategy.setSusd3Strategy(address(susd3Strategy));
+        usd3Strategy.setSUSD3(address(susd3Strategy));
         // Set performance fee to distribute yield to sUSD3
         ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(
             uint16(INTEREST_SHARE_BPS)

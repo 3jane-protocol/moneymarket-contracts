@@ -57,7 +57,7 @@ contract InvariantsTest is Setup {
 
         // Link strategies
         vm.prank(management);
-        usd3Strategy.setSusd3Strategy(address(susd3Strategy));
+        usd3Strategy.setSUSD3(address(susd3Strategy));
 
         // Setup test actors
         _setupActors();
@@ -230,14 +230,12 @@ contract InvariantsTest is Setup {
         uint256 usd3TotalSupply = ERC20(address(usd3Strategy)).totalSupply();
 
         // Skip if no supply or sUSD3 not set
-        if (
-            usd3TotalSupply == 0 || usd3Strategy.susd3Strategy() == address(0)
-        ) {
+        if (usd3TotalSupply == 0 || usd3Strategy.sUSD3() == address(0)) {
             return;
         }
 
         uint256 susd3Holdings = ERC20(address(usd3Strategy)).balanceOf(
-            usd3Strategy.susd3Strategy()
+            usd3Strategy.sUSD3()
         );
 
         // Get the max subordination ratio from USD3
@@ -286,14 +284,12 @@ contract InvariantsTest is Setup {
     function invariant_totalSubordinationRatio() public {
         uint256 usd3TotalSupply = ERC20(address(usd3Strategy)).totalSupply();
 
-        if (
-            usd3TotalSupply == 0 || usd3Strategy.susd3Strategy() == address(0)
-        ) {
+        if (usd3TotalSupply == 0 || usd3Strategy.sUSD3() == address(0)) {
             return;
         }
 
         uint256 susd3Holdings = ERC20(address(usd3Strategy)).balanceOf(
-            usd3Strategy.susd3Strategy()
+            usd3Strategy.sUSD3()
         );
 
         uint256 maxSubRatio = usd3Strategy.maxSubordinationRatio();

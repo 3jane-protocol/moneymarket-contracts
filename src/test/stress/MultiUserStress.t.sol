@@ -46,7 +46,7 @@ contract MultiUserStressTest is Setup {
 
         // Link strategies
         vm.prank(management);
-        usd3Strategy.setSusd3Strategy(address(susd3Strategy));
+        usd3Strategy.setSUSD3(address(susd3Strategy));
 
         // Setup yield sharing via protocol config
         address morphoAddress = address(usd3Strategy.morphoCredit());

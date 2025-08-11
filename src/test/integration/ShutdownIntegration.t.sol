@@ -55,7 +55,7 @@ contract ShutdownIntegrationTest is Setup {
 
         // Link strategies
         vm.prank(management);
-        usd3Strategy.setSusd3Strategy(address(susd3Strategy));
+        usd3Strategy.setSUSD3(address(susd3Strategy));
 
         // Configure restrictions
         vm.startPrank(management);

@@ -48,7 +48,7 @@ contract USD3Coverage is Setup {
 
         // Link strategies
         vm.prank(management);
-        usd3Strategy.setSusd3Strategy(address(susd3Strategy));
+        usd3Strategy.setSUSD3(address(susd3Strategy));
 
         // Setup test users with USDC
         airdrop(asset, alice, 100000e6);
@@ -91,7 +91,7 @@ contract USD3Coverage is Setup {
 
         // Verify sUSD3 is properly linked
         assertEq(
-            usd3Strategy.susd3Strategy(),
+            usd3Strategy.sUSD3(),
             address(susd3Strategy),
             "sUSD3 should be linked"
         );
@@ -120,11 +120,11 @@ contract USD3Coverage is Setup {
         // Test that sUSD3 cannot be changed once set (it's already set in setUp)
         vm.prank(management);
         vm.expectRevert("sUSD3 already set");
-        usd3Strategy.setSusd3Strategy(address(0));
+        usd3Strategy.setSUSD3(address(0));
 
         // Verify original is still set
         assertEq(
-            usd3Strategy.susd3Strategy(),
+            usd3Strategy.sUSD3(),
             address(susd3Strategy),
             "sUSD3 should remain unchanged"
         );
@@ -285,30 +285,30 @@ contract USD3Coverage is Setup {
     }
 
     /**
-     * @notice Test setSusd3Strategy access control
+     * @notice Test setSUSD3 access control
      * @dev Verifies only management can set sUSD3 strategy
      */
-    function test_setSusd3StrategyAccessControl() public {
+    function test_setSUSD3AccessControl() public {
         // sUSD3 is already set in setUp, test that it can't be set again even by management
         address newSusd3 = makeAddr("newSusd3");
 
         // Management cannot set it again (one-time only)
         vm.prank(management);
         vm.expectRevert("sUSD3 already set");
-        usd3Strategy.setSusd3Strategy(newSusd3);
+        usd3Strategy.setSUSD3(newSusd3);
 
         // Verify the original is still set
-        assertEq(usd3Strategy.susd3Strategy(), address(susd3Strategy));
+        assertEq(usd3Strategy.sUSD3(), address(susd3Strategy));
     }
 
     /**
-     * @notice Test setSusd3Strategy one-time only behavior
+     * @notice Test setSUSD3 one-time only behavior
      * @dev Verifies sUSD3 can only be set once
      */
-    function test_setSusd3Strategy_oneTimeOnly() public {
+    function test_setSUSD3_oneTimeOnly() public {
         // The main usd3Strategy already has sUSD3 set in setUp
         // Verify it's set
-        address currentSusd3 = usd3Strategy.susd3Strategy();
+        address currentSusd3 = usd3Strategy.sUSD3();
         assertEq(currentSusd3, address(susd3Strategy), "sUSD3 should be set");
 
         address firstSusd3 = makeAddr("firstSusd3");
@@ -317,11 +317,11 @@ contract USD3Coverage is Setup {
         // Cannot set again even with management
         vm.prank(management);
         vm.expectRevert("sUSD3 already set");
-        usd3Strategy.setSusd3Strategy(firstSusd3);
+        usd3Strategy.setSUSD3(firstSusd3);
 
         // Verify original is still set
         assertEq(
-            usd3Strategy.susd3Strategy(),
+            usd3Strategy.sUSD3(),
             currentSusd3,
             "Should remain as initially set"
         );
@@ -329,12 +329,12 @@ contract USD3Coverage is Setup {
         // Cannot set to address(0) either
         vm.prank(management);
         vm.expectRevert("sUSD3 already set");
-        usd3Strategy.setSusd3Strategy(address(0));
+        usd3Strategy.setSUSD3(address(0));
 
         // Cannot set to same address either
         vm.prank(management);
         vm.expectRevert("sUSD3 already set");
-        usd3Strategy.setSusd3Strategy(currentSusd3);
+        usd3Strategy.setSUSD3(currentSusd3);
     }
 
     /**

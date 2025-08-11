@@ -26,7 +26,7 @@ interface IUSD3 is IStrategy {
 
     // Configuration parameters
     function maxOnCredit() external view returns (uint256);
-    function susd3Strategy() external view returns (address);
+    function sUSD3() external view returns (address);
     function whitelistEnabled() external view returns (bool);
     function whitelist(address user) external view returns (bool);
     function minDeposit() external view returns (uint256);
@@ -38,7 +38,7 @@ interface IUSD3 is IStrategy {
                     MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    function setSusd3Strategy(address _susd3Strategy) external;
+    function setSUSD3(address _sUSD3) external;
     function setWhitelistEnabled(bool _enabled) external;
     function setWhitelist(address _user, bool _allowed) external;
     function setMinDeposit(uint256 _minDeposit) external;

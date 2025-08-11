@@ -47,7 +47,7 @@ contract BaseStrategyCoverage is Setup {
 
         // Link strategies
         vm.prank(management);
-        usd3Strategy.setSusd3Strategy(address(susd3Strategy));
+        usd3Strategy.setSUSD3(address(susd3Strategy));
 
         // Setup test users
         airdrop(asset, alice, 100000e6);
@@ -532,12 +532,12 @@ contract BaseStrategyCoverage is Setup {
         // Non-management cannot set sUSD3
         vm.prank(alice);
         vm.expectRevert();
-        usd3Strategy.setSusd3Strategy(newSusd3);
+        usd3Strategy.setSUSD3(newSusd3);
 
         // Even management cannot change it once set (one-time only)
         vm.prank(management);
         vm.expectRevert("sUSD3 already set");
-        usd3Strategy.setSusd3Strategy(newSusd3);
+        usd3Strategy.setSUSD3(newSusd3);
 
         // Test onlyKeepers (syncTrancheShare)
         vm.prank(alice);

@@ -47,7 +47,7 @@ contract AccessControlTest is Setup {
 
         // Link strategies
         vm.prank(management);
-        usd3Strategy.setSusd3Strategy(address(susd3Strategy));
+        usd3Strategy.setSUSD3(address(susd3Strategy));
 
         // Give users some funds
         deal(address(underlyingAsset), alice, 10_000e6);
@@ -74,29 +74,29 @@ contract AccessControlTest is Setup {
         // not directly on USD3 strategy
     }
 
-    function test_setSusd3Strategy_onlyManagement() public {
+    function test_setSUSD3_onlyManagement() public {
         // sUSD3 is already set in setUp, so we test that it can't be set again
         address newSusd3 = makeAddr("newSusd3");
 
         // Even management cannot set it again (one-time only)
         vm.prank(management);
         vm.expectRevert("sUSD3 already set");
-        usd3Strategy.setSusd3Strategy(newSusd3);
+        usd3Strategy.setSUSD3(newSusd3);
 
         // Verify the original is still set
         assertEq(
-            usd3Strategy.susd3Strategy(),
+            usd3Strategy.sUSD3(),
             address(susd3Strategy),
             "sUSD3 strategy should remain unchanged"
         );
     }
 
-    function test_setSusd3Strategy_initialSet() public {
+    function test_setSUSD3_initialSet() public {
         // This test validates that sUSD3 can only be set once
         // The main usd3Strategy already has sUSD3 set in setUp,
         // so we test that it cannot be changed
 
-        address currentSusd3 = usd3Strategy.susd3Strategy();
+        address currentSusd3 = usd3Strategy.sUSD3();
         assertEq(currentSusd3, address(susd3Strategy), "sUSD3 should be set");
 
         address newSusd3 = makeAddr("newSusd3");
@@ -104,11 +104,11 @@ contract AccessControlTest is Setup {
         // Even management cannot change it once set
         vm.prank(management);
         vm.expectRevert("sUSD3 already set");
-        usd3Strategy.setSusd3Strategy(newSusd3);
+        usd3Strategy.setSUSD3(newSusd3);
 
         // Verify it hasn't changed
         assertEq(
-            usd3Strategy.susd3Strategy(),
+            usd3Strategy.sUSD3(),
             currentSusd3,
             "sUSD3 should remain unchanged"
         );

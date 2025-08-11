@@ -51,7 +51,7 @@ contract sUSD3Test is Setup {
 
         // Link USD3 and sUSD3
         vm.prank(management);
-        usd3.setSusd3Strategy(address(susd3Strategy));
+        usd3.setSUSD3(address(susd3Strategy));
 
         // Give test users some USD3 tokens
         // First give them USDC

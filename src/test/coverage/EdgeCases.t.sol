@@ -51,7 +51,7 @@ contract EdgeCases is Setup {
 
         // Link strategies
         vm.prank(management);
-        usd3Strategy.setSusd3Strategy(address(susd3Strategy));
+        usd3Strategy.setSUSD3(address(susd3Strategy));
 
         // Setup test users with large amounts for fuzzing
         airdrop(asset, alice, 1000000e6); // 1M USDC

@@ -68,7 +68,7 @@ contract USD3 is BaseHooksUpgradeable {
     //////////////////////////////////////////////////////////////*/
     /// @notice Address of the subordinate sUSD3 strategy
     /// @dev Used for loss absorption and yield distribution
-    address public susd3Strategy;
+    address public sUSD3;
 
     /// @notice Whether whitelist is enforced for deposits
     bool public whitelistEnabled;
@@ -381,11 +381,11 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Check subordination ratio constraint
         // Prevent withdrawals that would leave USD3 below minimum ratio
-        if (susd3Strategy != address(0)) {
+        if (sUSD3 != address(0)) {
             uint256 usd3TotalSupply = TokenizedStrategy.totalSupply();
 
             // sUSD3 holds USD3 tokens, so we check USD3 balance of sUSD3
-            uint256 susd3Holdings = TokenizedStrategy.balanceOf(susd3Strategy);
+            uint256 susd3Holdings = TokenizedStrategy.balanceOf(sUSD3);
 
             // Get max subordination ratio from ProtocolConfig
             uint256 maxSubRatio = maxSubordinationRatio();
@@ -482,9 +482,9 @@ contract USD3 is BaseHooksUpgradeable {
 
     /// @dev Post-report hook to handle loss absorption by burning sUSD3's shares
     function _postReportHook(uint256 profit, uint256 loss) internal override {
-        if (loss > 0 && susd3Strategy != address(0)) {
+        if (loss > 0 && sUSD3 != address(0)) {
             // Get sUSD3's current USD3 balance
-            uint256 susd3Balance = TokenizedStrategy.balanceOf(susd3Strategy);
+            uint256 susd3Balance = TokenizedStrategy.balanceOf(sUSD3);
 
             if (susd3Balance > 0) {
                 // Calculate how many shares are needed to cover the loss
@@ -522,9 +522,7 @@ contract USD3 is BaseHooksUpgradeable {
     function _burnSharesFromSusd3(uint256 amount) internal {
         // Calculate storage slots using the library
         bytes32 totalSupplySlot = TokenizedStrategyStorageLib.totalSupplySlot();
-        bytes32 balanceSlot = TokenizedStrategyStorageLib.balancesSlot(
-            susd3Strategy
-        );
+        bytes32 balanceSlot = TokenizedStrategyStorageLib.balancesSlot(sUSD3);
 
         // Read current values
         uint256 currentBalance;
@@ -547,11 +545,8 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         // Emit Transfer event to address(0) for transparency
-        emit Transfer(susd3Strategy, address(0), actualBurn);
+        emit IERC20.Transfer(sUSD3, address(0), actualBurn);
     }
-
-    // Event for ERC20 Transfer (when burning shares)
-    event Transfer(address indexed from, address indexed to, uint256 value);
 
     /*//////////////////////////////////////////////////////////////
                         PUBLIC VIEW FUNCTIONS
@@ -588,18 +583,18 @@ contract USD3 is BaseHooksUpgradeable {
 
     /**
      * @notice Set the sUSD3 subordinate strategy address
-     * @param _susd3Strategy Address of the sUSD3 strategy
+     * @param _sUSD3 Address of the sUSD3 strategy
      * @dev Only callable by management. After calling, also set performance fee recipient.
      */
-    function setSusd3Strategy(address _susd3Strategy) external onlyManagement {
-        require(susd3Strategy == address(0), "sUSD3 already set");
-        require(_susd3Strategy != address(0), "Invalid address");
+    function setSUSD3(address _sUSD3) external onlyManagement {
+        require(sUSD3 == address(0), "sUSD3 already set");
+        require(_sUSD3 != address(0), "Invalid address");
 
-        susd3Strategy = _susd3Strategy;
-        emit SUSD3StrategyUpdated(address(0), _susd3Strategy);
+        sUSD3 = _sUSD3;
+        emit SUSD3StrategyUpdated(address(0), _sUSD3);
 
         // NOTE: After calling this, management should also call:
-        // ITokenizedStrategy(usd3Address).setPerformanceFeeRecipient(_susd3Strategy)
+        // ITokenizedStrategy(usd3Address).setPerformanceFeeRecipient(_sUSD3)
         // to ensure yield distribution goes to sUSD3
     }
 
