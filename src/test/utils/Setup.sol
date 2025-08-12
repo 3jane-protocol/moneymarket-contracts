@@ -22,6 +22,7 @@ import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/
 import {TransparentUpgradeableProxy} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
+import {MockERC20} from "../mocks/MockERC20.sol";
 
 interface IFactory {
     function governance() external view returns (address);
@@ -245,6 +246,9 @@ contract Setup is Test, IEvents {
     }
 
     function _setTokenAddrs() internal {
-        tokenAddrs["USDC"] = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+        // Use a mock ERC20 for testing instead of real USDC
+        // Real USDC has proxy implementation that causes issues in tests
+        MockERC20 mockUsdc = new MockERC20("USD Coin", "USDC", 6);
+        tokenAddrs["USDC"] = address(mockUsdc);
     }
 }

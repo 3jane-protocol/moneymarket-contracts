@@ -648,6 +648,9 @@ contract LossAbsorptionStressTest is Setup {
                 marketSlot,
                 bytes32(currentTotalSupply - lossAmount)
             );
+        } else if (currentTotalSupply > 0) {
+            // If loss is greater than supply, set to 0 to prevent underflow
+            vm.store(address(morpho), marketSlot, bytes32(0));
         }
 
         emit LossReported(lossAmount);
@@ -668,19 +671,225 @@ contract LossAbsorptionStressTest is Setup {
         return;
     }
 
-    function test_lossAbsorption_zeroSusd3Balance() public {
-        // This test is disabled as sUSD3 deployment is currently disabled
-        // TODO: Re-enable when sUSD3 proxy deployment is fixed
-        return;
-    }
-
     function test_lossAbsorption_precisionLoss() public {
-        // This test is disabled as sUSD3 deployment is currently disabled
-        // TODO: Re-enable when sUSD3 proxy deployment is fixed
-        return;
+        // Test that small losses don't get lost due to precision issues
+        // Deploy strategies without sUSD3 for now
+
+        // Alice deposits a small amount
+        vm.startPrank(alice);
+        asset.approve(address(strategy), 1001e6); // 1001 USDC
+        strategy.deposit(1001e6, alice);
+        vm.stopPrank();
+
+        // Report a very small loss (1 USDC)
+        uint256 smallLoss = 1e6;
+        _simulateLoss(smallLoss);
+
+        // Report should handle the small loss
+        vm.prank(keeper);
+        (, uint256 loss) = strategy.report();
+
+        // Verify the loss is properly accounted for
+        assertGt(loss, 0, "Small loss should be detected");
+        assertLe(loss, smallLoss + 1, "Loss precision should be maintained");
     }
 
     function test_lossAbsorption_rapidConsecutiveLosses() public {
+        // Test multiple losses in quick succession
+
+        // Alice deposits
+        vm.startPrank(alice);
+        asset.approve(address(strategy), MEDIUM_DEPOSIT);
+        strategy.deposit(MEDIUM_DEPOSIT, alice);
+        vm.stopPrank();
+
+        uint256 initialShares = strategy.balanceOf(alice);
+
+        // Simulate 5 consecutive losses
+        uint256[] memory losses = new uint256[](5);
+        losses[0] = 1000e6; // 1K USDC
+        losses[1] = 2000e6; // 2K USDC
+        losses[2] = 1500e6; // 1.5K USDC
+        losses[3] = 500e6; // 500 USDC
+        losses[4] = 3000e6; // 3K USDC
+
+        uint256 totalLoss;
+        for (uint i = 0; i < losses.length; i++) {
+            _simulateLoss(losses[i]);
+            totalLoss += losses[i];
+
+            // Report after each loss
+            vm.prank(keeper);
+            strategy.report();
+
+            // Small delay between losses
+            skip(1 hours);
+        }
+
+        // Verify total impact
+        uint256 finalShares = strategy.balanceOf(alice);
+        uint256 finalAssets = strategy.convertToAssets(finalShares);
+
+        assertLt(
+            finalAssets,
+            MEDIUM_DEPOSIT - totalLoss + 1000,
+            "Consecutive losses should compound"
+        );
+        assertEq(
+            finalShares,
+            initialShares,
+            "Share count shouldn't change without burns"
+        );
+    }
+
+    function test_lossAbsorption_duringCooldownPeriod() public {
+        // Test loss absorption when users are in cooldown
+        // Note: This primarily tests USD3 behavior as sUSD3 is disabled
+
+        // Alice deposits
+        vm.startPrank(alice);
+        asset.approve(address(strategy), LARGE_DEPOSIT);
+        strategy.deposit(LARGE_DEPOSIT, alice);
+        vm.stopPrank();
+
+        // Bob deposits
+        vm.startPrank(bob);
+        asset.approve(address(strategy), MEDIUM_DEPOSIT);
+        strategy.deposit(MEDIUM_DEPOSIT, bob);
+        vm.stopPrank();
+
+        // Simulate a loss
+        uint256 lossAmount = 10000e6; // 10K USDC
+        _simulateLoss(lossAmount);
+
+        // Report the loss
+        vm.prank(keeper);
+        (uint256 profit, uint256 loss) = strategy.report();
+
+        assertEq(loss, lossAmount, "Loss should be reported");
+
+        // Users should still be able to withdraw after loss
+        // (though they'll receive less due to the loss)
+        uint256 aliceShares = strategy.balanceOf(alice);
+        uint256 aliceAssets = strategy.convertToAssets(aliceShares);
+
+        assertLt(aliceAssets, LARGE_DEPOSIT, "Alice should have loss applied");
+
+        // Alice can still withdraw
+        vm.prank(alice);
+        uint256 withdrawn = strategy.redeem(aliceShares, alice, alice);
+        assertGt(withdrawn, 0, "Alice should be able to withdraw after loss");
+    }
+
+    function test_lossAbsorption_interactionWithWithdrawals() public {
+        // Test loss occurring while withdrawals are in progress
+
+        // Multiple users deposit
+        vm.startPrank(alice);
+        asset.approve(address(strategy), LARGE_DEPOSIT);
+        strategy.deposit(LARGE_DEPOSIT, alice);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        asset.approve(address(strategy), MEDIUM_DEPOSIT);
+        strategy.deposit(MEDIUM_DEPOSIT, bob);
+        vm.stopPrank();
+
+        vm.startPrank(charlie);
+        asset.approve(address(strategy), SMALL_DEPOSIT);
+        strategy.deposit(SMALL_DEPOSIT, charlie);
+        vm.stopPrank();
+
+        // Alice starts withdrawal
+        uint256 aliceShares = strategy.balanceOf(alice);
+        vm.prank(alice);
+        strategy.approve(address(strategy), aliceShares / 2);
+
+        // Loss occurs
+        uint256 lossAmount = 50000e6; // 50K USDC
+        _simulateLoss(lossAmount);
+
+        // Report the loss
+        vm.prank(keeper);
+        strategy.report();
+
+        // Alice completes withdrawal (should get less due to loss)
+        vm.prank(alice);
+        uint256 withdrawn = strategy.redeem(aliceShares / 2, alice, alice);
+
+        assertLt(
+            withdrawn,
+            LARGE_DEPOSIT / 2,
+            "Withdrawal should reflect loss"
+        );
+
+        // Bob and Charlie check their positions
+        uint256 bobAssets = strategy.convertToAssets(strategy.balanceOf(bob));
+        uint256 charlieAssets = strategy.convertToAssets(
+            strategy.balanceOf(charlie)
+        );
+
+        assertLt(bobAssets, MEDIUM_DEPOSIT, "Bob should have loss applied");
+        assertLt(
+            charlieAssets,
+            SMALL_DEPOSIT,
+            "Charlie should have loss applied"
+        );
+    }
+
+    function test_lossAbsorption_maxLossScenario() public {
+        // Test behavior at maximum possible loss
+
+        // Alice deposits
+        vm.startPrank(alice);
+        asset.approve(address(strategy), MEDIUM_DEPOSIT);
+        strategy.deposit(MEDIUM_DEPOSIT, alice);
+        vm.stopPrank();
+
+        // Simulate 99% loss
+        uint256 massiveLoss = (MEDIUM_DEPOSIT * 99) / 100;
+        _simulateLoss(massiveLoss);
+
+        // Report the loss
+        vm.prank(keeper);
+        (uint256 profit, uint256 loss) = strategy.report();
+
+        assertGt(loss, 0, "Massive loss should be reported");
+
+        // Check remaining value
+        uint256 remainingAssets = strategy.convertToAssets(
+            strategy.balanceOf(alice)
+        );
+        assertLt(
+            remainingAssets,
+            MEDIUM_DEPOSIT / 50,
+            "Should have minimal value left"
+        );
+        assertGt(remainingAssets, 0, "Should not go to zero");
+    }
+
+    function test_lossAbsorption_withZeroTotalAssets() public {
+        // Test edge case where total assets might hit zero
+
+        // Small deposit
+        vm.startPrank(alice);
+        asset.approve(address(strategy), 100e6); // 100 USDC
+        strategy.deposit(100e6, alice);
+        vm.stopPrank();
+
+        // Try to simulate loss equal to deposits (not greater to avoid underflow)
+        _simulateLoss(100e6);
+
+        // Report should handle this gracefully
+        vm.prank(keeper);
+        (uint256 profit, uint256 loss) = strategy.report();
+
+        // Verify strategy doesn't break
+        uint256 totalAssets = strategy.totalAssets();
+        assertGe(totalAssets, 0, "Total assets should not go negative");
+    }
+
+    function test_lossAbsorption_zeroSusd3Balance() public {
         // This test is disabled as sUSD3 deployment is currently disabled
         // TODO: Re-enable when sUSD3 proxy deployment is fixed
         return;

@@ -598,4 +598,219 @@ contract OperationTest is Setup {
         assertEq(currentParams.loanToken, initialParams.loanToken);
         assertEq(currentParams.creditLine, initialParams.creditLine);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                    PROTOCOL CONFIG FALLBACK TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_protocolConfig_maxOnCreditFallback() public {
+        // Get the protocol config mock
+        MockProtocolConfig config = MockProtocolConfig(
+            MorphoCredit(address(usd3Strategy.morphoCredit())).protocolConfig()
+        );
+
+        // Set maxOnCredit to 0 (should prevent deployment)
+        config.setConfig(keccak256("MAX_ON_CREDIT"), 0);
+
+        uint256 maxOnCredit = usd3Strategy.maxOnCredit();
+        assertEq(maxOnCredit, 0, "Should return 0 when set to 0");
+
+        // Deposit and verify no deployment happens
+        mintAndDepositIntoStrategy(strategy, user, 10000e6);
+
+        vm.prank(keeper);
+        strategy.report();
+
+        // Check that funds stay idle when maxOnCredit is 0
+        uint256 morphoBalance = morpho.expectedSupplyAssets(
+            usd3Strategy.marketParams(),
+            address(strategy)
+        );
+        assertEq(
+            morphoBalance,
+            0,
+            "Should not deploy to Morpho when maxOnCredit is 0"
+        );
+    }
+
+    function test_protocolConfig_dynamicMaxOnCreditUpdate() public {
+        MockProtocolConfig config = MockProtocolConfig(
+            MorphoCredit(address(usd3Strategy.morphoCredit())).protocolConfig()
+        );
+
+        // Start with 50% deployment
+        config.setConfig(keccak256("MAX_ON_CREDIT"), 5000);
+
+        // Deposit funds
+        uint256 depositAmount = 100000e6;
+        mintAndDepositIntoStrategy(strategy, user, depositAmount);
+
+        // Trigger deployment
+        vm.prank(keeper);
+        strategy.report();
+
+        // Check ~50% deployed
+        uint256 deployedBefore = morpho.expectedSupplyAssets(
+            usd3Strategy.marketParams(),
+            address(strategy)
+        );
+        assertApproxEqRel(
+            deployedBefore,
+            depositAmount / 2,
+            0.01e18,
+            "Should deploy ~50%"
+        );
+
+        // Update to 80% deployment
+        config.setConfig(keccak256("MAX_ON_CREDIT"), 8000);
+
+        // Trigger rebalance
+        vm.prank(keeper);
+        strategy.tend();
+
+        // Check ~80% deployed
+        uint256 deployedAfter = morpho.expectedSupplyAssets(
+            usd3Strategy.marketParams(),
+            address(strategy)
+        );
+        assertApproxEqRel(
+            deployedAfter,
+            (depositAmount * 80) / 100,
+            0.01e18,
+            "Should deploy ~80%"
+        );
+
+        // Update to 20% deployment (should withdraw excess)
+        config.setConfig(keccak256("MAX_ON_CREDIT"), 2000);
+
+        vm.prank(keeper);
+        strategy.tend();
+
+        uint256 deployedFinal = morpho.expectedSupplyAssets(
+            usd3Strategy.marketParams(),
+            address(strategy)
+        );
+        assertApproxEqRel(
+            deployedFinal,
+            (depositAmount * 20) / 100,
+            0.01e18,
+            "Should reduce to ~20%"
+        );
+    }
+
+    function test_protocolConfig_subordinationRatioFallback() public {
+        MockProtocolConfig config = MockProtocolConfig(
+            MorphoCredit(address(usd3Strategy.morphoCredit())).protocolConfig()
+        );
+
+        // Test fallback when ratio not set (0)
+        config.setConfig(keccak256("TRANCHE_RATIO"), 0);
+
+        uint256 maxSubRatio = usd3Strategy.maxSubordinationRatio();
+        assertEq(maxSubRatio, 1500, "Should fallback to 15% when not set");
+
+        // Set custom ratio
+        config.setConfig(keccak256("TRANCHE_RATIO"), 2000); // 20%
+
+        maxSubRatio = usd3Strategy.maxSubordinationRatio();
+        assertEq(maxSubRatio, 2000, "Should use configured ratio");
+    }
+
+    function test_protocolConfig_multipleParameterChanges() public {
+        MockProtocolConfig config = MockProtocolConfig(
+            MorphoCredit(address(usd3Strategy.morphoCredit())).protocolConfig()
+        );
+
+        // Change multiple parameters at once
+        config.setConfig(keccak256("MAX_ON_CREDIT"), 7000); // 70%
+        config.setConfig(keccak256("TRANCHE_RATIO"), 1000); // 10%
+        config.setConfig(keccak256("TRANCHE_SHARE_VARIANT"), 500); // 5% performance fee
+
+        // Verify all changes take effect
+        assertEq(usd3Strategy.maxOnCredit(), 7000, "maxOnCredit should update");
+        assertEq(
+            usd3Strategy.maxSubordinationRatio(),
+            1000,
+            "subordination ratio should update"
+        );
+
+        // Sync tranche share
+        vm.prank(keeper);
+        usd3Strategy.syncTrancheShare();
+
+        // Verify performance fee updated (would need to check storage)
+        uint256 perfFee = ITokenizedStrategy(address(strategy))
+            .performanceFee();
+        assertEq(perfFee, 500, "Performance fee should update");
+    }
+
+    function test_protocolConfig_invalidResponseHandling() public {
+        MockProtocolConfig config = MockProtocolConfig(
+            MorphoCredit(address(usd3Strategy.morphoCredit())).protocolConfig()
+        );
+
+        // Set invalid tranche share (> 100%)
+        config.setConfig(keccak256("TRANCHE_SHARE_VARIANT"), 10001);
+
+        // syncTrancheShare should revert on invalid value
+        vm.prank(keeper);
+        vm.expectRevert("Invalid tranche share");
+        usd3Strategy.syncTrancheShare();
+
+        // Normal operations should continue
+        mintAndDepositIntoStrategy(strategy, user, 1000e6);
+
+        vm.prank(keeper);
+        strategy.report(); // Should work despite invalid tranche share config
+    }
+
+    function test_protocolConfig_operationsDuringUpdate() public {
+        MockProtocolConfig config = MockProtocolConfig(
+            MorphoCredit(address(usd3Strategy.morphoCredit())).protocolConfig()
+        );
+
+        // User deposits
+        mintAndDepositIntoStrategy(strategy, user, 50000e6);
+
+        // Start with 60% deployment
+        config.setConfig(keccak256("MAX_ON_CREDIT"), 6000);
+
+        vm.prank(keeper);
+        strategy.report();
+
+        // User starts withdrawal
+        vm.prank(user);
+        uint256 userShares = strategy.balanceOf(user);
+        strategy.approve(address(strategy), userShares / 2);
+
+        // Config changes mid-operation
+        config.setConfig(keccak256("MAX_ON_CREDIT"), 3000); // Reduce to 30%
+
+        // Complete withdrawal
+        vm.prank(user);
+        uint256 withdrawn = strategy.redeem(userShares / 2, user, user);
+        assertGt(
+            withdrawn,
+            0,
+            "Withdrawal should complete despite config change"
+        );
+
+        // Verify rebalancing happens on next tend
+        vm.prank(keeper);
+        strategy.tend();
+
+        uint256 deployed = morpho.expectedSupplyAssets(
+            usd3Strategy.marketParams(),
+            address(strategy)
+        );
+        uint256 totalAssets = strategy.totalAssets();
+        uint256 deploymentRatio = (deployed * 10000) / totalAssets;
+
+        assertApproxEqRel(
+            deploymentRatio,
+            3000,
+            0.02e18,
+            "Should rebalance to new ratio"
+        );
+    }
 }
