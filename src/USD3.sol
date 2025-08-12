@@ -278,10 +278,6 @@ contract USD3 is BaseHooksUpgradeable {
                 address(this)
             );
         }
-
-        // Verify we received the tokens (allow for small rounding differences)
-        uint256 balance = asset.balanceOf(address(this));
-        require(balance > 0, "No tokens received from withdraw");
     }
 
     /// @dev Emergency withdraw function to free funds from MorphoCredit
