@@ -201,6 +201,45 @@ contract sUSD3 is BaseHooksUpgradeable {
         }
     }
 
+    /**
+     * @notice Prevent transfers during lock period or active cooldown
+     * @dev Override from BaseHooksUpgradeable to enforce lock and cooldown
+     * @param from Address transferring shares
+     * @param to Address receiving shares
+     * @param amount Amount of shares being transferred
+     */
+    function _preTransferHook(
+        address from,
+        address to,
+        uint256 amount
+    ) internal override {
+        // Allow minting (from == 0) and burning (to == 0)
+        if (from == address(0) || to == address(0)) return;
+
+        // Check lock period
+        require(
+            block.timestamp >= lockedUntil[from],
+            "sUSD3: Cannot transfer during lock period"
+        );
+
+        // Check if user has active cooldown
+        UserCooldown memory cooldown = cooldowns[from];
+        if (cooldown.shares > 0) {
+            // User has shares in cooldown, check if trying to transfer them
+            // Note: 'this' refers to the sUSD3 strategy contract
+            uint256 userBalance = IERC20(address(this)).balanceOf(from);
+            uint256 nonCooldownShares = userBalance > cooldown.shares
+                ? userBalance - cooldown.shares
+                : 0;
+
+            // Only allow transfer of non-cooldown shares
+            require(
+                amount <= nonCooldownShares,
+                "sUSD3: Cannot transfer shares in cooldown"
+            );
+        }
+    }
+
     /*//////////////////////////////////////////////////////////////
                         COOLDOWN FUNCTIONS
     //////////////////////////////////////////////////////////////*/

@@ -470,6 +470,32 @@ contract USD3 is BaseHooksUpgradeable {
         }
     }
 
+    /**
+     * @notice Prevent transfers during commitment period
+     * @dev Override from BaseHooksUpgradeable to enforce commitment
+     * @param from Address transferring shares
+     * @param to Address receiving shares
+     * @param amount Amount of shares being transferred
+     */
+    function _preTransferHook(
+        address from,
+        address to,
+        uint256 amount
+    ) internal override {
+        // Allow minting (from == 0) and burning (to == 0)
+        if (from == address(0) || to == address(0)) return;
+
+        // Allow transfers to sUSD3 (users can stake restricted USD3)
+        if (to == sUSD3) return;
+
+        // Check commitment period
+        uint256 commitmentEnd = depositTimestamp[from] + minCommitmentTime;
+        require(
+            block.timestamp >= commitmentEnd || depositTimestamp[from] == 0,
+            "USD3: Cannot transfer during commitment period"
+        );
+    }
+
     /*//////////////////////////////////////////////////////////////
                     INTERNAL HELPER FUNCTIONS
     //////////////////////////////////////////////////////////////*/

@@ -307,17 +307,22 @@ contract CommitmentEdgeCasesTest is Setup {
         uint256 shares = usd3Strategy.deposit(1000e6, alice);
         vm.stopPrank();
 
-        // Fast forward 4 days
+        // Fast forward 4 days (still in commitment period)
         skip(4 days);
 
-        // Alice transfers shares to Bob
+        // Alice CANNOT transfer shares during commitment period
+        vm.prank(alice);
+        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        ERC20(address(usd3Strategy)).transfer(bob, shares);
+
+        // Fast forward 3 more days (7 days from Alice's deposit - commitment complete)
+        skip(3 days);
+
+        // Now Alice CAN transfer shares
         vm.prank(alice);
         ERC20(address(usd3Strategy)).transfer(bob, shares);
 
-        // Fast forward 3 more days (7 days from Alice's deposit)
-        skip(3 days);
-
-        // Bob should be able to withdraw (commitment tied to original deposit)
+        // Bob can withdraw immediately (no commitment since he didn't deposit)
         vm.startPrank(bob);
         uint256 withdrawn = usd3Strategy.redeem(shares, bob, bob);
         assertGt(withdrawn, 0, "Bob should withdraw transferred shares");
@@ -396,7 +401,15 @@ contract CommitmentEdgeCasesTest is Setup {
         uint256 aliceShares = usd3Strategy.deposit(100e6, alice);
         vm.stopPrank();
 
-        // Alice transfers shares to Bob (who hasn't deposited)
+        // Alice CANNOT transfer shares during commitment period
+        vm.prank(alice);
+        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        ERC20(address(usd3Strategy)).transfer(bob, aliceShares);
+
+        // Skip commitment period
+        skip(7 days);
+
+        // Now Alice CAN transfer shares to Bob
         vm.prank(alice);
         ERC20(address(usd3Strategy)).transfer(bob, aliceShares);
 

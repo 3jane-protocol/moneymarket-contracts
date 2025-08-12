@@ -1,0 +1,461 @@
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity ^0.8.18;
+
+import {Setup} from "../utils/Setup.sol";
+import {USD3} from "../../USD3.sol";
+import {sUSD3} from "../../sUSD3.sol";
+import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
+import {TransparentUpgradeableProxy} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
+
+/**
+ * @title TransferRestrictionEdgeCases
+ * @notice Tests edge cases for transfer restrictions in USD3 and sUSD3
+ * @dev Comprehensive edge case coverage for transfer restriction functionality
+ */
+contract TransferRestrictionEdgeCases is Setup {
+    USD3 public usd3Strategy;
+    sUSD3 public susd3Strategy;
+    address public alice = makeAddr("alice");
+    address public bob = makeAddr("bob");
+    address public charlie = makeAddr("charlie");
+
+    function setUp() public override {
+        super.setUp();
+
+        usd3Strategy = USD3(address(strategy));
+
+        // Deploy sUSD3 implementation with proxy
+        sUSD3 susd3Implementation = new sUSD3();
+
+        // Deploy proxy admin
+        address proxyAdminOwner = makeAddr("ProxyAdminOwner");
+        ProxyAdmin susd3ProxyAdmin = new ProxyAdmin(proxyAdminOwner);
+
+        // Deploy proxy with initialization
+        bytes memory susd3InitData = abi.encodeWithSelector(
+            sUSD3.initialize.selector,
+            address(usd3Strategy),
+            management,
+            keeper
+        );
+
+        TransparentUpgradeableProxy susd3Proxy = new TransparentUpgradeableProxy(
+                address(susd3Implementation),
+                address(susd3ProxyAdmin),
+                susd3InitData
+            );
+
+        susd3Strategy = sUSD3(address(susd3Proxy));
+
+        // Link strategies
+        vm.prank(management);
+        usd3Strategy.setSUSD3(address(susd3Strategy));
+
+        // Configure commitment and lock periods
+        vm.startPrank(management);
+        usd3Strategy.setMinCommitmentTime(7 days);
+        usd3Strategy.setMinDeposit(100e6);
+        vm.stopPrank();
+
+        // Setup test users
+        airdrop(asset, alice, 10000e6);
+        airdrop(asset, bob, 10000e6);
+        airdrop(asset, charlie, 10000e6);
+    }
+
+    // Boundary Condition Tests
+
+    function test_transfer_exactly_at_commitment_expiry() public {
+        // Alice deposits
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
+        vm.stopPrank();
+
+        // Fast forward to exactly commitment expiry
+        skip(7 days);
+
+        // Transfer should succeed at exact boundary
+        vm.prank(alice);
+        IERC20(address(usd3Strategy)).transfer(bob, aliceShares / 2);
+
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), aliceShares / 2);
+    }
+
+    function test_transfer_one_second_before_commitment_expiry() public {
+        // Alice deposits
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
+        vm.stopPrank();
+
+        // Fast forward to one second before expiry
+        skip(7 days - 1);
+
+        // Transfer should fail
+        vm.prank(alice);
+        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        IERC20(address(usd3Strategy)).transfer(bob, aliceShares / 2);
+
+        // One second later should work
+        skip(1);
+        vm.prank(alice);
+        IERC20(address(usd3Strategy)).transfer(bob, aliceShares / 2);
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), aliceShares / 2);
+    }
+
+    function test_zero_amount_transfers() public {
+        // Alice deposits
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        vm.stopPrank();
+
+        // Zero amount transfer during commitment is still blocked by the hook
+        // The hook checks commitment before checking amount
+        vm.prank(alice);
+        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        IERC20(address(usd3Strategy)).transfer(bob, 0);
+
+        // After commitment, zero transfers work (though they're no-ops)
+        skip(7 days);
+        vm.prank(alice);
+        IERC20(address(usd3Strategy)).transfer(bob, 0);
+
+        // Verify no actual transfer occurred
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), 0);
+    }
+
+    // Approval and TransferFrom Tests
+
+    function test_transferFrom_with_infinite_approval() public {
+        // Alice deposits
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
+
+        // Alice gives Bob infinite approval
+        IERC20(address(usd3Strategy)).approve(bob, type(uint256).max);
+        vm.stopPrank();
+
+        // Bob cannot transfer during commitment even with infinite approval
+        vm.prank(bob);
+        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        IERC20(address(usd3Strategy)).transferFrom(
+            alice,
+            charlie,
+            aliceShares / 2
+        );
+
+        // After commitment period
+        skip(7 days);
+
+        // Now Bob can transfer
+        vm.prank(bob);
+        IERC20(address(usd3Strategy)).transferFrom(
+            alice,
+            charlie,
+            aliceShares / 2
+        );
+        assertEq(
+            IERC20(address(usd3Strategy)).balanceOf(charlie),
+            aliceShares / 2
+        );
+    }
+
+    function test_partial_approval_scenarios() public {
+        // Alice deposits
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
+        vm.stopPrank();
+
+        // Skip commitment
+        skip(7 days);
+
+        // Alice approves Bob for only half her shares
+        vm.prank(alice);
+        IERC20(address(usd3Strategy)).approve(bob, aliceShares / 2);
+
+        // Bob tries to transfer more than approved
+        vm.prank(bob);
+        vm.expectRevert(); // ERC20 insufficient allowance
+        IERC20(address(usd3Strategy)).transferFrom(alice, charlie, aliceShares);
+
+        // Bob transfers exactly approved amount
+        vm.prank(bob);
+        IERC20(address(usd3Strategy)).transferFrom(
+            alice,
+            charlie,
+            aliceShares / 2
+        );
+        assertEq(
+            IERC20(address(usd3Strategy)).balanceOf(charlie),
+            aliceShares / 2
+        );
+    }
+
+    // Flash Loan Attack Prevention
+
+    function test_flash_loan_cannot_bypass_commitment() public {
+        // Simulate a flash loan attack scenario
+        FlashLoanAttacker attacker = new FlashLoanAttacker(
+            address(usd3Strategy),
+            address(asset)
+        );
+
+        // Fund attacker
+        airdrop(asset, address(attacker), 10000e6);
+
+        // Attacker tries to deposit and immediately transfer
+        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        attacker.attack();
+    }
+
+    // Emergency Scenarios
+
+    function test_transfer_during_shutdown() public {
+        // Alice deposits
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
+        vm.stopPrank();
+
+        // Shutdown strategy
+        vm.prank(emergencyAdmin);
+        ITokenizedStrategy(address(usd3Strategy)).shutdownStrategy();
+
+        // Alice still cannot transfer during commitment (shutdown doesn't bypass transfer restrictions)
+        vm.prank(alice);
+        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        IERC20(address(usd3Strategy)).transfer(bob, aliceShares);
+
+        // After commitment, transfer works
+        skip(7 days);
+        vm.prank(alice);
+        IERC20(address(usd3Strategy)).transfer(bob, aliceShares);
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), aliceShares);
+    }
+
+    // Multiple Partial Transfers
+
+    function test_multiple_partial_transfers_after_commitment() public {
+        // Alice deposits
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        uint256 initialShares = IERC20(address(usd3Strategy)).balanceOf(alice);
+        vm.stopPrank();
+
+        // Skip commitment
+        skip(7 days);
+
+        // Alice makes multiple partial transfers
+        vm.startPrank(alice);
+        IERC20(address(usd3Strategy)).transfer(bob, initialShares / 4);
+        IERC20(address(usd3Strategy)).transfer(charlie, initialShares / 4);
+        IERC20(address(usd3Strategy)).transfer(bob, initialShares / 4);
+        vm.stopPrank();
+
+        // Verify final balances
+        assertEq(
+            IERC20(address(usd3Strategy)).balanceOf(alice),
+            initialShares / 4
+        );
+        assertEq(
+            IERC20(address(usd3Strategy)).balanceOf(bob),
+            initialShares / 2
+        );
+        assertEq(
+            IERC20(address(usd3Strategy)).balanceOf(charlie),
+            initialShares / 4
+        );
+    }
+
+    // sUSD3 Edge Cases
+
+    function test_susd3_transfer_exactly_at_lock_expiry() public {
+        // Setup USD3 first
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        skip(7 days); // Pass USD3 commitment
+
+        // Deposit into sUSD3
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 150e6);
+        susd3Strategy.deposit(150e6, alice);
+        uint256 susd3Shares = IERC20(address(susd3Strategy)).balanceOf(alice);
+        vm.stopPrank();
+
+        // Fast forward to exactly lock expiry
+        skip(90 days);
+
+        // Transfer should succeed at exact boundary
+        vm.prank(alice);
+        IERC20(address(susd3Strategy)).transfer(bob, susd3Shares / 2);
+        assertEq(
+            IERC20(address(susd3Strategy)).balanceOf(bob),
+            susd3Shares / 2
+        );
+    }
+
+    function test_susd3_cooldown_shares_boundary() public {
+        // Setup
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        skip(7 days);
+
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 150e6);
+        susd3Strategy.deposit(150e6, alice);
+        skip(90 days);
+
+        uint256 totalShares = IERC20(address(susd3Strategy)).balanceOf(alice);
+
+        // Start cooldown for exactly half
+        susd3Strategy.startCooldown(totalShares / 2);
+
+        // Can transfer exactly the non-cooldown half
+        IERC20(address(susd3Strategy)).transfer(bob, totalShares / 2);
+
+        // Cannot transfer even 1 wei more
+        vm.expectRevert("sUSD3: Cannot transfer shares in cooldown");
+        IERC20(address(susd3Strategy)).transfer(bob, 1);
+        vm.stopPrank();
+    }
+
+    // Reentrancy During Transfer
+
+    function test_no_reentrancy_during_transfer_hook() public {
+        ReentrantReceiver reentrant = new ReentrantReceiver(
+            address(usd3Strategy)
+        );
+
+        // Alice deposits
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        skip(7 days); // Pass commitment
+
+        // Transfer to reentrant contract
+        // The transfer should complete without reentrancy issues
+        IERC20(address(usd3Strategy)).transfer(address(reentrant), 100e6);
+        vm.stopPrank();
+
+        assertEq(
+            IERC20(address(usd3Strategy)).balanceOf(address(reentrant)),
+            100e6
+        );
+    }
+
+    // Gas Optimization Tests
+
+    function test_gas_transfer_after_commitment() public {
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        skip(7 days);
+
+        uint256 gasBefore = gasleft();
+        IERC20(address(usd3Strategy)).transfer(bob, 100e6);
+        uint256 gasUsed = gasBefore - gasleft();
+        vm.stopPrank();
+
+        // Log gas usage for optimization tracking
+        emit log_named_uint("Gas used for transfer after commitment", gasUsed);
+
+        // Ensure reasonable gas usage (< 100k)
+        assertLt(gasUsed, 100000);
+    }
+
+    // Transfer to self
+
+    function test_transfer_to_self_during_commitment() public {
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
+
+        // Transfer to self should still be blocked during commitment
+        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        IERC20(address(usd3Strategy)).transfer(alice, aliceShares);
+        vm.stopPrank();
+    }
+
+    // USD3 to sUSD3 transfer exception
+
+    function test_can_transfer_usd3_to_susd3_during_commitment() public {
+        // Alice deposits USD3
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+
+        // Alice can transfer USD3 to sUSD3 even during commitment
+        // This is allowed by the _preTransferHook exception
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 150e6);
+        susd3Strategy.deposit(150e6, alice);
+
+        // Verify sUSD3 received the USD3
+        assertGt(IERC20(address(susd3Strategy)).balanceOf(alice), 0);
+        vm.stopPrank();
+    }
+}
+
+/**
+ * @notice Flash loan attacker contract
+ */
+contract FlashLoanAttacker {
+    USD3 public immutable usd3;
+    IERC20 public immutable usdc;
+
+    constructor(address _usd3, address _usdc) {
+        usd3 = USD3(_usd3);
+        usdc = IERC20(_usdc);
+    }
+
+    function attack() external {
+        // Approve and deposit
+        usdc.approve(address(usd3), 1000e6);
+        usd3.deposit(1000e6, address(this));
+
+        // Try to immediately transfer (should fail)
+        IERC20(address(usd3)).transfer(
+            msg.sender,
+            IERC20(address(usd3)).balanceOf(address(this))
+        );
+    }
+}
+
+/**
+ * @notice Reentrant receiver contract
+ */
+contract ReentrantReceiver {
+    address public immutable token;
+    bool public reentered;
+
+    constructor(address _token) {
+        token = _token;
+    }
+
+    // ERC20 receive hook (if it existed)
+    function onERC20Received(
+        address,
+        address,
+        uint256,
+        bytes calldata
+    ) external returns (bytes4) {
+        if (!reentered) {
+            reentered = true;
+            // Try to transfer during receive (would cause reentrancy if vulnerable)
+            try IERC20(token).transfer(msg.sender, 1) {} catch {}
+        }
+        return this.onERC20Received.selector;
+    }
+}

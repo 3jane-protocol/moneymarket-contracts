@@ -194,17 +194,20 @@ contract ReentrancyTest is Setup {
         asset.approve(address(usd3Strategy), 2000e6);
         usd3Strategy.deposit(2000e6, alice);
 
+        // Skip commitment period for USD3
+        skip(7 days);
+
         // Alice deposits USD3 into sUSD3 (respecting subordination)
         IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 300e6);
         susd3Strategy.deposit(300e6, alice);
         vm.stopPrank();
 
-        // Transfer some sUSD3 shares to attacker
+        // Skip lock period for sUSD3
+        skip(90 days);
+
+        // Now Alice can transfer sUSD3 shares to attacker
         vm.prank(alice);
         IERC20(address(susd3Strategy)).transfer(address(attacker), 100e6);
-
-        // Skip lock period
-        skip(90 days);
 
         // Attacker tries cross-contract reentrancy
         // This should succeed but not cause issues

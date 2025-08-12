@@ -113,19 +113,23 @@ contract BypassAttempts is Setup {
         vm.prank(alice);
         IERC20(address(usd3Strategy)).approve(bob, aliceShares);
 
-        // Bob transfers Alice's shares to himself
+        // Bob CANNOT transfer Alice's shares during commitment
         vm.prank(bob);
+        vm.expectRevert("USD3: Cannot transfer during commitment period");
         IERC20(address(usd3Strategy)).transferFrom(alice, bob, aliceShares);
 
-        // Bob has the shares but no commitment timestamp
-        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), aliceShares);
-        assertEq(usd3Strategy.depositTimestamp(bob), 0);
+        // Verify Alice still has her shares
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(alice), aliceShares);
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), 0);
 
-        // Bob can withdraw since he didn't deposit (no commitment)
-        // This is expected behavior - commitment is per depositor
+        // Skip commitment period
+        skip(7 days);
+
+        // Now Bob CAN transfer
         vm.prank(bob);
-        uint256 withdrawn = usd3Strategy.withdraw(100e6, bob, bob);
-        assertGt(withdrawn, 0);
+        IERC20(address(usd3Strategy)).transferFrom(alice, bob, aliceShares);
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), aliceShares);
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(alice), 0);
     }
 
     function test_commitment_extends_on_subsequent_deposits() public {
@@ -448,21 +452,79 @@ contract BypassAttempts is Setup {
         vm.expectRevert();
         usd3Strategy.withdraw(100e6, alice, alice);
 
-        // Alice transfers shares to Bob (who has no commitment)
+        // Alice CANNOT transfer shares during commitment period
         vm.prank(alice);
+        vm.expectRevert("USD3: Cannot transfer during commitment period");
         IERC20(address(usd3Strategy)).transfer(bob, 500e6);
 
-        // Bob can withdraw (no commitment) but Alice still cannot
-        vm.prank(bob);
-        uint256 bobWithdrawn = usd3Strategy.withdraw(100e6, bob, bob);
-        assertGt(bobWithdrawn, 0);
+        // Verify shares didn't move
+        assertGt(IERC20(address(usd3Strategy)).balanceOf(alice), 0);
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), 0);
 
+        // After commitment period, transfers work
+        skip(7 days);
         vm.prank(alice);
-        vm.expectRevert();
-        usd3Strategy.withdraw(100e6, alice, alice);
+        IERC20(address(usd3Strategy)).transfer(bob, 500e6);
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), 500e6);
+    }
 
-        // This is expected - commitment is per-depositor, not per-share
-        // Transfers don't carry commitment restrictions
+    function test_cannot_transfer_during_lock_period() public {
+        // Setup: Get USD3 first
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+
+        // Wait for commitment to pass
+        skip(7 days);
+
+        // Deposit USD3 into sUSD3
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 150e6);
+        susd3Strategy.deposit(150e6, alice);
+        uint256 aliceSusd3Shares = IERC20(address(susd3Strategy)).balanceOf(
+            alice
+        );
+        vm.stopPrank();
+
+        // Alice tries to transfer during lock period
+        vm.prank(alice);
+        vm.expectRevert("sUSD3: Cannot transfer during lock period");
+        IERC20(address(susd3Strategy)).transfer(bob, aliceSusd3Shares);
+
+        // Skip lock period (90 days)
+        skip(90 days);
+
+        // Now transfer works
+        vm.prank(alice);
+        IERC20(address(susd3Strategy)).transfer(bob, aliceSusd3Shares);
+        assertEq(
+            IERC20(address(susd3Strategy)).balanceOf(bob),
+            aliceSusd3Shares
+        );
+    }
+
+    function test_cannot_transfer_shares_in_cooldown() public {
+        // Setup and pass lock period
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        skip(7 days); // Pass USD3 commitment
+
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 150e6);
+        susd3Strategy.deposit(150e6, alice);
+        skip(90 days); // Pass sUSD3 lock
+
+        uint256 aliceShares = IERC20(address(susd3Strategy)).balanceOf(alice);
+
+        // Start cooldown for half the shares
+        susd3Strategy.startCooldown(aliceShares / 2);
+
+        // Can transfer non-cooldown shares
+        IERC20(address(susd3Strategy)).transfer(bob, aliceShares / 4);
+
+        // Cannot transfer more than non-cooldown shares
+        vm.expectRevert("sUSD3: Cannot transfer shares in cooldown");
+        IERC20(address(susd3Strategy)).transfer(bob, aliceShares / 2);
+        vm.stopPrank();
     }
 
     function test_cannot_bypass_minimum_deposit() public {
