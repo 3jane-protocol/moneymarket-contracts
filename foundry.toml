@@ -7,6 +7,11 @@ optimizer = true
 optimizer_runs = 999999
 bytecode_hash = "none"
 evm_version = "shanghai"
+# Required for OpenZeppelin Upgrades
+ffi = true
+ast = true
+build_info = true
+extra_output = ["storageLayout"]
 
 [profile.default.invariant]
 runs = 16

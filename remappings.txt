@@ -1,2 +1,4 @@
 forge-std/=lib/forge-std/src/
 halmos-cheatcodes/=lib/halmos-cheatcodes/src/
+@openzeppelin/contracts/=lib/openzeppelin/contracts/
+openzeppelin-foundry-upgrades/=lib/openzeppelin-foundry-upgrades/src/
