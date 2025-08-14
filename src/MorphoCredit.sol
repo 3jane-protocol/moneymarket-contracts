@@ -777,25 +777,26 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             // Markdown increasing (borrower deeper in default)
             uint256 increase = uint256(markdownDelta);
 
-            // Only reduce supply by what's actually available to avoid underflow
-            // Track the actual reduction amount in totalMarkdownAmount for accurate reversal
-            uint256 actualReduction = m.totalSupplyAssets >= increase ? increase : m.totalSupplyAssets;
+            // Cap at available supply to avoid underflow
+            if (increase > m.totalSupplyAssets) {
+                increase = m.totalSupplyAssets;
+            }
 
-            // Apply the reduction to supply and record what was actually marked down
-            m.totalSupplyAssets = (m.totalSupplyAssets - actualReduction).toUint128();
-            m.totalMarkdownAmount = (m.totalMarkdownAmount + actualReduction).toUint128();
+            // Apply the reduction to supply and record what was marked down
+            m.totalSupplyAssets = (m.totalSupplyAssets - increase).toUint128();
+            m.totalMarkdownAmount = (m.totalMarkdownAmount + increase).toUint128();
         } else {
             // Markdown decreasing (borrower repaying/recovering)
             uint256 decrease = uint256(-markdownDelta);
 
-            // Only restore supply up to the amount that was previously marked down
-            // This ensures we don't create supply that was never removed
-            uint256 maxRestore = m.totalMarkdownAmount;
-            uint256 actualRestore = decrease <= maxRestore ? decrease : maxRestore;
+            // Cap at previously marked down amount to avoid creating phantom supply
+            if (decrease > m.totalMarkdownAmount) {
+                decrease = m.totalMarkdownAmount;
+            }
 
             // Restore the supply and reduce the tracked markdown amount
-            m.totalSupplyAssets = (m.totalSupplyAssets + actualRestore).toUint128();
-            m.totalMarkdownAmount = (m.totalMarkdownAmount - actualRestore).toUint128();
+            m.totalSupplyAssets = (m.totalSupplyAssets + decrease).toUint128();
+            m.totalMarkdownAmount = (m.totalMarkdownAmount - decrease).toUint128();
         }
 
         market[id] = m;
