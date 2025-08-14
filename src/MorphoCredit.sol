@@ -348,8 +348,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     function _snapshotBorrowerPosition(Id id, address borrower) internal {
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
 
-        if (premium.rate == 0) return;
-
         Market memory targetMarket = market[id];
 
         uint256 currentBorrowAssets = uint256(position[id][borrower].borrowShares).toAssetsUp(
