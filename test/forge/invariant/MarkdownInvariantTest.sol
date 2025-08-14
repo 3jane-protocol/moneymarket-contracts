@@ -47,6 +47,9 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
         );
         id = marketParams.id();
 
+        // Ensure clean prank state for Halmos compatibility
+        try vm.stopPrank() {} catch {}
+
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
         creditLine.setMm(address(markdownManager));
@@ -55,6 +58,10 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
         // Supply initial funds
         totalSupplied = 1000 ether;
         loanToken.setBalance(SUPPLIER, totalSupplied);
+
+        // Ensure clean prank state for Halmos compatibility
+        try vm.stopPrank() {} catch {}
+
         vm.startPrank(SUPPLIER);
         loanToken.approve(address(morpho), type(uint256).max);
         morpho.supply(marketParams, totalSupplied, 0, SUPPLIER, "");
