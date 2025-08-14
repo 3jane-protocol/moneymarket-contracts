@@ -56,7 +56,7 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
         // Supply initial funds
         totalSupplied = 1000 ether;
         loanToken.setBalance(SUPPLIER, totalSupplied);
-        
+
         vm.startPrank(SUPPLIER);
         loanToken.approve(address(morpho), type(uint256).max);
         morpho.supply(marketParams, totalSupplied, 0, SUPPLIER, "");
