@@ -160,7 +160,17 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
 
         borrowerIndex = borrowerIndex % activeBorrowers.length;
         address borrower = activeBorrowers[borrowerIndex];
-        markdownAmount = bound(markdownAmount, 0, borrowerDebts[borrower] * 2);
+
+        // Accrue premium first to get accurate debt
+        morphoCredit.accrueBorrowerPremium(id, borrower);
+
+        // Get actual current debt after accrual
+        Position memory pos = morpho.position(id, borrower);
+        if (pos.borrowShares == 0) return; // No debt to markdown
+
+        Market memory m = morpho.market(id);
+        uint256 currentDebt = uint256(pos.borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+        markdownAmount = bound(markdownAmount, 0, currentDebt * 2);
 
         // Set up default state for borrower
         address[] memory borrowers = new address[](1);
@@ -168,7 +178,7 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
         uint256[] memory repaymentBps = new uint256[](1);
         repaymentBps[0] = 10000;
         uint256[] memory endingBalances = new uint256[](1);
-        endingBalances[0] = borrowerDebts[borrower];
+        endingBalances[0] = currentDebt;
 
         vm.prank(address(creditLine));
         try morphoCredit.closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances) {
@@ -178,6 +188,9 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
             // Apply markdown
             markdownManager.setMarkdownForBorrower(borrower, markdownAmount);
             morphoCredit.accrueBorrowerPremium(id, borrower);
+
+            // Update tracked debt after markdown
+            borrowerDebts[borrower] = currentDebt;
         } catch {}
     }
 
@@ -200,7 +213,10 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
         borrowerIndex = borrowerIndex % activeBorrowers.length;
         address borrower = activeBorrowers[borrowerIndex];
 
-        // Get actual current debt instead of using stale borrowerDebts
+        // Accrue premium to get accurate debt amount
+        morphoCredit.accrueBorrowerPremium(id, borrower);
+
+        // Get actual current debt after accrual
         Position memory pos = morpho.position(id, borrower);
         if (pos.borrowShares == 0) return; // No debt to repay
 
