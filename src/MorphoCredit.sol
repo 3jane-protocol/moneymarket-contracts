@@ -745,8 +745,15 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 newMarkdown = 0;
         if (isInDefault) {
             uint256 timeInDefault = block.timestamp > statusStartTime ? block.timestamp - statusStartTime : 0;
-            newMarkdown =
-                IMarkdownManager(manager).calculateMarkdown(borrower, _getBorrowerAssets(id, borrower), timeInDefault);
+            uint256 borrowerAssets = _getBorrowerAssets(id, borrower);
+
+            newMarkdown = IMarkdownManager(manager).calculateMarkdown(borrower, borrowerAssets, timeInDefault);
+
+            // Cap markdown at the borrower's actual outstanding debt
+            // since markdown represents the write-down of the loan value
+            if (newMarkdown > borrowerAssets) {
+                newMarkdown = borrowerAssets;
+            }
         }
 
         if (newMarkdown != lastMarkdown) {
@@ -768,26 +775,29 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         Market memory m = market[id];
 
-        // Track total markdowns for reporting/reversibility
         if (markdownDelta > 0) {
-            // Markdown increased - add to total
-            m.totalMarkdownAmount = (m.totalMarkdownAmount + uint256(markdownDelta)).toUint128();
-        } else {
-            // Markdown decreased - subtract from total (with underflow protection)
-            uint256 decrease = uint256(-markdownDelta);
-            m.totalMarkdownAmount =
-                m.totalMarkdownAmount > decrease ? (m.totalMarkdownAmount - decrease).toUint128() : 0;
-        }
+            // Markdown increasing (borrower deeper in default)
+            uint256 increase = uint256(markdownDelta);
 
-        // Directly adjust supply assets
-        if (markdownDelta > 0) {
-            // Markdown increased - reduce supply
-            m.totalSupplyAssets = m.totalSupplyAssets > uint256(markdownDelta)
-                ? (m.totalSupplyAssets - uint256(markdownDelta)).toUint128()
-                : 0;
+            // Only reduce supply by what's actually available to avoid underflow
+            // Track the actual reduction amount in totalMarkdownAmount for accurate reversal
+            uint256 actualReduction = m.totalSupplyAssets >= increase ? increase : m.totalSupplyAssets;
+
+            // Apply the reduction to supply and record what was actually marked down
+            m.totalSupplyAssets = (m.totalSupplyAssets - actualReduction).toUint128();
+            m.totalMarkdownAmount = (m.totalMarkdownAmount + actualReduction).toUint128();
         } else {
-            // Markdown decreased (borrower recovering) - restore supply
-            m.totalSupplyAssets = (m.totalSupplyAssets + uint256(-markdownDelta)).toUint128();
+            // Markdown decreasing (borrower repaying/recovering)
+            uint256 decrease = uint256(-markdownDelta);
+
+            // Only restore supply up to the amount that was previously marked down
+            // This ensures we don't create supply that was never removed
+            uint256 maxRestore = m.totalMarkdownAmount;
+            uint256 actualRestore = decrease <= maxRestore ? decrease : maxRestore;
+
+            // Restore the supply and reduce the tracked markdown amount
+            m.totalSupplyAssets = (m.totalSupplyAssets + actualRestore).toUint128();
+            m.totalMarkdownAmount = (m.totalMarkdownAmount - actualRestore).toUint128();
         }
 
         market[id] = m;
