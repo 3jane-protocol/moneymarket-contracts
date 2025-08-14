@@ -32,6 +32,7 @@ contract PremiumIntegrationTest is BaseTest {
         marketParams.irm = address(irm);
         marketParams.creditLine = address(creditLine);
 
+        vm.prank(OWNER);
         morpho.createMarket(marketParams);
         id = MarketParamsLib.id(marketParams);
 

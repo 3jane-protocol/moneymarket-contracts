@@ -115,11 +115,11 @@ contract BorrowIntegrationTest is BaseTest {
         });
 
         // Set up the market on the new instance
-        vm.prank(OWNER);
+        vm.startPrank(OWNER);
         morphoCredit.enableIrm(address(irm));
-        vm.prank(OWNER);
         morphoCredit.enableLltv(DEFAULT_TEST_LLTV);
         morphoCredit.createMarket(isolatedMarketParams);
+        vm.stopPrank();
 
         Id isolatedId = isolatedMarketParams.id();
 

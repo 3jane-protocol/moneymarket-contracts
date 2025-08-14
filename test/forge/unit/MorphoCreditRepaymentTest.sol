@@ -50,6 +50,7 @@ contract MorphoCreditRepaymentTest is BaseTest {
         });
 
         id = marketParams.id();
+        vm.prank(OWNER);
         morpho.createMarket(marketParams);
 
         // Setup test tokens

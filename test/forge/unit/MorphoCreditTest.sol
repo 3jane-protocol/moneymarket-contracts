@@ -98,13 +98,12 @@ contract MorphoCreditTest is Test {
             creditLine: address(creditLine)
         });
 
-        vm.prank(owner);
+        vm.startPrank(owner);
         morpho.enableLltv(0.8e18);
-
-        vm.prank(owner);
         morpho.enableIrm(address(irm));
-
         morpho.createMarket(marketParams);
+        vm.stopPrank();
+
         marketId = marketParams.id();
 
         // Set fee recipient
