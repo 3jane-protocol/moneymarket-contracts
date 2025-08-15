@@ -7,6 +7,7 @@ import {MarkdownManagerMock} from "../mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {HelperMock} from "../../../src/mocks/HelperMock.sol";
 import {Market} from "../../../src/interfaces/IMorpho.sol";
+import {MathLib, WAD} from "../../../src/libraries/MathLib.sol";
 
 /// @title MarkdownInvariantTest
 /// @notice Invariant tests to ensure markdown logic maintains critical properties
@@ -15,6 +16,7 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
     using MarketParamsLib for MarketParams;
     using MorphoBalancesLib for IMorpho;
     using SharesMathLib for uint256;
+    using MathLib for uint256;
 
     MarkdownManagerMock markdownManager;
     CreditLineMock creditLine;
@@ -24,6 +26,7 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
     // State tracking for invariants
     uint256 public initialTokenBalance;
     uint256 public totalSupplied;
+    uint256 public testStartTime;
     mapping(address => uint256) public borrowerDebts;
     address[] public activeBorrowers;
 
@@ -64,6 +67,7 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
 
         // Track initial state
         initialTokenBalance = loanToken.balanceOf(address(morpho));
+        testStartTime = block.timestamp;
 
         // Set up target contracts for invariant testing
         targetContract(address(this));
@@ -75,8 +79,18 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
         Market memory m = morpho.market(id);
         uint256 expectedTotal = totalSupplied;
 
-        // Account for interest accrual (allow up to 20% for compound interest over extended periods)
-        uint256 maxInterest = (totalSupplied * 20) / 100;
+        // Calculate dynamic tolerance based on elapsed time and maximum possible rates
+        uint256 timeElapsed = block.timestamp - testStartTime;
+
+        // Maximum possible rate: 100% APR (base at full utilization) + 10% APR (penalty)
+        // Convert to per-second rate: 110% / 365 days
+        uint256 maxRatePerSecond = (110 * WAD) / (100 * 365 days);
+
+        // Calculate compound interest growth using the same formula as the protocol
+        uint256 compoundedGrowth = maxRatePerSecond.wTaylorCompounded(timeElapsed);
+
+        // Calculate maximum possible interest with 5% buffer for rounding errors
+        uint256 maxInterest = totalSupplied.wMulDown(compoundedGrowth).mulDivUp(105, 100);
 
         assertApproxEqAbs(
             m.totalSupplyAssets + m.totalMarkdownAmount,
