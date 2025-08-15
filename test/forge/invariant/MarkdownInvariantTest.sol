@@ -283,13 +283,15 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
     function handler_warp(uint256 time) public {
         time = bound(time, 1 hours, 7 days);
 
-        // Don't exceed 1 year total
-        if (totalTimeElapsed + time > MAX_TOTAL_TIME) {
-            time = MAX_TOTAL_TIME - totalTimeElapsed;
+        uint256 currentTime = block.timestamp - testStartTime;
+
+        // Don't exceed 1 year total from test start
+        if (currentTime + time > MAX_TOTAL_TIME) {
+            time = MAX_TOTAL_TIME - currentTime;
             if (time == 0) return; // Already at max time
         }
 
-        totalTimeElapsed += time;
+        totalTimeElapsed = currentTime + time;
         vm.warp(block.timestamp + time);
 
         // Accrue interest for all borrowers
@@ -303,16 +305,17 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
         blocks = bound(blocks, 1, 1 days / BLOCK_TIME);
 
         uint256 timeToAdd = blocks * BLOCK_TIME;
+        uint256 currentTime = block.timestamp - testStartTime;
 
-        // Don't exceed 1 year total
-        if (totalTimeElapsed + timeToAdd > MAX_TOTAL_TIME) {
-            timeToAdd = MAX_TOTAL_TIME - totalTimeElapsed;
+        // Don't exceed 1 year total from test start
+        if (currentTime + timeToAdd > MAX_TOTAL_TIME) {
+            timeToAdd = MAX_TOTAL_TIME - currentTime;
             if (timeToAdd == 0) return; // Already at max time
             blocks = timeToAdd / BLOCK_TIME;
             if (blocks == 0) return; // Less than one block of time left
         }
 
-        totalTimeElapsed += timeToAdd;
+        totalTimeElapsed = currentTime + timeToAdd;
         _forward(blocks);
     }
 }
