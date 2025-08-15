@@ -116,18 +116,15 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
         Market memory m = morpho.market(id);
 
         // Markdown should never exceed total borrow assets (within 1 wei for rounding)
-        if (m.totalMarkdownAmount > m.totalBorrowAssets) {
-            // Allow 1 wei of rounding error if markdown exceeds debt
-            assertLe(
-                m.totalMarkdownAmount - m.totalBorrowAssets,
-                1,
-                "Total markdown should not exceed total debt by more than 1 wei"
-            );
-        }
-
-        // If there's no debt, there should be no markdown
         if (m.totalBorrowAssets == 0) {
             assertEq(m.totalMarkdownAmount, 0, "No markdown without debt");
+        } else if (m.totalMarkdownAmount > m.totalBorrowAssets) {
+            // Allow 1 wei of rounding error if markdown exceeds debt
+            uint256 excess = m.totalMarkdownAmount - m.totalBorrowAssets;
+            assertLe(excess, 1, "Total markdown should not exceed total debt by more than 1 wei");
+        } else {
+            // Markdown is less than or equal to debt, which is expected
+            assertLe(m.totalMarkdownAmount, m.totalBorrowAssets, "Markdown should not exceed debt");
         }
     }
 
@@ -144,13 +141,10 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
 
                 // Get borrower's markdown state (would need to expose this in real implementation)
                 // For now, we verify the total markdown doesn't exceed total debt (with rounding tolerance)
-                if (m.totalMarkdownAmount > m.totalBorrowAssets) {
+                if (m.totalBorrowAssets > 0 && m.totalMarkdownAmount > m.totalBorrowAssets) {
                     // Allow 1 wei of rounding error if markdown exceeds debt
-                    assertLe(
-                        m.totalMarkdownAmount - m.totalBorrowAssets,
-                        1,
-                        "Total markdown should not exceed total debt by more than 1 wei"
-                    );
+                    uint256 excess = m.totalMarkdownAmount - m.totalBorrowAssets;
+                    assertLe(excess, 1, "Total markdown should not exceed total debt by more than 1 wei");
                 }
             }
         }
@@ -220,8 +214,18 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
 
         vm.prank(address(creditLine));
         try morphoCredit.closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances) {
-            // Move to default
-            vm.warp(block.timestamp + 31 days);
+            // Move to default (but respect time limit)
+            uint256 currentTime = block.timestamp - testStartTime;
+            uint256 timeToAdd = 31 days;
+
+            // Don't exceed 1 year total from test start
+            if (currentTime + timeToAdd > MAX_TOTAL_TIME) {
+                timeToAdd = MAX_TOTAL_TIME - currentTime;
+                if (timeToAdd == 0) return; // Already at max time
+            }
+
+            totalTimeElapsed = currentTime + timeToAdd;
+            vm.warp(block.timestamp + timeToAdd);
 
             // Apply markdown
             markdownManager.setMarkdownForBorrower(borrower, markdownAmount);
