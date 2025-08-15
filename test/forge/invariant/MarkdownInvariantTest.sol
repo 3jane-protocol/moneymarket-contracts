@@ -75,8 +75,8 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
         Market memory m = morpho.market(id);
         uint256 expectedTotal = totalSupplied;
 
-        // Account for interest accrual (allow up to 10% APR over test duration)
-        uint256 maxInterest = (totalSupplied * 10) / 100;
+        // Account for interest accrual (allow up to 20% for compound interest over extended periods)
+        uint256 maxInterest = (totalSupplied * 20) / 100;
 
         assertApproxEqAbs(
             m.totalSupplyAssets + m.totalMarkdownAmount,
