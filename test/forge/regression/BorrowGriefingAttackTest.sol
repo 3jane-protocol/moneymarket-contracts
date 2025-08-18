@@ -32,7 +32,7 @@ contract BorrowGriefingAttackTest is BaseTest {
 
         // This should now revert with InsufficientBorrowAmount error
         vm.prank(attacker);
-        vm.expectRevert();
+        vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         morpho.borrow(
             marketParams,
             0, // assets
@@ -59,7 +59,7 @@ contract BorrowGriefingAttackTest is BaseTest {
         // First attack attempt: Try to borrow VIRTUAL_SHARES - 1 shares (would result in 0 assets)
         uint256 firstAttackShares = SharesMathLib.VIRTUAL_SHARES - 1;
         vm.prank(attacker);
-        vm.expectRevert();
+        vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         morpho.borrow(marketParams, 0, firstAttackShares, attacker, attacker);
 
         // Verify market remains clean after first attempt
@@ -69,7 +69,7 @@ contract BorrowGriefingAttackTest is BaseTest {
         // Even smaller attacks that would result in 0 assets are prevented
         uint256 smallAttackShares = SharesMathLib.VIRTUAL_SHARES / 2;
         vm.prank(attacker);
-        vm.expectRevert();
+        vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         morpho.borrow(marketParams, 0, smallAttackShares, attacker, attacker);
 
         // Market should still be clean
@@ -93,7 +93,7 @@ contract BorrowGriefingAttackTest is BaseTest {
 
         // Attack attempts that would result in 0 assets are prevented
         vm.prank(attacker);
-        vm.expectRevert();
+        vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         morpho.borrow(marketParams, 0, attackShares, attacker, attacker);
 
         // Verify market is still clean
@@ -129,12 +129,12 @@ contract BorrowGriefingAttackTest is BaseTest {
 
         // Try attack that would result in 0 assets
         vm.prank(attacker);
-        vm.expectRevert();
+        vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         morpho.borrow(marketParams, 0, baseShares - 1, attacker, attacker);
 
         // Try another attack that would result in 0 assets
         vm.prank(attacker);
-        vm.expectRevert();
+        vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         morpho.borrow(marketParams, 0, baseShares / 2, attacker, attacker);
 
         // Verify market remains clean
