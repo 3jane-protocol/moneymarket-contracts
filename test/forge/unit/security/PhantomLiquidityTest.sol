@@ -77,7 +77,7 @@ contract PhantomLiquidityTest is BaseTest {
         vm.prank(address(maliciousCreditLine));
         mc.setCreditLine(id, BORROWER, HIGH_COLLATERAL_AMOUNT, 0);
 
-        // Step 1: The attack is blocked at the first step - cannot borrow virtual shares with 0 assets
+        // Step 1: Cannot borrow virtual shares with 0 assets - protocol requires actual borrowing
         vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         helper.borrow(marketParams, 0, 10 ** 6 - 1, BORROWER, BORROWER);
 

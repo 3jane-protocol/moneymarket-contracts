@@ -211,7 +211,7 @@ contract MarkdownEdgeCaseTest is BaseTest {
         vm.prank(address(creditLine));
         morphoCredit.setCreditLine(id, BORROWER, HIGH_COLLATERAL_AMOUNT, 0);
 
-        // Cannot borrow virtual shares without supply anymore - this is prevented
+        // Cannot borrow virtual shares without actual assets
         vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         helper.borrow(marketParams, 0, 1000, BORROWER, BORROWER);
 

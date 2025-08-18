@@ -63,8 +63,8 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         vm.prank(address(maliciousCreditLine));
         morphoCredit.setCreditLine(id, BORROWER, HIGH_COLLATERAL_AMOUNT, 0);
 
-        // Step 2: The original POC attack (borrowing virtual shares with 0 assets) is now prevented
-        // This is the primary fix - the griefing attack is blocked at the source
+        // Step 2: Attempting to borrow virtual shares with 0 assets should fail
+        // The protocol prevents borrowing shares without borrowing actual assets
         vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         helper.borrow(marketParams, 0, VIRTUAL_SHARES, BORROWER, BORROWER);
 
@@ -73,8 +73,8 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         assertEq(morpho.totalBorrowAssets(id), 0, "No assets should be borrowed");
         assertEq(morpho.totalBorrowShares(id), 0, "No shares should be borrowed");
 
-        // The original POC attack path is completely blocked
-        // No need to test further steps as the initial attack vector is eliminated
+        // The attack cannot proceed as borrowing virtual shares without assets is prevented
+        // Market remains clean with no phantom shares created
     }
 
     /// @notice Test that market creation by non-owner fails (first defense)
@@ -198,7 +198,7 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         vm.prank(address(maliciousCreditLine));
         morphoCredit.setCreditLine(id, BORROWER, HIGH_COLLATERAL_AMOUNT, 0);
 
-        // 2. The POC attack is blocked at step 2 - cannot borrow virtual shares with 0 assets
+        // 2. Attempting to borrow virtual shares with 0 assets should fail
         vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         helper.borrow(marketParams, 0, VIRTUAL_SHARES, BORROWER, BORROWER);
 

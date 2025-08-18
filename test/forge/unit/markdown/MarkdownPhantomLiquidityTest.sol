@@ -60,7 +60,7 @@ contract MarkdownPhantomLiquidityTest is BaseTest {
         vm.prank(address(creditLine));
         morphoCredit.setCreditLine(id, BORROWER, HIGH_COLLATERAL_AMOUNT, 0);
 
-        // The vulnerability is now prevented - cannot borrow virtual shares with 0 assets
+        // Cannot borrow virtual shares with 0 assets - protocol requires actual asset borrowing
         vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         helper.borrow(marketParams, 0, 10 ** 6 - 1, BORROWER, BORROWER);
 
