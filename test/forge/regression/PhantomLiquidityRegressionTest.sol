@@ -63,51 +63,18 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         vm.prank(address(maliciousCreditLine));
         morphoCredit.setCreditLine(id, BORROWER, HIGH_COLLATERAL_AMOUNT, 0);
 
-        // Step 2: Borrow virtual shares (same as POC)
-        (uint256 assets, uint256 shares) = helper.borrow(marketParams, 0, VIRTUAL_SHARES, BORROWER, BORROWER);
+        // Step 2: The original POC attack (borrowing virtual shares with 0 assets) is now prevented
+        // This is the primary fix - the griefing attack is blocked at the source
+        vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
+        helper.borrow(marketParams, 0, VIRTUAL_SHARES, BORROWER, BORROWER);
 
-        assertEq(assets, 0, "Virtual shares should yield 0 assets");
-        assertEq(shares, VIRTUAL_SHARES, "Should have exact virtual shares");
+        // Verify that the attack was prevented at the first step
+        // The market should remain clean with no phantom shares
+        assertEq(morpho.totalBorrowAssets(id), 0, "No assets should be borrowed");
+        assertEq(morpho.totalBorrowShares(id), 0, "No shares should be borrowed");
 
-        // Step 3: Set up repayment obligation (trigger default)
-        address[] memory borrowers = new address[](1);
-        borrowers[0] = BORROWER;
-        uint256[] memory repaymentBps = new uint256[](1);
-        repaymentBps[0] = 10000; // 100%
-        uint256[] memory endingBalances = new uint256[](1);
-        endingBalances[0] = 1000000; // Arbitrary obligation amount
-
-        vm.prank(address(maliciousCreditLine));
-        morphoCredit.closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-
-        // Step 4: Set malicious markdown (exact POC amount)
-        maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, MARKDOWN_AMOUNT);
-
-        // Move to default state (31 days as in POC)
-        vm.warp(block.timestamp + 31 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-
-        Market memory m1 = morpho.market(id);
-
-        // Step 5: Reduce markdown to create phantom liquidity (POC exploit)
-        maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 0);
-        vm.warp(block.timestamp + 1 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-
-        Market memory m2 = morpho.market(id);
-
-        // Verify the fix: Supply should NOT have phantom liquidity
-        assertTrue(m2.totalSupplyAssets < ATTEMPTED_DRAIN, "Supply should not have phantom liquidity to drain");
-
-        // Step 6: Attempt to drain funds (should fail)
-        address attacker2 = makeAddr("Attacker2");
-        vm.prank(address(maliciousCreditLine));
-        morphoCredit.setCreditLine(id, attacker2, HIGH_COLLATERAL_AMOUNT, 0);
-
-        // This should revert - the attack is prevented
-        vm.expectRevert(ErrorsLib.InsufficientLiquidity.selector);
-        helper.borrow(marketParams, ATTEMPTED_DRAIN, 0, attacker2, attacker2);
+        // The original POC attack path is completely blocked
+        // No need to test further steps as the initial attack vector is eliminated
     }
 
     /// @notice Test that market creation by non-owner fails (first defense)
@@ -165,28 +132,18 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         vm.prank(address(maliciousCreditLine));
         morphoCredit.setCreditLine(id, BORROWER, HIGH_COLLATERAL_AMOUNT, 0);
 
-        // Borrow exact virtual shares from POC
+        // The virtual shares exploit is now prevented at the source
+        // Attempting to borrow virtual shares with 0 assets is blocked
+        vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         helper.borrow(marketParams, 0, VIRTUAL_SHARES, BORROWER, BORROWER);
 
-        // Trigger default
-        _triggerDefault(BORROWER, 1000000);
+        // Verify the market remains clean
+        Market memory m = morpho.market(id);
+        assertEq(m.totalSupplyAssets, 0, "Supply should remain 0");
+        assertEq(m.totalBorrowAssets, 0, "Borrow should remain 0");
+        assertEq(m.totalBorrowShares, 0, "No virtual shares should exist");
 
-        // Apply huge markdown
-        maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, MARKDOWN_AMOUNT);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-
-        Market memory m1 = morpho.market(id);
-        assertEq(m1.totalSupplyAssets, 0, "Supply should stay at 0");
-
-        // Reverse markdown (POC exploit step)
-        maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 0);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-
-        Market memory m2 = morpho.market(id);
-
-        // Verify minimal phantom liquidity from rounding
-        // Virtual shares can create small amounts due to rounding (up to ~10000 wei is acceptable)
-        assertTrue(m2.totalSupplyAssets < 10000, "Should not create significant phantom liquidity from virtual shares");
+        // The exploit cannot proceed as the initial vector is blocked
     }
 
     /// @notice Test that the fix handles markdown reversal correctly
@@ -241,32 +198,19 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         vm.prank(address(maliciousCreditLine));
         morphoCredit.setCreditLine(id, BORROWER, HIGH_COLLATERAL_AMOUNT, 0);
 
-        // 2. Borrow virtual shares
+        // 2. The POC attack is blocked at step 2 - cannot borrow virtual shares with 0 assets
+        vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         helper.borrow(marketParams, 0, VIRTUAL_SHARES, BORROWER, BORROWER);
 
-        // 3. Default
-        _triggerDefault(BORROWER, 1000000);
-
-        // 4. First markdown
-        maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, MARKDOWN_AMOUNT);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-
-        // 5. Second markdown (exploit attempt)
-        maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 0);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-
-        // 6. Setup second attacker
-        address attacker2 = makeAddr("Attacker2");
-        vm.prank(address(maliciousCreditLine));
-        morphoCredit.setCreditLine(id, attacker2, HIGH_COLLATERAL_AMOUNT, 0);
-
-        // 7. Attempt drain - should fail
-        vm.expectRevert(ErrorsLib.InsufficientLiquidity.selector);
-        helper.borrow(marketParams, ATTEMPTED_DRAIN, 0, attacker2, attacker2);
+        // The attack sequence cannot continue past this point
+        // Verify the market remains clean and funds are safe
+        Market memory m = morpho.market(id);
+        assertEq(m.totalBorrowShares, 0, "No virtual shares created");
+        assertEq(m.totalBorrowAssets, 0, "No phantom borrows");
 
         // Verify funds are safe
         uint256 finalBalance = loanToken.balanceOf(address(morpho));
-        assertEq(finalBalance, initialBalance, "No funds were drained");
+        assertEq(finalBalance, initialBalance, "All funds remain safe");
     }
 
     // Helper function to trigger default state
