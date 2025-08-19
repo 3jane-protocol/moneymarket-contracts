@@ -11,9 +11,7 @@ import {
     Authorization,
     Signature
 } from "./interfaces/IMorpho.sol";
-import {
-    IMorphoRepayCallback, IMorphoSupplyCallback, IMorphoFlashLoanCallback
-} from "./interfaces/IMorphoCallbacks.sol";
+import {IMorphoRepayCallback, IMorphoSupplyCallback} from "./interfaces/IMorphoCallbacks.sol";
 import {IIrm} from "./interfaces/IIrm.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IOracle} from "./interfaces/IOracle.sol";
