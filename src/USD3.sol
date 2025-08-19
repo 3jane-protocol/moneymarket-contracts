@@ -72,6 +72,9 @@ contract USD3 is BaseHooksUpgradeable {
     /// @notice Whitelist status for addresses
     mapping(address => bool) public whitelist;
 
+    /// @notice Whitelist of depositors allowed to extend commitment periods
+    mapping(address => bool) public depositorWhitelist;
+
     /// @notice Minimum deposit amount required
     uint256 public minDeposit;
 
@@ -87,6 +90,7 @@ contract USD3 is BaseHooksUpgradeable {
     //////////////////////////////////////////////////////////////*/
     event SUSD3StrategyUpdated(address oldStrategy, address newStrategy);
     event WhitelistUpdated(address indexed user, bool allowed);
+    event DepositorWhitelistUpdated(address indexed depositor, bool allowed);
     event MinDepositUpdated(uint256 newMinDeposit);
     event TrancheShareSynced(uint256 trancheShare);
 
@@ -423,8 +427,8 @@ contract USD3 is BaseHooksUpgradeable {
             require(assets >= minDeposit, "Below minimum deposit");
         }
 
-        // Each deposit extends commitment for entire balance
-        if (minCommitmentTime > 0) {
+        // Only extend commitment if depositor is receiver or whitelisted
+        if (minCommitmentTime > 0 && (msg.sender == receiver || depositorWhitelist[msg.sender])) {
             depositTimestamp[receiver] = block.timestamp;
         }
     }
@@ -606,6 +610,19 @@ contract USD3 is BaseHooksUpgradeable {
     ) external onlyManagement {
         whitelist[_user] = _allowed;
         emit WhitelistUpdated(_user, _allowed);
+    }
+
+    /**
+     * @notice Update depositor whitelist status for an address
+     * @param _depositor Address to update
+     * @param _allowed True to allow extending commitments, false to disallow
+     */
+    function setDepositorWhitelist(
+        address _depositor,
+        bool _allowed
+    ) external onlyManagement {
+        depositorWhitelist[_depositor] = _allowed;
+        emit DepositorWhitelistUpdated(_depositor, _allowed);
     }
 
     /**

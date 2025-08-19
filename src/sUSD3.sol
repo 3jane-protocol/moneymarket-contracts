@@ -55,6 +55,9 @@ contract sUSD3 is BaseHooksUpgradeable {
     mapping(address => UserCooldown) public cooldowns;
     mapping(address => uint256) public lockedUntil; // Initial lock tracking
 
+    // Whitelist of depositors allowed to extend lock periods
+    mapping(address => bool) public depositorWhitelist;
+
     // Configurable parameters (only withdrawalWindow is locally managed)
     uint256 public withdrawalWindow; // Window to complete withdrawal (default 2 days)
 
@@ -73,6 +76,7 @@ contract sUSD3 is BaseHooksUpgradeable {
         uint256 timestamp
     );
     event CooldownCancelled(address indexed user);
+    event DepositorWhitelistUpdated(address indexed depositor, bool allowed);
     event WithdrawalCompleted(
         address indexed user,
         uint256 shares,
@@ -166,8 +170,8 @@ contract sUSD3 is BaseHooksUpgradeable {
             assets = TokenizedStrategy.previewMint(shares);
         }
 
-        // Each deposit extends lock period for entire balance
-        if (assets > 0 || shares > 0) {
+        // Only extend lock period if depositor is receiver or whitelisted
+        if ((assets > 0 || shares > 0) && (msg.sender == receiver || depositorWhitelist[msg.sender])) {
             // Read lock duration from ProtocolConfig
             uint256 duration = lockDuration();
             lockedUntil[receiver] = block.timestamp + duration;
@@ -429,6 +433,19 @@ contract sUSD3 is BaseHooksUpgradeable {
         );
         withdrawalWindow = _withdrawalWindow;
         emit WithdrawalWindowUpdated(_withdrawalWindow);
+    }
+
+    /**
+     * @notice Update depositor whitelist status for an address
+     * @param _depositor Address to update
+     * @param _allowed True to allow extending lock periods, false to disallow
+     */
+    function setDepositorWhitelist(
+        address _depositor,
+        bool _allowed
+    ) external onlyManagement {
+        depositorWhitelist[_depositor] = _allowed;
+        emit DepositorWhitelistUpdated(_depositor, _allowed);
     }
 
     /*//////////////////////////////////////////////////////////////

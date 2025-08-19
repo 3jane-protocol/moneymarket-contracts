@@ -406,6 +406,158 @@ contract TransferRestrictionEdgeCases is Setup {
         assertGt(IERC20(address(susd3Strategy)).balanceOf(alice), 0);
         vm.stopPrank();
     }
+
+    function test_griefing_attack_prevention_usd3() public {
+        // Airdrop USDC to users
+        airdrop(underlyingAsset, alice, 1000e6);
+        airdrop(underlyingAsset, bob, 1000e6);
+        
+        // Alice deposits and has commitment period
+        vm.startPrank(alice);
+        underlyingAsset.approve(address(usd3Strategy), 100e6);
+        usd3Strategy.deposit(100e6, alice);
+        uint256 aliceCommitmentEnd = block.timestamp + 7 days;
+        vm.stopPrank();
+
+        // Advance time partially through commitment
+        vm.warp(block.timestamp + 3 days);
+
+        // Bob (attacker) tries to grief Alice by depositing dust on her behalf
+        vm.startPrank(bob);
+        underlyingAsset.approve(address(usd3Strategy), 1);
+        usd3Strategy.deposit(1, alice); // Deposit dust to Alice
+        vm.stopPrank();
+
+        // Alice's commitment should NOT be extended since Bob isn't whitelisted
+        // Fast forward to original commitment end
+        vm.warp(aliceCommitmentEnd + 1);
+
+        // Alice should be able to transfer (commitment not extended)
+        vm.startPrank(alice);
+        uint256 balance = IERC20(address(usd3Strategy)).balanceOf(alice);
+        IERC20(address(usd3Strategy)).transfer(bob, balance);
+        vm.stopPrank();
+
+        // Verify transfer succeeded
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), balance);
+    }
+
+    function test_griefing_attack_prevention_susd3() public {
+        // Airdrop USDC to users
+        airdrop(underlyingAsset, alice, 1000e6);
+        airdrop(underlyingAsset, bob, 1000e6);
+        
+        // Alice deposits USD3 and stakes to sUSD3
+        vm.startPrank(alice);
+        underlyingAsset.approve(address(usd3Strategy), 100e6);
+        usd3Strategy.deposit(100e6, alice);
+        
+        // Wait for commitment to end
+        vm.warp(block.timestamp + 7 days + 1);
+        
+        // Stake only 10e6 USD3 to sUSD3 (to stay within subordination ratio)
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 10e6);
+        susd3Strategy.deposit(10e6, alice);
+        uint256 aliceLockEnd = block.timestamp + 90 days;
+        vm.stopPrank();
+
+        // Advance time partially through lock
+        vm.warp(block.timestamp + 30 days);
+
+        // Bob gets some USD3 to perform the griefing attack
+        vm.startPrank(bob);
+        underlyingAsset.approve(address(usd3Strategy), 100e6);
+        usd3Strategy.deposit(100e6, bob);
+        vm.warp(block.timestamp + 7 days + 1); // Wait for Bob's commitment
+        
+        // Bob deposits minimum amount on Alice's behalf to try to extend her lock
+        // This should NOT extend Alice's lock since Bob is not whitelisted
+        uint256 bobUsd3Balance = IERC20(address(usd3Strategy)).balanceOf(bob);
+        require(bobUsd3Balance >= 1e6, "Bob needs more USD3");
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 1e6);
+        susd3Strategy.deposit(1e6, alice); // Try to extend Alice's lock
+        vm.stopPrank();
+
+        // Alice's lock should NOT be extended
+        vm.warp(aliceLockEnd + 1);
+
+        // Alice should be able to transfer
+        vm.startPrank(alice);
+        uint256 shares = IERC20(address(susd3Strategy)).balanceOf(alice);
+        IERC20(address(susd3Strategy)).transfer(bob, shares);
+        vm.stopPrank();
+
+        assertEq(IERC20(address(susd3Strategy)).balanceOf(bob), shares);
+    }
+
+    function test_whitelisted_depositor_can_extend_commitment() public {
+        // Airdrop USDC to users and test contract
+        airdrop(underlyingAsset, alice, 1000e6);
+        airdrop(underlyingAsset, address(this), 1000e6);
+        
+        // First whitelist a helper contract (using address(this) as mock helper)
+        vm.prank(management);
+        usd3Strategy.setDepositorWhitelist(address(this), true);
+
+        // Alice deposits
+        vm.startPrank(alice);
+        underlyingAsset.approve(address(usd3Strategy), 100e6);
+        usd3Strategy.deposit(100e6, alice);
+        vm.stopPrank();
+
+        // Advance time partially
+        vm.warp(block.timestamp + 3 days);
+
+        // Whitelisted depositor deposits on Alice's behalf
+        underlyingAsset.approve(address(usd3Strategy), 10e6);
+        usd3Strategy.deposit(10e6, alice);
+
+        // Alice's commitment SHOULD be extended
+        vm.warp(block.timestamp + 4 days + 1); // Original would have ended
+
+        // Alice should NOT be able to transfer yet
+        vm.startPrank(alice);
+        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        IERC20(address(usd3Strategy)).transfer(bob, 1);
+        vm.stopPrank();
+
+        // But after new commitment ends, she can
+        vm.warp(block.timestamp + 3 days); // Complete new 7-day period
+        vm.prank(alice);
+        IERC20(address(usd3Strategy)).transfer(bob, 1);
+        
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), 1);
+    }
+
+    function test_self_deposit_always_extends_commitment() public {
+        // Airdrop USDC to Alice
+        airdrop(underlyingAsset, alice, 1000e6);
+        
+        // Alice deposits initially
+        vm.startPrank(alice);
+        underlyingAsset.approve(address(usd3Strategy), 200e6);
+        usd3Strategy.deposit(100e6, alice);
+        
+        // Advance time partially
+        vm.warp(block.timestamp + 3 days);
+        
+        // Alice deposits again for herself
+        usd3Strategy.deposit(100e6, alice);
+        
+        // Commitment should be extended
+        vm.warp(block.timestamp + 4 days + 1); // Original would have ended
+        
+        // Should still be locked
+        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        IERC20(address(usd3Strategy)).transfer(bob, 1);
+        
+        // After new period ends, can transfer
+        vm.warp(block.timestamp + 3 days);
+        IERC20(address(usd3Strategy)).transfer(bob, 1);
+        vm.stopPrank();
+        
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), 1);
+    }
 }
 
 /**
