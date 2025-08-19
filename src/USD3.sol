@@ -427,11 +427,15 @@ contract USD3 is BaseHooksUpgradeable {
             require(assets >= minDeposit, "Below minimum deposit");
         }
 
-        // Only extend commitment if depositor is receiver or whitelisted
-        if (
-            minCommitmentTime > 0 &&
-            (msg.sender == receiver || depositorWhitelist[msg.sender])
-        ) {
+        // Prevent commitment bypass and griefing attacks
+        if (minCommitmentTime > 0) {
+            // Only allow self-deposits or whitelisted depositors
+            require(
+                msg.sender == receiver || depositorWhitelist[msg.sender],
+                "USD3: Only self or whitelisted deposits allowed"
+            );
+
+            // Always extend commitment for valid deposits
             depositTimestamp[receiver] = block.timestamp;
         }
     }

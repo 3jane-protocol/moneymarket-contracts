@@ -422,17 +422,21 @@ contract TransferRestrictionEdgeCases is Setup {
         // Advance time partially through commitment
         vm.warp(block.timestamp + 3 days);
 
-        // Bob (attacker) tries to grief Alice by depositing dust on her behalf
+        // Bob (attacker) tries to grief Alice by depositing on her behalf
+        // This should now be blocked entirely (not just prevent commitment extension)
         vm.startPrank(bob);
         underlyingAsset.approve(address(usd3Strategy), 1);
-        usd3Strategy.deposit(1, alice); // Deposit dust to Alice
+        vm.expectRevert("USD3: Only self or whitelisted deposits allowed");
+        usd3Strategy.deposit(1, alice); // Attempt to deposit to Alice
         vm.stopPrank();
 
-        // Alice's commitment should NOT be extended since Bob isn't whitelisted
+        // Verify Bob's deposit was blocked (Alice's balance unchanged)
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(alice), 100e6);
+
         // Fast forward to original commitment end
         vm.warp(aliceCommitmentEnd + 1);
 
-        // Alice should be able to transfer (commitment not extended)
+        // Alice should be able to transfer after commitment ends
         vm.startPrank(alice);
         uint256 balance = IERC20(address(usd3Strategy)).balanceOf(alice);
         IERC20(address(usd3Strategy)).transfer(bob, balance);
@@ -464,21 +468,25 @@ contract TransferRestrictionEdgeCases is Setup {
         // Advance time partially through lock
         vm.warp(block.timestamp + 30 days);
 
-        // Bob gets some USD3 to perform the griefing attack
+        // Bob gets some USD3 to attempt the griefing attack
         vm.startPrank(bob);
         underlyingAsset.approve(address(usd3Strategy), 100e6);
         usd3Strategy.deposit(100e6, bob);
         vm.warp(block.timestamp + 7 days + 1); // Wait for Bob's commitment
 
-        // Bob deposits minimum amount on Alice's behalf to try to extend her lock
-        // This should NOT extend Alice's lock since Bob is not whitelisted
+        // Bob tries to deposit on Alice's behalf to extend her lock
+        // This should now be blocked entirely (not just prevent lock extension)
         uint256 bobUsd3Balance = IERC20(address(usd3Strategy)).balanceOf(bob);
         require(bobUsd3Balance >= 1e6, "Bob needs more USD3");
         IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 1e6);
-        susd3Strategy.deposit(1e6, alice); // Try to extend Alice's lock
+        vm.expectRevert("sUSD3: Only self or whitelisted deposits allowed");
+        susd3Strategy.deposit(1e6, alice); // Attempt to deposit to Alice
         vm.stopPrank();
 
-        // Alice's lock should NOT be extended
+        // Verify Alice's sUSD3 balance unchanged (Bob's deposit was blocked)
+        assertEq(IERC20(address(susd3Strategy)).balanceOf(alice), 10e6);
+
+        // Alice's lock ends as originally scheduled
         vm.warp(aliceLockEnd + 1);
 
         // Alice should be able to transfer
@@ -557,6 +565,86 @@ contract TransferRestrictionEdgeCases is Setup {
         vm.stopPrank();
 
         assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), 1);
+    }
+
+    function test_commitment_bypass_prevention() public {
+        // Airdrop USDC to Alice and her secondary address (Bob)
+        airdrop(underlyingAsset, alice, 1000e6);
+        airdrop(underlyingAsset, bob, 1000e6);
+
+        // Alice tries to bypass commitment by depositing from Alice to Bob
+        vm.startPrank(alice);
+        underlyingAsset.approve(address(usd3Strategy), 100e6);
+
+        // This should be blocked - can't deposit to a different address
+        vm.expectRevert("USD3: Only self or whitelisted deposits allowed");
+        usd3Strategy.deposit(100e6, bob);
+        vm.stopPrank();
+
+        // Verify Bob has no USD3 balance
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), 0);
+
+        // Alice can only deposit to herself
+        vm.startPrank(alice);
+        usd3Strategy.deposit(100e6, alice);
+        vm.stopPrank();
+
+        // Verify Alice has the balance with commitment
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(alice), 100e6);
+
+        // Alice cannot transfer during commitment
+        vm.startPrank(alice);
+        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        IERC20(address(usd3Strategy)).transfer(bob, 50e6);
+        vm.stopPrank();
+    }
+
+    function test_deposit_restrictions() public {
+        // Airdrop USDC to users
+        airdrop(underlyingAsset, alice, 1000e6);
+        airdrop(underlyingAsset, bob, 1000e6);
+        airdrop(underlyingAsset, charlie, 1000e6);
+
+        // Test 1: Users can deposit to themselves
+        vm.startPrank(alice);
+        underlyingAsset.approve(address(usd3Strategy), 100e6);
+        usd3Strategy.deposit(100e6, alice);
+        vm.stopPrank();
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(alice), 100e6);
+
+        // Test 2: Users cannot deposit to others
+        vm.startPrank(bob);
+        underlyingAsset.approve(address(usd3Strategy), 100e6);
+        vm.expectRevert("USD3: Only self or whitelisted deposits allowed");
+        usd3Strategy.deposit(100e6, alice);
+        vm.stopPrank();
+
+        // Test 3: Whitelist an address (like Helper contract)
+        vm.prank(management);
+        usd3Strategy.setDepositorWhitelist(charlie, true);
+
+        // Test 4: Whitelisted address can deposit for others
+        vm.startPrank(charlie);
+        underlyingAsset.approve(address(usd3Strategy), 100e6);
+        usd3Strategy.deposit(100e6, alice); // Charlie can deposit for Alice
+        vm.stopPrank();
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(alice), 200e6);
+
+        // Test 5: Remove from whitelist
+        vm.prank(management);
+        usd3Strategy.setDepositorWhitelist(charlie, false);
+
+        // Test 6: Charlie can no longer deposit for others
+        vm.startPrank(charlie);
+        vm.expectRevert("USD3: Only self or whitelisted deposits allowed");
+        usd3Strategy.deposit(50e6, alice);
+        vm.stopPrank();
+
+        // Test 7: Charlie can still deposit for himself
+        vm.startPrank(charlie);
+        usd3Strategy.deposit(100e6, charlie); // Charlie deposits to himself (minimum deposit)
+        vm.stopPrank();
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(charlie), 100e6);
     }
 }
 

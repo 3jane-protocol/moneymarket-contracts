@@ -170,11 +170,15 @@ contract sUSD3 is BaseHooksUpgradeable {
             assets = TokenizedStrategy.previewMint(shares);
         }
 
-        // Only extend lock period if depositor is receiver or whitelisted
-        if (
-            (assets > 0 || shares > 0) &&
-            (msg.sender == receiver || depositorWhitelist[msg.sender])
-        ) {
+        // Prevent lock bypass and griefing attacks
+        // Only allow self-deposits or whitelisted depositors
+        require(
+            msg.sender == receiver || depositorWhitelist[msg.sender],
+            "sUSD3: Only self or whitelisted deposits allowed"
+        );
+
+        // Always extend lock period for valid deposits
+        if (assets > 0 || shares > 0) {
             // Read lock duration from ProtocolConfig
             uint256 duration = lockDuration();
             lockedUntil[receiver] = block.timestamp + duration;
