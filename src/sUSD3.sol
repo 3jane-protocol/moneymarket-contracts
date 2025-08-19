@@ -55,7 +55,7 @@ contract sUSD3 is BaseHooksUpgradeable {
     mapping(address => UserCooldown) public cooldowns;
     mapping(address => uint256) public lockedUntil; // Initial lock tracking
 
-    // Whitelist of depositors allowed to extend lock periods
+    /// Whitelist of depositors allowed to 3rd party deposit
     mapping(address => bool) public depositorWhitelist;
 
     // Configurable parameters (only withdrawalWindow is locally managed)

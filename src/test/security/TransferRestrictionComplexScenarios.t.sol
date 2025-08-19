@@ -66,7 +66,7 @@ contract TransferRestrictionComplexScenarios is Setup {
 
         // Setup test users with funds
         address[5] memory users = [alice, bob, charlie, dave, eve];
-        for (uint i = 0; i < users.length; i++) {
+        for (uint256 i = 0; i < users.length; i++) {
             airdrop(asset, users[i], 10000e6);
         }
     }
@@ -125,7 +125,7 @@ contract TransferRestrictionComplexScenarios is Setup {
     function test_circular_transfers_blocked_by_commitment() public {
         // Setup: All users deposit
         address[3] memory users = [alice, bob, charlie];
-        for (uint i = 0; i < users.length; i++) {
+        for (uint256 i = 0; i < users.length; i++) {
             vm.startPrank(users[i]);
             asset.approve(address(usd3Strategy), 1000e6);
             usd3Strategy.deposit(1000e6, users[i]);
@@ -284,7 +284,7 @@ contract TransferRestrictionComplexScenarios is Setup {
     function test_complex_susd3_state_transitions() public {
         // Setup: Multiple users with USD3
         address[3] memory users = [alice, bob, charlie];
-        for (uint i = 0; i < users.length; i++) {
+        for (uint256 i = 0; i < users.length; i++) {
             vm.startPrank(users[i]);
             asset.approve(address(usd3Strategy), 2000e6);
             usd3Strategy.deposit(2000e6, users[i]);

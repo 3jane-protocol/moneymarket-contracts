@@ -714,7 +714,7 @@ contract LossAbsorptionStressTest is Setup {
         losses[4] = 3000e6; // 3K USDC
 
         uint256 totalLoss;
-        for (uint i = 0; i < losses.length; i++) {
+        for (uint256 i = 0; i < losses.length; i++) {
             _simulateLoss(losses[i]);
             totalLoss += losses[i];
 

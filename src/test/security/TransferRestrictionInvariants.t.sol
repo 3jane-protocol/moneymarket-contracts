@@ -82,7 +82,7 @@ contract TransferRestrictionInvariants is Setup {
         // 2. Have no balance (fully withdrawn)
 
         address[] memory users = handler.getUsers();
-        for (uint i = 0; i < users.length; i++) {
+        for (uint256 i = 0; i < users.length; i++) {
             address user = users[i];
             uint256 balance = IERC20(address(usd3Strategy)).balanceOf(user);
             uint256 depositTime = usd3Strategy.depositTimestamp(user);
@@ -116,7 +116,7 @@ contract TransferRestrictionInvariants is Setup {
         // they cannot transfer
 
         address[] memory users = handler.getUsers();
-        for (uint i = 0; i < users.length; i++) {
+        for (uint256 i = 0; i < users.length; i++) {
             address user = users[i];
             uint256 balance = IERC20(address(susd3Strategy)).balanceOf(user);
             uint256 lockedUntil = susd3Strategy.lockedUntil(user);
@@ -137,7 +137,7 @@ contract TransferRestrictionInvariants is Setup {
         // Cooldown shares should never exceed user's balance
 
         address[] memory users = handler.getUsers();
-        for (uint i = 0; i < users.length; i++) {
+        for (uint256 i = 0; i < users.length; i++) {
             address user = users[i];
             uint256 balance = IERC20(address(susd3Strategy)).balanceOf(user);
             (, , uint256 cooldownShares) = susd3Strategy.getCooldownStatus(
@@ -155,7 +155,7 @@ contract TransferRestrictionInvariants is Setup {
         address[] memory users = handler.getUsers();
         uint256 sumBalances = 0;
 
-        for (uint i = 0; i < users.length; i++) {
+        for (uint256 i = 0; i < users.length; i++) {
             sumBalances += IERC20(address(usd3Strategy)).balanceOf(users[i]);
         }
 
@@ -209,7 +209,7 @@ contract TransferRestrictionInvariants is Setup {
         // Users in commitment/lock/cooldown should have appropriate restrictions
 
         address[] memory users = handler.getUsers();
-        for (uint i = 0; i < users.length; i++) {
+        for (uint256 i = 0; i < users.length; i++) {
             address user = users[i];
 
             // Check USD3 restrictions

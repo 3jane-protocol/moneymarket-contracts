@@ -363,7 +363,7 @@ contract InvariantsTest is Setup {
                 ERC20(address(susd3Strategy)).totalSupply();
             assertGe(
                 susd3SharePrice,
-                0.90e18,
+                0.9e18,
                 "sUSD3 share price dropped too much"
             );
         }

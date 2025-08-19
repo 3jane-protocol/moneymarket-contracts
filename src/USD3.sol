@@ -72,7 +72,7 @@ contract USD3 is BaseHooksUpgradeable {
     /// @notice Whitelist status for addresses
     mapping(address => bool) public whitelist;
 
-    /// @notice Whitelist of depositors allowed to extend commitment periods
+    /// @notice Whitelist of depositors allowed to 3rd party deposit
     mapping(address => bool) public depositorWhitelist;
 
     /// @notice Minimum deposit amount required

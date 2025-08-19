@@ -379,7 +379,8 @@ contract MultiUserStressTest is Setup {
                 subordinationRatio,
                 MAX_SUBORDINATION + 1,
                 "Should enforce subordination ratio"
-            ); // +1 for rounding
+            ); // +1 for
+            // rounding
         }
 
         assertGt(

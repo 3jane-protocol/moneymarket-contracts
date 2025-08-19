@@ -281,7 +281,7 @@ contract USD3sUSD3IntegrationTest is Setup {
         vm.stopPrank();
 
         // Simulate market volatility
-        for (uint i = 0; i < 10; i++) {
+        for (uint256 i = 0; i < 10; i++) {
             if (i % 2 == 0) {
                 // Profit round
                 _simulateYield(3000e6);

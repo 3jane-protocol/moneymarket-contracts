@@ -309,7 +309,7 @@ contract SubordinationRatioStressTest is Setup {
         uint256 oddDeposit = 1234567; // Small odd number (1.23 USDC)
 
         // Multiple small deposits
-        for (uint i = 0; i < 10; i++) {
+        for (uint256 i = 0; i < 10; i++) {
             address user = address(uint160(0x1000 + i));
             deal(address(underlyingAsset), user, oddDeposit);
 
