@@ -625,7 +625,7 @@ contract TransferRestrictionEdgeCases is Setup {
 
         // Test 4: Whitelisted address can deposit for others
         vm.startPrank(charlie);
-        underlyingAsset.approve(address(usd3Strategy), 100e6);
+        underlyingAsset.approve(address(usd3Strategy), 200e6); // Need 200e6 total
         usd3Strategy.deposit(100e6, alice); // Charlie can deposit for Alice
         vm.stopPrank();
         assertEq(IERC20(address(usd3Strategy)).balanceOf(alice), 200e6);
