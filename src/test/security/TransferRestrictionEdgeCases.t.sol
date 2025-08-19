@@ -411,7 +411,7 @@ contract TransferRestrictionEdgeCases is Setup {
         // Airdrop USDC to users
         airdrop(underlyingAsset, alice, 1000e6);
         airdrop(underlyingAsset, bob, 1000e6);
-        
+
         // Alice deposits and has commitment period
         vm.startPrank(alice);
         underlyingAsset.approve(address(usd3Strategy), 100e6);
@@ -446,15 +446,15 @@ contract TransferRestrictionEdgeCases is Setup {
         // Airdrop USDC to users
         airdrop(underlyingAsset, alice, 1000e6);
         airdrop(underlyingAsset, bob, 1000e6);
-        
+
         // Alice deposits USD3 and stakes to sUSD3
         vm.startPrank(alice);
         underlyingAsset.approve(address(usd3Strategy), 100e6);
         usd3Strategy.deposit(100e6, alice);
-        
+
         // Wait for commitment to end
         vm.warp(block.timestamp + 7 days + 1);
-        
+
         // Stake only 10e6 USD3 to sUSD3 (to stay within subordination ratio)
         IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 10e6);
         susd3Strategy.deposit(10e6, alice);
@@ -469,7 +469,7 @@ contract TransferRestrictionEdgeCases is Setup {
         underlyingAsset.approve(address(usd3Strategy), 100e6);
         usd3Strategy.deposit(100e6, bob);
         vm.warp(block.timestamp + 7 days + 1); // Wait for Bob's commitment
-        
+
         // Bob deposits minimum amount on Alice's behalf to try to extend her lock
         // This should NOT extend Alice's lock since Bob is not whitelisted
         uint256 bobUsd3Balance = IERC20(address(usd3Strategy)).balanceOf(bob);
@@ -494,7 +494,7 @@ contract TransferRestrictionEdgeCases is Setup {
         // Airdrop USDC to users and test contract
         airdrop(underlyingAsset, alice, 1000e6);
         airdrop(underlyingAsset, address(this), 1000e6);
-        
+
         // First whitelist a helper contract (using address(this) as mock helper)
         vm.prank(management);
         usd3Strategy.setDepositorWhitelist(address(this), true);
@@ -525,37 +525,37 @@ contract TransferRestrictionEdgeCases is Setup {
         vm.warp(block.timestamp + 3 days); // Complete new 7-day period
         vm.prank(alice);
         IERC20(address(usd3Strategy)).transfer(bob, 1);
-        
+
         assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), 1);
     }
 
     function test_self_deposit_always_extends_commitment() public {
         // Airdrop USDC to Alice
         airdrop(underlyingAsset, alice, 1000e6);
-        
+
         // Alice deposits initially
         vm.startPrank(alice);
         underlyingAsset.approve(address(usd3Strategy), 200e6);
         usd3Strategy.deposit(100e6, alice);
-        
+
         // Advance time partially
         vm.warp(block.timestamp + 3 days);
-        
+
         // Alice deposits again for herself
         usd3Strategy.deposit(100e6, alice);
-        
+
         // Commitment should be extended
         vm.warp(block.timestamp + 4 days + 1); // Original would have ended
-        
+
         // Should still be locked
         vm.expectRevert("USD3: Cannot transfer during commitment period");
         IERC20(address(usd3Strategy)).transfer(bob, 1);
-        
+
         // After new period ends, can transfer
         vm.warp(block.timestamp + 3 days);
         IERC20(address(usd3Strategy)).transfer(bob, 1);
         vm.stopPrank();
-        
+
         assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), 1);
     }
 }

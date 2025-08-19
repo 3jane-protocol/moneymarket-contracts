@@ -428,7 +428,10 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         // Only extend commitment if depositor is receiver or whitelisted
-        if (minCommitmentTime > 0 && (msg.sender == receiver || depositorWhitelist[msg.sender])) {
+        if (
+            minCommitmentTime > 0 &&
+            (msg.sender == receiver || depositorWhitelist[msg.sender])
+        ) {
             depositTimestamp[receiver] = block.timestamp;
         }
     }

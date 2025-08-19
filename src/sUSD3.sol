@@ -171,7 +171,10 @@ contract sUSD3 is BaseHooksUpgradeable {
         }
 
         // Only extend lock period if depositor is receiver or whitelisted
-        if ((assets > 0 || shares > 0) && (msg.sender == receiver || depositorWhitelist[msg.sender])) {
+        if (
+            (assets > 0 || shares > 0) &&
+            (msg.sender == receiver || depositorWhitelist[msg.sender])
+        ) {
             // Read lock duration from ProtocolConfig
             uint256 duration = lockDuration();
             lockedUntil[receiver] = block.timestamp + duration;
