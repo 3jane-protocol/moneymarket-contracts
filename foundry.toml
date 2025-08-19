@@ -7,11 +7,6 @@ optimizer = true
 optimizer_runs = 999999
 bytecode_hash = "none"
 evm_version = "shanghai"
-# Required for OpenZeppelin Upgrades
-ffi = true
-ast = true
-build_info = true
-extra_output = ["storageLayout"]
 
 [profile.default.invariant]
 runs = 16
@@ -25,6 +20,21 @@ wrap_comments = true
 [profile.build]
 test = "/dev/null"
 script = "/dev/null"
+
+
+[profile.deploy]
+# Inherits from default profile but excludes tests for faster compilation
+test = "/dev/null"
+# Keep all the metadata needed for OpenZeppelin Upgrades
+ffi = true
+ast = true
+# Allow file system access for deployment tracking
+fs_permissions = [
+  { access = "read-write", path = "./deployments" },
+  { access = "read-write", path = "./out" },
+]
+build_info = true
+extra_output = ["storageLayout"]
 
 
 [profile.test]

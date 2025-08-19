@@ -4,34 +4,47 @@ pragma solidity 0.8.22;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {Upgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
+import {Options} from "openzeppelin-foundry-upgrades/Options.sol";
 import {MorphoCredit} from "../../src/MorphoCredit.sol";
 
 contract DeployMorphoCredit is Script {
     function run() external returns (address proxy, address implementation) {
-        address timelockAddress = vm.envAddress("TIMELOCK_ADDRESS");
         address protocolConfig = vm.envAddress("PROTOCOL_CONFIG");
         address owner = vm.envAddress("OWNER_ADDRESS");
         
+        // Check if already deployed by trying to load from env
+        try vm.envAddress("MORPHO_ADDRESS") returns (address existing) {
+            if (existing != address(0) && existing.code.length > 0) {
+                console.log("MorphoCredit already deployed at:", existing);
+                // Try to get implementation address to verify it's a proxy
+                implementation = Upgrades.getImplementationAddress(existing);
+                if (implementation != address(0)) {
+                    console.log("Implementation at:", implementation);
+                    return (existing, implementation);
+                }
+            }
+        } catch {}
+        
         vm.startBroadcast();
         
-        // First deploy the implementation to pass its address to constructor
-        // MorphoCredit constructor requires protocolConfig
-        MorphoCredit morphoImpl = new MorphoCredit(protocolConfig);
+        // MorphoCredit requires protocolConfig in its constructor
+        Options memory opts;
+        opts.constructorData = abi.encode(protocolConfig);
         
-        // Deploy Transparent Proxy with Timelock as ProxyAdmin owner
-        // Note: We need to deploy the proxy manually since MorphoCredit has a constructor with args
+        // Deploy Transparent Proxy using OpenZeppelin Upgrades library
         proxy = Upgrades.deployTransparentProxy(
-            address(morphoImpl),
-            timelockAddress, // Timelock owns the ProxyAdmin
-            abi.encodeCall(MorphoCredit.initialize, (owner))
+            "MorphoCredit.sol:MorphoCredit",
+            owner, // Owner owns the ProxyAdmin
+            abi.encodeCall(MorphoCredit.initialize, (owner)),
+            opts
         );
         
-        // Get implementation address for verification
-        implementation = address(morphoImpl);
+        // Get the implementation address for logging
+        implementation = Upgrades.getImplementationAddress(proxy);
         
         console.log("MorphoCredit Proxy deployed at:", proxy);
         console.log("MorphoCredit Implementation at:", implementation);
-        console.log("ProxyAdmin owner: TimelockController");
+        console.log("ProxyAdmin owner:", owner);
         console.log("MorphoCredit owner:", owner);
         console.log("ProtocolConfig address:", protocolConfig);
         

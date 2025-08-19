@@ -3,42 +3,63 @@ pragma solidity 0.8.22;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
-import {Helper} from "../../src/Helper.sol";
+import {Upgrades, Options} from "openzeppelin-foundry-upgrades/Upgrades.sol";
 
-contract DeployHelper is Script {
-    function run() external returns (address) {
+// Import the flattened sUSD3
+import "../../src/tokens/flattened/sUSD3.sol";
+
+contract DeploySUSD3 is Script {
+    function run() external returns (address, address) {
         // Check if already deployed
-        address existing = _loadAddress("helper");
+        address existing = _loadAddress("susd3");
         if (existing != address(0)) {
-            console.log("Helper already deployed at:", existing);
-            return existing;
+            console.log("sUSD3 already deployed at:", existing);
+            address implementation = _loadAddress("susd3Impl");
+            if (implementation != address(0)) {
+                console.log("Implementation at:", implementation);
+                return (existing, implementation);
+            }
         }
         
-        // Load addresses from environment variables
-        address morpho = vm.envAddress("MORPHO_ADDRESS");
-        address usd3 = vm.envAddress("USD3_ADDRESS");
-        address susd3 = vm.envAddress("SUSD3_ADDRESS");
-        address usdc = vm.envAddress("USDC_ADDRESS");
-        address wausdc = vm.envAddress("WAUSDC_ADDRESS");
+        // Load required addresses from env variables
+        address usd3Token = vm.envAddress("USD3_ADDRESS");
+        address owner = vm.envAddress("OWNER_ADDRESS");
         
-        console.log("Deploying Helper...");
-        console.log("  MORPHO:", morpho);
-        console.log("  USD3:", usd3);
-        console.log("  sUSD3:", susd3);
-        console.log("  USDC:", usdc);
-        console.log("  WAUSDC:", wausdc);
+        console.log("Deploying sUSD3 (Subordinate Tranche)...");
+        console.log("  USD3 Token:", usd3Token);
+        console.log("  Owner:", owner);
         
         vm.startBroadcast();
         
-        Helper helper = new Helper(morpho, usd3, susd3, usdc, wausdc);
+        // sUSD3 has no constructor arguments
+        Options memory opts;
+        opts.unsafeSkipAllChecks = true;
         
-        console.log("Helper deployed at:", address(helper));
+        // Deploy as upgradeable proxy
+        // Initialize requires: usd3Token, management, keeper
+        address proxy = Upgrades.deployTransparentProxy(
+            "out/sUSD3.sol/sUSD3.json",
+            owner, // ProxyAdmin owner
+            abi.encodeCall(sUSD3.initialize, (
+                usd3Token,       // _usd3Token
+                owner,          // _management
+                owner           // _keeper
+            )),
+            opts
+        );
+        
+        address implementation = Upgrades.getImplementationAddress(proxy);
+        
+        console.log("sUSD3 Proxy deployed at:", proxy);
+        console.log("sUSD3 Implementation at:", implementation);
+        console.log("ProxyAdmin owner:", owner);
         
         vm.stopBroadcast();
         
-        // Don't save to file during DeployAll - DeployAll handles persistence
+        // Don't save to file during DeployAll - just return the addresses
+        // The DeployAll script will handle persistence
         
-        return address(helper);
+        return (proxy, implementation);
     }
     
     function _loadAddress(string memory key) internal view returns (address) {
@@ -55,7 +76,7 @@ contract DeployHelper is Script {
         }
     }
     
-    function _saveAddress(string memory key, address value) internal {
+    function _saveAddresses(string memory key, address proxy, address implementation) internal {
         string memory chainId = vm.toString(block.chainid);
         string memory deploymentsPath = string.concat("deployments/", chainId, "/");
         string memory latestFile = string.concat(deploymentsPath, "latest.json");
@@ -77,7 +98,7 @@ contract DeployHelper is Script {
         vm.serializeAddress(json, "insuranceFund", vm.parseJsonAddress(existingJson, ".insuranceFund"));
         vm.serializeAddress(json, "adaptiveCurveIrm", vm.parseJsonAddress(existingJson, ".adaptiveCurveIrm"));
         
-        // Copy token addresses if they exist
+        // Copy token addresses
         try vm.parseJsonAddress(existingJson, ".waUSDC") returns (address waUSDC) {
             vm.serializeAddress(json, "waUSDC", waUSDC);
         } catch {}
@@ -90,29 +111,19 @@ contract DeployHelper is Script {
         try vm.parseJsonAddress(existingJson, ".usd3Impl") returns (address usd3Impl) {
             vm.serializeAddress(json, "usd3Impl", usd3Impl);
         } catch {}
-        try vm.parseJsonAddress(existingJson, ".susd3") returns (address susd3) {
-            vm.serializeAddress(json, "susd3", susd3);
-        } catch {}
-        try vm.parseJsonAddress(existingJson, ".susd3Impl") returns (address susd3Impl) {
-            vm.serializeAddress(json, "susd3Impl", susd3Impl);
-        } catch {}
         
-        // Copy market ID if it exists
+        // Copy market ID
         try vm.parseJsonBytes32(existingJson, ".marketId") returns (bytes32 marketId) {
             vm.serializeBytes32(json, "marketId", marketId);
         } catch {}
         
-        // Copy configuration status if it exists
-        try vm.parseJsonBool(existingJson, ".tokensConfigured") returns (bool configured) {
-            vm.serializeBool(json, "tokensConfigured", configured);
-        } catch {}
-        
-        // Add new address
-        string memory finalJson = vm.serializeAddress(json, key, value);
+        // Add new addresses
+        vm.serializeAddress(json, key, proxy);
+        string memory finalJson = vm.serializeAddress(json, string.concat(key, "Impl"), implementation);
         
         // Write updated JSON
         vm.writeJson(finalJson, latestFile);
         
-        console.log("Address saved to deployment file");
+        console.log("Addresses saved to deployment file");
     }
 }

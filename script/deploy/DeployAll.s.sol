@@ -3,15 +3,22 @@ pragma solidity 0.8.22;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
+import {Id} from "../../src/interfaces/IMorpho.sol";
 
 import {DeployTimelock} from "./00_DeployTimelock.s.sol";
 import {DeployProtocolConfig} from "./01_DeployProtocolConfig.s.sol";
+import {ConfigureProtocol} from "./01a_ConfigureProtocol.s.sol";
 import {DeployMorphoCredit} from "./02_DeployMorphoCredit.s.sol";
 import {DeployAdaptiveCurveIrm} from "./03_DeployAdaptiveCurveIrm.s.sol";
 import {DeployHelper} from "./04_DeployHelper.s.sol";
 import {DeployCreditLine} from "./05_DeployCreditLine.s.sol";
 import {DeployInsuranceFund} from "./06_DeployInsuranceFund.s.sol";
 import {DeployMarkdownManager} from "./07_DeployMarkdownManager.s.sol";
+import {DeployWAUSDC} from "./08_DeployWAUSDC.s.sol";
+import {CreateMarket} from "./09_CreateMarket.s.sol";
+import {DeployUSD3} from "./10_DeployUSD3.s.sol";
+import {DeploySUSD3} from "./11_DeploySUSD3.s.sol";
+import {ConfigureTokens} from "./12_ConfigureTokens.s.sol";
 
 contract DeployAll is Script {
     struct DeploymentAddresses {
@@ -22,10 +29,17 @@ contract DeployAll is Script {
         address morphoCreditImpl;
         address adaptiveCurveIrm;
         address adaptiveCurveIrmImpl;
-        address helper;
         address creditLine;
         address insuranceFund;
         address markdownManager;
+        address waUSDC;
+        address waUSDCImpl;
+        bytes32 marketId;
+        address usd3;
+        address usd3Impl;
+        address susd3;
+        address susd3Impl;
+        address helper;
     }
     
     function run() external returns (DeploymentAddresses memory addresses) {
@@ -47,6 +61,12 @@ contract DeployAll is Script {
         DeployProtocolConfig deployProtocolConfig = new DeployProtocolConfig();
         (addresses.protocolConfig, addresses.protocolConfigImpl) = deployProtocolConfig.run();
         vm.setEnv("PROTOCOL_CONFIG", vm.toString(addresses.protocolConfig));
+        console.log("");
+        
+        // Step 2a: Configure ProtocolConfig
+        console.log(">>> Step 2a: Configuring ProtocolConfig...");
+        ConfigureProtocol configureProtocol = new ConfigureProtocol();
+        configureProtocol.run();
         console.log("");
         
         // Step 3: Deploy MorphoCredit
@@ -79,11 +99,47 @@ contract DeployAll is Script {
         // Step 7: Deploy AdaptiveCurveIrm
         console.log(">>> Step 7: Deploying AdaptiveCurveIrm...");
         DeployAdaptiveCurveIrm deployAdaptiveCurveIrm = new DeployAdaptiveCurveIrm();
-        (addresses.adaptiveCurveIrm, addresses.adaptiveCurveIrmImpl) = deployAdaptiveCurveIrm.run();
+        addresses.adaptiveCurveIrm = deployAdaptiveCurveIrm.run();
+        addresses.adaptiveCurveIrmImpl = address(0); // Not upgradeable
+        vm.setEnv("ADAPTIVE_CURVE_IRM_ADDRESS", vm.toString(addresses.adaptiveCurveIrm));
         console.log("");
         
-        // Step 8: Deploy Helper
-        console.log(">>> Step 8: Deploying Helper...");
+        // Step 8: Deploy waUSDC (ATokenVault)
+        console.log(">>> Step 8: Deploying waUSDC (ATokenVault)...");
+        DeployWAUSDC deployWAUSDC = new DeployWAUSDC();
+        (addresses.waUSDC, addresses.waUSDCImpl) = deployWAUSDC.run();
+        vm.setEnv("WAUSDC_ADDRESS", vm.toString(addresses.waUSDC));
+        console.log("");
+        
+        // Step 9: Create Market in MorphoCredit
+        console.log(">>> Step 9: Creating Market in MorphoCredit...");
+        CreateMarket createMarket = new CreateMarket();
+        addresses.marketId = Id.unwrap(createMarket.run());
+        vm.setEnv("MARKET_ID", vm.toString(addresses.marketId));
+        console.log("");
+        
+        // Step 10: Deploy USD3 (Senior Tranche)
+        console.log(">>> Step 10: Deploying USD3 (Senior Tranche)...");
+        DeployUSD3 deployUSD3 = new DeployUSD3();
+        (addresses.usd3, addresses.usd3Impl) = deployUSD3.run();
+        vm.setEnv("USD3_ADDRESS", vm.toString(addresses.usd3));
+        console.log("");
+        
+        // Step 11: Deploy sUSD3 (Subordinate Tranche)
+        console.log(">>> Step 11: Deploying sUSD3 (Subordinate Tranche)...");
+        DeploySUSD3 deploySUSD3 = new DeploySUSD3();
+        (addresses.susd3, addresses.susd3Impl) = deploySUSD3.run();
+        vm.setEnv("SUSD3_ADDRESS", vm.toString(addresses.susd3));
+        console.log("");
+        
+        // Step 12: Configure Token Relationships
+        console.log(">>> Step 12: Configuring Token Relationships...");
+        ConfigureTokens configureTokens = new ConfigureTokens();
+        configureTokens.run();
+        console.log("");
+        
+        // Step 13: Deploy Helper (after tokens are deployed)
+        console.log(">>> Step 13: Deploying Helper...");
         DeployHelper deployHelper = new DeployHelper();
         addresses.helper = deployHelper.run();
         console.log("");
@@ -101,13 +157,24 @@ contract DeployAll is Script {
         console.log("MorphoCredit (Proxy):", addresses.morphoCredit);
         console.log("MorphoCredit (Impl):", addresses.morphoCreditImpl);
         console.log("");
-        console.log("AdaptiveCurveIrm (Proxy):", addresses.adaptiveCurveIrm);
-        console.log("AdaptiveCurveIrm (Impl):", addresses.adaptiveCurveIrmImpl);
+        console.log("AdaptiveCurveIrm:", addresses.adaptiveCurveIrm);
         console.log("");
-        console.log("Helper:", addresses.helper);
         console.log("CreditLine:", addresses.creditLine);
         console.log("InsuranceFund:", addresses.insuranceFund);
         console.log("MarkdownManager:", addresses.markdownManager);
+        console.log("");
+        console.log("waUSDC (Proxy):", addresses.waUSDC);
+        console.log("waUSDC (Impl):", addresses.waUSDCImpl);
+        console.log("");
+        console.log("Market ID:", vm.toString(addresses.marketId));
+        console.log("");
+        console.log("USD3 (Proxy):", addresses.usd3);
+        console.log("USD3 (Impl):", addresses.usd3Impl);
+        console.log("");
+        console.log("sUSD3 (Proxy):", addresses.susd3);
+        console.log("sUSD3 (Impl):", addresses.susd3Impl);
+        console.log("");
+        console.log("Helper:", addresses.helper);
         console.log("-------------------------------");
         
         // Save deployment addresses to file
@@ -130,10 +197,18 @@ contract DeployAll is Script {
         vm.serializeAddress(json, "morphoCreditImpl", addresses.morphoCreditImpl);
         vm.serializeAddress(json, "adaptiveCurveIrm", addresses.adaptiveCurveIrm);
         vm.serializeAddress(json, "adaptiveCurveIrmImpl", addresses.adaptiveCurveIrmImpl);
-        vm.serializeAddress(json, "helper", addresses.helper);
         vm.serializeAddress(json, "creditLine", addresses.creditLine);
         vm.serializeAddress(json, "insuranceFund", addresses.insuranceFund);
         vm.serializeAddress(json, "markdownManager", addresses.markdownManager);
+        vm.serializeAddress(json, "waUSDC", addresses.waUSDC);
+        vm.serializeAddress(json, "waUSDCImpl", addresses.waUSDCImpl);
+        vm.serializeBytes32(json, "marketId", addresses.marketId);
+        vm.serializeAddress(json, "usd3", addresses.usd3);
+        vm.serializeAddress(json, "usd3Impl", addresses.usd3Impl);
+        vm.serializeAddress(json, "susd3", addresses.susd3);
+        vm.serializeAddress(json, "susd3Impl", addresses.susd3Impl);
+        vm.serializeAddress(json, "helper", addresses.helper);
+        vm.serializeBool(json, "tokensConfigured", true);
         vm.serializeUint(json, "timestamp", block.timestamp);
         vm.serializeUint(json, "blockNumber", block.number);
         string memory finalJson = vm.serializeAddress(json, "deployer", msg.sender);
