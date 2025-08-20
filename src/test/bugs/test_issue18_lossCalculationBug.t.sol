@@ -319,10 +319,31 @@ contract TestIssue18LossCalculationBug is Setup {
             .balanceOf(address(susd3Strategy));
         console2.log("sUSD3 balance before loss:", susd3BalanceBefore);
 
+        // Deploy funds to MorphoCredit first
+        vm.prank(keeper);
+        ITokenizedStrategy(address(usd3Strategy)).tend();
+
         // Simulate a large loss (20%)
         uint256 lossAmount = 200e6;
-        vm.prank(address(usd3Strategy));
+
+        // To simulate loss, we need to manipulate the market state
+        // First withdraw some funds from MorphoCredit
+        MarketParams memory params = usd3Strategy.marketParams();
+        IMorpho morpho = usd3Strategy.morphoCredit();
+
+        vm.startPrank(address(usd3Strategy));
+        // Withdraw funds from MorphoCredit to create idle balance
+        morpho.withdraw(
+            params,
+            lossAmount,
+            0,
+            address(usd3Strategy),
+            address(usd3Strategy)
+        );
+
+        // Now transfer them away to simulate loss
         asset.transfer(address(0xdead), lossAmount);
+        vm.stopPrank();
 
         // Report the loss
         vm.prank(keeper);
