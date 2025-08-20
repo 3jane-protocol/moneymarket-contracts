@@ -646,6 +646,144 @@ contract TransferRestrictionEdgeCases is Setup {
         vm.stopPrank();
         assertEq(IERC20(address(usd3Strategy)).balanceOf(charlie), 100e6);
     }
+
+    function test_susd3_dos_via_commitment_timestamp() public {
+        // Setup: Give users USDC
+        airdrop(underlyingAsset, alice, 1000e6);
+        airdrop(underlyingAsset, bob, 1000e6);
+
+        // Deploy a mock Helper contract and whitelist it
+        address mockHelper = makeAddr("mockHelper");
+        vm.prank(management);
+        usd3Strategy.setDepositorWhitelist(mockHelper, true);
+
+        // Step 1: Alice deposits USD3 and waits for commitment to pass
+        vm.startPrank(alice);
+        underlyingAsset.approve(address(usd3Strategy), 500e6);
+        usd3Strategy.deposit(500e6, alice);
+        vm.stopPrank();
+
+        // Wait for Alice's commitment to pass
+        skip(7 days + 1);
+
+        // Step 2: Alice stakes USD3 to sUSD3
+        vm.startPrank(alice);
+        uint256 aliceUsd3Balance = IERC20(address(usd3Strategy)).balanceOf(
+            alice
+        );
+        IERC20(address(usd3Strategy)).approve(
+            address(susd3Strategy),
+            aliceUsd3Balance
+        );
+
+        // Deposit half to sUSD3 (respecting subordination ratio)
+        uint256 depositAmount = 75e6; // Small amount to stay within ratio
+        susd3Strategy.deposit(depositAmount, alice);
+        uint256 aliceSusd3Shares = IERC20(address(susd3Strategy)).balanceOf(
+            alice
+        );
+        assertGt(aliceSusd3Shares, 0, "Alice should have sUSD3 shares");
+        vm.stopPrank();
+
+        // Wait for sUSD3 lock period to pass
+        skip(90 days);
+
+        // Step 3: Alice starts cooldown for withdrawal
+        vm.prank(alice);
+        susd3Strategy.startCooldown(aliceSusd3Shares);
+
+        // Wait for cooldown to complete
+        skip(7 days + 1);
+
+        // Step 4: Now the attack - Helper deposits 1 wei to sUSD3
+        // This gives sUSD3 contract a commitment timestamp
+        airdrop(underlyingAsset, mockHelper, 1e6);
+        vm.startPrank(mockHelper);
+        underlyingAsset.approve(address(usd3Strategy), 1);
+
+        // Helper can deposit on behalf of sUSD3 because it's whitelisted
+        usd3Strategy.deposit(1, address(susd3Strategy));
+        vm.stopPrank();
+
+        // Verify sUSD3 now has a commitment timestamp
+        uint256 susd3CommitmentTime = usd3Strategy.depositTimestamp(
+            address(susd3Strategy)
+        );
+        assertGt(
+            susd3CommitmentTime,
+            0,
+            "sUSD3 should have commitment timestamp"
+        );
+
+        // Step 5: Alice tries to withdraw from sUSD3 - THIS SHOULD SUCCEED DESPITE sUSD3's COMMITMENT
+        vm.startPrank(alice);
+
+        // Check Alice is in valid withdrawal window
+        (
+            uint256 cooldownEnd,
+            uint256 windowEnd,
+            uint256 cooldownShares
+        ) = susd3Strategy.getCooldownStatus(alice);
+        assertLt(block.timestamp, windowEnd, "Should be in withdrawal window");
+        assertGt(cooldownShares, 0, "Should have cooldown shares");
+
+        // Get balances before withdrawal
+        uint256 aliceUsd3Before = IERC20(address(usd3Strategy)).balanceOf(
+            alice
+        );
+
+        // Approve sUSD3 to burn shares
+        IERC20(address(susd3Strategy)).approve(
+            address(susd3Strategy),
+            aliceSusd3Shares
+        );
+
+        // Withdraw should succeed because sUSD3 is exempt from commitment restrictions
+        susd3Strategy.redeem(aliceSusd3Shares, alice, alice);
+
+        // Verify withdrawal succeeded
+        uint256 aliceUsd3After = IERC20(address(usd3Strategy)).balanceOf(alice);
+        assertGt(
+            aliceUsd3After,
+            aliceUsd3Before,
+            "Alice should have received USD3"
+        );
+        assertEq(
+            IERC20(address(susd3Strategy)).balanceOf(alice),
+            0,
+            "Alice should have no sUSD3 left"
+        );
+        vm.stopPrank();
+
+        // Step 6: Verify that even with commitment extended, withdrawals still work
+        skip(6 days); // Almost at end of commitment
+
+        // Helper deposits another 1 wei to reset commitment
+        vm.startPrank(mockHelper);
+        underlyingAsset.approve(address(usd3Strategy), 1);
+        usd3Strategy.deposit(1, address(susd3Strategy));
+        vm.stopPrank();
+
+        // Commitment has been extended again
+        uint256 newCommitmentTime = usd3Strategy.depositTimestamp(
+            address(susd3Strategy)
+        );
+        assertGt(
+            newCommitmentTime,
+            susd3CommitmentTime,
+            "Commitment should be extended"
+        );
+
+        // But this doesn't affect sUSD3's ability to operate
+        // (Alice already withdrew, but if there were other users, they could still withdraw)
+
+        emit log_string(
+            "TEST RESULT: sUSD3 withdrawals work correctly despite commitment timestamp!"
+        );
+        emit log_string(
+            "Fix successfully prevents DoS attack by exempting sUSD3 from transfer restrictions"
+        );
+    }
 }
 
 /**
