@@ -492,8 +492,8 @@ contract USD3 is BaseHooksUpgradeable {
         // Allow minting (from == 0) and burning (to == 0)
         if (from == address(0) || to == address(0)) return;
 
-        // Allow transfers to sUSD3 (users can stake restricted USD3)
-        if (to == sUSD3) return;
+        // Allow transfers to/from sUSD3 (staking and withdrawals)
+        if (to == sUSD3 || from == sUSD3) return;
 
         // Check commitment period
         uint256 commitmentEnd = depositTimestamp[from] + minCommitmentTime;
