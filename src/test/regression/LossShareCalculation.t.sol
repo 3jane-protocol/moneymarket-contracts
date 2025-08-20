@@ -13,9 +13,9 @@ import {IMorpho, IMorphoCredit, MarketParams, Id} from "@3jane-morpho-blue/inter
 import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBalancesLib.sol";
 
 /**
- * @title Test for Issue #18: Loss Calculation Bug
+ * @title Test for Loss Share Calculation Bug
  * @notice Demonstrates that _postReportHook incorrectly calculates shares to burn
- * @dev Shows that using post-report values leads to burning too few shares from sUSD3
+ * @dev Shows that using post-report values leads to burning incorrect shares from sUSD3
  *
  * The bug occurs because:
  * 1. report() reduces totalAssets by the loss amount
@@ -33,7 +33,7 @@ import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBa
  * In reality, the math is more complex due to the way losses are processed,
  * but the core issue remains: using post-report values gives wrong results.
  */
-contract TestIssue18LossCalculationBug is Setup {
+contract LossShareCalculationTest is Setup {
     using MorphoBalancesLib for IMorpho;
 
     USD3 public usd3Strategy;
@@ -91,7 +91,7 @@ contract TestIssue18LossCalculationBug is Setup {
      *      and PASS once we fix it to use pre-report values
      */
     function test_loss_calculation_bug() public {
-        console2.log("\n=== Testing Issue #18: Loss Calculation Bug ===\n");
+        console2.log("\n=== Testing Loss Share Calculation Bug ===\n");
 
         // Step 1: Setup initial deposits
         // Alice deposits 850 USDC into USD3
