@@ -228,11 +228,16 @@ contract PremiumRateChangeTimestampTest is BaseTest {
 
         // Get debt with high rate
         uint256 debtBeforeDecrease = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        console.log("Debt before rate decrease:", debtBeforeDecrease);
 
         // Decrease rate to 5% APR
         uint256 lowPremiumRate = uint256(0.05e18) / uint256(365 days);
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, 10_000e18, uint128(lowPremiumRate));
+
+        // Get debt right after rate change to see if premium was accrued
+        uint256 debtAfterRateChange = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        console.log("Debt right after rate change:", debtAfterRateChange);
 
         // Verify timestamp is updated
         (uint256 timestampAfterDecrease,,) = IMorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
@@ -240,21 +245,27 @@ contract PremiumRateChangeTimestampTest is BaseTest {
 
         skip(7 days);
 
-        // Accrue with new lower rate
-        morpho.accrueInterest(marketParams);
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
-
+        // Get debt after second week (expectedBorrowAssets will trigger internal accrual)
         uint256 debtAfterLowRate = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        console.log("Debt after second week:", debtAfterLowRate);
 
-        // Calculate growth rates
-        uint256 firstWeekGrowth = debtBeforeDecrease - 1000e18;
-        uint256 secondWeekGrowth = debtAfterLowRate - debtBeforeDecrease;
+        // Calculate growth rates (percentage increase) instead of absolute amounts
+        // First week: from initial borrow to rate change (includes accrual at rate change)
+        uint256 firstWeekGrowth = debtAfterRateChange - 1000e18;
+        // Second week: from rate change to end (only the new lower rate)
+        uint256 secondWeekGrowth = debtAfterLowRate - debtAfterRateChange;
+
+        // Calculate growth rates relative to principal
+        uint256 firstWeekRate = (firstWeekGrowth * 1e18) / 1000e18;
+        uint256 secondWeekRate = (secondWeekGrowth * 1e18) / debtAfterRateChange;
 
         console.log("First week growth (30% APR):", firstWeekGrowth);
         console.log("Second week growth (15% APR):", secondWeekGrowth);
+        console.log("First week growth rate (basis points):", firstWeekRate / 1e14);
+        console.log("Second week growth rate (basis points):", secondWeekRate / 1e14);
 
-        // Second week should have less growth due to lower rate
-        assertLt(secondWeekGrowth, firstWeekGrowth, "Second week should have lower growth due to decreased rate");
+        // Second week should have lower growth rate due to decreased rate
+        assertLt(secondWeekRate, firstWeekRate, "Second week should have lower growth rate due to decreased rate");
     }
 
     /// @notice Test that rate change to zero works correctly
@@ -284,17 +295,19 @@ contract PremiumRateChangeTimestampTest is BaseTest {
         assertEq(timestampAfterZero, block.timestamp, "Timestamp should be updated even when rate set to zero");
         assertEq(rateAfterZero, 0, "Rate should be zero");
 
+        // Get debt right after setting rate to 0
+        uint256 debtAtRateChange = morpho.expectedBorrowAssets(marketParams, BORROWER);
+
         skip(7 days);
 
-        // Only base rate should accrue now
-        uint256 debtBefore = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        morpho.accrueInterest(marketParams);
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
-        uint256 debtAfter = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        // Get debt after 7 days - this will trigger internal accrual
+        uint256 debtAfterWeek = morpho.expectedBorrowAssets(marketParams, BORROWER);
 
-        // Should only have base rate growth
-        uint256 weeklyGrowth = debtAfter - debtBefore;
-        uint256 expectedBaseGrowth = debtBefore.wMulDown(uint256(0.1e18) * uint256(7 days) / uint256(365 days));
+        // Calculate actual growth
+        uint256 weeklyGrowth = debtAfterWeek - debtAtRateChange;
+
+        // Calculate expected base rate growth
+        uint256 expectedBaseGrowth = debtAtRateChange.wMulDown(uint256(0.1e18) * uint256(7 days) / uint256(365 days));
 
         // Allow small tolerance for rounding
         assertApproxEqRel(weeklyGrowth, expectedBaseGrowth, 0.01e18, "Should only have base rate growth");
