@@ -354,13 +354,15 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
         );
 
-        // Update premium struct in memory
-        premium.borrowAssetsAtLastAccrual = currentBorrowAssets.toUint128();
-
-        // Safety check: Initialize timestamp if not already set
-        if (premium.lastAccrualTime == 0) {
+        // Update timestamp if:
+        // - Not initialized (safety check), OR
+        // - This is the first actual borrow (transition from 0 debt to positive debt)
+        if (premium.lastAccrualTime == 0 || (premium.borrowAssetsAtLastAccrual == 0 && currentBorrowAssets > 0)) {
             premium.lastAccrualTime = uint128(block.timestamp);
         }
+
+        // Update borrow amount snapshot
+        premium.borrowAssetsAtLastAccrual = currentBorrowAssets.toUint128();
 
         // Write back to storage
         borrowerPremium[id][borrower] = premium;
@@ -410,10 +412,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Set the new rate before taking snapshot
         premium.rate = newRate;
-        if (premium.lastAccrualTime == 0) {
-            premium.lastAccrualTime = uint128(block.timestamp);
-        }
-
         borrowerPremium[id][borrower] = premium;
 
         // Take snapshot after setting the new rate if there are borrow shares
