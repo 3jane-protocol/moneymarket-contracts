@@ -422,6 +422,11 @@ contract USD3 is BaseHooksUpgradeable {
             assets = TokenizedStrategy.previewMint(shares);
         }
 
+        // Handle type(uint256).max case - resolve to actual balance
+        if (assets == type(uint256).max) {
+            assets = asset.balanceOf(msg.sender);
+        }
+
         // Enforce minimum deposit only for first-time depositors
         uint256 currentBalance = TokenizedStrategy.balanceOf(receiver);
         if (currentBalance == 0) {
