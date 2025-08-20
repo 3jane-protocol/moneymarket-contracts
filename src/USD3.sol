@@ -46,6 +46,7 @@ contract USD3 is BaseHooksUpgradeable {
     using MorphoLib for IMorpho;
     using MorphoBalancesLib for IMorpho;
     using SharesMathLib for uint256;
+    using Math for uint256;
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE - MORPHO PARAMETERS
@@ -462,8 +463,17 @@ contract USD3 is BaseHooksUpgradeable {
 
             if (susd3Balance > 0) {
                 // Calculate how many shares are needed to cover the loss
-                // This ensures sUSD3 absorbs the actual loss amount, not just proportionally
-                uint256 sharesToBurn = TokenizedStrategy.convertToShares(loss);
+                // IMPORTANT: We must use pre-report values to calculate the correct share amount
+                // The report has already reduced totalAssets, so we add the loss back
+                uint256 totalSupply = TokenizedStrategy.totalSupply();
+                uint256 totalAssets = TokenizedStrategy.totalAssets();
+
+                // Calculate shares to burn using pre-loss exchange rate
+                uint256 sharesToBurn = loss.mulDiv(
+                    totalSupply,
+                    totalAssets + loss,
+                    Math.Rounding.Floor
+                );
 
                 // Cap at sUSD3's actual balance - they can't lose more than they have
                 if (sharesToBurn > susd3Balance) {
