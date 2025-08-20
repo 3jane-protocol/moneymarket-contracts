@@ -437,13 +437,24 @@ contract PenaltyInterestTest is BaseTest {
     // ============ Multiple Accrual Tests ============
 
     function testPenaltyInterest_MultipleAccrualEvents() public {
-        // Setup: Borrow initial amount
+        // Timeline:
+        // - Day 60 (from setUp): Initial timestamp
+        // - Day 60: Borrow happens (timestamp set due to Issue #13 fix)
+        // - Day 70: Warp forward and create obligation
+        // - Obligation cycleEndDate will be Day 60 (when borrow happened)
+
+        // Setup: Borrow initial amount at day 60
+        uint256 borrowTime = block.timestamp;
         deal(address(loanToken), ALICE, 10000e18);
         vm.prank(ALICE);
         morpho.borrow(marketParams, 10000e18, 0, ALICE, ALICE);
 
-        // Create delinquent obligation (already 10 days past grace)
-        uint256 cycleEndDate = block.timestamp - 10 days;
+        // Warp forward 10 days to create the obligation
+        vm.warp(block.timestamp + 10 days);
+
+        // Create delinquent obligation (cycleEndDate = when we borrowed = 10 days ago)
+        // This means borrower is already 3 days delinquent (10 days - 7 day grace = 3)
+        uint256 cycleEndDate = borrowTime;
         address[] memory borrowers = new address[](1);
         uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
@@ -476,8 +487,30 @@ contract PenaltyInterestTest is BaseTest {
         uint256 borrowAssetsAfterDay5 = morpho.expectedBorrowAssets(marketParams, ALICE);
         uint256 day5Increase = borrowAssetsAfterDay5 - borrowAssetsAfterDay3;
 
-        // Calculate expected total penalty
-        // Borrower has been delinquent for: initial 3 days + 5 days = 8 days total
+        // Math for expected interest increase:
+        // Initial debt: 10000e18
+        // Time periods:
+        //   - 3 days delinquent at start (10 days past - 7 grace)
+        //   - 5 more days of accrual
+        //   - Total: 8 days delinquent, 15 days since borrow
+        //
+        // Interest components (all APR rates):
+        //   - Base rate: 10% APR = 0.1/365 per day
+        //   - Premium rate: 2% APR = 0.02/365 per day
+        //   - Penalty rate: 10% APR on ending balance (10000e18)
+        //
+        // Penalty calculation:
+        //   Penalty applies for 8 days of delinquency
+        //   Penalty amount = 10000e18 * ((1 + 0.1/365)^8 - 1)
+        //                  ≈ 10000e18 * 0.00219 = 21.9e18
+        //
+        // Base + Premium on borrowed amount for 15 days:
+        //   Growth = (1 + 0.12/365)^15 - 1 ≈ 0.00493
+        //   Amount ≈ 10000e18 * 0.00493 = 49.3e18
+        //
+        // Total expected increase ≈ 21.9e18 + 49.3e18 = 71.2e18
+        // As percentage: 71.2/10000 ≈ 0.71%
+
         uint256 totalDelinquencyDuration = 8 days;
         uint256 expectedTotalPenalty =
             balances[0].wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(totalDelinquencyDuration));
@@ -511,6 +544,8 @@ contract PenaltyInterestTest is BaseTest {
         assertGt(day5Increase, day3Increase, "Day 5 should show compound effect");
 
         // Verify total accrued is significant and includes penalty
+        // Expected ~0.7% from calculation above, but use 0.5% as minimum threshold
+        // to account for rounding and approximation differences
         assertGt(actualTotalIncrease, borrowAssetsInitial * 5 / 1000, "Should have at least 0.5% increase");
 
         // This test demonstrates that with the corrected implementation:
@@ -522,13 +557,17 @@ contract PenaltyInterestTest is BaseTest {
     // ============ Edge Cases ============
 
     function testPenaltyInterest_ZeroEndingBalance() public {
-        // Borrow
+        // Borrow at current time
+        uint256 borrowTime = block.timestamp;
         deal(address(loanToken), ALICE, 10000e18);
         vm.prank(ALICE);
         morpho.borrow(marketParams, 10000e18, 0, ALICE, ALICE);
 
+        // Warp forward to create obligation
+        vm.warp(block.timestamp + 10 days);
+
         // Create obligation with zero ending balance
-        uint256 cycleEndDate = block.timestamp - 10 days;
+        uint256 cycleEndDate = borrowTime;
         address[] memory borrowers = new address[](1);
         uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory balances = new uint256[](1);
