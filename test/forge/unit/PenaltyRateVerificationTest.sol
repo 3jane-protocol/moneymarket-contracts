@@ -84,7 +84,7 @@ contract PenaltyRateVerificationTest is BaseTest {
     function testPenaltyRate_InitialAccrualAtDelinquency() public {
         // Timeline:
         // - Day 60 (from setUp): Initial timestamp
-        // - Day 60: Alice borrows (timestamp set due to Issue #13 fix)
+        // - Day 60: Alice borrows (timestamp initialized on first borrow)
         // - Day 67: Warp forward by grace period and create obligation
         // - Obligation cycleEndDate = Day 60 (when borrow happened)
         // - Day 67 + 1 second: Move into delinquency

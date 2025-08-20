@@ -6,7 +6,7 @@ import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
 
 /// @title TimestampOnFirstBorrowRegressionTest
-/// @notice Regression tests for Issue #13: Premium interest incorrectly accruing from credit line creation
+/// @notice Regression tests for premium interest accrual timestamp initialization
 /// @dev Verifies that premium interest only accrues from first borrow, not from credit line setup
 contract TimestampOnFirstBorrowRegressionTest is BaseTest {
     using MarketParamsLib for MarketParams;

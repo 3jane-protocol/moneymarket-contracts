@@ -439,7 +439,7 @@ contract PenaltyInterestTest is BaseTest {
     function testPenaltyInterest_MultipleAccrualEvents() public {
         // Timeline:
         // - Day 60 (from setUp): Initial timestamp
-        // - Day 60: Borrow happens (timestamp set due to Issue #13 fix)
+        // - Day 60: Borrow happens (timestamp initialized on first borrow)
         // - Day 70: Warp forward and create obligation
         // - Obligation cycleEndDate will be Day 60 (when borrow happened)
 
