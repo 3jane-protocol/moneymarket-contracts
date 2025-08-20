@@ -71,7 +71,7 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
         realMorpho.enableLltv(DEFAULT_TEST_LLTV);
         realMorpho.createMarket(testMarketParams);
         realMorpho.setFee(testMarketParams, FEE_RATE);
-        // FEE_RECIPIENT is already set in the parent setUp
+        realMorpho.setFeeRecipient(FEE_RECIPIENT);
         vm.stopPrank();
 
         // Supply liquidity through USD3
@@ -225,13 +225,15 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
         vm.prank(OWNER);
         realMorpho.setFeeRecipient(newFeeRecipient);
 
-        // Original fee recipient can withdraw their shares
+        // Original fee recipient can no longer withdraw directly (needs to go through USD3)
+        // This is expected behavior - only the current fee recipient can withdraw directly
         vm.prank(FEE_RECIPIENT);
-        (uint256 withdrawn,) = realMorpho.withdraw(testMarketParams, 0, oldFeeShares, FEE_RECIPIENT, FEE_RECIPIENT);
-        assertGt(withdrawn, 0, "Original fee recipient should withdraw their shares");
+        vm.expectRevert(ErrorsLib.NotUsd3.selector);
+        realMorpho.withdraw(testMarketParams, 0, oldFeeShares, FEE_RECIPIENT, FEE_RECIPIENT);
 
-        Position memory afterWithdraw = realMorpho.position(testMarketId, FEE_RECIPIENT);
-        assertEq(afterWithdraw.supplyShares, 0, "Original fee recipient shares should be withdrawn");
+        // Verify old fee recipient still has their shares (not withdrawn)
+        Position memory stillHasShares = realMorpho.position(testMarketId, FEE_RECIPIENT);
+        assertEq(stillHasShares.supplyShares, oldFeeShares, "Original fee recipient still has shares");
 
         // Generate fees for new fee recipient
         skip(30 days);
