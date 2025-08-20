@@ -67,9 +67,9 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
         vm.prank(address(creditLine));
         morphoCredit.setCreditLine(id, BORROWER, CREDIT_LIMIT, uint128(premiumRatePerSecond));
 
-        // Verify timestamp is set initially
+        // Verify timestamp is NOT set initially (this is the fix!)
         (uint256 timestampAfterSet,,) = morphoCredit.borrowerPremium(id, BORROWER);
-        assertEq(timestampAfterSet, creditLineSetTime, "Initial timestamp should be set");
+        assertEq(timestampAfterSet, 0, "Initial timestamp should NOT be set until first borrow");
 
         // Step 2: Wait significant time before borrowing
         skip(WAIT_TIME_BEFORE_BORROW);
@@ -404,10 +404,10 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
         vm.prank(address(creditLine));
         morphoCredit.setCreditLine(id, newBorrower, CREDIT_LIMIT, uint128(premiumRatePerSecond));
 
-        // Verify timestamp is set when credit line is created
+        // Verify timestamp is NOT set when credit line is created (this is the fix!)
         (uint256 timestampAfterCreditLine,, uint256 borrowAssetsAfterCreditLine) =
             morphoCredit.borrowerPremium(id, newBorrower);
-        assertEq(timestampAfterCreditLine, creditLineTime, "Timestamp set when credit line created");
+        assertEq(timestampAfterCreditLine, 0, "Timestamp should NOT be set when credit line created");
         assertEq(borrowAssetsAfterCreditLine, 0, "No borrow assets yet");
 
         // Wait 5 days
