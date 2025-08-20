@@ -847,10 +847,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     function _applySettlement(Id id, address borrower, uint256 writtenOffShares, uint256 writtenOffAssets) internal {
         uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
 
-        // Clear position
+        // Clear borrower position and related state
         position[id][borrower].borrowShares = 0;
+        position[id][borrower].collateral = 0;
         delete markdownState[id][borrower];
         delete repaymentObligation[id][borrower];
+        delete borrowerPremium[id][borrower];
 
         // Update borrow totals
         market[id].totalBorrowShares = (market[id].totalBorrowShares - writtenOffShares).toUint128();
