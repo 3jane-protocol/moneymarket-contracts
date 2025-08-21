@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.18;
 
+import {Test} from "forge-std/Test.sol";
 import {USD3} from "../../USD3.sol";
 import {sUSD3} from "../../sUSD3.sol";
 import {ERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
@@ -10,7 +11,7 @@ import {ERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/E
  * @notice Handler contract for invariant testing
  * @dev Wraps strategy calls to enable proper fuzzing
  */
-contract InvariantHandler {
+contract InvariantHandler is Test {
     USD3 public immutable usd3Strategy;
     sUSD3 public immutable susd3Strategy;
     ERC20 public immutable underlyingAsset;
@@ -83,23 +84,4 @@ contract InvariantHandler {
             // Ignore failures
         }
     }
-
-    // Helper to make amount bounded
-    function bound(
-        uint256 x,
-        uint256 min,
-        uint256 max
-    ) internal pure returns (uint256) {
-        if (x < min) return min;
-        if (x > max) return max;
-        return x;
-    }
-
-    // Import vm for pranking
-    Vm constant vm =
-        Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-}
-
-interface Vm {
-    function prank(address) external;
 }
