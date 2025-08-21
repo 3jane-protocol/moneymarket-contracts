@@ -451,12 +451,18 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 startDate;
 
         if (cycleLength > 0) {
-            // Validate cycle comes after previous one
             PaymentCycle storage prevCycle = paymentCycle[id][cycleLength - 1];
-            startDate = prevCycle.endDate + 1 days;
-            if (startDate >= endDate) revert ErrorsLib.InvalidCycleDuration();
+            startDate = prevCycle.endDate;
+
+            uint256 cycleDuration = IProtocolConfig(protocolConfig).getCycleDuration();
+
+            if (cycleDuration > 0) {
+                uint256 expectedCycleEnd = startDate + cycleDuration;
+                if (endDate < expectedCycleEnd) {
+                    revert ErrorsLib.InvalidCycleDuration();
+                }
+            }
         }
-        // else startDate remains 0 for the first cycle
 
         // Create the payment cycle record
         paymentCycle[id].push(PaymentCycle({endDate: endDate}));
@@ -593,6 +599,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal virtual override {
         if (msg.sender != helper) revert ErrorsLib.NotHelper();
         if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
+        if (_isMarketFrozen(id)) revert ErrorsLib.MarketFrozen();
 
         // Check if borrower can borrow
         (RepaymentStatus status,) = getRepaymentStatus(id, onBehalf);
@@ -610,6 +617,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         virtual
         override
     {
+        if (_isMarketFrozen(id)) revert ErrorsLib.MarketFrozen();
+
         // Accrue premium (including penalty if past grace period)
         _accrueBorrowerPremium(id, onBehalf);
         _updateBorrowerMarkdown(id, onBehalf); // TODO: decide whether to remove
@@ -809,6 +818,31 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     function _getBorrowerAssets(Id id, address borrower) internal view returns (uint256 assets) {
         Market memory m = market[id];
         assets = uint256(position[id][borrower].borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+    }
+
+    /// @notice Check if a market is frozen based on cycle timing
+    /// @param id Market ID
+    /// @return Whether the market is frozen
+    function _isMarketFrozen(Id id) internal view returns (bool) {
+        uint256 cycleCount = paymentCycle[id].length;
+
+        if (cycleCount == 0) {
+            // No cycles yet - market frozen until first cycle
+            return true;
+        }
+
+        // Get cycle duration from protocol config
+        uint256 cycleDuration = IProtocolConfig(protocolConfig).getCycleDuration();
+        if (cycleDuration == 0) {
+            // If cycle duration not set, market is frozen (safety mechanism)
+            return true;
+        }
+
+        // Check if we're past when the next cycle should have ended
+        uint256 lastCycleEnd = paymentCycle[id][cycleCount - 1].endDate;
+        uint256 expectedNextCycleEnd = lastCycleEnd + cycleDuration;
+
+        return block.timestamp > expectedNextCycleEnd;
     }
 
     /// @notice Settle a borrower's account by writing off all remaining debt

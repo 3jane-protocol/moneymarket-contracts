@@ -143,4 +143,7 @@ library ErrorsLib {
 
     /// @notice Thrown when the cover amount exceeds the assets amount.
     error InvalidCoverAmount();
+
+    /// @notice Thrown when attempting operations on a frozen market.
+    error MarketFrozen();
 }
