@@ -379,12 +379,21 @@ contract DebtSettlementTest is BaseTest {
         assertTrue(writtenOffShares > 0, "Should have written off shares");
     }
 
-    /// @notice Test cannot settle non-existent debt
-    function testCannotSettleNonExistentDebt() public {
-        // Try to settle for borrower with no debt
+    /// @notice Test settling non-existent debt is idempotent and clears state
+    function testSettleNonExistentDebtIsIdempotent() public {
+        // After fix for Issue #12, settling non-existent debt is idempotent
+        // It returns (0, 0) and clears any remaining state to prevent re-borrowing
         vm.prank(address(creditLine));
-        vm.expectRevert(ErrorsLib.NoAccountToSettle.selector);
-        morphoCredit.settleAccount(marketParams, BORROWER);
+        (uint256 writtenOffAssets, uint256 writtenOffShares) = morphoCredit.settleAccount(marketParams, BORROWER);
+
+        // Should return zero values for non-existent debt
+        assertEq(writtenOffAssets, 0, "No assets should be written off");
+        assertEq(writtenOffShares, 0, "No shares should be written off");
+
+        // Verify state is cleared (important for preventing re-borrowing)
+        Position memory pos = morpho.position(id, BORROWER);
+        assertEq(pos.collateral, 0, "Collateral should be cleared");
+        assertEq(pos.borrowShares, 0, "Borrow shares should be zero");
     }
 
     /// @notice Test zero repayment settlement (100% write-off)
@@ -562,9 +571,11 @@ contract DebtSettlementTest is BaseTest {
         assertLe(actualRepaid, totalDebt + 1, "Should not take more than owed (accounting for rounding)");
 
         // Verify no debt left to settle
+        // After fix for Issue #12, this is idempotent and returns (0, 0)
         vm.prank(address(creditLine));
-        vm.expectRevert(ErrorsLib.NoAccountToSettle.selector);
-        morphoCredit.settleAccount(marketParams, BORROWER);
+        (uint256 writtenOffAssets, uint256 writtenOffShares) = morphoCredit.settleAccount(marketParams, BORROWER);
+        assertEq(writtenOffAssets, 0, "No assets should be written off after full repayment");
+        assertEq(writtenOffShares, 0, "No shares should be written off after full repayment");
     }
 }
 
