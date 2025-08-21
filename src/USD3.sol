@@ -356,21 +356,17 @@ contract USD3 is BaseHooksUpgradeable {
             uint256 susd3Holdings = TokenizedStrategy.balanceOf(sUSD3);
 
             // Get max subordination ratio from ProtocolConfig
-            uint256 maxSubRatio = maxSubordinationRatio();
+            uint256 maxSubRatio = maxSubordinationRatio(); // e.g., 1500 (15%)
 
-            // If maxSubRatio = 1500 (15%), then minUSD3Ratio = 8500 (85%)
-            uint256 minUSD3Ratio = MAX_BPS - maxSubRatio;
+            // Calculate the minimum total supply that maintains the ratio
+            // minTotalSupply = susd3Holdings / maxSubRatio
+            uint256 minTotalSupply = (susd3Holdings * MAX_BPS) / maxSubRatio;
 
-            // USD3 circulating (not held by sUSD3) must be at least minUSD3Ratio of total
-            uint256 usd3Circulating = usd3TotalSupply - susd3Holdings;
-            uint256 minUSD3Required = (usd3TotalSupply * minUSD3Ratio) /
-                MAX_BPS;
-
-            // Prevent withdrawals that would drop circulating USD3 below minimum
-            if (usd3Circulating <= minUSD3Required) {
+            if (usd3TotalSupply <= minTotalSupply) {
                 availableLiquidity = 0; // No withdrawals allowed
             } else {
-                uint256 maxWithdrawable = usd3Circulating - minUSD3Required;
+                // Only allow withdrawal down to the minimum supply
+                uint256 maxWithdrawable = usd3TotalSupply - minTotalSupply;
                 availableLiquidity = Math.min(
                     availableLiquidity,
                     maxWithdrawable
