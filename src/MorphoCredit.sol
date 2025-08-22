@@ -834,7 +834,15 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Get position
         writtenOffShares = position[id][borrower].borrowShares;
-        if (writtenOffShares == 0) revert ErrorsLib.NoAccountToSettle();
+
+        // If no debt remains (e.g., insurance fully covered it), still clear all state
+        // This prevents settled borrowers from borrowing again
+        if (writtenOffShares == 0) {
+            // Clear all borrower state to prevent re-borrowing
+            _applySettlement(id, borrower, 0, 0);
+            emit EventsLib.AccountSettled(id, msg.sender, borrower, 0, 0);
+            return (0, 0);
+        }
 
         Market memory m = market[id];
 
