@@ -583,7 +583,14 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         virtual
         override
     {
-        if (msg.sender != usd3) revert ErrorsLib.NotUsd3();
+        // Allow USD3 to withdraw on behalf of anyone
+        if (msg.sender == usd3) return;
+
+        // Allow fee recipient to withdraw their own fees only
+        if (msg.sender == feeRecipient && onBehalf == feeRecipient) return;
+
+        // Reject all other withdrawals
+        revert ErrorsLib.NotUsd3();
     }
 
     /// @inheritdoc Morpho
