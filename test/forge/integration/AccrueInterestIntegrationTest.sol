@@ -3,11 +3,43 @@ pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
 import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
+import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
+import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
 
 contract AccrueInterestIntegrationTest is BaseTest {
     using MathLib for uint256;
     using MorphoLib for IMorpho;
     using SharesMathLib for uint256;
+    using MarketParamsLib for MarketParams;
+
+    CreditLineMock internal creditLine;
+
+    function setUp() public override {
+        super.setUp();
+
+        // Deploy credit line mock
+        // Required: Credit line markets need active payment cycles to allow borrowing after the market freeze refactor
+        creditLine = new CreditLineMock(address(morpho));
+
+        // Update marketParams to use the credit line
+        marketParams = MarketParams(
+            address(loanToken),
+            address(collateralToken),
+            address(oracle),
+            address(irm),
+            DEFAULT_TEST_LLTV,
+            address(creditLine)
+        );
+        id = marketParams.id();
+
+        // Create the market with credit line
+        vm.prank(OWNER);
+        morpho.createMarket(marketParams);
+
+        // Initialize market cycles to prevent MarketFrozen error
+        // Required for all credit line markets after the freeze refactor - markets without active cycles are frozen
+        _ensureMarketActive(id);
+    }
 
     function testAccrueInterestMarketNotCreated(MarketParams memory marketParamsFuzz) public {
         vm.assume(neq(marketParamsFuzz, marketParams));
@@ -24,22 +56,25 @@ contract AccrueInterestIntegrationTest is BaseTest {
         vm.prank(OWNER);
         morpho.createMarket(marketParamsFuzz);
 
-        _forward(blocks);
+        // Use simple time warp since this market doesn't have credit lines
+        vm.roll(block.number + blocks);
+        vm.warp(block.timestamp + blocks * BLOCK_TIME);
 
         morpho.accrueInterest(marketParamsFuzz);
     }
 
-    function testAccrueInterestNoTimeElapsed(uint256 amountSupplied, uint256 amountBorrowed) public {
+    function testAccrueInterestNoTimeElapsed(uint256 amountSupplied, uint256 amountBorrowed, uint256 amountCollateral)
+        public
+    {
         uint256 collateralPrice = oracle.price();
-        uint256 amountCollateral;
         (amountCollateral, amountBorrowed,) = _boundHealthyPosition(amountCollateral, amountBorrowed, collateralPrice);
         amountSupplied = bound(amountSupplied, amountBorrowed, MAX_TEST_AMOUNT);
 
         loanToken.setBalance(address(this), amountSupplied);
         morpho.supply(marketParams, amountSupplied, 0, address(this), hex"");
 
-        // Set up credit line instead of supplying collateral
-        vm.prank(marketParams.creditLine);
+        // Set up credit line for borrower
+        vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, amountCollateral, 0);
 
         vm.prank(BORROWER);
@@ -64,7 +99,7 @@ contract AccrueInterestIntegrationTest is BaseTest {
         loanToken.setBalance(address(this), amountSupplied);
         morpho.supply(marketParams, amountSupplied, 0, address(this), hex"");
 
-        _forward(blocks);
+        _forwardWithMarket(blocks, id);
 
         uint256 totalBorrowBeforeAccrued = morpho.totalBorrowAssets(id);
         uint256 totalSupplyBeforeAccrued = morpho.totalSupplyAssets(id);
@@ -79,25 +114,28 @@ contract AccrueInterestIntegrationTest is BaseTest {
         assertEq(morpho.lastUpdate(id), block.timestamp, "last update");
     }
 
-    function testAccrueInterestNoFee(uint256 amountSupplied, uint256 amountBorrowed, uint256 blocks) public {
+    function testAccrueInterestNoFee(
+        uint256 amountSupplied,
+        uint256 amountBorrowed,
+        uint256 amountCollateral,
+        uint256 blocks
+    ) public {
         uint256 collateralPrice = oracle.price();
-        uint256 amountCollateral;
         (amountCollateral, amountBorrowed,) = _boundHealthyPosition(amountCollateral, amountBorrowed, collateralPrice);
         amountSupplied = bound(amountSupplied, amountBorrowed, MAX_TEST_AMOUNT);
         blocks = _boundBlocks(blocks);
 
         loanToken.setBalance(address(this), amountSupplied);
-        loanToken.setBalance(address(this), amountSupplied);
         morpho.supply(marketParams, amountSupplied, 0, address(this), hex"");
 
-        // Set up credit line instead of supplying collateral
-        vm.prank(marketParams.creditLine);
+        // Set up credit line for borrower
+        vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, amountCollateral, 0);
 
         vm.prank(BORROWER);
         morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
 
-        _forward(blocks);
+        _forwardWithMarket(blocks, id);
 
         uint256 borrowRate = (morpho.totalBorrowAssets(id).wDivDown(morpho.totalSupplyAssets(id))) / 365 days;
         uint256 totalBorrowBeforeAccrued = morpho.totalBorrowAssets(id);
@@ -127,13 +165,16 @@ contract AccrueInterestIntegrationTest is BaseTest {
         uint256 feeShares;
     }
 
-    function testAccrueInterestWithFees(uint256 amountSupplied, uint256 amountBorrowed, uint256 blocks, uint256 fee)
-        public
-    {
+    function testAccrueInterestWithFees(
+        uint256 amountSupplied,
+        uint256 amountBorrowed,
+        uint256 amountCollateral,
+        uint256 blocks,
+        uint256 fee
+    ) public {
         AccrueInterestWithFeesTestParams memory params;
 
         uint256 collateralPrice = oracle.price();
-        uint256 amountCollateral;
         (amountCollateral, amountBorrowed,) = _boundHealthyPosition(amountCollateral, amountBorrowed, collateralPrice);
         amountSupplied = bound(amountSupplied, amountBorrowed, MAX_TEST_AMOUNT);
         blocks = _boundBlocks(blocks);
@@ -147,14 +188,14 @@ contract AccrueInterestIntegrationTest is BaseTest {
         loanToken.setBalance(address(this), amountSupplied);
         morpho.supply(marketParams, amountSupplied, 0, address(this), hex"");
 
-        // Set up credit line instead of supplying collateral
-        vm.prank(marketParams.creditLine);
+        // Set up credit line for borrower
+        vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, amountCollateral, 0);
 
         vm.prank(BORROWER);
         morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, BORROWER);
 
-        _forward(blocks);
+        _forwardWithMarket(blocks, id);
 
         params.borrowRate = (morpho.totalBorrowAssets(id).wDivDown(morpho.totalSupplyAssets(id))) / 365 days;
         params.totalBorrowBeforeAccrued = morpho.totalBorrowAssets(id);

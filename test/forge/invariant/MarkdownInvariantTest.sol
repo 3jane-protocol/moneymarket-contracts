@@ -60,6 +60,16 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
         creditLine.setMm(address(markdownManager));
         vm.stopPrank();
 
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + CYCLE_DURATION);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
+
         // Supply initial funds
         totalSupplied = 1000 ether;
         loanToken.setBalance(SUPPLIER, totalSupplied);

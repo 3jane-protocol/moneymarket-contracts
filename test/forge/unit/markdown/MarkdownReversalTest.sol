@@ -46,6 +46,9 @@ contract MarkdownReversalTest is BaseTest {
         creditLine.setMm(address(markdownManager));
         vm.stopPrank();
 
+        // Initialize first cycle to unfreeze the market
+        _ensureMarketActive(id);
+
         // Setup initial supply
         loanToken.setBalance(SUPPLIER, 100_000e18);
         vm.prank(SUPPLIER);
@@ -67,7 +70,7 @@ contract MarkdownReversalTest is BaseTest {
         _createPastObligation(BORROWER, 500, borrowAmount);
 
         // Fast forward to default
-        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown applied
@@ -124,7 +127,7 @@ contract MarkdownReversalTest is BaseTest {
         _createPastObligation(BORROWER, 500, borrowAmount);
 
         // Fast forward to default
-        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1 days);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1 days);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Record initial markdown
@@ -138,7 +141,7 @@ contract MarkdownReversalTest is BaseTest {
         assertTrue(markdown1 > 0, "Should have initial markdown");
 
         // Fast forward more time
-        vm.warp(block.timestamp + 10 days);
+        _continueMarketCycles(id, block.timestamp + 10 days);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown increased
@@ -152,7 +155,7 @@ contract MarkdownReversalTest is BaseTest {
         assertTrue(markdown2 > markdown1, "Markdown should increase over time");
 
         // Fast forward even more
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown continues to increase
@@ -179,7 +182,7 @@ contract MarkdownReversalTest is BaseTest {
 
         // Cycle 1: Default and recover
         _createPastObligation(BORROWER, 500, borrowAmount);
-        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 5 days);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 5 days);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown applied
@@ -199,10 +202,10 @@ contract MarkdownReversalTest is BaseTest {
         assertEq(morpho.market(id).totalMarkdownAmount, 0, "Markdown should be cleared");
 
         // Cycle 2: Default again
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
         uint256 currentBorrowAmount = _getBorrowerAssets(id, BORROWER);
         _createPastObligation(BORROWER, 500, currentBorrowAmount);
-        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 10 days);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 10 days);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown applied again
@@ -238,7 +241,7 @@ contract MarkdownReversalTest is BaseTest {
         _createPastObligation(borrower2, 500, borrowAmount);
         _createPastObligation(borrower3, 500, borrowAmount);
 
-        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 7 days);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 7 days);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
         morphoCredit.accrueBorrowerPremium(id, borrower2);
         morphoCredit.accrueBorrowerPremium(id, borrower3);
@@ -300,7 +303,7 @@ contract MarkdownReversalTest is BaseTest {
         _createPastObligation(BORROWER, 500, borrowAmount);
 
         // Fast forward to default with significant markdown
-        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 15 days);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 15 days);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // New supplier deposits

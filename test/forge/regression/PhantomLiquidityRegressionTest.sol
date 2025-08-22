@@ -53,6 +53,9 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         maliciousCreditLine.setMm(address(maliciousMarkdownManager));
         vm.stopPrank();
 
+        // Initialize market to prevent freezing
+        _ensureMarketActive(id);
+
         // Fund morpho with exact POC amount
         loanToken.setBalance(address(morpho), INITIAL_BALANCE);
     }
@@ -77,22 +80,22 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         uint256[] memory endingBalances = new uint256[](1);
         endingBalances[0] = 1000000; // Arbitrary obligation amount
 
-        vm.prank(address(maliciousCreditLine));
-        morphoCredit.closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
+        // Use helper to create obligation with proper cycle management
+        _createMultipleObligations(id, borrowers, repaymentBps, endingBalances, 0);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Step 4: Set malicious markdown (exact POC amount)
         maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, MARKDOWN_AMOUNT);
 
         // Move to default state (31 days as in POC)
-        vm.warp(block.timestamp + 31 days);
+        _continueMarketCycles(id, block.timestamp + 31 days);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         Market memory m1 = morpho.market(id);
 
         // Step 5: Reduce markdown to create phantom liquidity (POC exploit)
         maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 0);
-        vm.warp(block.timestamp + 1 days);
+        _continueMarketCycles(id, block.timestamp + 1 days);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         Market memory m2 = morpho.market(id);
@@ -278,11 +281,11 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         uint256[] memory endingBalances = new uint256[](1);
         endingBalances[0] = amount;
 
-        vm.prank(address(maliciousCreditLine));
-        morphoCredit.closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
+        // Use helper to create obligation with proper cycle management
+        _createMultipleObligations(id, borrowers, repaymentBps, endingBalances, 0);
 
-        // Move to default (exact POC timing)
-        vm.warp(block.timestamp + 31 days);
+        // Move to default (31 days past cycle end, which is 1 day ago from _createMultipleObligations)
+        vm.warp(block.timestamp + 30 days);
         morphoCredit.accrueBorrowerPremium(id, borrower);
     }
 }

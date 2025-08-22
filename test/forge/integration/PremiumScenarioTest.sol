@@ -44,6 +44,9 @@ contract PremiumScenarioTest is BaseTest {
         morpho.createMarket(marketParams);
         id = MarketParamsLib.id(marketParams);
 
+        // Initialize first cycle to unfreeze the market
+        _ensureMarketActive(id);
+
         creditAnalyst = makeAddr("CreditAnalyst");
 
         // Enable LLTV for second market (first is already enabled in BaseTest)
@@ -63,6 +66,27 @@ contract PremiumScenarioTest is BaseTest {
         vm.prank(OWNER);
         morpho.createMarket(marketParams2);
         id2 = marketParams2.id();
+
+        // Initialize first cycle for second market to unfreeze it
+        // First create the market, then ensure it's active
+        // Note: Can't use _continueMarketCycles before market exists
+        vm.warp(block.timestamp + CYCLE_DURATION);
+        address[] memory borrowers2 = new address[](0);
+        uint256[] memory repaymentBps2 = new uint256[](0);
+        uint256[] memory endingBalances2 = new uint256[](0);
+        vm.prank(marketParams2.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id2, block.timestamp, borrowers2, repaymentBps2, endingBalances2
+        );
+
+        // Also need to post a new cycle for the first market since we warped time
+        address[] memory borrowers1 = new address[](0);
+        uint256[] memory repaymentBps1 = new uint256[](0);
+        uint256[] memory endingBalances1 = new uint256[](0);
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, block.timestamp, borrowers1, repaymentBps1, endingBalances1
+        );
 
         // Set up initial balances
         loanToken.setBalance(SUPPLIER, HIGH_COLLATERAL_AMOUNT);
@@ -110,6 +134,9 @@ contract PremiumScenarioTest is BaseTest {
         uint128 initialPremiumRate = uint128(uint256(0.08e18) / 365 days); // 8% APR - good credit
         _setCreditLineWithPremium(id, BORROWER, 50_000e18, initialPremiumRate);
 
+        // Ensure market stays active after credit line setup
+        _continueMarketCycles(id, block.timestamp + 1);
+
         // Phase 2: Initial borrow
         uint256 initialBorrow = 20_000e18;
         vm.prank(BORROWER);
@@ -118,7 +145,7 @@ contract PremiumScenarioTest is BaseTest {
         // Record initial state
 
         // Phase 3: Time passes, borrower makes partial payments
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
 
         // Borrower makes first payment
         uint256 firstPayment = 2_000e18;
@@ -127,7 +154,7 @@ contract PremiumScenarioTest is BaseTest {
         morpho.repay(marketParams, firstPayment, 0, BORROWER, hex"");
 
         // Phase 4: Credit improvement - 3CA reduces premium rate
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
         uint128 improvedPremiumRate = uint128(uint256(0.05e18) / 365 days); // 5% APR - improved credit
         _setCreditLineWithPremium(id, BORROWER, 50_000e18, improvedPremiumRate);
 
@@ -138,7 +165,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // Phase 6: Regular payments over time
         for (uint256 i = 0; i < 6; i++) {
-            vm.warp(block.timestamp + 30 days);
+            _continueMarketCycles(id, block.timestamp + 30 days);
 
             uint256 monthlyPayment = 3_000e18;
             loanToken.setBalance(BORROWER, monthlyPayment);
@@ -147,12 +174,12 @@ contract PremiumScenarioTest is BaseTest {
         }
 
         // Phase 7: Credit deterioration - 3CA increases premium
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
         uint128 deterioratedPremiumRate = uint128(uint256(0.15e18) / 365 days); // 15% APR - credit issues
         _setCreditLineWithPremium(id, BORROWER, 50_000e18, deterioratedPremiumRate);
 
         // Phase 8: Final repayment
-        vm.warp(block.timestamp + 60 days);
+        _continueMarketCycles(id, block.timestamp + 60 days);
 
         // First accrue premium to get accurate debt
         vm.prank(BORROWER);
@@ -204,6 +231,10 @@ contract PremiumScenarioTest is BaseTest {
         _setCreditLineWithPremium(id, BORROWER, 30_000e18, market1Premium);
         _setCreditLineWithPremium(id2, BORROWER, 30_000e18, market2Premium);
 
+        // Markets should already be active from setUp, but ensure they stay active
+        // after any time warps by continuing the test without this call
+        // since _ensureMarketActive uses marketParams.creditLine which is for the first market only
+
         // Borrow from both markets
         uint256 borrow1 = 15_000e18;
         uint256 borrow2 = 20_000e18;
@@ -214,7 +245,9 @@ contract PremiumScenarioTest is BaseTest {
         morpho.borrow(marketParams2, borrow2, 0, BORROWER, BORROWER);
 
         // Time passes - premiums accrue at different rates
-        vm.warp(block.timestamp + 90 days);
+        // Need to continue cycles for both markets
+        _continueMarketCycles(id, block.timestamp + 90 days);
+        _continueMarketCycles(id2, block.timestamp + 90 days);
 
         // Manually accrue premiums for both markets
         MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
@@ -252,7 +285,7 @@ contract PremiumScenarioTest is BaseTest {
         assertLe(clearedPos2.borrowShares, 1);
 
         // Continue with market 1
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
 
         // Update debt calculation for market 1
         pos1 = morpho.position(id, BORROWER);
@@ -290,6 +323,9 @@ contract PremiumScenarioTest is BaseTest {
         uint128 standardPremium = uint128(uint256(0.12e18) / 365 days); // 12% APR
         _setCreditLineWithPremium(id, BORROWER, creditLineAmount, standardPremium);
 
+        // Ensure market stays active
+        _continueMarketCycles(id, block.timestamp + 1);
+
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
@@ -299,7 +335,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // Simulate 12 months of payment history
         for (uint256 i = 0; i < 12; i++) {
-            vm.warp(block.timestamp + 30 days);
+            _continueMarketCycles(id, block.timestamp + 30 days);
 
             if (i < 6) {
                 // First 6 months: Good payment behavior
@@ -411,7 +447,7 @@ contract PremiumScenarioTest is BaseTest {
         ConfigurableIrmMock(address(irm)).setApr(baseRate);
 
         // Fast forward 1 year
-        vm.warp(block.timestamp + 365 days);
+        _continueMarketCycles(id, block.timestamp + 365 days);
 
         // Trigger premium accrual for all borrowers
         MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, borrowers);
@@ -482,13 +518,16 @@ contract PremiumScenarioTest is BaseTest {
         uint128 initialPremium = uint128(uint256(0.15e18) / 365 days); // 15% APR
         _setCreditLineWithPremium(id, BORROWER, 40_000e18, initialPremium);
 
+        // Ensure market stays active
+        _continueMarketCycles(id, block.timestamp + 1);
+
         // Use initial credit line
         vm.prank(BORROWER);
         morpho.borrow(marketParams, initialCreditLine * 8 / 10, 0, BORROWER, BORROWER); // 80% utilization
 
         // Good payment history for 6 months
         for (uint256 i = 0; i < 6; i++) {
-            vm.warp(block.timestamp + 30 days);
+            _continueMarketCycles(id, block.timestamp + 30 days);
 
             // Regular payments
             uint256 payment = 1_500e18;
@@ -509,7 +548,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // Continue good behavior
         for (uint256 i = 0; i < 6; i++) {
-            vm.warp(block.timestamp + 30 days);
+            _continueMarketCycles(id, block.timestamp + 30 days);
 
             // Increased payments for larger balance
             uint256 payment = 2_500e18;
@@ -576,7 +615,7 @@ contract PremiumScenarioTest is BaseTest {
         }
 
         // Simulate 180 days
-        vm.warp(block.timestamp + 180 days);
+        _continueMarketCycles(id, block.timestamp + 180 days);
 
         // Accrue all premiums
         MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, borrowerArray);
@@ -648,6 +687,9 @@ contract PremiumScenarioTest is BaseTest {
 
             _setCreditLineWithPremium(id, borrowers[i], borrowAmounts[i] * 2, premiumRates[i]);
 
+            // Ensure market stays active
+            _continueMarketCycles(id, block.timestamp + 1);
+
             vm.prank(borrowers[i]);
             morpho.borrow(marketParams, borrowAmounts[i], 0, borrowers[i], borrowers[i]);
         }
@@ -670,6 +712,9 @@ contract PremiumScenarioTest is BaseTest {
 
             // Set risk premium
             _setCreditLineWithPremium(id, borrowers[i], collateralPerBorrower, riskPremiums[i]);
+
+            // Ensure market stays active after each credit line
+            _continueMarketCycles(id, block.timestamp + 1);
 
             // Borrow
             vm.prank(borrowers[i]);

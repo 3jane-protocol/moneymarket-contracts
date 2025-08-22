@@ -54,6 +54,9 @@ contract DebtSettlementTest is BaseTest {
         creditLine.setMm(address(markdownManager));
         vm.stopPrank();
 
+        // Initialize first cycle to unfreeze the market
+        _ensureMarketActive(id);
+
         // Setup initial supply
         loanToken.setBalance(SUPPLIER, 100_000e18);
         vm.prank(SUPPLIER);
@@ -68,7 +71,7 @@ contract DebtSettlementTest is BaseTest {
         _setupBorrowerWithLoan(BORROWER, borrowAmount);
 
         // Forward time to accrue some interest
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
         morpho.accrueInterest(marketParams);
 
         // Get current debt
@@ -118,7 +121,7 @@ contract DebtSettlementTest is BaseTest {
         _setupBorrowerWithLoan(BORROWER, borrowAmount);
 
         // Forward time to accrue interest
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
         morpho.accrueInterest(marketParams);
 
         // Get position details
@@ -230,7 +233,7 @@ contract DebtSettlementTest is BaseTest {
         _createPastObligation(BORROWER, 500, borrowAmount);
 
         // Fast forward to default
-        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown exists
@@ -330,6 +333,16 @@ contract DebtSettlementTest is BaseTest {
 
         vm.prank(address(callbackHandler));
         morphoCredit.setCreditLine(callbackMarketId, BORROWER, borrowAmount * 2, 0);
+
+        // Initialize market cycles for the callback market directly
+        // since _ensureMarketActive uses the wrong marketParams
+        uint256 firstCycleEnd = block.timestamp + CYCLE_DURATION;
+        vm.warp(firstCycleEnd);
+        vm.prank(address(callbackHandler));
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            callbackMarketId, firstCycleEnd, new address[](0), new uint256[](0), new uint256[](0)
+        );
+        vm.warp(firstCycleEnd + 1);
 
         loanToken.setBalance(SUPPLIER, 20_000e18);
         vm.prank(SUPPLIER);

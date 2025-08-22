@@ -27,6 +27,7 @@ import {MathLib, WAD} from "./libraries/MathLib.sol";
 import {MarketParamsLib} from "./libraries/MarketParamsLib.sol";
 import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
+import {ORACLE_PRICE_SCALE} from "./libraries/ConstantsLib.sol";
 
 /// @title Morpho Credit
 /// @author Morpho Labs
@@ -716,13 +717,20 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (position.borrowShares == 0) return true;
 
         Market memory market = market[id];
-
-        // For credit-based lending, health is determined by credit utilization
-        // position.collateral represents the credit limit
         uint256 borrowed = uint256(position.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
-        uint256 creditLimit = position.collateral;
 
-        return creditLimit >= borrowed;
+        // Check if this is a credit line market or collateralized market
+        if (marketParams.creditLine != address(0)) {
+            // For credit-based lending, health is determined by credit utilization
+            // position.collateral represents the credit limit
+            uint256 creditLimit = position.collateral;
+            return creditLimit >= borrowed;
+        } else {
+            // For collateralized markets, use the original collateral logic
+            uint256 maxBorrow =
+                uint256(position.collateral).mulDivDown(collateralPrice, ORACLE_PRICE_SCALE).wMulDown(marketParams.lltv);
+            return maxBorrow >= borrowed;
+        }
     }
 
     /* MARKDOWN FUNCTIONS */
@@ -824,6 +832,14 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @return Whether the market is frozen
     function _isMarketFrozen(Id id) internal view returns (bool) {
+        // Get market params to check if it has a credit line
+        MarketParams memory marketParams = idToMarketParams[id];
+
+        // Only apply frozen checks to credit line markets
+        if (marketParams.creditLine == address(0)) {
+            return false; // Collateralized markets are never frozen
+        }
+
         uint256 cycleCount = paymentCycle[id].length;
 
         if (cycleCount == 0) {

@@ -51,7 +51,27 @@ contract MarkdownManagerMock is IMarkdownManager {
         view
         returns (uint256 markdownAmount)
     {
-        return markdowns[borrower];
+        // If a specific markdown is set for this borrower, use it as a base
+        uint256 baseMarkdown = markdowns[borrower];
+        if (baseMarkdown > 0) {
+            // Scale the markdown based on time in default
+            // Each day in default adds 10% to the markdown (up to 200% max)
+            uint256 scaledDays = timeInDefault / SECONDS_PER_DAY;
+            uint256 multiplier = 100 + (scaledDays * 10); // 100% + 10% per day
+            if (multiplier > 200) multiplier = 200; // Cap at 200%
+            return (baseMarkdown * multiplier) / 100;
+        }
+
+        // Otherwise use the default time-based calculation
+        if (timeInDefault == 0) return 0;
+
+        uint256 daysInDefault = timeInDefault / SECONDS_PER_DAY;
+        uint256 markdownBps = daysInDefault * dailyMarkdownBps;
+        if (markdownBps > maxMarkdownBps) {
+            markdownBps = maxMarkdownBps;
+        }
+
+        return (borrowAmount * markdownBps) / BPS;
     }
 
     function getMarkdownMultiplier(uint256 timeInDefault) external view returns (uint256 multiplier) {
