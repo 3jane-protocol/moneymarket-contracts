@@ -248,6 +248,9 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         if (assets > 0) shares = assets.toSharesUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
         else assets = shares.toAssetsDown(market[id].totalBorrowAssets, market[id].totalBorrowShares);
 
+        // Prevent griefing attack: ensure borrowing shares results in borrowing at least 1 asset
+        if (assets == 0 && shares > 0) revert ErrorsLib.InsufficientBorrowAmount();
+
         position[id][onBehalf].borrowShares += shares.toUint128();
         market[id].totalBorrowShares += shares.toUint128();
         market[id].totalBorrowAssets += assets.toUint128();

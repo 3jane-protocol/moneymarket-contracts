@@ -81,6 +81,9 @@ library ErrorsLib {
     /// @notice Thrown when the liquidity is insufficient to `withdraw` or `borrow`.
     error InsufficientLiquidity();
 
+    /// @notice Thrown when borrowing shares would result in borrowing zero assets.
+    error InsufficientBorrowAmount();
+
     /// @notice Thrown when the position to liquidate is healthy.
     error HealthyPosition();
 

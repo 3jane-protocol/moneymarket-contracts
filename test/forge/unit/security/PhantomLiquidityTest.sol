@@ -77,53 +77,21 @@ contract PhantomLiquidityTest is BaseTest {
         vm.prank(address(maliciousCreditLine));
         mc.setCreditLine(id, BORROWER, HIGH_COLLATERAL_AMOUNT, 0);
 
-        // Step 1: Borrow virtual shares (creates minimal position)
-        (uint256 assets, uint256 shares) = helper.borrow(marketParams, 0, 10 ** 6 - 1, BORROWER, BORROWER);
-        assertEq(assets, 0, "Virtual shares should not create assets");
-        assertEq(shares, 10 ** 6 - 1, "Should have borrowed virtual shares");
+        // Step 1: Cannot borrow virtual shares with 0 assets - protocol requires actual borrowing
+        vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
+        helper.borrow(marketParams, 0, 10 ** 6 - 1, BORROWER, BORROWER);
 
-        // Step 2: Set up repayment obligation to trigger default
-        address[] memory borrowers = new address[](1);
-        borrowers[0] = BORROWER;
-        uint256[] memory repaymentBps = new uint256[](1);
-        repaymentBps[0] = 10000;
-        uint256[] memory endingBalances = new uint256[](1);
-        endingBalances[0] = 1000000;
-
-        vm.prank(address(maliciousCreditLine));
-        mc.closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
-        mc.accrueBorrowerPremium(id, BORROWER);
-
-        // Step 3: Set malicious markdown (would exploit old code)
-        maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 10 ** 10 * 10 ** 18);
-
-        // Move to default state
-        vm.warp(block.timestamp + 31 days);
-        mc.accrueBorrowerPremium(id, BORROWER);
-
+        // Verify the market remains clean - no phantom shares were created
         Market memory m = morpho.market(id);
-        uint256 supplyAfterFirstMarkdown = m.totalSupplyAssets;
-        uint256 markdownAfterFirst = m.totalMarkdownAmount;
+        assertEq(m.totalBorrowAssets, 0, "No borrow assets should exist");
+        assertEq(m.totalBorrowShares, 0, "No borrow shares should exist");
+        assertEq(m.totalSupplyAssets, 0, "No supply should exist");
+        assertEq(m.totalMarkdownAmount, 0, "No markdown should exist");
 
-        // Step 4: Second markdown - this would create phantom liquidity in vulnerable code
-        maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 0);
-        vm.warp(block.timestamp + 1 days);
-        mc.accrueBorrowerPremium(id, BORROWER);
-
-        m = morpho.market(id);
-
-        // Verify the fix prevents phantom liquidity creation
-        // The supply should only reflect actual marked down amount, not the requested 10^28
-        assertTrue(m.totalSupplyAssets < 10 ** 20, "Supply should not have phantom liquidity");
-
-        // Step 5: Attempt to drain funds should fail
-        address attacker2 = makeAddr("Attacker2");
-        vm.prank(address(maliciousCreditLine));
-        mc.setCreditLine(id, attacker2, HIGH_COLLATERAL_AMOUNT, 0);
-
-        // This should revert with InsufficientLiquidity
-        vm.expectRevert(ErrorsLib.InsufficientLiquidity.selector);
-        helper.borrow(marketParams, 10 ** 8 * 10 ** 18, 0, attacker2, attacker2);
+        // The attack cannot proceed since the initial vector is completely blocked
+        // Funds remain safe in the contract
+        uint256 morphoBalance = loanToken.balanceOf(address(morpho));
+        assertEq(morphoBalance, 10 ** 10 * 10 ** 18, "All funds should remain safe");
     }
 
     /// @notice Test that markdown is properly capped at borrower's debt

@@ -100,17 +100,22 @@ contract MarkdownEdgeCaseTest is BaseTest {
         assertTrue(m.totalSupplyAssets > 940 ether, "Supply reduced by debt amount");
     }
 
-    /// @notice Test markdown with minimum borrow shares (1 share)
+    /// @notice Test markdown with minimum borrow amount (1 wei)
     function testMarkdownWithMinimalShares() public {
         // Supply funds
-        loanToken.setBalance(address(morpho), 10 ether);
+        loanToken.setBalance(SUPPLIER, 10 ether);
+        vm.startPrank(SUPPLIER);
+        loanToken.approve(address(morpho), type(uint256).max);
+        morpho.supply(marketParams, 10 ether, 0, SUPPLIER, "");
+        vm.stopPrank();
 
         // Set up borrower
         vm.prank(address(creditLine));
         morphoCredit.setCreditLine(id, BORROWER, HIGH_COLLATERAL_AMOUNT, 0);
 
-        // Borrow minimal shares (virtual shares)
-        helper.borrow(marketParams, 0, 1, BORROWER, BORROWER);
+        // Borrow minimal amount (1 wei) instead of trying to borrow 0 assets
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1, 0, BORROWER, BORROWER);
 
         _triggerDefault(BORROWER, 1);
 
@@ -120,8 +125,8 @@ contract MarkdownEdgeCaseTest is BaseTest {
 
         Market memory m = morpho.market(id);
 
-        // Markdown should be minimal (1 share worth)
-        assertTrue(m.totalMarkdownAmount < 100, "Minimal markdown for 1 share");
+        // Markdown should be minimal (for 1 wei of debt)
+        assertTrue(m.totalMarkdownAmount <= 1, "Minimal markdown for 1 wei debt");
     }
 
     /// @notice Test concurrent markdown updates for same borrower
@@ -206,21 +211,16 @@ contract MarkdownEdgeCaseTest is BaseTest {
         vm.prank(address(creditLine));
         morphoCredit.setCreditLine(id, BORROWER, HIGH_COLLATERAL_AMOUNT, 0);
 
-        // Borrow virtual shares without supply
+        // Cannot borrow virtual shares without actual assets
+        vm.expectRevert(ErrorsLib.InsufficientBorrowAmount.selector);
         helper.borrow(marketParams, 0, 1000, BORROWER, BORROWER);
 
-        _triggerDefault(BORROWER, 1000);
-
-        // Set markdown
-        markdownManager.setMarkdownForBorrower(BORROWER, 1000 ether);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-
+        // Verify market remains clean
         Market memory m = morpho.market(id);
-
-        // Supply should remain zero
-        assertEq(m.totalSupplyAssets, 0, "Supply stays zero");
-        // Markdown should be limited to actual debt
-        assertTrue(m.totalMarkdownAmount < 1 ether, "Minimal markdown with virtual shares");
+        assertEq(m.totalSupplyAssets, 0, "Supply remains zero");
+        assertEq(m.totalBorrowAssets, 0, "No phantom borrows");
+        assertEq(m.totalBorrowShares, 0, "No virtual shares");
+        assertEq(m.totalMarkdownAmount, 0, "No markdown without debt");
     }
 
     /// @notice Test markdown transitions between states
