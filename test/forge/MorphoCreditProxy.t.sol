@@ -107,19 +107,19 @@ contract MorphoCreditProxyTest is Test {
         assertEq(uint256(bytes32(MorphoStorageLib.MARKET_SLOT)), 3);
         assertEq(uint256(bytes32(MorphoStorageLib.IS_IRM_ENABLED_SLOT)), 4);
         assertEq(uint256(bytes32(MorphoStorageLib.IS_LLTV_ENABLED_SLOT)), 5);
-        assertEq(uint256(bytes32(MorphoStorageLib.IS_AUTHORIZED_SLOT)), 6);
-        assertEq(uint256(bytes32(MorphoStorageLib.NONCE_SLOT)), 7);
-        assertEq(uint256(bytes32(MorphoStorageLib.ID_TO_MARKET_PARAMS_SLOT)), 8);
+        // IS_AUTHORIZED_SLOT removed - no isAuthorized mapping in Morpho
+        assertEq(uint256(bytes32(MorphoStorageLib.NONCE_SLOT)), 6);
+        assertEq(uint256(bytes32(MorphoStorageLib.ID_TO_MARKET_PARAMS_SLOT)), 7);
         // DOMAIN_SEPARATOR is now at slot 9
 
         // Test MorphoCredit storage slots (start after Morpho base + __gap)
-        assertEq(uint256(MorphoCreditStorageLib.helperSlot()), 20);
-        assertEq(uint256(MorphoCreditStorageLib.protocolConfigSlot()), 21);
-        assertEq(uint256(MorphoCreditStorageLib.usd3Slot()), 22);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.BORROWER_PREMIUM_SLOT)), 23);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.PAYMENT_CYCLE_SLOT)), 24);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.REPAYMENT_OBLIGATION_SLOT)), 25);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.MARKDOWN_STATE_SLOT)), 26);
+        assertEq(uint256(MorphoCreditStorageLib.helperSlot()), 19);
+        // protocolConfigSlot removed - protocolConfig is immutable
+        assertEq(uint256(MorphoCreditStorageLib.usd3Slot()), 20);
+        assertEq(uint256(bytes32(MorphoCreditStorageLib.BORROWER_PREMIUM_SLOT)), 21);
+        assertEq(uint256(bytes32(MorphoCreditStorageLib.PAYMENT_CYCLE_SLOT)), 22);
+        assertEq(uint256(bytes32(MorphoCreditStorageLib.REPAYMENT_OBLIGATION_SLOT)), 23);
+        assertEq(uint256(bytes32(MorphoCreditStorageLib.MARKDOWN_STATE_SLOT)), 24);
     }
 
     function testProxyStatePreservation() public {
