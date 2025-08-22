@@ -29,6 +29,7 @@ contract PremiumCompoundingTest is BaseTest {
         // Create market with credit line
         marketParams.irm = address(configurableIrm);
         marketParams.creditLine = address(creditLine);
+        vm.prank(OWNER);
         morpho.createMarket(marketParams);
         id = MarketParamsLib.id(marketParams);
 

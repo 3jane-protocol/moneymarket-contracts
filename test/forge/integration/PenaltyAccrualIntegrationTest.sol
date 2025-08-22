@@ -50,10 +50,10 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
 
         id = marketParams.id();
 
-        vm.prank(OWNER);
+        vm.startPrank(OWNER);
         morpho.enableIrm(address(configurableIrm));
-
         morpho.createMarket(marketParams);
+        vm.stopPrank();
 
         // Setup liquidity
         deal(address(loanToken), SUPPLIER, 1000000e18);
@@ -355,6 +355,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         });
 
         Id market2Id = market2Params.id();
+        vm.prank(OWNER);
         morpho.createMarket(market2Params);
 
         // Supply to second market

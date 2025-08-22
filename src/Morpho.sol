@@ -146,7 +146,7 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
     /* MARKET CREATION */
 
     /// @inheritdoc IMorphoBase
-    function createMarket(MarketParams memory marketParams) external {
+    function createMarket(MarketParams memory marketParams) external onlyOwner {
         Id id = marketParams.id();
         if (!isIrmEnabled[marketParams.irm]) revert ErrorsLib.IrmNotEnabled();
         if (!isLltvEnabled[marketParams.lltv]) revert ErrorsLib.LltvNotEnabled();

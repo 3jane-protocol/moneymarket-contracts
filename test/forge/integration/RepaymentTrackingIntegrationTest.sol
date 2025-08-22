@@ -51,10 +51,10 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         id = marketParams.id();
 
         // Enable IRM
-        vm.prank(OWNER);
+        vm.startPrank(OWNER);
         morpho.enableIrm(address(configurableIrm));
-
         morpho.createMarket(marketParams);
+        vm.stopPrank();
 
         // Setup liquidity
         deal(address(loanToken), SUPPLIER, 1000000e18);

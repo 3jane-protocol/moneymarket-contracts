@@ -21,6 +21,7 @@ contract AccrueInterestIntegrationTest is BaseTest {
         marketParamsFuzz.lltv = 0;
         blocks = _boundBlocks(blocks);
 
+        vm.prank(OWNER);
         morpho.createMarket(marketParamsFuzz);
 
         _forward(blocks);

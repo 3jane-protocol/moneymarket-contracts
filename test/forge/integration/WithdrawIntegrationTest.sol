@@ -112,11 +112,11 @@ contract WithdrawIntegrationTest is BaseTest {
         });
 
         // Set up the market on the new instance
-        vm.prank(OWNER);
+        vm.startPrank(OWNER);
         morphoCredit.enableIrm(address(irm));
-        vm.prank(OWNER);
         morphoCredit.enableLltv(DEFAULT_TEST_LLTV);
         morphoCredit.createMarket(isolatedMarketParams);
+        vm.stopPrank();
 
         // Supply to the market (through mockUsd3 to pass the check)
         loanToken.setBalance(mockUsd3, amount);

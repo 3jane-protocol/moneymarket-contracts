@@ -23,6 +23,7 @@ contract MorphoCreditIntegrationTest is BaseTest {
 
         // Create market with creditLine
         marketParams.creditLine = address(creditLine);
+        vm.prank(OWNER);
         morpho.createMarket(marketParams);
         id = marketParams.id();
     }

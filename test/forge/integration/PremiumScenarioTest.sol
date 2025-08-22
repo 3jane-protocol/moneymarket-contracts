@@ -40,6 +40,7 @@ contract PremiumScenarioTest is BaseTest {
         // Set credit line in market params before creation
         marketParams.irm = address(irm);
         marketParams.creditLine = address(creditLine);
+        vm.prank(OWNER);
         morpho.createMarket(marketParams);
         id = MarketParamsLib.id(marketParams);
 
@@ -59,6 +60,7 @@ contract PremiumScenarioTest is BaseTest {
             creditLine: address(creditLine2)
         });
 
+        vm.prank(OWNER);
         morpho.createMarket(marketParams2);
         id2 = marketParams2.id();
 

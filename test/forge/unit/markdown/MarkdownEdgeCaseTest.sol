@@ -1,0 +1,334 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.0;
+
+import "../../BaseTest.sol";
+import {MarkdownManagerMock} from "../../mocks/MarkdownManagerMock.sol";
+import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
+import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
+import {Market, RepaymentStatus} from "../../../../src/interfaces/IMorpho.sol";
+
+/// @title MarkdownEdgeCaseTest
+/// @notice Tests edge cases and boundary conditions for markdown logic
+/// @dev Covers scenarios like zero debt, maximum values, concurrent updates
+contract MarkdownEdgeCaseTest is BaseTest {
+    using MathLib for uint256;
+    using SharesMathLib for uint256;
+    using MorphoLib for IMorpho;
+    using MarketParamsLib for MarketParams;
+
+    MarkdownManagerMock markdownManager;
+    CreditLineMock creditLine;
+    HelperMock helper;
+    IMorphoCredit morphoCredit;
+
+    function setUp() public override {
+        super.setUp();
+
+        // Deploy contracts
+        markdownManager = new MarkdownManagerMock();
+        creditLine = new CreditLineMock(morphoAddress);
+        morphoCredit = IMorphoCredit(morphoAddress);
+        helper = new HelperMock(morphoAddress);
+
+        // Create market
+        marketParams = MarketParams(
+            address(loanToken),
+            address(collateralToken),
+            address(oracle),
+            address(irm),
+            DEFAULT_TEST_LLTV,
+            address(creditLine)
+        );
+        id = marketParams.id();
+
+        vm.startPrank(OWNER);
+        morpho.createMarket(marketParams);
+        creditLine.setMm(address(markdownManager));
+        vm.stopPrank();
+    }
+
+    /// @notice Test markdown with zero debt borrower
+    function testMarkdownWithZeroDebt() public {
+        // Supply funds
+        loanToken.setBalance(SUPPLIER, 1000 ether);
+        vm.startPrank(SUPPLIER);
+        loanToken.approve(address(morpho), type(uint256).max);
+        morpho.supply(marketParams, 1000 ether, 0, SUPPLIER, "");
+        vm.stopPrank();
+
+        // Set up borrower with credit line but no debt
+        vm.prank(address(creditLine));
+        morphoCredit.setCreditLine(id, BORROWER, 100 ether, 0);
+
+        // Try to set markdown without any debt
+        markdownManager.setMarkdownForBorrower(BORROWER, 50 ether);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        Market memory m = morpho.market(id);
+
+        // Markdown should be zero since there's no debt
+        assertEq(m.totalMarkdownAmount, 0, "No markdown without debt");
+        assertEq(m.totalSupplyAssets, 1000 ether, "Supply should be unchanged");
+    }
+
+    /// @notice Test markdown with maximum uint256 values
+    function testMarkdownWithMaxValues() public {
+        // Supply funds
+        loanToken.setBalance(SUPPLIER, 1000 ether);
+        vm.startPrank(SUPPLIER);
+        loanToken.approve(address(morpho), type(uint256).max);
+        morpho.supply(marketParams, 1000 ether, 0, SUPPLIER, "");
+        vm.stopPrank();
+
+        // Set up borrower
+        vm.prank(address(creditLine));
+        morphoCredit.setCreditLine(id, BORROWER, 100 ether, 0);
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 50 ether, 0, BORROWER, BORROWER);
+
+        _triggerDefault(BORROWER, 50 ether);
+
+        // Try to set maximum markdown value
+        markdownManager.setMarkdownForBorrower(BORROWER, type(uint256).max);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        Market memory m = morpho.market(id);
+
+        // Markdown should be capped at debt (around 50 ether)
+        assertTrue(m.totalMarkdownAmount < 60 ether, "Markdown capped at debt");
+        assertTrue(m.totalSupplyAssets > 940 ether, "Supply reduced by debt amount");
+    }
+
+    /// @notice Test markdown with minimum borrow shares (1 share)
+    function testMarkdownWithMinimalShares() public {
+        // Supply funds
+        loanToken.setBalance(address(morpho), 10 ether);
+
+        // Set up borrower
+        vm.prank(address(creditLine));
+        morphoCredit.setCreditLine(id, BORROWER, HIGH_COLLATERAL_AMOUNT, 0);
+
+        // Borrow minimal shares (virtual shares)
+        helper.borrow(marketParams, 0, 1, BORROWER, BORROWER);
+
+        _triggerDefault(BORROWER, 1);
+
+        // Set markdown
+        markdownManager.setMarkdownForBorrower(BORROWER, 1 ether);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        Market memory m = morpho.market(id);
+
+        // Markdown should be minimal (1 share worth)
+        assertTrue(m.totalMarkdownAmount < 100, "Minimal markdown for 1 share");
+    }
+
+    /// @notice Test concurrent markdown updates for same borrower
+    function testConcurrentMarkdownUpdates() public {
+        // Supply funds
+        loanToken.setBalance(SUPPLIER, 1000 ether);
+        vm.startPrank(SUPPLIER);
+        loanToken.approve(address(morpho), type(uint256).max);
+        morpho.supply(marketParams, 1000 ether, 0, SUPPLIER, "");
+        vm.stopPrank();
+
+        // Set up borrower
+        vm.prank(address(creditLine));
+        morphoCredit.setCreditLine(id, BORROWER, 100 ether, 0);
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 50 ether, 0, BORROWER, BORROWER);
+
+        _triggerDefault(BORROWER, 50 ether);
+
+        // Apply multiple markdowns in same block
+        markdownManager.setMarkdownForBorrower(BORROWER, 20 ether);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        Market memory m1 = morpho.market(id);
+
+        // Update markdown again in same block
+        markdownManager.setMarkdownForBorrower(BORROWER, 30 ether);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        Market memory m2 = morpho.market(id);
+
+        // Verify markdown updated correctly
+        assertTrue(m2.totalMarkdownAmount > m1.totalMarkdownAmount, "Markdown increased");
+        assertTrue(m2.totalSupplyAssets < m1.totalSupplyAssets, "Supply decreased");
+    }
+
+    /// @notice Test markdown behavior when debt changes
+    function testMarkdownWithDebtChanges() public {
+        // Supply funds
+        loanToken.setBalance(SUPPLIER, 1000 ether);
+        vm.startPrank(SUPPLIER);
+        loanToken.approve(address(morpho), type(uint256).max);
+        morpho.supply(marketParams, 1000 ether, 0, SUPPLIER, "");
+        vm.stopPrank();
+
+        // Set up borrower
+        vm.prank(address(creditLine));
+        morphoCredit.setCreditLine(id, BORROWER, 100 ether, 0);
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 50 ether, 0, BORROWER, BORROWER);
+
+        _triggerDefault(BORROWER, 50 ether);
+
+        // Apply markdown
+        markdownManager.setMarkdownForBorrower(BORROWER, 30 ether);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        Market memory mWithMarkdown = morpho.market(id);
+        assertTrue(mWithMarkdown.totalMarkdownAmount > 0, "Markdown applied");
+
+        // Clear markdown before repayment to avoid underflow
+        markdownManager.setMarkdownForBorrower(BORROWER, 0);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        // Repay the exact obligation amount (50 ether)
+        loanToken.setBalance(BORROWER, 50 ether);
+        vm.startPrank(BORROWER);
+        loanToken.approve(address(morpho), type(uint256).max);
+        morpho.repay(marketParams, 50 ether, 0, BORROWER, "");
+        vm.stopPrank();
+
+        // After repayment, markdown should remain zero
+        Market memory mFinal = morpho.market(id);
+        assertEq(mFinal.totalMarkdownAmount, 0, "No markdown after repayment");
+    }
+
+    /// @notice Test markdown with zero supply market
+    function testMarkdownWithZeroSupply() public {
+        // Create borrower with credit line
+        vm.prank(address(creditLine));
+        morphoCredit.setCreditLine(id, BORROWER, HIGH_COLLATERAL_AMOUNT, 0);
+
+        // Borrow virtual shares without supply
+        helper.borrow(marketParams, 0, 1000, BORROWER, BORROWER);
+
+        _triggerDefault(BORROWER, 1000);
+
+        // Set markdown
+        markdownManager.setMarkdownForBorrower(BORROWER, 1000 ether);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        Market memory m = morpho.market(id);
+
+        // Supply should remain zero
+        assertEq(m.totalSupplyAssets, 0, "Supply stays zero");
+        // Markdown should be limited to actual debt
+        assertTrue(m.totalMarkdownAmount < 1 ether, "Minimal markdown with virtual shares");
+    }
+
+    /// @notice Test markdown transitions between states
+    function testMarkdownStateTransitions() public {
+        // Supply funds
+        loanToken.setBalance(SUPPLIER, 1000 ether);
+        vm.startPrank(SUPPLIER);
+        loanToken.approve(address(morpho), type(uint256).max);
+        morpho.supply(marketParams, 1000 ether, 0, SUPPLIER, "");
+        vm.stopPrank();
+
+        // Set up borrower
+        vm.prank(address(creditLine));
+        morphoCredit.setCreditLine(id, BORROWER, 100 ether, 0);
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 50 ether, 0, BORROWER, BORROWER);
+
+        // Cycle through different states
+        address[] memory borrowers = new address[](1);
+        borrowers[0] = BORROWER;
+        uint256[] memory repaymentBps = new uint256[](1);
+        repaymentBps[0] = 10000;
+        uint256[] memory endingBalances = new uint256[](1);
+        endingBalances[0] = 50 ether;
+
+        vm.prank(address(creditLine));
+        morphoCredit.closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
+
+        // Current state
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        markdownManager.setMarkdownForBorrower(BORROWER, 10 ether);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        Market memory mCurrent = morpho.market(id);
+        assertEq(mCurrent.totalMarkdownAmount, 0, "No markdown in current state");
+
+        // Grace period
+        vm.warp(block.timestamp + 3 days);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        Market memory mGrace = morpho.market(id);
+        assertEq(mGrace.totalMarkdownAmount, 0, "No markdown in grace period");
+
+        // Delinquent state
+        vm.warp(block.timestamp + 8 days);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        Market memory mDelinquent = morpho.market(id);
+        assertEq(mDelinquent.totalMarkdownAmount, 0, "No markdown in delinquent state");
+
+        // Default state
+        vm.warp(block.timestamp + 25 days);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        Market memory mDefault = morpho.market(id);
+        assertTrue(mDefault.totalMarkdownAmount > 0, "Markdown applied in default state");
+    }
+
+    /// @notice Test markdown with interest accrual edge cases
+    function testMarkdownWithInterestAccrual() public {
+        // Supply funds
+        loanToken.setBalance(SUPPLIER, 1000 ether);
+        vm.startPrank(SUPPLIER);
+        loanToken.approve(address(morpho), type(uint256).max);
+        morpho.supply(marketParams, 1000 ether, 0, SUPPLIER, "");
+        vm.stopPrank();
+
+        // Set up borrower
+        vm.prank(address(creditLine));
+        morphoCredit.setCreditLine(id, BORROWER, 100 ether, 0);
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 50 ether, 0, BORROWER, BORROWER);
+
+        // Let interest accrue significantly
+        vm.warp(block.timestamp + 365 days);
+
+        _triggerDefault(BORROWER, 50 ether);
+
+        // Apply markdown after significant interest
+        Market memory mBefore = morpho.market(id);
+        uint256 borrowShares = morpho.position(id, BORROWER).borrowShares;
+        uint256 debtWithInterest = borrowShares.toAssetsUp(mBefore.totalBorrowAssets, mBefore.totalBorrowShares);
+
+        markdownManager.setMarkdownForBorrower(BORROWER, debtWithInterest * 2);
+        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+
+        Market memory mAfter = morpho.market(id);
+
+        // Markdown should be capped at actual debt with interest
+        assertApproxEqAbs(mAfter.totalMarkdownAmount, debtWithInterest, 1e18, "Markdown equals debt with interest");
+    }
+
+    // Helper function to trigger default state
+    function _triggerDefault(address borrower, uint256 amount) internal {
+        address[] memory borrowers = new address[](1);
+        borrowers[0] = borrower;
+        uint256[] memory repaymentBps = new uint256[](1);
+        repaymentBps[0] = 10000;
+        uint256[] memory endingBalances = new uint256[](1);
+        endingBalances[0] = amount;
+
+        vm.prank(address(creditLine));
+        morphoCredit.closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
+
+        // Move to default (past grace and delinquent periods)
+        vm.warp(block.timestamp + 31 days);
+        morphoCredit.accrueBorrowerPremium(id, borrower);
+    }
+}
