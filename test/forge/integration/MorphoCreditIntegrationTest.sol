@@ -126,7 +126,8 @@ contract MorphoCreditIntegrationTest is BaseTest {
         // Verify premium rate was set
         (uint128 lastAccrualTime, uint128 rate,) = IMorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
         assertEq(rate, premiumRate, "premium rate not set correctly");
-        assertEq(lastAccrualTime, block.timestamp, "last accrual time not set correctly");
+        // With Issue #13 fix: timestamp is NOT set until first borrow
+        assertEq(lastAccrualTime, 0, "timestamp should not be set until first borrow");
     }
 
     function testRemoveCreditLine(uint256 initialCredit) public {

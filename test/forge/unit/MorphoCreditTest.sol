@@ -332,7 +332,8 @@ contract MorphoCreditTest is Test {
 
         (uint128 lastAccrualTime, uint128 rate,) = MorphoCredit(address(morpho)).borrowerPremium(marketId, borrower);
         assertEq(rate, newRatePerSecond);
-        assertEq(lastAccrualTime, block.timestamp);
+        // With Issue #13 fix: timestamp is NOT set until first borrow
+        assertEq(lastAccrualTime, 0);
         // Credit line is set in market collateral
         Position memory pos = morpho.position(marketId, borrower);
         assertEq(pos.collateral, creditAmount);
