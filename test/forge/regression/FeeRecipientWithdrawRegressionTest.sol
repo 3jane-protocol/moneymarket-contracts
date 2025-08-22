@@ -74,6 +74,17 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
         realMorpho.setFeeRecipient(FEE_RECIPIENT);
         vm.stopPrank();
 
+        // Initialize market cycles to prevent freezing (market has credit line)
+        // We need to create an initial cycle for the real morpho instance
+        vm.warp(block.timestamp + 30 days);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(address(creditLine));
+        IMorphoCredit(realMorphoAddress).closeCycleAndPostObligations(
+            testMarketId, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
+
         // Supply liquidity through USD3
         loanToken.setBalance(mockUsd3, SUPPLY_AMOUNT);
         vm.startPrank(mockUsd3);
@@ -209,6 +220,16 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
         realMorpho.borrow(testMarketParams, BORROW_AMOUNT, 0, BORROWER, BORROWER);
 
         skip(30 days);
+
+        // Post another cycle to keep market active after time skip
+        vm.warp(block.timestamp);
+        address[] memory emptyBorrowers = new address[](0);
+        uint256[] memory emptyRepaymentBps = new uint256[](0);
+        uint256[] memory emptyBalances = new uint256[](0);
+        vm.prank(address(creditLine));
+        IMorphoCredit(realMorphoAddress).closeCycleAndPostObligations(
+            testMarketId, block.timestamp, emptyBorrowers, emptyRepaymentBps, emptyBalances
+        );
 
         vm.startPrank(BORROWER);
         loanToken.approve(realMorphoAddress, type(uint256).max);

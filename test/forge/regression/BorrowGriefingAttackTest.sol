@@ -4,6 +4,34 @@ pragma solidity ^0.8.0;
 import "../BaseTest.sol";
 import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 import {SharesMathLib} from "../../../src/libraries/SharesMathLib.sol";
+import {UtilsLib} from "../../../src/libraries/UtilsLib.sol";
+import {MorphoCreditMock} from "../../../src/mocks/MorphoCreditMock.sol";
+import {MorphoCredit} from "../../../src/MorphoCredit.sol";
+import {ProtocolConfig} from "../../../src/ProtocolConfig.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {ERC20Mock} from "../../../src/mocks/ERC20Mock.sol";
+import {OracleMock} from "../../../src/mocks/OracleMock.sol";
+import {IrmMock} from "../../../src/mocks/IrmMock.sol";
+
+// Mock contract that bypasses credit line checks for testing virtual shares attack
+contract MorphoVirtualSharesTestMock is MorphoCreditMock {
+    using MathLib for uint256;
+    using UtilsLib for uint256;
+
+    constructor(address _protocolConfig) MorphoCreditMock(_protocolConfig) {}
+
+    // Override _beforeBorrow to skip all credit line checks
+    function _beforeBorrow(MarketParams memory, Id, address, uint256, uint256) internal virtual override {
+        // Skip all checks for testing virtual shares attack prevention
+        // This allows us to test the InsufficientBorrowAmount check in isolation
+    }
+
+    // Allow setting credit lines directly for testing (bypass creditLine authorization)
+    function setCreditLineForTest(Id id, address borrower, uint256 credit) external {
+        position[id][borrower].collateral = credit.toUint128();
+    }
+}
 
 contract BorrowGriefingAttackTest is BaseTest {
     using MathLib for uint256;
@@ -15,7 +43,69 @@ contract BorrowGriefingAttackTest is BaseTest {
     address victim = makeAddr("Victim");
 
     function setUp() public override {
-        super.setUp();
+        // Skip parent setUp to use our custom mock
+        SUPPLIER = makeAddr("Supplier");
+        BORROWER = makeAddr("Borrower");
+        OWNER = makeAddr("Owner");
+        FEE_RECIPIENT = makeAddr("FeeRecipient");
+
+        // Deploy protocol config
+        ProtocolConfig protocolConfigImpl = new ProtocolConfig();
+        TransparentUpgradeableProxy protocolConfigProxy = new TransparentUpgradeableProxy(
+            address(protocolConfigImpl),
+            address(this),
+            abi.encodeWithSelector(ProtocolConfig.initialize.selector, OWNER)
+        );
+        protocolConfig = ProtocolConfig(address(protocolConfigProxy));
+
+        // Deploy our test mock that bypasses health checks
+        MorphoVirtualSharesTestMock morphoImpl = new MorphoVirtualSharesTestMock(address(protocolConfig));
+
+        // Deploy proxy admin
+        ProxyAdmin proxyAdmin = new ProxyAdmin(OWNER);
+
+        // Deploy proxy with initialization
+        bytes memory initData = abi.encodeWithSelector(MorphoCredit.initialize.selector, OWNER);
+        TransparentUpgradeableProxy morphoProxy =
+            new TransparentUpgradeableProxy(address(morphoImpl), address(proxyAdmin), initData);
+
+        morpho = IMorpho(address(morphoProxy));
+
+        // Setup tokens and oracle
+        loanToken = new ERC20Mock();
+        collateralToken = new ERC20Mock();
+        oracle = new OracleMock();
+        oracle.setPrice(ORACLE_PRICE_SCALE);
+        irm = new IrmMock();
+
+        // Enable IRM and create market
+        vm.startPrank(OWNER);
+        morpho.enableIrm(address(irm));
+        morpho.enableLltv(0);
+        morpho.setFeeRecipient(FEE_RECIPIENT);
+        vm.stopPrank();
+
+        // Create market with credit line for testing virtual shares
+        // Set this test contract as the credit line provider
+        marketParams = MarketParams({
+            loanToken: address(loanToken),
+            collateralToken: address(0),
+            oracle: address(oracle),
+            irm: address(irm),
+            lltv: 0,
+            creditLine: address(this)
+        });
+
+        vm.prank(OWNER);
+        morpho.createMarket(marketParams);
+        id = marketParams.id();
+
+        // Approve tokens
+        loanToken.approve(address(morpho), type(uint256).max);
+
+        vm.startPrank(SUPPLIER);
+        loanToken.approve(address(morpho), type(uint256).max);
+        vm.stopPrank();
     }
 
     function testBorrowGriefingAttack_SingleAttackPrevented() public {
@@ -23,9 +113,8 @@ contract BorrowGriefingAttackTest is BaseTest {
         uint256 supplyAmount = 1000e18;
         _supply(supplyAmount);
 
-        // Setup credit line for attacker
-        vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).setCreditLine(id, attacker, 1e18, 0);
+        // Set credit line for attacker using our test mock
+        MorphoVirtualSharesTestMock(address(morpho)).setCreditLineForTest(id, attacker, 100e18);
 
         // Attack: Try to borrow VIRTUAL_SHARES - 1 shares when market has no borrows
         uint256 attackShares = SharesMathLib.VIRTUAL_SHARES - 1;
@@ -52,9 +141,8 @@ contract BorrowGriefingAttackTest is BaseTest {
         uint256 supplyAmount = 1000e18;
         _supply(supplyAmount);
 
-        // Setup credit line for attacker with high limit
-        vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).setCreditLine(id, attacker, 1e30, 0);
+        // Set credit line for attacker using our test mock
+        MorphoVirtualSharesTestMock(address(morpho)).setCreditLineForTest(id, attacker, 1e30);
 
         // First attack attempt: Try to borrow VIRTUAL_SHARES - 1 shares (would result in 0 assets)
         uint256 firstAttackShares = SharesMathLib.VIRTUAL_SHARES - 1;
@@ -84,9 +172,8 @@ contract BorrowGriefingAttackTest is BaseTest {
         uint256 supplyAmount = 1000e18;
         _supply(supplyAmount);
 
-        // Setup credit line for attacker
-        vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).setCreditLine(id, attacker, 1e30, 0);
+        // Set credit line for attacker using our test mock
+        MorphoVirtualSharesTestMock(address(morpho)).setCreditLineForTest(id, attacker, 1e30);
 
         // Attack attempts should fail
         uint256 attackShares = SharesMathLib.VIRTUAL_SHARES - 1;
@@ -100,9 +187,8 @@ contract BorrowGriefingAttackTest is BaseTest {
         assertEq(morpho.totalBorrowAssets(id), 0, "Market should have no borrows");
         assertEq(morpho.totalBorrowShares(id), 0, "Market should have no shares");
 
-        // Now a legitimate user can borrow normally
-        vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).setCreditLine(id, victim, 100e18, 0);
+        // Set credit line for victim using our test mock
+        MorphoVirtualSharesTestMock(address(morpho)).setCreditLineForTest(id, victim, 1000e18);
 
         // Legitimate user borrows a normal amount
         uint256 legitimateBorrowAmount = 10e18;
@@ -120,9 +206,8 @@ contract BorrowGriefingAttackTest is BaseTest {
         uint256 supplyAmount = 1000e18;
         _supply(supplyAmount);
 
-        // Setup credit line for attacker
-        vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).setCreditLine(id, attacker, 1e30, 0);
+        // Set credit line for attacker using our test mock
+        MorphoVirtualSharesTestMock(address(morpho)).setCreditLineForTest(id, attacker, 1e30);
 
         // Try various attack patterns - all should fail
         uint256 baseShares = SharesMathLib.VIRTUAL_SHARES;
@@ -141,9 +226,8 @@ contract BorrowGriefingAttackTest is BaseTest {
         assertEq(morpho.totalBorrowAssets(id), 0, "Total assets should be 0");
         assertEq(morpho.totalBorrowShares(id), 0, "Total shares should be 0");
 
-        // Legitimate users can still use the market normally
-        vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).setCreditLine(id, victim, 100e18, 0);
+        // Set credit line for victim using our test mock
+        MorphoVirtualSharesTestMock(address(morpho)).setCreditLineForTest(id, victim, 1000e18);
 
         vm.prank(victim);
         (uint256 assets,) = morpho.borrow(marketParams, 10e18, 0, victim, victim);

@@ -81,6 +81,9 @@ contract SettlementWithFullCoverageTest is BaseTest {
         morpho.createMarket(marketParams);
         vm.stopPrank();
 
+        // Initialize market cycles to prevent freezing
+        _ensureMarketActive(id);
+
         // Setup liquidity
         deal(address(loanToken), SUPPLIER, 1000000e18);
         vm.prank(SUPPLIER);

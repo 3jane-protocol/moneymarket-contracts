@@ -39,6 +39,9 @@ contract PremiumRateChangeTimestampTest is BaseTest {
         morpho.createMarket(marketParams);
         id = MarketParamsLib.id(marketParams);
 
+        // Initialize market cycles to prevent freezing
+        _ensureMarketActive(id);
+
         // Set up initial balances
         loanToken.setBalance(SUPPLIER, HIGH_COLLATERAL_AMOUNT);
         loanToken.setBalance(BORROWER, HIGH_COLLATERAL_AMOUNT);

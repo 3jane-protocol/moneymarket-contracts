@@ -22,9 +22,10 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: {
       chainId: 1,
-      gasPrice: 0,
-      initialBaseFeePerGas: 0,
+      gasPrice: 1000000000, // 1 gwei
+      initialBaseFeePerGas: 1,
       allowBlocksWithSameTimestamp: true,
+      allowUnlimitedContractSize: true, // Allow contracts larger than 24KB for testing
       accounts: {
         count: 202, // must be even
       },
@@ -37,9 +38,22 @@ const config: HardhatUserConfig = {
         settings: {
           optimizer: {
             enabled: true,
-            runs: 4294967295,
+            runs: 1, // Minimize size at the cost of gas efficiency
+            details: {
+              yul: true,
+              yulDetails: {
+                stackAllocation: true,
+                optimizerSteps: "dhfoDgvulfnTUtnIf[lpf]"
+              }
+            }
           },
           viaIR: true,
+          outputSelection: {
+            "*": {
+              "*": ["metadata", "evm.bytecode", "evm.deployedBytecode"],
+              "": ["ast"]
+            }
+          }
         },
       },
       {

@@ -35,6 +35,9 @@ contract SettlementResetTest is BaseTest {
         vm.prank(OWNER);
         morpho.createMarket(marketParams);
 
+        // Initialize market cycles to prevent freezing
+        _ensureMarketActive(id);
+
         loanToken.setBalance(SUPPLIER, 100000e18);
         vm.startPrank(SUPPLIER);
         loanToken.approve(address(morpho), type(uint256).max);

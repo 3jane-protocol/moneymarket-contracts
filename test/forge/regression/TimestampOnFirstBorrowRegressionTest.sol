@@ -52,6 +52,9 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
         vm.prank(OWNER);
         morpho.createMarket(marketParams);
 
+        // Initialize market cycles to prevent freezing
+        _ensureMarketActive(id);
+
         // Supply liquidity
         loanToken.setBalance(SUPPLIER, SUPPLY_AMOUNT);
         vm.startPrank(SUPPLIER);

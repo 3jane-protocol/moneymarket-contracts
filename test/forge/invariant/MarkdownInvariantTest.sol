@@ -308,6 +308,9 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
         totalTimeElapsed = currentTime + time;
         vm.warp(block.timestamp + time);
 
+        // Keep market active by posting cycles after time warp
+        _continueMarketCycles(id, block.timestamp);
+
         // Accrue interest for all borrowers
         for (uint256 i = 0; i < activeBorrowers.length; i++) {
             try morphoCredit.accrueBorrowerPremium(id, activeBorrowers[i]) {} catch {}
