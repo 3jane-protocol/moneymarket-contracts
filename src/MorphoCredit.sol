@@ -373,9 +373,13 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @notice Modifier to restrict access to the market's CreditLine contract
     modifier onlyCreditLine(Id id) {
+        requireCreditLine(id);
+        _;
+    }
+
+    function requireCreditLine(Id id) internal {
         if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
         if (msg.sender != idToMarketParams[id].creditLine) revert ErrorsLib.NotCreditLine();
-        _;
     }
 
     /* EXTERNAL FUNCTIONS - CREDIT LINE MANAGEMENT */
