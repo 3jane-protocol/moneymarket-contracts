@@ -46,6 +46,9 @@ contract PathIndependentPenaltyTest is BaseTest {
         vm.prank(OWNER);
         morpho.createMarket(marketParams);
 
+        // Initialize market cycles since it has a credit line
+        _ensureMarketActive(id);
+
         // Supply assets
         loanToken.setBalance(SUPPLIER, 1_000_000e18);
         vm.startPrank(SUPPLIER);
@@ -61,7 +64,7 @@ contract PathIndependentPenaltyTest is BaseTest {
         morpho.borrow(marketParams, 10_000e18, 0, BORROWER, BORROWER);
 
         // Move time forward to avoid any edge cases
-        vm.warp(block.timestamp + 100 days);
+        _continueMarketCycles(id, block.timestamp + 100 days);
     }
 
     function testPathIndependence_GracePeriodDeferral() public {

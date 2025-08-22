@@ -21,6 +21,7 @@ contract ProtocolConfig is Initializable {
     bytes32 private constant MIN_BORROW = keccak256("MIN_BORROW");
     bytes32 private constant GRACE_PERIOD = keccak256("GRACE_PERIOD");
     bytes32 private constant DELINQUENCY_PERIOD = keccak256("DELINQUENCY_PERIOD");
+    bytes32 private constant CYCLE_DURATION = keccak256("CYCLE_DURATION");
     // IRM
     bytes32 private constant CURVE_STEEPNESS = keccak256("CURVE_STEEPNESS");
     bytes32 private constant ADJUSTMENT_SPEED = keccak256("ADJUSTMENT_SPEED");
@@ -120,5 +121,9 @@ contract ProtocolConfig is Initializable {
 
     function getSusd3CooldownPeriod() external view returns (uint256) {
         return config[SUSD3_COOLDOWN_PERIOD];
+    }
+
+    function getCycleDuration() external view returns (uint256) {
+        return config[CYCLE_DURATION];
     }
 }

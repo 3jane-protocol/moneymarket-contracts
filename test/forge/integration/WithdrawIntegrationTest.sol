@@ -37,6 +37,16 @@ contract WithdrawIntegrationTest is BaseTest {
         // Create the market with credit line
         vm.prank(OWNER);
         morpho.createMarket(marketParams);
+
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + CYCLE_DURATION);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
     }
 
     function testWithdrawMarketNotCreated(MarketParams memory marketParamsParamsFuzz) public {
@@ -112,11 +122,11 @@ contract WithdrawIntegrationTest is BaseTest {
         });
 
         // Set up the market on the new instance
-        vm.prank(OWNER);
+        vm.startPrank(OWNER);
         morphoCredit.enableIrm(address(irm));
-        vm.prank(OWNER);
         morphoCredit.enableLltv(DEFAULT_TEST_LLTV);
         morphoCredit.createMarket(isolatedMarketParams);
+        vm.stopPrank();
 
         // Supply to the market (through mockUsd3 to pass the check)
         loanToken.setBalance(mockUsd3, amount);

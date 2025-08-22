@@ -22,10 +22,16 @@ contract SimplePathIndependenceTest is BaseTest {
     using MathLib for uint256;
     using MarketParamsLib for MarketParams;
 
+    uint256 internal constant TEST_CYCLE_DURATION = 30 days;
+
     CreditLineMock internal creditLine;
 
     function setUp() public override {
         super.setUp();
+
+        // Set cycle duration in protocol config
+        vm.prank(OWNER);
+        protocolConfig.setConfig(keccak256("CYCLE_DURATION"), TEST_CYCLE_DURATION);
 
         // Deploy a mock credit line contract
         creditLine = new CreditLineMock(address(morpho));
@@ -43,6 +49,16 @@ contract SimplePathIndependenceTest is BaseTest {
 
         vm.prank(OWNER);
         morpho.createMarket(marketParams);
+
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + TEST_CYCLE_DURATION);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(address(creditLine));
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
 
         // Supply assets
         loanToken.setBalance(SUPPLIER, 1_000_000e18);

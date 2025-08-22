@@ -159,18 +159,22 @@ contract BaseTest is Test {
         vm.startPrank(SUPPLIER);
         loanToken.approve(address(morpho), type(uint256).max);
         collateralToken.approve(address(morpho), type(uint256).max);
+        vm.stopPrank();
 
         vm.startPrank(BORROWER);
         loanToken.approve(address(morpho), type(uint256).max);
         collateralToken.approve(address(morpho), type(uint256).max);
+        vm.stopPrank();
 
         vm.startPrank(REPAYER);
         loanToken.approve(address(morpho), type(uint256).max);
         collateralToken.approve(address(morpho), type(uint256).max);
+        vm.stopPrank();
 
         vm.startPrank(LIQUIDATOR);
         loanToken.approve(address(morpho), type(uint256).max);
         collateralToken.approve(address(morpho), type(uint256).max);
+        vm.stopPrank();
 
         vm.startPrank(ONBEHALF);
         loanToken.approve(address(morpho), type(uint256).max);
@@ -188,7 +192,16 @@ contract BaseTest is Test {
 
         vm.startPrank(OWNER);
         if (!morpho.isLltvEnabled(lltv)) morpho.enableLltv(lltv);
-        if (morpho.lastUpdate(marketParams.id()) == 0) morpho.createMarket(marketParams);
+        if (morpho.lastUpdate(marketParams.id()) == 0) {
+            morpho.createMarket(marketParams);
+            vm.stopPrank();
+
+            // Initialize market cycles if it has a credit line
+            if (marketParams.creditLine != address(0)) {
+                _ensureMarketActive(id);
+            }
+            vm.startPrank(OWNER);
+        }
         vm.stopPrank();
 
         _forward(1);
@@ -211,6 +224,7 @@ contract BaseTest is Test {
         protocolConfig.setConfig(keccak256("MIN_BORROW"), 1000e18); // 1 token minimum borrow
         protocolConfig.setConfig(keccak256("GRACE_PERIOD"), 7 days); // 7 days grace period
         protocolConfig.setConfig(keccak256("DELINQUENCY_PERIOD"), 23 days); // 23 days delinquency period
+        protocolConfig.setConfig(keccak256("CYCLE_DURATION"), CYCLE_DURATION); // 30 days cycle duration
 
         // IRM configurations
         protocolConfig.setConfig(keccak256("CURVE_STEEPNESS"), uint256(4 ether)); // 4 curve steepness
@@ -236,6 +250,22 @@ contract BaseTest is Test {
     function _forward(uint256 blocks) internal {
         vm.roll(block.number + blocks);
         vm.warp(block.timestamp + blocks * BLOCK_TIME); // Block speed should depend on test network.
+    }
+
+    /// @dev Rolls & warps the given number of blocks forward the blockchain for a specific market.
+    function _forwardWithMarket(uint256 blocks, Id marketId) internal {
+        vm.roll(block.number + blocks);
+        uint256 targetTime = block.timestamp + blocks * BLOCK_TIME;
+
+        // Only continue cycles for markets with credit lines
+        // Get market params for this ID to check if it has a credit line
+        MarketParams memory mktParams = morpho.idToMarketParams(marketId);
+        if (mktParams.creditLine != address(0)) {
+            _continueMarketCycles(marketId, targetTime);
+        } else {
+            // For non-credit line markets, just warp time
+            vm.warp(targetTime);
+        }
     }
 
     /// @dev Bounds the fuzzing input to a realistic number of blocks.
@@ -270,6 +300,31 @@ contract BaseTest is Test {
         morpho.supply(marketParams, amount, 0, mockUsd3, hex"");
         vm.stopPrank();
         return mockUsd3;
+    }
+
+    /// @notice Initialize the first cycle for a market to unfreeze it
+    /// @param _id Market ID to initialize
+    function _initializeFirstCycle(Id _id) internal {
+        // Only initialize if no cycles exist
+        if (IMorphoCredit(address(morpho)).getPaymentCycleLength(_id) == 0) {
+            // Warp to ensure we can close the cycle
+            vm.warp(block.timestamp + CYCLE_DURATION);
+
+            address[] memory borrowers = new address[](0);
+            uint256[] memory repaymentBps = new uint256[](0);
+            uint256[] memory endingBalances = new uint256[](0);
+
+            // Post first cycle with current timestamp
+            vm.prank(marketParams.creditLine);
+            IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+                _id, block.timestamp, borrowers, repaymentBps, endingBalances
+            );
+        }
+    }
+
+    /// @notice Initialize the first cycle for the default market
+    function _initializeFirstCycle() internal {
+        _initializeFirstCycle(id);
     }
 
     function _boundHealthyPosition(uint256 amountCollateral, uint256 amountBorrowed, uint256 priceCollateral)
@@ -487,20 +542,10 @@ contract BaseTest is Test {
         uint256 endingBalance,
         uint256 daysAgo
     ) internal {
-        uint256 cycleEndDate = block.timestamp - (daysAgo * 1 days);
-        address[] memory borrowers = new address[](1);
-        uint256[] memory repaymentBps = new uint256[](1);
-        uint256[] memory balances = new uint256[](1);
-
-        borrowers[0] = borrower;
-        // Calculate basis points from amountDue and endingBalance
-        repaymentBps[0] = amountDue * 10000 / endingBalance;
-        balances[0] = endingBalance;
-
-        vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            _id, cycleEndDate, borrowers, repaymentBps, balances
-        );
+        // For tests that need obligations in the past relative to current time,
+        // we just use the existing _createPastObligation which already handles cycle spacing
+        uint256 repaymentBps = amountDue * 10000 / endingBalance;
+        _createPastObligation(borrower, repaymentBps, endingBalance);
     }
 
     // Overloaded version that accepts repaymentBps directly
@@ -511,19 +556,9 @@ contract BaseTest is Test {
         uint256 endingBalance,
         uint256 daysAgo
     ) internal {
-        uint256 cycleEndDate = block.timestamp - (daysAgo * 1 days);
-        address[] memory borrowers = new address[](1);
-        uint256[] memory repaymentBpsArray = new uint256[](1);
-        uint256[] memory balances = new uint256[](1);
-
-        borrowers[0] = borrower;
-        repaymentBpsArray[0] = repaymentBps;
-        balances[0] = endingBalance;
-
-        vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            _id, cycleEndDate, borrowers, repaymentBpsArray, balances
-        );
+        // For tests that need obligations in the past relative to current time,
+        // we just use the existing _createPastObligation which already handles cycle spacing
+        _createPastObligation(borrower, repaymentBps, endingBalance);
     }
 
     function _createMultipleObligations(
@@ -533,11 +568,27 @@ contract BaseTest is Test {
         uint256[] memory balances,
         uint256 daysAgo
     ) internal {
-        uint256 cycleEndDate = block.timestamp - (daysAgo * 1 days);
+        // Get the correct market params for this market ID
+        MarketParams memory mktParams = morpho.idToMarketParams(_id);
 
-        vm.prank(marketParams.creditLine);
+        // Ensure market has a cycle and enough time has passed
+        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(_id);
+        require(cycleLength > 0, "Market needs at least one cycle");
+
+        // Get last cycle end date
+        (, uint256 lastCycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(_id, cycleLength - 1);
+
+        // Calculate new cycle end that's at least CYCLE_DURATION after last one
+        uint256 targetCycleEnd = lastCycleEnd + CYCLE_DURATION + (daysAgo * 1 days);
+
+        // Warp to the target time if needed
+        if (block.timestamp < targetCycleEnd) {
+            vm.warp(targetCycleEnd);
+        }
+
+        vm.prank(mktParams.creditLine);
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            _id, cycleEndDate, borrowers, repaymentBps, balances
+            _id, block.timestamp, borrowers, repaymentBps, balances
         );
     }
 
@@ -607,9 +658,112 @@ contract BaseTest is Test {
     }
 
     // Helper for creating past obligations (used by markdown tests)
+    /// @notice Continues market cycles up to a target time to prevent MarketFrozen errors
+    /// @param marketId The market to continue cycles for
+    /// @param targetTime The timestamp to continue cycles up to
+    function _continueMarketCycles(Id marketId, uint256 targetTime) internal {
+        // Get the correct market params for this market ID
+        MarketParams memory mktParams = morpho.idToMarketParams(marketId);
+
+        // Only continue cycles if market has a credit line
+        if (mktParams.creditLine == address(0)) return;
+
+        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(marketId);
+
+        // If no cycles exist yet, initialize first cycle
+        if (cycleLength == 0) {
+            uint256 firstCycleEnd = block.timestamp > CYCLE_DURATION ? block.timestamp : CYCLE_DURATION;
+            vm.warp(firstCycleEnd);
+
+            address[] memory borrowers = new address[](0);
+            uint256[] memory repaymentBps = new uint256[](0);
+            uint256[] memory endingBalances = new uint256[](0);
+
+            vm.prank(mktParams.creditLine);
+            IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+                marketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
+            );
+            cycleLength = 1;
+        }
+
+        // Continue posting cycles until we reach target time
+        while (true) {
+            (, uint256 lastCycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(marketId, cycleLength - 1);
+            uint256 nextCycleEnd = lastCycleEnd + CYCLE_DURATION;
+
+            // Stop if next cycle would be beyond target time
+            if (nextCycleEnd > targetTime) break;
+
+            // Post empty cycle
+            vm.warp(nextCycleEnd);
+            address[] memory borrowers = new address[](0);
+            uint256[] memory repaymentBps = new uint256[](0);
+            uint256[] memory endingBalances = new uint256[](0);
+
+            vm.prank(mktParams.creditLine);
+            IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+                marketId, nextCycleEnd, borrowers, repaymentBps, endingBalances
+            );
+
+            cycleLength++;
+        }
+
+        // Finally warp to target time
+        if (block.timestamp < targetTime) {
+            vm.warp(targetTime);
+        }
+    }
+
+    /// @notice Ensures a market with credit line is active (not frozen)
+    /// @param marketId The market to check and unfreeze if needed
+    function _ensureMarketActive(Id marketId) internal {
+        // Get the correct market params for this market ID
+        MarketParams memory mktParams = morpho.idToMarketParams(marketId);
+
+        if (mktParams.creditLine == address(0)) return;
+
+        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(marketId);
+
+        if (cycleLength == 0) {
+            // Initialize first cycle
+            _continueMarketCycles(marketId, block.timestamp + CYCLE_DURATION);
+        } else {
+            // Check if market is frozen and post new cycle if needed
+            (, uint256 lastCycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(marketId, cycleLength - 1);
+            uint256 expectedNextEnd = lastCycleEnd + CYCLE_DURATION;
+
+            if (block.timestamp > expectedNextEnd) {
+                // Market is frozen, post a new cycle
+                uint256 newCycleEnd = block.timestamp;
+                address[] memory borrowers = new address[](0);
+                uint256[] memory repaymentBps = new uint256[](0);
+                uint256[] memory endingBalances = new uint256[](0);
+
+                vm.prank(mktParams.creditLine);
+                IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+                    marketId, newCycleEnd, borrowers, repaymentBps, endingBalances
+                );
+            }
+        }
+    }
+
     function _createPastObligation(address borrower, uint256 repaymentBps, uint256 endingBalance) internal {
-        // First forward time to allow for a past cycle
-        vm.warp(block.timestamp + 2 days);
+        // Ensure enough time has passed for a new cycle
+        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
+        uint256 minTimeForNextCycle = CYCLE_DURATION + 1 days;
+
+        if (cycleLength > 0) {
+            // Get the last cycle's end date and ensure we're past the minimum duration
+            (, uint256 lastCycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+            uint256 timeNeeded = lastCycleEnd + CYCLE_DURATION + 1 days;
+            if (block.timestamp < timeNeeded) {
+                vm.warp(timeNeeded);
+            }
+        } else {
+            // If no cycles exist, warp forward enough to create one
+            vm.warp(block.timestamp + minTimeForNextCycle);
+        }
+
         uint256 cycleEndDate = block.timestamp - 1 days;
 
         address[] memory borrowers = new address[](1);

@@ -28,10 +28,12 @@ contract MorphoCreditMock is MorphoCredit {
         // Do nothing - remove usd3 restriction for testing
     }
 
-    /// @dev Override _beforeBorrow to remove helper/paused restrictions
+    /// @dev Override _beforeBorrow to remove helper/paused restrictions but keep freeze check
     function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal virtual override {
         // Remove helper and paused restrictions for testing
-        // Keep the repayment status check and premium accrual
+        // Keep the market freeze check, repayment status check and premium accrual
+        if (_isMarketFrozen(id)) revert ErrorsLib.MarketFrozen();
+
         (RepaymentStatus status,) = getRepaymentStatus(id, onBehalf);
         if (status != RepaymentStatus.Current) revert ErrorsLib.OutstandingRepayment();
         _accrueBorrowerPremium(id, onBehalf);

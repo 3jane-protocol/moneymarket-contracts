@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import {Test} from "../../../lib/forge-std/src/Test.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {Morpho} from "../../../src/Morpho.sol";
-import {IMorpho, Id, MarketParams, Position, Market} from "../../../src/interfaces/IMorpho.sol";
+import {IMorpho, IMorphoCredit, Id, MarketParams, Position, Market} from "../../../src/interfaces/IMorpho.sol";
 import {MathLib, WAD} from "../../../src/libraries/MathLib.sol";
 import {SharesMathLib} from "../../../src/libraries/SharesMathLib.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
@@ -98,14 +98,23 @@ contract MorphoCreditTest is Test {
             creditLine: address(creditLine)
         });
 
-        vm.prank(owner);
+        vm.startPrank(owner);
         morpho.enableLltv(0.8e18);
-
-        vm.prank(owner);
         morpho.enableIrm(address(irm));
-
         morpho.createMarket(marketParams);
+        vm.stopPrank();
+
         marketId = marketParams.id();
+
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + 30 days);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(address(creditLine));
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            marketId, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
 
         // Set fee recipient
         vm.prank(owner);
@@ -142,6 +151,7 @@ contract MorphoCreditTest is Test {
         protocolConfig.setConfig(keccak256("MIN_BORROW"), 1000e18); // 1 token minimum borrow
         protocolConfig.setConfig(keccak256("GRACE_PERIOD"), 7 days); // 7 days grace period
         protocolConfig.setConfig(keccak256("DELINQUENCY_PERIOD"), 23 days); // 23 days delinquency period
+        protocolConfig.setConfig(keccak256("CYCLE_DURATION"), 30 days); // 30 days cycle duration
         vm.stopPrank();
     }
 
@@ -292,25 +302,29 @@ contract MorphoCreditTest is Test {
         morpho.supply(marketParams, supplyAmount, 0, borrower, "");
         vm.prank(address(creditLine));
         MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, 1000e18, 0);
-        // Move time forward first to avoid underflow
-        vm.warp(block.timestamp + 10 days);
-
         // First, have the borrower actually borrow some funds
         loanToken.setBalance(borrower, 0);
         vm.prank(helper);
         morpho.borrow(marketParams, 100e18, 0, borrower, borrower);
 
-        // Create a payment cycle with obligation that ended in the past
-        uint256 endDate = block.timestamp - 2 days;
+        // Create a payment cycle with obligation
+        // Start the cycle at current time and end it 30 days later (matching CYCLE_DURATION)
+        uint256 cycleStartTime = block.timestamp;
+        uint256 cycleEndTime = cycleStartTime + 30 days;
+
+        // Warp to cycle end so we can close it
+        vm.warp(cycleEndTime + 1);
+
         address[] memory borrowers = new address[](1);
         uint256[] memory repaymentBps = new uint256[](1);
         uint256[] memory endingBalances = new uint256[](1);
         borrowers[0] = borrower;
         repaymentBps[0] = 1000; // 10% repayment
         endingBalances[0] = 100e18; // Current balance
+
         vm.prank(address(creditLine));
         MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            marketId, endDate, borrowers, repaymentBps, endingBalances
+            marketId, cycleEndTime, borrowers, repaymentBps, endingBalances
         );
 
         vm.expectRevert(ErrorsLib.OutstandingRepayment.selector);
@@ -333,7 +347,8 @@ contract MorphoCreditTest is Test {
 
         (uint128 lastAccrualTime, uint128 rate,) = MorphoCredit(address(morpho)).borrowerPremium(marketId, borrower);
         assertEq(rate, newRatePerSecond);
-        assertEq(lastAccrualTime, block.timestamp);
+        // With Issue #13 fix: timestamp is NOT set until first borrow
+        assertEq(lastAccrualTime, 0);
         // Credit line is set in market collateral
         Position memory pos = morpho.position(marketId, borrower);
         assertEq(pos.collateral, creditAmount);

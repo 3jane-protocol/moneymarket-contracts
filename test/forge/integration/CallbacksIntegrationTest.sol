@@ -34,6 +34,9 @@ contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupp
         vm.prank(OWNER);
         morpho.createMarket(marketParams);
 
+        // Initialize the market with a cycle to prevent freezing
+        _ensureMarketActive(id);
+
         // Set up MorphoCredit to allow this test contract to act as helper and USD3
         vm.startPrank(OWNER);
         IMorphoCredit(address(morpho)).setHelper(address(this));

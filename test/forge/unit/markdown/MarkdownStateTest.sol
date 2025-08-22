@@ -48,6 +48,9 @@ contract MarkdownStateTest is BaseTest {
         creditLine.setMm(address(markdownManager));
         vm.stopPrank();
 
+        // Initialize first cycle to unfreeze the market
+        _ensureMarketActive(id);
+
         // Setup initial supply
         loanToken.setBalance(SUPPLIER, 100_000e18);
         vm.prank(SUPPLIER);
@@ -73,7 +76,7 @@ contract MarkdownStateTest is BaseTest {
         // Note: statusStartTime may not be 0 if borrower is in grace/delinquent status
 
         // Move directly to default period (add 1 day for markdown to accrue)
-        vm.warp(expectedDefaultTime + 1 days);
+        _continueMarketCycles(id, expectedDefaultTime + 1 days);
 
         // Expect DefaultStarted event
         vm.expectEmit(true, true, false, true);
@@ -100,7 +103,7 @@ contract MarkdownStateTest is BaseTest {
         _createPastObligation(BORROWER, 500, 10_000e18);
 
         // Fast forward to default
-        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify in default with timestamp set
@@ -147,7 +150,7 @@ contract MarkdownStateTest is BaseTest {
         _createPastObligation(ONBEHALF, 500, 10_000e18);
 
         // Fast forward to default
-        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
 
         // Touch only BORROWER
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
@@ -167,7 +170,7 @@ contract MarkdownStateTest is BaseTest {
         assertEq(onbehalfLastMarkdown, 0, "ONBEHALF should not have markdown (not touched)");
 
         // Forward time significantly
-        vm.warp(block.timestamp + 10 days);
+        _continueMarketCycles(id, block.timestamp + 10 days);
 
         // BORROWER's markdown should still be stale (not updated)
         uint128 borrowerLastMarkdown = morphoCredit.markdownState(id, BORROWER);
@@ -209,7 +212,7 @@ contract MarkdownStateTest is BaseTest {
         }
 
         // Fast forward to default
-        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
 
         // Get initial market state
         Market memory marketBefore = morpho.market(id);
@@ -236,7 +239,7 @@ contract MarkdownStateTest is BaseTest {
         }
 
         // Forward time and update one borrower
-        vm.warp(block.timestamp + 5 days);
+        _continueMarketCycles(id, block.timestamp + 5 days);
 
         // Get stored markdown for first borrower before update
         uint128 storedMarkdown = morphoCredit.markdownState(id, borrowers[0]);
@@ -270,7 +273,7 @@ contract MarkdownStateTest is BaseTest {
         _createPastObligation(BORROWER, 500, 10_000e18);
 
         // Go to default
-        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         uint128 markdown1 = morphoCredit.markdownState(id, BORROWER);
@@ -293,11 +296,11 @@ contract MarkdownStateTest is BaseTest {
         assertEq(markdown2, 0, "Should have no markdown after repay");
 
         // Cycle 2: Create new obligation and default again
-        vm.warp(block.timestamp + 10 days);
+        _continueMarketCycles(id, block.timestamp + 10 days);
         _createPastObligation(BORROWER, 1000, 10_000e18); // 10% repayment this time
 
         // Go to default again
-        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         uint128 markdown3 = morphoCredit.markdownState(id, BORROWER);
@@ -329,7 +332,7 @@ contract MarkdownStateTest is BaseTest {
         assertEq(markdown, 0, "Grace period borrower should have no markdown");
 
         // Test Delinquent
-        vm.warp(cycleEndDate + GRACE_PERIOD_DURATION + 1);
+        _continueMarketCycles(id, cycleEndDate + GRACE_PERIOD_DURATION + 1);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
         markdown = morphoCredit.markdownState(id, BORROWER);
         assertEq(markdown, 0, "Delinquent borrower should have no markdown");

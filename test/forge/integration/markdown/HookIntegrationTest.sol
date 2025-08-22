@@ -47,6 +47,11 @@ contract HookIntegrationTest is BaseTest {
         creditLine.setMm(address(markdownManager));
         vm.stopPrank();
 
+        // Initialize first cycle to unfreeze the market
+        // Move forward by more than one cycle to allow for past obligations
+        _continueMarketCycles(id, block.timestamp + CYCLE_DURATION + 7 days);
+        // Market is now active with a cycle
+
         // Setup initial supply
         loanToken.setBalance(SUPPLIER, 500_000e18);
         vm.prank(SUPPLIER);
@@ -70,7 +75,7 @@ contract HookIntegrationTest is BaseTest {
 
         // Move to default period and wait for markdown to accumulate
         uint256 defaultStart = cycleEnd + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION;
-        vm.warp(defaultStart + 5 days); // 5 days into default
+        _continueMarketCycles(id, defaultStart + 5 days); // 5 days into default
 
         // Verify we're in default
         (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, BORROWER);
@@ -88,7 +93,7 @@ contract HookIntegrationTest is BaseTest {
         assertTrue(markdownBefore > 0, "Should have markdown after 5 days in default");
 
         // Forward time so markdown accumulates more
-        vm.warp(block.timestamp + 5 days);
+        _continueMarketCycles(id, block.timestamp + 5 days);
 
         // Clear the obligation to test borrow hook
         _repayObligation(BORROWER);
@@ -123,7 +128,7 @@ contract HookIntegrationTest is BaseTest {
         assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default after _moveToDefault");
 
         // Let markdown accrue
-        vm.warp(block.timestamp + 10 days);
+        _continueMarketCycles(id, block.timestamp + 10 days);
 
         // Trigger markdown update to set default time
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
@@ -186,7 +191,7 @@ contract HookIntegrationTest is BaseTest {
         _moveToDefault();
 
         // Let markdown accrue
-        vm.warp(block.timestamp + 15 days);
+        _continueMarketCycles(id, block.timestamp + 15 days);
 
         // Get initial market state
         Market memory marketBefore = morpho.market(id);
@@ -256,7 +261,7 @@ contract HookIntegrationTest is BaseTest {
         _setupBorrowerWithLoan(defaultedBorrower, borrowAmount);
         _createPastObligation(defaultedBorrower, 500, borrowAmount);
         _moveToDefault();
-        vm.warp(block.timestamp + 10 days);
+        _continueMarketCycles(id, block.timestamp + 10 days);
 
         // Measure gas for defaulted borrower repay (includes markdown update)
         loanToken.setBalance(defaultedBorrower, 5_000e18);
@@ -283,7 +288,7 @@ contract HookIntegrationTest is BaseTest {
         _setupBorrowerWithLoan(BORROWER, borrowAmount);
         _createPastObligation(BORROWER, 500, borrowAmount);
         _moveToDefault();
-        vm.warp(block.timestamp + 20 days);
+        _continueMarketCycles(id, block.timestamp + 20 days);
 
         // Update markdown
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
@@ -339,7 +344,7 @@ contract HookIntegrationTest is BaseTest {
         (uint128 cycleId,,) = morphoCredit.repaymentObligation(id, borrower1);
         uint256 cycleEndDate = morphoCredit.paymentCycle(id, cycleId);
         uint256 defaultTime = cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1;
-        vm.warp(defaultTime + 10 days);
+        _continueMarketCycles(id, defaultTime + 10 days);
 
         // Trigger markdown accrual for borrower1
         morphoCredit.accrueBorrowerPremium(id, borrower1);
@@ -409,7 +414,7 @@ contract HookIntegrationTest is BaseTest {
         if (amountDue > 0) {
             uint256 cycleEndDate = morphoCredit.paymentCycle(id, cycleId);
             uint256 defaultTime = cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1;
-            vm.warp(defaultTime);
+            _continueMarketCycles(id, defaultTime);
         }
     }
 

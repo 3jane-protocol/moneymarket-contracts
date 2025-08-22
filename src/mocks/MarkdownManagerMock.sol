@@ -84,10 +84,4 @@ contract MarkdownManagerMock is IMarkdownManager {
         uint256 remainingValueBps = BPS - markdownBps;
         multiplier = (remainingValueBps * WAD) / BPS;
     }
-
-    /// @inheritdoc IMarkdownManager
-    function isValidForMarket(Id) external pure returns (bool) {
-        // Mock always returns true for any market
-        return true;
-    }
 }

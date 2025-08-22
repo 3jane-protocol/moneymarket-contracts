@@ -17,9 +17,8 @@ library MorphoStorageLib {
     uint256 internal constant MARKET_SLOT = 3;
     uint256 internal constant IS_IRM_ENABLED_SLOT = 4;
     uint256 internal constant IS_LLTV_ENABLED_SLOT = 5;
-    uint256 internal constant IS_AUTHORIZED_SLOT = 6;
-    uint256 internal constant NONCE_SLOT = 7;
-    uint256 internal constant ID_TO_MARKET_PARAMS_SLOT = 8;
+    uint256 internal constant NONCE_SLOT = 6;
+    uint256 internal constant ID_TO_MARKET_PARAMS_SLOT = 7;
 
     /* SLOT OFFSETS */
 
@@ -78,10 +77,6 @@ library MorphoStorageLib {
 
     function isLltvEnabledSlot(uint256 lltv) internal pure returns (bytes32) {
         return keccak256(abi.encode(lltv, IS_LLTV_ENABLED_SLOT));
-    }
-
-    function isAuthorizedSlot(address authorizer, address authorizee) internal pure returns (bytes32) {
-        return keccak256(abi.encode(authorizee, keccak256(abi.encode(authorizer, IS_AUTHORIZED_SLOT))));
     }
 
     function nonceSlot(address authorizer) internal pure returns (bytes32) {
