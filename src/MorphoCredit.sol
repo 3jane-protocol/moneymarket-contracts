@@ -399,18 +399,17 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         MarketParams memory marketParams = idToMarketParams[id];
         _accrueInterest(marketParams, id);
 
-        BorrowerPremium memory premium = borrowerPremium[id][borrower];
-        uint128 oldRate = premium.rate;
-
-        // If there's an existing position with borrow shares
+        // If there's an existing position with borrow shares, accrue premium
         uint256 borrowShares = uint256(position[id][borrower].borrowShares);
-
-        // If there was a previous rate, accrue premium first
-        if (borrowShares > 0 && oldRate > 0) {
+        if (borrowShares > 0) {
             _accrueBorrowerPremium(id, borrower);
         }
 
-        // Set the new rate before taking snapshot
+        // Load premium from storage
+        BorrowerPremium memory premium = borrowerPremium[id][borrower];
+        uint128 oldRate = premium.rate;
+
+        // Set the new rate
         premium.rate = newRate;
         borrowerPremium[id][borrower] = premium;
 
