@@ -276,7 +276,7 @@ contract MarkdownManagerTest is BaseTest {
     }
 }
 
-/// @notice Mock markdown manager that always returns false for isValidForMarket
+/// @notice Mock markdown manager that returns zero markdown
 contract InvalidMarkdownManager is IMarkdownManager {
     function calculateMarkdown(address, uint256, uint256) external pure returns (uint256) {
         return 0;
@@ -284,10 +284,6 @@ contract InvalidMarkdownManager is IMarkdownManager {
 
     function getMarkdownMultiplier(uint256) external pure returns (uint256) {
         return 1e18;
-    }
-
-    function isValidForMarket(Id) external pure returns (bool) {
-        return false;
     }
 }
 
@@ -299,9 +295,5 @@ contract RevertingMarkdownManager is IMarkdownManager {
 
     function getMarkdownMultiplier(uint256) external pure returns (uint256) {
         revert("Markdown calculation failed");
-    }
-
-    function isValidForMarket(Id) external pure returns (bool) {
-        return true;
     }
 }

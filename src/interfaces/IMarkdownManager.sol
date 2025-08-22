@@ -20,9 +20,4 @@ interface IMarkdownManager {
     /// @param timeInDefault The duration in seconds since the borrower entered default
     /// @return multiplier The value multiplier (1e18 = 100% value, 0 = 0% value)
     function getMarkdownMultiplier(uint256 timeInDefault) external view returns (uint256 multiplier);
-
-    /// @notice Check if a market is valid for markdown calculations
-    /// @param market The market ID to check
-    /// @return isValid True if the market is valid for markdown calculations
-    function isValidForMarket(Id market) external view returns (bool isValid);
 }

@@ -17,7 +17,8 @@ import {
 } from "types";
 import { MarketParamsStruct } from "types/src/Morpho";
 import { CreditLineMock } from "types/src/mocks/CreditLineMock";
-import { FlashBorrowerMock } from "types/src/mocks/FlashBorrowerMock";
+
+// import { FlashBorrowerMock } from "types/src/mocks/FlashBorrowerMock"; // Flash loans removed
 
 const closePositions = false;
 // Without the division it overflows.
@@ -63,7 +64,7 @@ describe("Morpho", () => {
   let oracle: OracleMock;
   let irm: IrmMock;
   let creditLine: CreditLineMock;
-  let flashBorrower: FlashBorrowerMock;
+  // let flashBorrower: FlashBorrowerMock; // Flash loans removed
   let usd3: USD3Mock;
   let helper: HelperMock;
 
@@ -184,9 +185,9 @@ describe("Morpho", () => {
     await loanToken.connect(liquidator).approve(usd3Address, MaxUint256); // Approve USD3
     await loanToken.connect(liquidator).approve(helperAddress, MaxUint256); // Approve Helper
 
-    const FlashBorrowerFactory = await hre.ethers.getContractFactory("FlashBorrowerMock", admin);
-
-    flashBorrower = await FlashBorrowerFactory.deploy(morphoAddress);
+    // Flash loans removed - no longer creating FlashBorrowerMock
+    // const FlashBorrowerFactory = await hre.ethers.getContractFactory("FlashBorrowerMock", admin);
+    // flashBorrower = await FlashBorrowerFactory.deploy(morphoAddress);
   });
 
   it("should simulate gas cost [main]", async () => {
@@ -266,7 +267,8 @@ describe("Morpho", () => {
 
     const loanAddress = await loanToken.getAddress();
 
-    const data = AbiCoder.defaultAbiCoder().encode(["address"], [loanAddress]);
-    await flashBorrower.flashLoan(loanAddress, assets / 2n, data);
+    // Flash loans removed - test skipped
+    // const data = AbiCoder.defaultAbiCoder().encode(["address"], [loanAddress]);
+    // await flashBorrower.flashLoan(loanAddress, assets / 2n, data);
   });
 });
