@@ -175,10 +175,11 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         if (onBehalf == address(0)) revert ErrorsLib.ZeroAddress();
 
         _accrueInterest(marketParams, id);
-        _beforeSupply(marketParams, id, onBehalf, assets, shares, data);
 
         if (assets > 0) shares = assets.toSharesDown(market[id].totalSupplyAssets, market[id].totalSupplyShares);
         else assets = shares.toAssetsUp(market[id].totalSupplyAssets, market[id].totalSupplyShares);
+
+        _beforeSupply(marketParams, id, onBehalf, assets, shares, data);
 
         position[id][onBehalf].supplyShares += shares;
         market[id].totalSupplyShares += shares.toUint128();
@@ -207,10 +208,11 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         if (receiver == address(0)) revert ErrorsLib.ZeroAddress();
 
         _accrueInterest(marketParams, id);
-        _beforeWithdraw(marketParams, id, onBehalf, assets, shares);
 
         if (assets > 0) shares = assets.toSharesUp(market[id].totalSupplyAssets, market[id].totalSupplyShares);
         else assets = shares.toAssetsDown(market[id].totalSupplyAssets, market[id].totalSupplyShares);
+
+        _beforeWithdraw(marketParams, id, onBehalf, assets, shares);
 
         position[id][onBehalf].supplyShares -= shares;
         market[id].totalSupplyShares -= shares.toUint128();
@@ -241,12 +243,12 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         if (receiver == address(0)) revert ErrorsLib.ZeroAddress();
 
         _accrueInterest(marketParams, id);
-        _beforeBorrow(marketParams, id, onBehalf, assets, shares);
 
         if (assets > 0) shares = assets.toSharesUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
         else assets = shares.toAssetsDown(market[id].totalBorrowAssets, market[id].totalBorrowShares);
 
-        // Prevent griefing attack: ensure borrowing shares results in borrowing at least 1 asset
+        _beforeBorrow(marketParams, id, onBehalf, assets, shares);
+
         if (assets == 0 && shares > 0) revert ErrorsLib.InsufficientBorrowAmount();
 
         position[id][onBehalf].borrowShares += shares.toUint128();
@@ -279,10 +281,11 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         if (onBehalf == address(0)) revert ErrorsLib.ZeroAddress();
 
         _accrueInterest(marketParams, id);
-        _beforeRepay(marketParams, id, onBehalf, assets, shares);
 
         if (assets > 0) shares = assets.toSharesDown(market[id].totalBorrowAssets, market[id].totalBorrowShares);
         else assets = shares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
+
+        _beforeRepay(marketParams, id, onBehalf, assets, shares);
 
         position[id][onBehalf].borrowShares -= shares.toUint128();
         market[id].totalBorrowShares -= shares.toUint128();
