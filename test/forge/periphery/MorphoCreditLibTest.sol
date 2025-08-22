@@ -45,6 +45,9 @@ contract MorphoCreditLibTest is BaseTest {
         creditLine.setMm(address(markdownManager));
         vm.stopPrank();
 
+        // Initialize market cycles since it has a credit line
+        _ensureMarketActive(id);
+
         // Setup initial supply
         loanToken.setBalance(SUPPLIER, 100_000e18);
         vm.prank(SUPPLIER);

@@ -17,6 +17,8 @@ import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 contract MorphoCreditRepaymentTest is BaseTest {
     using MarketParamsLib for MarketParams;
 
+    uint256 internal constant TEST_CYCLE_DURATION = 30 days;
+
     CreditLineMock internal creditLine;
     address internal CREDIT_LINE_OWNER;
 
@@ -27,6 +29,10 @@ contract MorphoCreditRepaymentTest is BaseTest {
 
     function setUp() public override {
         super.setUp();
+
+        // Set cycle duration in protocol config
+        vm.prank(OWNER);
+        protocolConfig.setConfig(keccak256("CYCLE_DURATION"), TEST_CYCLE_DURATION);
 
         CREDIT_LINE_OWNER = makeAddr("CreditLineOwner");
         ALICE = makeAddr("Alice");

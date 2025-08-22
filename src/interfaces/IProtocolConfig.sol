@@ -85,6 +85,10 @@ interface IProtocolConfig {
     /// @return The SUSD3 cooldown period value
     function getSusd3CooldownPeriod() external view returns (uint256);
 
+    /// @dev Get the cycle duration for payment cycles
+    /// @return The cycle duration in seconds
+    function getCycleDuration() external view returns (uint256);
+
     /// @dev Get configuration value by key
     /// @param key The configuration key
     /// @return The configuration value

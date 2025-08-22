@@ -68,6 +68,16 @@ contract PhantomLiquidityTest is BaseTest {
         morpho.createMarket(marketParams);
         id = marketParams.id();
 
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + CYCLE_DURATION);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
+
         IMorphoCredit mc = IMorphoCredit(address(morpho));
 
         // Fund the morpho contract to simulate USD3 deposits
@@ -92,6 +102,20 @@ contract PhantomLiquidityTest is BaseTest {
         // Funds remain safe in the contract
         uint256 morphoBalance = loanToken.balanceOf(address(morpho));
         assertEq(morphoBalance, 10 ** 10 * 10 ** 18, "All funds should remain safe");
+        maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 0);
+        vm.warp(block.timestamp + 1 days);
+        mc.accrueBorrowerPremium(id, BORROWER);
+
+        m = morpho.market(id);
+
+        // Verify the fix prevents phantom liquidity creation
+        // The supply should only reflect actual marked down amount, not the requested 10^28
+        assertTrue(m.totalSupplyAssets < 10 ** 20, "Supply should not have phantom liquidity");
+
+        // Step 5: Attempt to drain funds should fail
+        address attacker2 = makeAddr("Attacker2");
+        vm.prank(address(maliciousCreditLine));
+        mc.setCreditLine(id, attacker2, HIGH_COLLATERAL_AMOUNT, 0);
     }
 
     /// @notice Test that markdown is properly capped at borrower's debt
@@ -101,6 +125,16 @@ contract PhantomLiquidityTest is BaseTest {
         vm.prank(OWNER);
         morpho.createMarket(marketParams);
         id = marketParams.id();
+
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + CYCLE_DURATION);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
 
         IMorphoCredit mc = IMorphoCredit(address(morpho));
 
@@ -121,15 +155,17 @@ contract PhantomLiquidityTest is BaseTest {
         morpho.borrow(marketParams, 10 ether, 0, BORROWER, BORROWER);
 
         // Set up repayment obligation to trigger default
-        address[] memory borrowers = new address[](1);
-        borrowers[0] = BORROWER;
-        uint256[] memory repaymentBps = new uint256[](1);
-        repaymentBps[0] = 10000;
-        uint256[] memory endingBalances = new uint256[](1);
-        endingBalances[0] = 10 ether;
+        address[] memory borrowers3 = new address[](1);
+        borrowers3[0] = BORROWER;
+        uint256[] memory repaymentBps3 = new uint256[](1);
+        repaymentBps3[0] = 10000;
+        uint256[] memory endingBalances3 = new uint256[](1);
+        endingBalances3[0] = 10 ether;
 
+        // Move forward to allow next cycle
+        vm.warp(block.timestamp + CYCLE_DURATION);
         vm.prank(address(maliciousCreditLine));
-        mc.closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
+        mc.closeCycleAndPostObligations(id, block.timestamp, borrowers3, repaymentBps3, endingBalances3);
 
         // Move to default
         vm.warp(block.timestamp + 31 days);

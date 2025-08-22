@@ -42,6 +42,16 @@ contract MarkdownManagerTest is BaseTest {
         morpho.createMarket(marketParams);
         vm.stopPrank();
 
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + CYCLE_DURATION);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
+
         // Setup initial supply
         loanToken.setBalance(SUPPLIER, 100_000e18);
         vm.prank(SUPPLIER);

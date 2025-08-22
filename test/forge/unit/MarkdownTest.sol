@@ -13,12 +13,18 @@ contract MarkdownTest is BaseTest {
     using MarketParamsLib for MarketParams;
     using MorphoBalancesLib for IMorpho;
 
+    uint256 internal constant TEST_CYCLE_DURATION = 30 days;
+
     MarkdownManagerMock markdownManager;
     CreditLineMock creditLine;
     IMorphoCredit morphoCredit;
 
     function setUp() public override {
         super.setUp();
+
+        // Set cycle duration in protocol config
+        vm.prank(OWNER);
+        protocolConfig.setConfig(keccak256("CYCLE_DURATION"), TEST_CYCLE_DURATION);
 
         // Deploy markdown manager
         markdownManager = new MarkdownManagerMock();
@@ -42,6 +48,14 @@ contract MarkdownTest is BaseTest {
         morpho.createMarket(marketParams);
         creditLine.setMm(address(markdownManager));
         vm.stopPrank();
+
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + TEST_CYCLE_DURATION);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(address(creditLine));
+        morphoCredit.closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
     }
 
     function testMarkdownManagerSet() public {
@@ -125,6 +139,9 @@ contract MarkdownTest is BaseTest {
 
         // Fast forward to default
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+
+        // Continue market cycles to keep market active
+        _continueMarketCycles(id, block.timestamp + 30 days);
 
         // Settle the debt
         loanToken.setBalance(address(creditLine), repayAmount);

@@ -53,6 +53,9 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         maliciousCreditLine.setMm(address(maliciousMarkdownManager));
         vm.stopPrank();
 
+        // Initialize market to prevent freezing
+        _ensureMarketActive(id);
+
         // Fund morpho with exact POC amount
         loanToken.setBalance(address(morpho), INITIAL_BALANCE);
     }
@@ -222,11 +225,11 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         uint256[] memory endingBalances = new uint256[](1);
         endingBalances[0] = amount;
 
-        vm.prank(address(maliciousCreditLine));
-        morphoCredit.closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
+        // Use helper to create obligation with proper cycle management
+        _createMultipleObligations(id, borrowers, repaymentBps, endingBalances, 0);
 
-        // Move to default (exact POC timing)
-        vm.warp(block.timestamp + 31 days);
+        // Move to default (31 days past cycle end, which is 1 day ago from _createMultipleObligations)
+        vm.warp(block.timestamp + 30 days);
         morphoCredit.accrueBorrowerPremium(id, borrower);
     }
 }
