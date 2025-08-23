@@ -27,7 +27,6 @@ import {MathLib, WAD} from "./libraries/MathLib.sol";
 import {MarketParamsLib} from "./libraries/MarketParamsLib.sol";
 import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
-import {ORACLE_PRICE_SCALE} from "./libraries/ConstantsLib.sol";
 
 /// @title Morpho Credit
 /// @author Morpho Labs
@@ -459,11 +458,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
             uint256 cycleDuration = IProtocolConfig(protocolConfig).getCycleDuration();
 
-            if (cycleDuration > 0) {
-                uint256 expectedCycleEnd = startDate + cycleDuration;
-                if (endDate < expectedCycleEnd) {
-                    revert ErrorsLib.InvalidCycleDuration();
-                }
+            if (cycleDuration > 0 && endDate < startDate + cycleDuration) {
+                revert ErrorsLib.InvalidCycleDuration();
             }
         }
 
@@ -727,19 +723,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         Market memory market = market[id];
         uint256 borrowed = uint256(position.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
+        uint256 creditLimit = position.collateral;
 
-        // Check if this is a credit line market or collateralized market
-        if (marketParams.creditLine != address(0)) {
-            // For credit-based lending, health is determined by credit utilization
-            // position.collateral represents the credit limit
-            uint256 creditLimit = position.collateral;
-            return creditLimit >= borrowed;
-        } else {
-            // For collateralized markets, use the original collateral logic
-            uint256 maxBorrow =
-                uint256(position.collateral).mulDivDown(collateralPrice, ORACLE_PRICE_SCALE).wMulDown(marketParams.lltv);
-            return maxBorrow >= borrowed;
-        }
+        return creditLimit >= borrowed;
     }
 
     /* MARKDOWN FUNCTIONS */
@@ -841,29 +827,13 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @return Whether the market is frozen
     function _isMarketFrozen(Id id) internal view returns (bool) {
-        // Get market params to check if it has a credit line
-        MarketParams memory marketParams = idToMarketParams[id];
-
-        // Only apply frozen checks to credit line markets
-        if (marketParams.creditLine == address(0)) {
-            return false; // Collateralized markets are never frozen
-        }
-
         uint256 cycleCount = paymentCycle[id].length;
-
-        if (cycleCount == 0) {
-            // No cycles yet - market frozen until first cycle
-            return true;
-        }
-
-        // Get cycle duration from protocol config
         uint256 cycleDuration = IProtocolConfig(protocolConfig).getCycleDuration();
-        if (cycleDuration == 0) {
-            // If cycle duration not set, market is frozen (safety mechanism)
+
+        if (cycleCount == 0 || cycleDuration == 0) {
             return true;
         }
 
-        // Check if we're past when the next cycle should have ended
         uint256 lastCycleEnd = paymentCycle[id][cycleCount - 1].endDate;
         uint256 expectedNextCycleEnd = lastCycleEnd + cycleDuration;
 
