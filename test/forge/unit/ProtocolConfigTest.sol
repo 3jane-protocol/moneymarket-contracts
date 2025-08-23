@@ -35,6 +35,9 @@ contract ProtocolConfigTest is Test {
     bytes32 private constant TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
     bytes32 private constant SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
     bytes32 private constant SUSD3_COOLDOWN_PERIOD = keccak256("SUSD3_COOLDOWN_PERIOD");
+    bytes32 private constant USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
+    bytes32 private constant SUSD3_WITHDRAWAL_WINDOW = keccak256("SUSD3_WITHDRAWAL_WINDOW");
+    bytes32 private constant CYCLE_DURATION = keccak256("CYCLE_DURATION");
 
     function setUp() public {
         owner = makeAddr("ProtocolConfigOwner");
@@ -167,5 +170,26 @@ contract ProtocolConfigTest is Test {
         vm.prank(owner);
         protocolConfig.setConfig(SUSD3_COOLDOWN_PERIOD, testValue);
         assertEq(protocolConfig.getSusd3CooldownPeriod(), testValue);
+    }
+
+    function test_GetCycleDuration() public {
+        uint256 testValue = 30 days;
+        vm.prank(owner);
+        protocolConfig.setConfig(CYCLE_DURATION, testValue);
+        assertEq(protocolConfig.getCycleDuration(), testValue);
+    }
+
+    function test_GetUsd3CommitmentTime() public {
+        uint256 testValue = 90 days;
+        vm.prank(owner);
+        protocolConfig.setConfig(USD3_COMMITMENT_TIME, testValue);
+        assertEq(protocolConfig.getUsd3CommitmentTime(), testValue);
+    }
+
+    function test_GetSusd3WithdrawalWindow() public {
+        uint256 testValue = 2 days; // 172800 seconds
+        vm.prank(owner);
+        protocolConfig.setConfig(SUSD3_WITHDRAWAL_WINDOW, testValue);
+        assertEq(protocolConfig.getSusd3WithdrawalWindow(), testValue);
     }
 }
