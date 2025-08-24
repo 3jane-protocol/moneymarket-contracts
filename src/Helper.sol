@@ -13,8 +13,8 @@ import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 import {IERC4626} from "../lib/forge-std/src/interfaces/IERC4626.sol";
 
 /// @title Helper
-/// @author Morpho Labs
-/// @custom:contact security@morpho.org
+/// @author 3Jane
+/// @custom:contact support@3jane.xyz
 contract Helper is IHelper {
     using SafeTransferLib for IERC20;
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.22;
 
 import {
@@ -29,8 +29,8 @@ import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 
 /// @title Morpho Credit
-/// @author Morpho Labs
-/// @custom:contact security@morpho.org
+/// @author 3Jane
+/// @custom:contact support@3jane.xyz
 /// @notice The Morpho Credit contract extends Morpho with credit-based lending and per-borrower risk premiums.
 /// @dev This contract implements a three-tier interest accrual system:
 ///
