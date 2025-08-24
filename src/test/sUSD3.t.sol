@@ -362,9 +362,9 @@ contract sUSD3Test is Setup {
         protocolConfig.setConfig(SUSD3_COOLDOWN_PERIOD, 14 days);
         assertEq(susd3Strategy.cooldownDuration(), 14 days);
 
-        // Set withdrawal window (locally managed)
-        vm.prank(management);
-        susd3Strategy.setWithdrawalWindow(3 days);
+        // Set withdrawal window via protocol config
+        bytes32 SUSD3_WITHDRAWAL_WINDOW = keccak256("SUSD3_WITHDRAWAL_WINDOW");
+        protocolConfig.setConfig(SUSD3_WITHDRAWAL_WINDOW, 3 days);
         assertEq(susd3Strategy.withdrawalWindow(), 3 days);
     }
 
@@ -388,22 +388,8 @@ contract sUSD3Test is Setup {
         protocolConfig.setConfig(SUSD3_COOLDOWN_PERIOD, 31 days);
         assertEq(susd3Strategy.cooldownDuration(), 31 days);
 
-        // Window too short
-        vm.prank(management);
-        vm.expectRevert("Invalid window");
-        susd3Strategy.setWithdrawalWindow(12 hours);
-
-        // Window too long
-        vm.prank(management);
-        vm.expectRevert("Invalid window");
-        susd3Strategy.setWithdrawalWindow(8 days);
-    }
-
-    function test_onlyManagement() public {
-        // Test that withdrawal window setter is still protected
-        vm.prank(alice);
-        vm.expectRevert();
-        susd3Strategy.setWithdrawalWindow(3 days);
+        // Withdrawal window validation now handled by ProtocolConfig
+        // Tests for validation would be done at ProtocolConfig level
     }
 
     /*//////////////////////////////////////////////////////////////

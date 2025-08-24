@@ -5,6 +5,8 @@ import {Setup} from "../utils/Setup.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {USD3} from "../../USD3.sol";
+import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
+import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 
 /**
  * @title CommitmentEdgeCases
@@ -25,9 +27,15 @@ contract CommitmentEdgeCasesTest is Setup {
 
         // Emergency admin is already set in Setup
 
-        // Enable commitment period
-        vm.prank(management);
-        usd3Strategy.setMinCommitmentTime(7 days);
+        // Enable commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
+        MockProtocolConfig(protocolConfigAddress).setConfig(
+            USD3_COMMITMENT_TIME,
+            7 days
+        );
 
         // Give users USDC
         deal(address(underlyingAsset), alice, 10_000e6);
@@ -212,8 +220,15 @@ contract CommitmentEdgeCasesTest is Setup {
      */
     function test_zeroCommitmentPeriod() public {
         // Set commitment period to zero
-        vm.prank(management);
-        usd3Strategy.setMinCommitmentTime(0);
+        // Disable commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
+        MockProtocolConfig(protocolConfigAddress).setConfig(
+            USD3_COMMITMENT_TIME,
+            0
+        );
 
         // Alice deposits
         vm.startPrank(alice);
@@ -240,8 +255,15 @@ contract CommitmentEdgeCasesTest is Setup {
         skip(5 days);
 
         // Management changes commitment to 3 days
-        vm.prank(management);
-        usd3Strategy.setMinCommitmentTime(3 days);
+        // Set commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
+        MockProtocolConfig(protocolConfigAddress).setConfig(
+            USD3_COMMITMENT_TIME,
+            3 days
+        );
 
         // Alice still can't withdraw (commitment doesn't apply retroactively)
         // But with the new logic, changing commitment time doesn't affect existing deposits
@@ -333,9 +355,15 @@ contract CommitmentEdgeCasesTest is Setup {
      * @notice Test rapid deposits and withdrawals at commitment boundaries
      */
     function test_rapidDepositsWithdrawalsAtBoundaries() public {
-        // Enable shorter commitment for rapid testing
-        vm.prank(management);
-        usd3Strategy.setMinCommitmentTime(1 days);
+        // Enable shorter commitment for rapid testing via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
+        MockProtocolConfig(protocolConfigAddress).setConfig(
+            USD3_COMMITMENT_TIME,
+            1 days
+        );
 
         vm.startPrank(alice);
         underlyingAsset.approve(address(usd3Strategy), 10_000e6);

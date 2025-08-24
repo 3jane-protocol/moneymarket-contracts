@@ -3,6 +3,8 @@ pragma solidity ^0.8.18;
 
 import {Setup} from "../utils/Setup.sol";
 import {USD3} from "../../USD3.sol";
+import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
+import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {sUSD3} from "../../sUSD3.sol";
 import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
@@ -51,14 +53,24 @@ contract TransferRestrictionInvariants is Setup {
         susd3Strategy = sUSD3(address(susd3Proxy));
 
         // Link strategies
+        // Set commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
+
+        // Configure commitment and lock periods
         vm.prank(management);
         usd3Strategy.setSUSD3(address(susd3Strategy));
 
-        // Configure commitment and lock periods
-        vm.startPrank(management);
-        usd3Strategy.setMinCommitmentTime(7 days);
+        // Set config as the owner (test contract in this case)
+        MockProtocolConfig(protocolConfigAddress).setConfig(
+            USD3_COMMITMENT_TIME,
+            7 days
+        );
+
+        vm.prank(management);
         usd3Strategy.setMinDeposit(100e6);
-        vm.stopPrank();
 
         // Deploy handler for invariant testing
         handler = new TransferRestrictionHandler(

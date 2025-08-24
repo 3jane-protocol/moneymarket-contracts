@@ -410,8 +410,8 @@ contract EdgeCases is Setup {
         protocolConfig.setConfig(SUSD3_LOCK_DURATION, lockDuration);
         protocolConfig.setConfig(SUSD3_COOLDOWN_PERIOD, cooldownDuration);
 
-        vm.prank(management);
-        susd3Strategy.setWithdrawalWindow(withdrawalWindow);
+        bytes32 SUSD3_WITHDRAWAL_WINDOW = keccak256("SUSD3_WITHDRAWAL_WINDOW");
+        protocolConfig.setConfig(SUSD3_WITHDRAWAL_WINDOW, withdrawalWindow);
 
         // Test deposit with new lock duration
         vm.startPrank(alice);

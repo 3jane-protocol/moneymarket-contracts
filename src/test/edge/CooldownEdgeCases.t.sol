@@ -7,6 +7,8 @@ import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrat
 import {sUSD3} from "../../sUSD3.sol";
 import {USD3} from "../../USD3.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
+import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 
 /**
  * @title CooldownEdgeCases
@@ -388,9 +390,15 @@ contract CooldownEdgeCasesTest is Setup {
         vm.prank(alice);
         susd3Strategy.startCooldown(shares);
 
-        // Management changes window to 1 day
-        vm.prank(management);
-        susd3Strategy.setWithdrawalWindow(1 days);
+        // Change window to 1 day via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 SUSD3_WITHDRAWAL_WINDOW = keccak256("SUSD3_WITHDRAWAL_WINDOW");
+        MockProtocolConfig(protocolConfigAddress).setConfig(
+            SUSD3_WITHDRAWAL_WINDOW,
+            1 days
+        );
 
         // Skip cooldown
         skip(7 days);

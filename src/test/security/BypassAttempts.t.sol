@@ -53,14 +53,24 @@ contract BypassAttempts is Setup {
         susd3Strategy = sUSD3(address(susd3Proxy));
 
         // Link strategies
+        // Set commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
+
+        // Configure commitment and lock periods
         vm.prank(management);
         usd3Strategy.setSUSD3(address(susd3Strategy));
 
-        // Configure commitment and lock periods
-        vm.startPrank(management);
-        usd3Strategy.setMinCommitmentTime(7 days);
+        // Set config as the owner (test contract in this case)
+        MockProtocolConfig(protocolConfigAddress).setConfig(
+            USD3_COMMITMENT_TIME,
+            7 days
+        );
+
+        vm.prank(management);
         usd3Strategy.setMinDeposit(100e6);
-        vm.stopPrank();
 
         // Set lock duration via protocol config (90 days is already the default)
         // No need to change it unless we want a different value

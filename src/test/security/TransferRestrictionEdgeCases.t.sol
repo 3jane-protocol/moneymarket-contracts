@@ -3,6 +3,8 @@ pragma solidity ^0.8.18;
 
 import {Setup} from "../utils/Setup.sol";
 import {USD3} from "../../USD3.sol";
+import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
+import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {sUSD3} from "../../sUSD3.sol";
 import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
@@ -50,14 +52,24 @@ contract TransferRestrictionEdgeCases is Setup {
         susd3Strategy = sUSD3(address(susd3Proxy));
 
         // Link strategies
+        // Set commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
+
+        // Configure commitment and lock periods
         vm.prank(management);
         usd3Strategy.setSUSD3(address(susd3Strategy));
 
-        // Configure commitment and lock periods
-        vm.startPrank(management);
-        usd3Strategy.setMinCommitmentTime(7 days);
+        // Set config as the owner (test contract in this case)
+        MockProtocolConfig(protocolConfigAddress).setConfig(
+            USD3_COMMITMENT_TIME,
+            7 days
+        );
+
+        vm.prank(management);
         usd3Strategy.setMinDeposit(100e6);
-        vm.stopPrank();
 
         // Setup test users
         airdrop(asset, alice, 10000e6);
@@ -504,6 +516,11 @@ contract TransferRestrictionEdgeCases is Setup {
         airdrop(underlyingAsset, address(this), 1000e6);
 
         // First whitelist a helper contract (using address(this) as mock helper)
+        // Set commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
         vm.prank(management);
         usd3Strategy.setDepositorWhitelist(address(this), true);
 
@@ -620,6 +637,11 @@ contract TransferRestrictionEdgeCases is Setup {
         vm.stopPrank();
 
         // Test 3: Whitelist an address (like Helper contract)
+        // Set commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
         vm.prank(management);
         usd3Strategy.setDepositorWhitelist(charlie, true);
 
@@ -654,6 +676,11 @@ contract TransferRestrictionEdgeCases is Setup {
 
         // Deploy a mock Helper contract and whitelist it
         address mockHelper = makeAddr("mockHelper");
+        // Set commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
         vm.prank(management);
         usd3Strategy.setDepositorWhitelist(mockHelper, true);
 
