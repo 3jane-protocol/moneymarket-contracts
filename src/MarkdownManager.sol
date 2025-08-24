@@ -3,6 +3,9 @@ pragma solidity 0.8.22;
 
 import {IMarkdownManager} from "./interfaces/IMarkdownManager.sol";
 
+/// @title MarkdownManager
+/// @author 3Jane
+/// @custom:contact support@3jane.xyz
 contract MarkdownManager is IMarkdownManager {
     /// @notice Calculate the markdown amount for a borrower's position
     /// @param borrower The address of the borrower

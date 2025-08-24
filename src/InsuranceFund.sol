@@ -7,8 +7,8 @@ import {IInsuranceFund} from "./interfaces/IInsuranceFund.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 
 /// @title InsuranceFund
-/// @author Morpho Labs
-/// @custom:contact security@morpho.org
+/// @author 3Jane
+/// @custom:contact support@3jane.xyz
 /// @notice This contract manages insurance fund operations for the Morpho protocol
 /// @dev Handles insurance fund transfers to the CreditLine contract
 contract InsuranceFund is IInsuranceFund {

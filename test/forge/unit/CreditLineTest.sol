@@ -179,6 +179,14 @@ contract MockProtocolConfig is IProtocolConfig {
     function getCycleDuration() external pure returns (uint256) {
         return 0;
     }
+
+    function getUsd3CommitmentTime() external pure returns (uint256) {
+        return 0;
+    }
+
+    function getSusd3WithdrawalWindow() external pure returns (uint256) {
+        return 0;
+    }
 }
 
 contract CreditLineTest is Test {

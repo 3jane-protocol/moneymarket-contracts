@@ -13,8 +13,8 @@ import {IERC20} from "./interfaces/IERC20.sol";
 import {IInsuranceFund} from "./interfaces/IInsuranceFund.sol";
 
 /// @title CreditLine
-/// @author Morpho Labs
-/// @custom:contact security@morpho.org
+/// @author 3Jane
+/// @custom:contact support@3jane.xyz
 /// @notice This contract manages credit line operations for the Morpho protocol
 /// @dev Handles credit line creation, validation, and configuration management
 contract CreditLine is ICreditLine, Ownable {
