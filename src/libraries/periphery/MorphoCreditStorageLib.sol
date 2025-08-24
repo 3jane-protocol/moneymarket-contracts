@@ -12,14 +12,14 @@ import {MorphoStorageLib} from "./MorphoStorageLib.sol";
 library MorphoCreditStorageLib {
     /* MORPHO CREDIT STORAGE SLOTS */
 
-    // MorphoCredit storage starts at slot 20 (after Morpho base storage and gap)
-    uint256 internal constant HELPER_SLOT = 20;
-    uint256 internal constant PROTOCOL_CONFIG_SLOT = 21;
-    uint256 internal constant USD3_SLOT = 22;
-    uint256 internal constant BORROWER_PREMIUM_SLOT = 23;
-    uint256 internal constant PAYMENT_CYCLE_SLOT = 24;
-    uint256 internal constant REPAYMENT_OBLIGATION_SLOT = 25;
-    uint256 internal constant MARKDOWN_STATE_SLOT = 26;
+    // MorphoCredit storage starts at slot 19 (after Morpho base storage slots 0-8 and gap slots 9-18)
+    uint256 internal constant HELPER_SLOT = 19;
+    // protocolConfig is immutable, not in storage
+    uint256 internal constant USD3_SLOT = 20;
+    uint256 internal constant BORROWER_PREMIUM_SLOT = 21;
+    uint256 internal constant PAYMENT_CYCLE_SLOT = 22;
+    uint256 internal constant REPAYMENT_OBLIGATION_SLOT = 23;
+    uint256 internal constant MARKDOWN_STATE_SLOT = 24;
 
     /* SLOT OFFSETS */
 
@@ -33,10 +33,6 @@ library MorphoCreditStorageLib {
 
     function helperSlot() internal pure returns (bytes32) {
         return bytes32(HELPER_SLOT);
-    }
-
-    function protocolConfigSlot() internal pure returns (bytes32) {
-        return bytes32(PROTOCOL_CONFIG_SLOT);
     }
 
     function usd3Slot() internal pure returns (bytes32) {

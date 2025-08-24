@@ -81,17 +81,8 @@ library ErrorsLib {
     /// @notice Thrown when the liquidity is insufficient to `withdraw` or `borrow`.
     error InsufficientLiquidity();
 
-    /// @notice Thrown when the position to liquidate is healthy.
-    error HealthyPosition();
-
-    /// @notice Thrown when the authorization signature is invalid.
-    error InvalidSignature();
-
-    /// @notice Thrown when the authorization signature is expired.
-    error SignatureExpired();
-
-    /// @notice Thrown when the nonce is invalid.
-    error InvalidNonce();
+    /// @notice Thrown when borrowing shares would result in borrowing zero assets.
+    error InsufficientBorrowAmount();
 
     /// @notice Thrown when a token transfer reverted.
     error TransferReverted();
@@ -143,4 +134,7 @@ library ErrorsLib {
 
     /// @notice Thrown when the cover amount exceeds the assets amount.
     error InvalidCoverAmount();
+
+    /// @notice Thrown when attempting operations on a frozen market.
+    error MarketFrozen();
 }

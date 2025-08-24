@@ -175,6 +175,10 @@ contract MockProtocolConfig is IProtocolConfig {
     function getSusd3CooldownPeriod() external pure returns (uint256) {
         return 0;
     }
+
+    function getCycleDuration() external pure returns (uint256) {
+        return 0;
+    }
 }
 
 contract CreditLineTest is Test {

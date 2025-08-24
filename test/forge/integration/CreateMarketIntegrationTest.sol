@@ -74,6 +74,24 @@ contract CreateMarketIntegrationTest is BaseTest {
         morpho.createMarket(marketParamsFuzz);
     }
 
+    function testCreateMarketAccessControl(address attacker, MarketParams memory marketParamsFuzz) public {
+        // Ensure attacker is not the owner or proxy-related address
+        vm.assume(attacker != OWNER);
+        vm.assume(!_isProxyRelatedAddress(attacker));
+
+        marketParamsFuzz.irm = address(irm);
+        marketParamsFuzz.lltv = _boundValidLltv(marketParamsFuzz.lltv);
+
+        vm.startPrank(OWNER);
+        if (!morpho.isLltvEnabled(marketParamsFuzz.lltv)) morpho.enableLltv(marketParamsFuzz.lltv);
+        vm.stopPrank();
+
+        // Non-owner should not be able to create markets
+        vm.prank(attacker);
+        vm.expectRevert(ErrorsLib.NotOwner.selector);
+        morpho.createMarket(marketParamsFuzz);
+    }
+
     function testIdToMarketParams(MarketParams memory marketParamsFuzz) public {
         marketParamsFuzz.irm = address(irm);
         marketParamsFuzz.lltv = _boundValidLltv(marketParamsFuzz.lltv);

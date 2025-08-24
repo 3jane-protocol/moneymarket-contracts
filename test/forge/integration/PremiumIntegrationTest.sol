@@ -32,8 +32,12 @@ contract PremiumIntegrationTest is BaseTest {
         marketParams.irm = address(irm);
         marketParams.creditLine = address(creditLine);
 
+        vm.prank(OWNER);
         morpho.createMarket(marketParams);
         id = MarketParamsLib.id(marketParams);
+
+        // Initialize first cycle to unfreeze the market
+        _ensureMarketActive(id);
 
         // Set up initial balances
         loanToken.setBalance(SUPPLIER, HIGH_COLLATERAL_AMOUNT);
@@ -70,8 +74,8 @@ contract PremiumIntegrationTest is BaseTest {
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
-        // Advance time
-        vm.warp(block.timestamp + 1 hours);
+        // Advance time while maintaining cycles
+        _continueMarketCycles(id, block.timestamp + 1 hours);
 
         // Record position before second borrow
         Position memory positionBefore = morpho.position(id, BORROWER);
@@ -127,8 +131,8 @@ contract PremiumIntegrationTest is BaseTest {
         (,, uint256 snapshot1) = MorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
         assertEq(snapshot1, borrowAmount);
 
-        // Advance time and borrow more
-        vm.warp(block.timestamp + 1 hours);
+        // Advance time and borrow more while maintaining cycles
+        _continueMarketCycles(id, block.timestamp + 1 hours);
 
         vm.prank(BORROWER);
         morpho.borrow(marketParams, 1_000e18, 0, BORROWER, BORROWER);
@@ -165,7 +169,7 @@ contract PremiumIntegrationTest is BaseTest {
         uint256 totalDebt = initialBorrow;
 
         for (uint256 i = 0; i < borrowAmounts.length; i++) {
-            vm.warp(block.timestamp + 2 hours);
+            _continueMarketCycles(id, block.timestamp + 2 hours);
 
             // Record state before borrow
             Market memory marketBefore = morpho.market(id);
@@ -209,7 +213,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Advance time significantly - premium will accrue
-        vm.warp(block.timestamp + 60 days);
+        _continueMarketCycles(id, block.timestamp + 60 days);
 
         // Try to borrow a small amount - should fail because the accrued premium
         // will push the total debt over the credit limit
@@ -263,7 +267,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Advance time
-        vm.warp(block.timestamp + 7 days);
+        _continueMarketCycles(id, block.timestamp + 7 days);
 
         // Give borrower tokens for repayment
         loanToken.setBalance(BORROWER, borrowAmount);
@@ -303,7 +307,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Advance time
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
 
         // First trigger premium accrual to get accurate debt
         MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
@@ -345,7 +349,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Advance time
-        vm.warp(block.timestamp + 10 days);
+        _continueMarketCycles(id, block.timestamp + 10 days);
 
         // Calculate current debt
         Position memory positionBefore = morpho.position(id, BORROWER);
@@ -392,7 +396,7 @@ contract PremiumIntegrationTest is BaseTest {
         (,, uint256 snapshotBefore) = MorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
 
         // Advance time
-        vm.warp(block.timestamp + 5 days);
+        _continueMarketCycles(id, block.timestamp + 5 days);
 
         // Repay
         loanToken.setBalance(BORROWER, 2_000e18);
@@ -423,7 +427,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Advance time
-        vm.warp(block.timestamp + 10 days);
+        _continueMarketCycles(id, block.timestamp + 10 days);
 
         // First accrue premium to get accurate debt
         MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
@@ -477,7 +481,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Advance time to accrue premium
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
 
         // Manually accrue borrower's premium since withdraw doesn't trigger it
         MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
@@ -516,7 +520,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Advance time - premium will accrue
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
 
         // Try to borrow additional amount - should fail because accumulated premium
         // has pushed the debt close to or over the credit limit
@@ -553,7 +557,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, borrower2, borrower2);
 
         // Advance time
-        vm.warp(block.timestamp + 10 days);
+        _continueMarketCycles(id, block.timestamp + 10 days);
 
         // Manually accrue premiums for both borrowers since withdraw doesn't trigger it
         address[] memory borrowers = new address[](2);
@@ -605,7 +609,7 @@ contract PremiumIntegrationTest is BaseTest {
         (uint128 timeBefore,, uint256 snapshotBefore) = MorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
 
         // Advance time
-        vm.warp(block.timestamp + 1 days);
+        _continueMarketCycles(id, block.timestamp + 1 days);
 
         // Call accrueInterest
         morpho.accrueInterest(marketParams);
@@ -637,7 +641,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Advance time
-        vm.warp(block.timestamp + 365 days);
+        _continueMarketCycles(id, block.timestamp + 365 days);
 
         // Trigger both accruals via borrow
         loanToken.setBalance(BORROWER, 10_000e18);
@@ -680,7 +684,7 @@ contract PremiumIntegrationTest is BaseTest {
 
         // Advance time
         uint256 timeElapsed = 30 days;
-        vm.warp(block.timestamp + timeElapsed);
+        _continueMarketCycles(id, block.timestamp + timeElapsed);
 
         // Manually accrue interest first
         morpho.accrueInterest(marketParams);
@@ -725,7 +729,7 @@ contract PremiumIntegrationTest is BaseTest {
         _setCreditLineWithPremium(BORROWER, 10_000e18, premiumRatePerSecond);
 
         // Advance time
-        vm.warp(block.timestamp + 365 days);
+        _continueMarketCycles(id, block.timestamp + 365 days);
 
         // Accrue premium
         MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
@@ -785,7 +789,7 @@ contract PremiumIntegrationTest is BaseTest {
         }
 
         // Advance time
-        vm.warp(block.timestamp + 365 days);
+        _continueMarketCycles(id, block.timestamp + 365 days);
 
         // Accrue premiums for all
         address[] memory borrowerArray = new address[](3);
@@ -854,7 +858,7 @@ contract PremiumIntegrationTest is BaseTest {
         );
 
         // Advance time
-        vm.warp(block.timestamp + 180 days);
+        _continueMarketCycles(id, block.timestamp + 180 days);
 
         // Trigger premium accrual for all borrowers
         vm.prank(BORROWER);
@@ -916,7 +920,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, borrower2, borrower2);
 
         // Advance time
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
 
         // Concurrent operations
         // Borrower1 borrows more (triggers premium accrual)
@@ -976,7 +980,7 @@ contract PremiumIntegrationTest is BaseTest {
         }
 
         // Advance time
-        vm.warp(block.timestamp + 90 days);
+        _continueMarketCycles(id, block.timestamp + 90 days);
 
         // Record market state before batch accrual
         Market memory marketBefore = morpho.market(id);
@@ -1016,7 +1020,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Advance time
-        vm.warp(block.timestamp + 7 days);
+        _continueMarketCycles(id, block.timestamp + 7 days);
 
         // Simulate keeper calling accrue in same block as user operation
         // First keeper accrues
@@ -1055,13 +1059,13 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Advance time
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
 
         // Change rate (this accrues at old rate first)
         _setCreditLineWithPremium(BORROWER, 10_000e18, newRatePerSecond);
 
         // Advance more time
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
 
         // Trigger accrual
         vm.prank(BORROWER);
@@ -1100,7 +1104,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Advance time
-        vm.warp(block.timestamp + 365 days);
+        _continueMarketCycles(id, block.timestamp + 365 days);
 
         // Record debt before
         Position memory posBefore = morpho.position(id, BORROWER);
@@ -1138,7 +1142,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Advance time significantly
-        vm.warp(block.timestamp + 365 days);
+        _continueMarketCycles(id, block.timestamp + 365 days);
 
         // Accrue premium
         MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
@@ -1186,7 +1190,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
         // Advance time
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
 
         // Should not revert
         MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
@@ -1227,7 +1231,7 @@ contract PremiumIntegrationTest is BaseTest {
         Position memory feePosBefore = morpho.position(id, FEE_RECIPIENT);
 
         // Advance time
-        vm.warp(block.timestamp + 365 days);
+        _continueMarketCycles(id, block.timestamp + 365 days);
 
         // Accrue premium
         MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
@@ -1289,7 +1293,7 @@ contract PremiumIntegrationTest is BaseTest {
         morpho.borrow(marketParams, borrowAmount, 0, borrower2, borrower2);
 
         // Advance time
-        vm.warp(block.timestamp + 180 days);
+        _continueMarketCycles(id, block.timestamp + 180 days);
 
         // Accrue premiums
         address[] memory borrowers = new address[](2);
@@ -1337,7 +1341,7 @@ contract PremiumIntegrationTest is BaseTest {
         Market memory marketBefore = morpho.market(id);
 
         // Advance time
-        vm.warp(block.timestamp + 100 days);
+        _continueMarketCycles(id, block.timestamp + 100 days);
 
         // Accrue premium
         MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);

@@ -17,7 +17,11 @@ import {
 } from "types";
 import { MarketParamsStruct } from "types/src/Morpho";
 import { CreditLineMock } from "types/src/mocks/CreditLineMock";
-import { FlashBorrowerMock } from "types/src/mocks/FlashBorrowerMock";
+
+// import { FlashBorrowerMock } from "types/src/mocks/FlashBorrowerMock"; // Flash loans removed
+
+// Cycle duration for credit line markets (30 days)
+const CYCLE_DURATION = 30 * 24 * 60 * 60;
 
 const closePositions = false;
 // Without the division it overflows.
@@ -51,6 +55,48 @@ const randomForwardTimestamp = async () => {
   await setNextBlockTimestamp(block!.timestamp + elapsed);
 };
 
+// Helper function to ensure market with credit line has active cycles
+// Required after market freeze refactor - markets without active cycles are frozen
+const ensureMarketActive = async (
+  morpho: MorphoCredit,
+  creditLineAddress: string,
+  marketId: Buffer,
+  cycleDuration: number,
+) => {
+  const block = await hre.ethers.provider.getBlock("latest");
+  const cycleEnd = block!.timestamp + cycleDuration;
+  await setNextBlockTimestamp(cycleEnd);
+
+  // Impersonate the credit line contract to call closeCycleAndPostObligations
+  await hre.network.provider.request({
+    method: "hardhat_impersonateAccount",
+    params: [creditLineAddress],
+  });
+
+  // Fund the credit line with some ETH for gas
+  await hre.network.provider.send("hardhat_setBalance", [
+    creditLineAddress,
+    "0x1000000000000000000", // 1 ETH
+  ]);
+
+  const creditLineSigner = await hre.ethers.getSigner(creditLineAddress);
+
+  // Call closeCycleAndPostObligations as the credit line contract
+  await morpho.connect(creditLineSigner).closeCycleAndPostObligations(
+    marketId,
+    cycleEnd,
+    [], // no borrowers
+    [], // no repayment percentages
+    [], // no ending balances
+  );
+
+  // Stop impersonating
+  await hre.network.provider.request({
+    method: "hardhat_stopImpersonatingAccount",
+    params: [creditLineAddress],
+  });
+};
+
 describe("Morpho", () => {
   let admin: SignerWithAddress;
   let liquidator: SignerWithAddress;
@@ -63,7 +109,7 @@ describe("Morpho", () => {
   let oracle: OracleMock;
   let irm: IrmMock;
   let creditLine: CreditLineMock;
-  let flashBorrower: FlashBorrowerMock;
+  // let flashBorrower: FlashBorrowerMock; // Flash loans removed
   let usd3: USD3Mock;
   let helper: HelperMock;
 
@@ -117,6 +163,11 @@ describe("Morpho", () => {
 
     const protocolConfig = ProtocolConfigFactory.attach(await protocolConfigProxy.getAddress()) as ProtocolConfig;
 
+    // Set cycle duration in ProtocolConfig (required for credit line markets)
+    await protocolConfig
+      .connect(admin)
+      .setConfig(hre.ethers.keccak256(hre.ethers.toUtf8Bytes("CYCLE_DURATION")), CYCLE_DURATION);
+
     // Deploy MorphoCredit implementation with ProtocolConfig
     const MorphoCreditFactory = await hre.ethers.getContractFactory("MorphoCredit", admin);
     const morphoImpl = await MorphoCreditFactory.deploy(await protocolConfig.getAddress());
@@ -164,6 +215,10 @@ describe("Morpho", () => {
     await morpho.enableIrm(marketParams.irm);
     await morpho.createMarket(marketParams);
 
+    // Initialize first payment cycle to unfreeze the market
+    // Required for credit line markets after the market freeze refactor
+    await ensureMarketActive(morpho as MorphoCredit, await creditLine.getAddress(), id, CYCLE_DURATION);
+
     const morphoAddress = await morpho.getAddress();
     const usd3Address = await usd3.getAddress();
     const helperAddress = await helper.getAddress();
@@ -184,9 +239,9 @@ describe("Morpho", () => {
     await loanToken.connect(liquidator).approve(usd3Address, MaxUint256); // Approve USD3
     await loanToken.connect(liquidator).approve(helperAddress, MaxUint256); // Approve Helper
 
-    const FlashBorrowerFactory = await hre.ethers.getContractFactory("FlashBorrowerMock", admin);
-
-    flashBorrower = await FlashBorrowerFactory.deploy(morphoAddress);
+    // Flash loans removed - no longer creating FlashBorrowerMock
+    // const FlashBorrowerFactory = await hre.ethers.getContractFactory("FlashBorrowerMock", admin);
+    // flashBorrower = await FlashBorrowerFactory.deploy(morphoAddress);
   });
 
   it("should simulate gas cost [main]", async () => {
@@ -266,7 +321,8 @@ describe("Morpho", () => {
 
     const loanAddress = await loanToken.getAddress();
 
-    const data = AbiCoder.defaultAbiCoder().encode(["address"], [loanAddress]);
-    await flashBorrower.flashLoan(loanAddress, assets / 2n, data);
+    // Flash loans removed - test skipped
+    // const data = AbiCoder.defaultAbiCoder().encode(["address"], [loanAddress]);
+    // await flashBorrower.flashLoan(loanAddress, assets / 2n, data);
   });
 });

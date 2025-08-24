@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.22;
 
-contract MarkdownManager {
+import {IMarkdownManager} from "./interfaces/IMarkdownManager.sol";
+
+contract MarkdownManager is IMarkdownManager {
     /// @notice Calculate the markdown amount for a borrower's position
     /// @param borrower The address of the borrower
     /// @param borrowAmount The current borrow amount in assets

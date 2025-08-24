@@ -97,27 +97,6 @@ library EventsLib {
     /// @param shares The amount of shares burned.
     event Repay(Id indexed id, address indexed caller, address indexed onBehalf, uint256 assets, uint256 shares);
 
-    /// @notice Emitted on flash loan.
-    /// @param caller The caller.
-    /// @param token The token that was flash loaned.
-    /// @param assets The amount that was flash loaned.
-    event FlashLoan(address indexed caller, address indexed token, uint256 assets);
-
-    /// @notice Emitted when setting an authorization.
-    /// @param caller The caller.
-    /// @param authorizer The authorizer address.
-    /// @param authorized The authorized address.
-    /// @param newIsAuthorized The new authorization status.
-    event SetAuthorization(
-        address indexed caller, address indexed authorizer, address indexed authorized, bool newIsAuthorized
-    );
-
-    /// @notice Emitted when setting an authorization with a signature.
-    /// @param caller The caller.
-    /// @param authorizer The authorizer address.
-    /// @param usedNonce The nonce that was used.
-    event IncrementNonce(address indexed caller, address indexed authorizer, uint256 usedNonce);
-
     /// @notice Emitted when accruing interest.
     /// @param id The market id.
     /// @param prevBorrowRate The previous borrow rate.
