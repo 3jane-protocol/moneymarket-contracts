@@ -222,11 +222,16 @@ contract sUSD3Coverage is Setup {
 
         skip(91 days);
 
-        // Try to cooldown more shares than owned
+        // Try to cooldown more shares than owned - should fail with new security fix
         vm.prank(alice);
+        vm.expectRevert("Insufficient balance for cooldown");
         susd3Strategy.startCooldown(shares * 2); // Double the actual balance
 
-        // The cooldown is set, but withdrawal will be limited by actual balance
+        // Start cooldown with actual balance
+        vm.prank(alice);
+        susd3Strategy.startCooldown(shares);
+
+        // Verify cooldown is set correctly
         (
             uint256 cooldownEnd,
             uint256 windowEnd,
@@ -234,16 +239,11 @@ contract sUSD3Coverage is Setup {
         ) = susd3Strategy.getCooldownStatus(alice);
         assertEq(
             cooldownShares,
-            shares * 2,
-            "Cooldown recorded the requested amount"
+            shares,
+            "Cooldown recorded the correct amount"
         );
 
         skip(8 days);
-
-        // Try to withdraw - will be limited by actual balance
-        vm.prank(alice);
-        vm.expectRevert(); // Will revert due to insufficient balance
-        susd3Strategy.redeem(shares * 2, alice, alice);
 
         // Can withdraw actual balance
         vm.prank(alice);

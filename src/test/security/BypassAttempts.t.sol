@@ -586,27 +586,19 @@ contract BypassAttempts is Setup {
         console2.log("Current timestamp:", block.timestamp);
         assertGt(aliceLockEnd, block.timestamp, "Alice should be locked");
 
-        // Step 2: User2 (bob) who NEVER deposited starts cooldown
-        // This should succeed because lockedUntil[bob] == 0
+        // Step 2: User2 (bob) who NEVER deposited tries to start cooldown
+        // This should now FAIL with the security fix
         console2.log(
             "\nBob (who never deposited) attempts to start cooldown..."
         );
         vm.prank(bob);
+        vm.expectRevert("Insufficient balance for cooldown");
         susd3Strategy.startCooldown(type(uint256).max); // Max shares they don't even have
 
-        (
-            uint256 bobCooldownEnd,
-            uint256 bobWindowEnd,
-            uint256 bobCooldownShares
-        ) = susd3Strategy.getCooldownStatus(bob);
-        console2.log("Bob's cooldown started successfully!");
-        console2.log("Bob's cooldown end:", bobCooldownEnd);
-        console2.log("Bob's cooldown shares:", bobCooldownShares);
-        assertGt(bobCooldownEnd, 0, "Bob should have active cooldown");
+        console2.log("Bob's cooldown attempt correctly blocked (FIXED)!");
 
-        // Step 3: Wait for Bob's cooldown to complete (but Alice still locked)
-        skip(7 days + 1); // Cooldown period
-        console2.log("\nAfter cooldown period:");
+        // Step 3: Since Bob couldn't start cooldown, skip ahead
+        console2.log("\nSkipping ahead to demonstrate the protection:");
         console2.log("Current timestamp:", block.timestamp);
         console2.log("Alice still locked until:", aliceLockEnd);
         assertLt(block.timestamp, aliceLockEnd, "Alice should still be locked");
@@ -632,26 +624,26 @@ contract BypassAttempts is Setup {
         IERC20(address(susd3Strategy)).transfer(bob, aliceShares);
         console2.log("Alice transferred shares to Bob");
 
-        // Bob would need to restart cooldown after receiving shares
-        // because the cooldown shares exceed his balance
+        // Bob needs to start cooldown after receiving shares
         uint256 bobBalance = IERC20(address(susd3Strategy)).balanceOf(bob);
         console2.log("Bob's sUSD3 balance:", bobBalance);
 
-        // Check if Bob can withdraw with his pre-started cooldown
+        // Bob must start a new cooldown with his actual balance
+        vm.prank(bob);
+        susd3Strategy.startCooldown(bobBalance);
+        console2.log("Bob started cooldown with actual balance");
+        
+        // Wait for cooldown
+        skip(7 days + 1);
+        
+        // Now Bob can withdraw
         uint256 bobWithdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
-        console2.log("Bob's withdraw limit:", bobWithdrawLimit);
-
-        // The issue is that Bob's cooldown was for max shares but he only has aliceShares
-        // The contract should validate cooldown shares against actual balance
-        if (bobWithdrawLimit > 0) {
-            console2.log(
-                "VULNERABILITY: Bob can withdraw with pre-started cooldown!"
-            );
-        } else {
-            console2.log(
-                "Bob cannot withdraw (cooldown shares mismatch or window expired)"
-            );
-        }
+        console2.log("Bob's withdraw limit after proper cooldown:", bobWithdrawLimit);
+        assertGt(bobWithdrawLimit, 0, "Bob can withdraw after proper cooldown");
+        
+        console2.log(
+            "VULNERABILITY FIXED: Pre-started cooldown without balance is prevented"
+        );
     }
 
     function test_non_depositor_can_start_cooldown() public {
@@ -669,9 +661,9 @@ contract BypassAttempts is Setup {
             "Charlie has no shares"
         );
 
-        // Charlie can start cooldown because lockedUntil[charlie] == 0
-        // and block.timestamp >= 0 is always true
+        // Charlie tries to start cooldown but should fail with the fix
         vm.prank(charlie);
+        vm.expectRevert("Insufficient balance for cooldown");
         susd3Strategy.startCooldown(1000e18); // Arbitrary large amount
 
         (uint256 cooldownEnd, uint256 windowEnd, uint256 shares) = susd3Strategy
@@ -679,16 +671,17 @@ contract BypassAttempts is Setup {
 
         console2.log("Charlie's cooldown end:", cooldownEnd);
         console2.log("Charlie's cooldown shares:", shares);
-        assertGt(
+        assertEq(
             cooldownEnd,
             0,
-            "Charlie started cooldown without depositing!"
+            "Charlie should not have cooldown set"
         );
         assertEq(
             shares,
-            1000e18,
-            "Charlie set cooldown for shares they don't have!"
+            0,
+            "Charlie should have no cooldown shares"
         );
+        console2.log("VULNERABILITY FIXED: Cannot start cooldown without balance");
     }
 
     function test_transfer_locked_shares_bypass_attempt() public {
@@ -705,12 +698,10 @@ contract BypassAttempts is Setup {
         uint256 aliceShares = IERC20(address(susd3Strategy)).balanceOf(alice);
         vm.stopPrank();
 
-        // Bob starts cooldown before receiving any shares
+        // Bob tries to start cooldown before receiving any shares - should fail
         vm.prank(bob);
-        susd3Strategy.startCooldown(aliceShares); // Cooldown for exact amount Alice has
-
-        // Wait for cooldown
-        skip(7 days + 1);
+        vm.expectRevert("Insufficient balance for cooldown");
+        susd3Strategy.startCooldown(aliceShares); // Will fail - no balance
 
         // Alice tries to transfer during lock period
         vm.prank(alice);
@@ -726,38 +717,30 @@ contract BypassAttempts is Setup {
         vm.prank(alice);
         IERC20(address(susd3Strategy)).transfer(bob, aliceShares);
 
-        // Check if Bob can immediately withdraw
+        // Bob needs to start cooldown after receiving shares
+        vm.prank(bob);
+        susd3Strategy.startCooldown(aliceShares);
+        console2.log("Bob started cooldown with received shares");
+        
+        // Wait for cooldown
+        skip(7 days + 1);
+        
+        // Now Bob can withdraw
         uint256 bobWithdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
         console2.log(
-            "Bob's withdraw limit after receiving shares:",
+            "Bob's withdraw limit after proper cooldown:",
             bobWithdrawLimit
         );
-
-        // Bob's pre-started cooldown should allow withdrawal if within window
-        (uint256 cooldownEnd, uint256 windowEnd, ) = susd3Strategy
-            .getCooldownStatus(bob);
-        if (block.timestamp >= cooldownEnd && block.timestamp <= windowEnd) {
-            // Within withdrawal window
-            assertGt(bobWithdrawLimit, 0, "Bob should be able to withdraw");
-            console2.log("ISSUE: Bob can withdraw using pre-started cooldown");
-
-            // Perform the withdrawal
-            vm.startPrank(bob);
-            IERC20(address(susd3Strategy)).approve(
-                address(susd3Strategy),
-                aliceShares
-            );
-            uint256 withdrawn = susd3Strategy.redeem(aliceShares, bob, bob);
-            console2.log("Bob successfully withdrew:", withdrawn);
-            vm.stopPrank();
-        }
+        assertGt(bobWithdrawLimit, 0, "Bob can withdraw after proper cooldown");
+        console2.log("VULNERABILITY FIXED: Must have shares to start cooldown");
     }
 
     function test_cooldown_shares_exceed_balance_check() public {
         console2.log("\n=== Testing Cooldown Shares vs Balance Validation ===");
 
-        // Bob starts cooldown for shares he doesn't have
+        // Bob tries to start cooldown for shares he doesn't have - should fail
         vm.prank(bob);
+        vm.expectRevert("Insufficient balance for cooldown");
         susd3Strategy.startCooldown(1000e18);
 
         (, , uint256 cooldownShares) = susd3Strategy.getCooldownStatus(bob);
@@ -765,24 +748,13 @@ contract BypassAttempts is Setup {
 
         console2.log("Bob's cooldown shares:", cooldownShares);
         console2.log("Bob's actual balance:", bobBalance);
-        assertGt(
+        assertEq(
             cooldownShares,
-            bobBalance,
-            "Cooldown shares exceed actual balance!"
+            0,
+            "Cooldown should not be set without balance"
         );
-
-        // Wait for cooldown
-        skip(7 days + 1);
-
-        // Check withdraw limit when cooldown shares > balance
-        uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
-        console2.log(
-            "Bob's withdraw limit with mismatched shares:",
-            withdrawLimit
-        );
-
-        // The contract converts cooldown.shares to assets without checking balance
-        // This is a vulnerability if not properly validated during withdrawal
+        
+        console2.log("VULNERABILITY FIXED: Balance validation prevents excessive cooldown");
     }
 
     function test_multiple_users_exploit_scenario() public {
@@ -797,15 +769,16 @@ contract BypassAttempts is Setup {
         susd3Strategy.deposit(150e6, alice);
         vm.stopPrank();
 
-        // Multiple attackers (bob and charlie) start cooldowns
+        // Multiple attackers (bob and charlie) try to start cooldowns - should fail
         vm.prank(bob);
+        vm.expectRevert("Insufficient balance for cooldown");
         susd3Strategy.startCooldown(75e6);
 
         vm.prank(charlie);
+        vm.expectRevert("Insufficient balance for cooldown");
         susd3Strategy.startCooldown(75e6);
 
-        // Wait for cooldowns
-        skip(7 days + 1);
+        console2.log("Both attackers correctly blocked from starting cooldown without balance");
 
         // After lock period, Alice splits shares between attackers
         skip(90 days);
@@ -815,17 +788,28 @@ contract BypassAttempts is Setup {
         IERC20(address(susd3Strategy)).transfer(charlie, 75e6);
         vm.stopPrank();
 
-        // Both can withdraw immediately
+        // Now they need to start cooldowns with their actual balances
+        vm.prank(bob);
+        susd3Strategy.startCooldown(75e6);
+        
+        vm.prank(charlie);
+        susd3Strategy.startCooldown(75e6);
+        
+        // Wait for cooldowns
+        skip(7 days + 1);
+
+        // Now both can withdraw after proper cooldown
         uint256 bobLimit = susd3Strategy.availableWithdrawLimit(bob);
         uint256 charlieLimit = susd3Strategy.availableWithdrawLimit(charlie);
 
         console2.log("Bob's withdraw limit:", bobLimit);
         console2.log("Charlie's withdraw limit:", charlieLimit);
 
-        if (bobLimit > 0 && charlieLimit > 0) {
-            console2.log(
-                "VULNERABILITY: Multiple attackers can bypass lock period!"
-            );
-        }
+        assertGt(bobLimit, 0, "Bob can withdraw after proper cooldown");
+        assertGt(charlieLimit, 0, "Charlie can withdraw after proper cooldown");
+        
+        console2.log(
+            "VULNERABILITY FIXED: Attackers must have balance to start cooldown"
+        );
     }
 }

@@ -195,19 +195,24 @@ contract EdgeCases is Setup {
         // Fast forward past lock
         skip(91 days);
 
-        // Test with maximum uint128 value (even though alice doesn't have that many)
+        // Test trying to set cooldown for more than balance - should fail with fix
         vm.prank(alice);
+        vm.expectRevert("Insufficient balance for cooldown");
         susd3Strategy.startCooldown(MAX_UINT128);
 
+        // Can set cooldown for actual balance
+        vm.prank(alice);
+        susd3Strategy.startCooldown(shares);
+        
         // Verify cooldown was set
         (, , uint256 cooldownShares) = susd3Strategy.getCooldownStatus(alice);
-        assertEq(cooldownShares, MAX_UINT128, "Should store max uint128");
+        assertEq(cooldownShares, shares, "Should store actual share amount");
 
-        // Actual withdrawal will be limited by balance
+        // Withdrawal for exact balance
         skip(8 days);
         vm.prank(alice);
         uint256 withdrawn = susd3Strategy.redeem(shares, alice, alice);
-        assertEq(withdrawn, 10000e6, "Should only withdraw actual balance");
+        assertEq(withdrawn, 10000e6, "Should withdraw actual balance");
     }
 
     /**

@@ -162,24 +162,29 @@ contract CooldownEdgeCasesTest is Setup {
         // Skip lock period
         skip(90 days + 1);
 
-        // Try to start cooldown with more shares than balance
+        // Try to start cooldown with more shares than balance - should fail with fix
         vm.prank(alice);
+        vm.expectRevert("Insufficient balance for cooldown");
         susd3Strategy.startCooldown(shares * 2);
 
-        // Cooldown should be set for the excess amount
+        // Start cooldown with actual balance
+        vm.prank(alice);
+        susd3Strategy.startCooldown(shares);
+        
+        // Cooldown should be set for the actual amount
         (uint256 cooldownEnd, , uint256 cooldownShares) = susd3Strategy
             .getCooldownStatus(alice);
         assertGt(cooldownEnd, 0, "Cooldown should be started");
         assertEq(
             cooldownShares,
-            shares * 2,
-            "Cooldown shares should be set to requested amount"
+            shares,
+            "Cooldown shares should be set to actual balance"
         );
 
         // Skip cooldown
         skip(7 days);
 
-        // Should only be able to withdraw actual balance
+        // Can withdraw actual balance
         vm.prank(alice);
         uint256 withdrawn = susd3Strategy.redeem(shares, alice, alice);
         assertGt(withdrawn, 0, "Should withdraw actual balance");
