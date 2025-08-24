@@ -58,9 +58,6 @@ contract sUSD3 is BaseHooksUpgradeable {
     /// Whitelist of depositors allowed to 3rd party deposit
     mapping(address => bool) public depositorWhitelist;
 
-    // Configurable parameters (only withdrawalWindow is locally managed)
-    uint256 public withdrawalWindow; // Window to complete withdrawal (default 2 days)
-
     // Subordination management
     address public morphoCredit; // MorphoCredit address to access protocol config
 
@@ -82,7 +79,6 @@ contract sUSD3 is BaseHooksUpgradeable {
         uint256 shares,
         uint256 assets
     );
-    event WithdrawalWindowUpdated(uint256 newWindow);
 
     /*//////////////////////////////////////////////////////////////
                             INITIALIZATION
@@ -116,9 +112,6 @@ contract sUSD3 is BaseHooksUpgradeable {
 
         // Get MorphoCredit address from USD3 strategy
         morphoCredit = address(USD3(_usd3Token).morphoCredit());
-
-        // Set default withdrawal window (locally managed)
-        withdrawalWindow = 2 days;
     }
 
     /**
@@ -274,7 +267,7 @@ contract sUSD3 is BaseHooksUpgradeable {
         cooldowns[msg.sender] = UserCooldown({
             cooldownEnd: uint64(block.timestamp + cooldownPeriod),
             windowEnd: uint64(
-                block.timestamp + cooldownPeriod + withdrawalWindow
+                block.timestamp + cooldownPeriod + withdrawalWindow()
             ),
             shares: uint128(shares)
         });
@@ -427,19 +420,15 @@ contract sUSD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Set the withdrawal window duration
-     * @param _withdrawalWindow Window duration in seconds (1-7 days)
-     * @dev Only callable by management
+     * @notice Get the withdrawal window from ProtocolConfig
+     * @return Withdrawal window duration in seconds
      */
-    function setWithdrawalWindow(
-        uint256 _withdrawalWindow
-    ) external onlyManagement {
-        require(
-            _withdrawalWindow >= 1 days && _withdrawalWindow <= 7 days,
-            "Invalid window"
+    function withdrawalWindow() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(
+            IMorphoCredit(morphoCredit).protocolConfig()
         );
-        withdrawalWindow = _withdrawalWindow;
-        emit WithdrawalWindowUpdated(_withdrawalWindow);
+        uint256 window = config.getSusd3WithdrawalWindow();
+        return window > 0 ? window : 2 days; // Default to 2 days if not set
     }
 
     /**

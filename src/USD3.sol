@@ -79,9 +79,6 @@ contract USD3 is BaseHooksUpgradeable {
     /// @notice Minimum deposit amount required
     uint256 public minDeposit;
 
-    /// @notice Minimum time funds must remain deposited (seconds)
-    uint256 public minCommitmentTime;
-
     /// @notice Timestamp of last deposit for each user
     /// @dev Used to enforce commitment periods
     mapping(address => uint256) public depositTimestamp;
@@ -375,12 +372,10 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         // Check commitment time
-        if (minCommitmentTime > 0) {
+        uint256 commitTime = minCommitmentTime();
+        if (commitTime > 0) {
             uint256 depositTime = depositTimestamp[_owner];
-            if (
-                depositTime > 0 &&
-                block.timestamp < depositTime + minCommitmentTime
-            ) {
+            if (depositTime > 0 && block.timestamp < depositTime + commitTime) {
                 return 0; // Commitment period not met
             }
         }
@@ -430,7 +425,7 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         // Prevent commitment bypass and griefing attacks
-        if (minCommitmentTime > 0) {
+        if (minCommitmentTime() > 0) {
             // Only allow self-deposits or whitelisted depositors
             require(
                 msg.sender == receiver || depositorWhitelist[msg.sender],
@@ -507,7 +502,7 @@ contract USD3 is BaseHooksUpgradeable {
         if (to == sUSD3 || from == sUSD3) return;
 
         // Check commitment period
-        uint256 commitmentEnd = depositTimestamp[from] + minCommitmentTime;
+        uint256 commitmentEnd = depositTimestamp[from] + minCommitmentTime();
         require(
             block.timestamp >= commitmentEnd || depositTimestamp[from] == 0,
             "USD3: Cannot transfer during commitment period"
@@ -588,6 +583,17 @@ contract USD3 is BaseHooksUpgradeable {
         return ratio > 0 ? ratio : 1500; // Default to 15% if not set
     }
 
+    /**
+     * @notice Get the minimum commitment time from ProtocolConfig
+     * @return Minimum commitment time in seconds
+     */
+    function minCommitmentTime() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(
+            IMorphoCredit(address(morphoCredit)).protocolConfig()
+        );
+        return config.getUsd3CommitmentTime();
+    }
+
     /*//////////////////////////////////////////////////////////////
                         MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -650,16 +656,6 @@ contract USD3 is BaseHooksUpgradeable {
     function setMinDeposit(uint256 _minDeposit) external onlyManagement {
         minDeposit = _minDeposit;
         emit MinDepositUpdated(_minDeposit);
-    }
-
-    /**
-     * @notice Set minimum commitment time for deposits
-     * @param _minCommitmentTime Time in seconds funds must remain deposited
-     */
-    function setMinCommitmentTime(
-        uint256 _minCommitmentTime
-    ) external onlyManagement {
-        minCommitmentTime = _minCommitmentTime;
     }
 
     /*//////////////////////////////////////////////////////////////

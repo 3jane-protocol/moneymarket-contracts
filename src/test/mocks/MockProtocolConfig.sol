@@ -19,6 +19,11 @@ contract MockProtocolConfig is IProtocolConfig {
         keccak256("SUSD3_LOCK_DURATION");
     bytes32 private constant SUSD3_COOLDOWN_PERIOD =
         keccak256("SUSD3_COOLDOWN_PERIOD");
+    bytes32 private constant USD3_COMMITMENT_TIME =
+        keccak256("USD3_COMMITMENT_TIME");
+    bytes32 private constant SUSD3_WITHDRAWAL_WINDOW =
+        keccak256("SUSD3_WITHDRAWAL_WINDOW");
+    bytes32 private constant CYCLE_DURATION = keccak256("CYCLE_DURATION");
     bytes32 private constant IS_PAUSED = keccak256("IS_PAUSED");
     bytes32 private constant MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
     bytes32 private constant GRACE_PERIOD = keccak256("GRACE_PERIOD");
@@ -35,6 +40,9 @@ contract MockProtocolConfig is IProtocolConfig {
         config[TRANCHE_SHARE_VARIANT] = 2000; // 20% performance fee to sUSD3
         config[SUSD3_LOCK_DURATION] = 90 days;
         config[SUSD3_COOLDOWN_PERIOD] = 7 days;
+        config[USD3_COMMITMENT_TIME] = 0; // No commitment by default in tests
+        config[SUSD3_WITHDRAWAL_WINDOW] = 2 days;
+        config[CYCLE_DURATION] = 30 days;
         config[MAX_ON_CREDIT] = 10000; // 100%
         config[GRACE_PERIOD] = 7 days;
         config[DELINQUENCY_PERIOD] = 30 days;
@@ -110,5 +118,17 @@ contract MockProtocolConfig is IProtocolConfig {
 
     function getSusd3CooldownPeriod() external view returns (uint256) {
         return config[SUSD3_COOLDOWN_PERIOD];
+    }
+
+    function getUsd3CommitmentTime() external view returns (uint256) {
+        return config[USD3_COMMITMENT_TIME];
+    }
+
+    function getSusd3WithdrawalWindow() external view returns (uint256) {
+        return config[SUSD3_WITHDRAWAL_WINDOW];
+    }
+
+    function getCycleDuration() external view returns (uint256) {
+        return config[CYCLE_DURATION];
     }
 }
