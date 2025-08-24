@@ -9,8 +9,15 @@ interface IUSD3 {
     function setPerformanceFeeRecipient(address recipient) external;
     function syncTrancheShare() external;
     function setWhitelistEnabled(bool _enabled) external;
+    function setWhitelist(address _user, bool _allowed) external;
     function setMinDeposit(uint256 _minDeposit) external;
     function setMinCommitmentTime(uint256 _minCommitmentTime) external;
+    function setDepositorWhitelist(address _depositor, bool _allowed) external;
+}
+
+interface ISUSD3 {
+    function setMinDeposit(uint256 _minDeposit) external;
+    function setWhitelistEnabled(bool _enabled) external;
     function setDepositorWhitelist(address _depositor, bool _allowed) external;
 }
 
@@ -23,9 +30,8 @@ contract ConfigureTokens is Script {
         address owner = vm.envAddress("OWNER_ADDRESS");
 
         // Load configuration parameters (with defaults for testnet)
-        uint256 minDeposit = vm.envOr("MIN_DEPOSIT", uint256(100e6)); // 100 USDC default
-        uint256 minCommitmentTime = vm.envOr("MIN_COMMITMENT_TIME", uint256(7 days)); // 7 days default
-        bool whitelistEnabled = vm.envOr("WHITELIST_ENABLED", false); // Disabled by default for testnet
+        uint256 minDeposit = vm.envOr("MIN_DEPOSIT", uint256(1_000e6)); // 100 USDC default
+        bool whitelistEnabled = vm.envOr("WHITELIST_ENABLED", true); // Disabled by default for testnet
 
         console.log("Configuring token relationships...");
         console.log("  USD3:", usd3);
@@ -52,12 +58,12 @@ contract ConfigureTokens is Script {
         IUSD3(usd3).setMinDeposit(minDeposit);
         console.log("  - Set minimum deposit to", minDeposit / 1e6, "USDC");
 
-        IUSD3(usd3).setMinCommitmentTime(minCommitmentTime);
-        console.log("  - Set minimum commitment time to", minCommitmentTime / 1 days, "days");
-
         // Configure whitelist
         IUSD3(usd3).setWhitelistEnabled(whitelistEnabled);
         console.log("  - Whitelist enabled:", whitelistEnabled);
+
+        IUSD3(usd3).setWhitelist(helper, true);
+        console.log("  - Added Helper to whitelist");
 
         // Add Helper to depositor whitelist (allows it to extend commitments)
         IUSD3(usd3).setDepositorWhitelist(helper, true);
@@ -65,16 +71,10 @@ contract ConfigureTokens is Script {
 
         // Configure sUSD3 with same parameters
         console.log("\nConfiguring sUSD3...");
-        IUSD3(susd3).setMinDeposit(minDeposit);
+        ISUSD3(susd3).setMinDeposit(minDeposit);
         console.log("  - Set minimum deposit to", minDeposit / 1e6, "USDC");
 
-        IUSD3(susd3).setMinCommitmentTime(minCommitmentTime);
-        console.log("  - Set minimum commitment time to", minCommitmentTime / 1 days, "days");
-
-        IUSD3(susd3).setWhitelistEnabled(whitelistEnabled);
-        console.log("  - Whitelist enabled:", whitelistEnabled);
-
-        IUSD3(susd3).setDepositorWhitelist(helper, true);
+        ISUSD3(susd3).setDepositorWhitelist(helper, true);
         console.log("  - Added Helper to depositor whitelist");
 
         vm.stopBroadcast();

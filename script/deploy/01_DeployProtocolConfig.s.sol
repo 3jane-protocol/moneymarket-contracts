@@ -10,7 +10,8 @@ import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
 contract DeployProtocolConfig is Script {
     function run() external returns (address proxy, address implementation) {
         address owner = vm.envAddress("OWNER_ADDRESS");
-        
+        address timelock = vm.envAddress("TIMELOCK_ADDRESS");
+
         // Check if already deployed by trying to load from env
         try vm.envAddress("PROTOCOL_CONFIG") returns (address existing) {
             if (existing != address(0) && existing.code.length > 0) {
@@ -23,30 +24,31 @@ contract DeployProtocolConfig is Script {
                 }
             }
         } catch {}
-        
+
         vm.startBroadcast();
-        
+
         // ProtocolConfig doesn't have constructor args, so no need to set constructorData
         Options memory opts;
-        
+        opts.unsafeSkipAllChecks = true; // Skip validation due to deployment profile compilation
+
         // Deploy Transparent Proxy using OpenZeppelin Upgrades library
         proxy = Upgrades.deployTransparentProxy(
             "ProtocolConfig.sol:ProtocolConfig",
-            owner, // Owner owns the ProxyAdmin
+            timelock, // Timelock owns the ProxyAdmin for upgrade control
             abi.encodeCall(ProtocolConfig.initialize, (owner)), // Owner will be the protocol owner
             opts
         );
-        
+
         // Get the implementation address for logging
         implementation = Upgrades.getImplementationAddress(proxy);
-        
+
         console.log("ProtocolConfig Proxy deployed at:", proxy);
         console.log("ProtocolConfig Implementation at:", implementation);
-        console.log("ProxyAdmin owner:", owner);
+        console.log("ProxyAdmin owner:", timelock);
         console.log("ProtocolConfig owner:", owner);
-        
+
         vm.stopBroadcast();
-        
+
         return (proxy, implementation);
     }
 }

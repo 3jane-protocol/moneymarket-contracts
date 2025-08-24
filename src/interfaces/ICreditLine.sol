@@ -44,4 +44,8 @@ interface ICreditLine {
         uint256[] calldata credit,
         uint128[] calldata drp
     ) external;
+
+    /// @notice Sets the insurance fund address
+    /// @param newInsuranceFund The new insurance fund address
+    function setInsuranceFund(address newInsuranceFund) external;
 }

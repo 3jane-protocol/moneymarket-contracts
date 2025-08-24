@@ -11,9 +11,11 @@ contract CreateMarket is Script {
         // Load deployed addresses - try env vars first, then file
         address morphoCredit = _loadAddressWithEnv("morphoCredit", "MORPHO_ADDRESS");
         address waUSDC = vm.envAddress("WAUSDC_ADDRESS"); // Load existing waUSDC from env
+        address USDC = vm.envAddress("USDC_ADDRESS"); // Load existing waUSDC from env
         address adaptiveCurveIrm = _loadAddressWithEnv("adaptiveCurveIrm", "ADAPTIVE_CURVE_IRM_ADDRESS");
         address creditLine = _loadAddressWithEnv("creditLine", "CREDIT_LINE_ADDRESS");
         address usdcOracle = vm.envAddress("USDC_ORACLE"); // Load USDC oracle from env
+        uint256 lltv = 1e18 - 1;
 
         console.log("Creating market in MorphoCredit...");
         console.log("  MorphoCredit:", morphoCredit);
@@ -25,10 +27,10 @@ contract CreateMarket is Script {
         // Create market parameters for unsecured lending
         MarketParams memory params = MarketParams({
             loanToken: waUSDC,
-            collateralToken: address(0), // No collateral for unsecured lending
+            collateralToken: USDC, // No collateral for unsecured lending
             oracle: usdcOracle, // USDC price oracle for health checks
             irm: adaptiveCurveIrm,
-            lltv: 0.95e18, // 95% LLTV for unsecured lending (high value since no collateral)
+            lltv: lltv, // 95% LLTV for unsecured lending (high value since no collateral)
             creditLine: creditLine // Enable credit line feature
         });
 
@@ -48,9 +50,9 @@ contract CreateMarket is Script {
         }
 
         // Enable LLTV of 95% for unsecured lending
-        if (!IMorpho(morphoCredit).isLltvEnabled(0.95e18)) {
-            console.log("Enabling LLTV 95% for unsecured lending...");
-            IMorpho(morphoCredit).enableLltv(0.95e18);
+        if (!IMorpho(morphoCredit).isLltvEnabled(lltv)) {
+            console.log("Enabling LLTV 99.999999999999% for unsecured lending...");
+            IMorpho(morphoCredit).enableLltv(lltv);
         }
 
         // Create the market

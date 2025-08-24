@@ -5900,7 +5900,7 @@ contract USD3 is BaseHooksUpgradeable {
             return availableLiquidity;
         }
 
-        // Check subordination ratio constraint
+        // Check subordination ratio constraint only if sUSD3 is set
         // Prevent withdrawals that would leave USD3 below minimum ratio
         if (sUSD3 != address(0)) {
             uint256 usd3TotalSupply = TokenizedStrategy.totalSupply();

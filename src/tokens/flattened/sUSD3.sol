@@ -5900,7 +5900,7 @@ contract USD3 is BaseHooksUpgradeable {
             return availableLiquidity;
         }
 
-        // Check subordination ratio constraint
+        // Check subordination ratio constraint only if sUSD3 is set
         // Prevent withdrawals that would leave USD3 below minimum ratio
         if (sUSD3 != address(0)) {
             uint256 usd3TotalSupply = TokenizedStrategy.totalSupply();
@@ -6453,7 +6453,10 @@ contract sUSD3 is BaseHooksUpgradeable {
     function startCooldown(uint256 shares) external {
         require(shares > 0, "Invalid shares");
         require(block.timestamp >= lockedUntil[msg.sender], "Still in lock period");
-        // Note: Balance check will be enforced during actual withdrawal
+
+        // Validate shares against actual balance
+        uint256 userBalance = IERC20(address(this)).balanceOf(msg.sender);
+        require(shares <= userBalance, "Insufficient balance for cooldown");
 
         // Read cooldown duration from ProtocolConfig
         uint256 cooldownPeriod = cooldownDuration();
