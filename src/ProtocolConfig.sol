@@ -6,6 +6,9 @@ import {MarketConfig, CreditLineConfig, IRMConfig} from "./interfaces/IProtocolC
 import {EventsLib} from "./libraries/EventsLib.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 
+/// @title ProtocolConfig
+/// @author 3Jane
+/// @custom:contact support@3jane.xyz
 contract ProtocolConfig is Initializable {
     // Configuration keys
     // Credit Line
