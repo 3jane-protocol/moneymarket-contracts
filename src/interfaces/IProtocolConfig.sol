@@ -49,6 +49,12 @@ interface IProtocolConfig {
     /// @param value The configuration value
     function setConfig(bytes32 key, uint256 value) external;
 
+    // Credit Line getters
+    /// @dev Get the credit line parameters
+    /// @return The credit line parameters
+    function getCreditLineConfig() external view returns (CreditLineConfig memory);
+
+    // Market getters
     /// @dev Get the pause status
     /// @return The pause status value
     function getIsPaused() external view returns (uint256);
@@ -57,18 +63,20 @@ interface IProtocolConfig {
     /// @return The max on credit value
     function getMaxOnCredit() external view returns (uint256);
 
-    /// @dev Get the credit line parameters
-    /// @return The credit line parameters
-    function getCreditLineConfig() external view returns (CreditLineConfig memory);
-
     /// @dev Get the market parameters
     /// @return The market parameters
     function getMarketConfig() external view returns (MarketConfig memory);
 
+    /// @dev Get the cycle duration for payment cycles
+    /// @return The cycle duration in seconds
+    function getCycleDuration() external view returns (uint256);
+
+    // IRM getters
     /// @dev Get the IRM parameters
     /// @return The IRM parameters
     function getIRMConfig() external view returns (IRMConfig memory);
 
+    // USD3 & sUSD3 getters
     /// @dev Get the tranche ratio
     /// @return The tranche ratio value
     function getTrancheRatio() external view returns (uint256);
@@ -85,9 +93,13 @@ interface IProtocolConfig {
     /// @return The SUSD3 cooldown period value
     function getSusd3CooldownPeriod() external view returns (uint256);
 
-    /// @dev Get the cycle duration for payment cycles
-    /// @return The cycle duration in seconds
-    function getCycleDuration() external view returns (uint256);
+    /// @dev Get the USD3 commitment time
+    /// @return The lock period in seconds
+    function getUsd3CommitmentTime() external view returns (uint256);
+
+    /// @dev Get the sUSD3 withdrawal window
+    /// @return The withdrawal window duration in seconds after cooldown
+    function getSusd3WithdrawalWindow() external view returns (uint256);
 
     /// @dev Get configuration value by key
     /// @param key The configuration key

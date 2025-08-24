@@ -34,6 +34,8 @@ contract ProtocolConfig is Initializable {
     bytes32 private constant TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
     bytes32 private constant SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
     bytes32 private constant SUSD3_COOLDOWN_PERIOD = keccak256("SUSD3_COOLDOWN_PERIOD");
+    bytes32 private constant USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
+    bytes32 private constant SUSD3_WITHDRAWAL_WINDOW = keccak256("SUSD3_WITHDRAWAL_WINDOW");
 
     /// @dev Configuration storage mapping
     mapping(bytes32 => uint256) public config;
@@ -69,14 +71,7 @@ contract ProtocolConfig is Initializable {
         config[key] = value;
     }
 
-    function getIsPaused() external view returns (uint256) {
-        return config[IS_PAUSED];
-    }
-
-    function getMaxOnCredit() external view returns (uint256) {
-        return config[MAX_ON_CREDIT];
-    }
-
+    // Credit Line getters
     function getCreditLineConfig() external view returns (CreditLineConfig memory) {
         return CreditLineConfig({
             maxLTV: config[MAX_LTV],
@@ -85,6 +80,15 @@ contract ProtocolConfig is Initializable {
             minCreditLine: config[MIN_CREDIT_LINE],
             maxDRP: config[MAX_DRP]
         });
+    }
+
+    // Market getters
+    function getIsPaused() external view returns (uint256) {
+        return config[IS_PAUSED];
+    }
+
+    function getMaxOnCredit() external view returns (uint256) {
+        return config[MAX_ON_CREDIT];
     }
 
     function getMarketConfig() external view returns (MarketConfig memory) {
@@ -96,6 +100,11 @@ contract ProtocolConfig is Initializable {
         });
     }
 
+    function getCycleDuration() external view returns (uint256) {
+        return config[CYCLE_DURATION];
+    }
+
+    // IRM getters
     function getIRMConfig() external view returns (IRMConfig memory) {
         return IRMConfig({
             curveSteepness: config[CURVE_STEEPNESS],
@@ -107,6 +116,7 @@ contract ProtocolConfig is Initializable {
         });
     }
 
+    // USD3 & sUSD3 getters
     function getTrancheRatio() external view returns (uint256) {
         return config[TRANCHE_RATIO];
     }
@@ -123,7 +133,11 @@ contract ProtocolConfig is Initializable {
         return config[SUSD3_COOLDOWN_PERIOD];
     }
 
-    function getCycleDuration() external view returns (uint256) {
-        return config[CYCLE_DURATION];
+    function getUsd3CommitmentTime() external view returns (uint256) {
+        return config[USD3_COMMITMENT_TIME];
+    }
+
+    function getSusd3WithdrawalWindow() external view returns (uint256) {
+        return config[SUSD3_WITHDRAWAL_WINDOW];
     }
 }
