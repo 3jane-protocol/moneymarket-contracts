@@ -346,29 +346,24 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Check subordination ratio constraint
         // Prevent withdrawals that would leave USD3 below minimum ratio
-        if (sUSD3 != address(0)) {
-            uint256 usd3TotalSupply = TokenizedStrategy.totalSupply();
+        uint256 usd3TotalSupply = TokenizedStrategy.totalSupply();
 
-            // sUSD3 holds USD3 tokens, so we check USD3 balance of sUSD3
-            uint256 susd3Holdings = TokenizedStrategy.balanceOf(sUSD3);
+        // sUSD3 holds USD3 tokens, so we check USD3 balance of sUSD3
+        uint256 susd3Holdings = TokenizedStrategy.balanceOf(sUSD3);
 
-            // Get max subordination ratio from ProtocolConfig
-            uint256 maxSubRatio = maxSubordinationRatio(); // e.g., 1500 (15%)
+        // Get max subordination ratio from ProtocolConfig
+        uint256 maxSubRatio = maxSubordinationRatio(); // e.g., 1500 (15%)
 
-            // Calculate the minimum total supply that maintains the ratio
-            // minTotalSupply = susd3Holdings / maxSubRatio
-            uint256 minTotalSupply = (susd3Holdings * MAX_BPS) / maxSubRatio;
+        // Calculate the minimum total supply that maintains the ratio
+        // minTotalSupply = susd3Holdings / maxSubRatio
+        uint256 minTotalSupply = (susd3Holdings * MAX_BPS) / maxSubRatio;
 
-            if (usd3TotalSupply <= minTotalSupply) {
-                availableLiquidity = 0; // No withdrawals allowed
-            } else {
-                // Only allow withdrawal down to the minimum supply
-                uint256 maxWithdrawable = usd3TotalSupply - minTotalSupply;
-                availableLiquidity = Math.min(
-                    availableLiquidity,
-                    maxWithdrawable
-                );
-            }
+        if (usd3TotalSupply <= minTotalSupply) {
+            availableLiquidity = 0; // No withdrawals allowed
+        } else {
+            // Only allow withdrawal down to the minimum supply
+            uint256 maxWithdrawable = usd3TotalSupply - minTotalSupply;
+            availableLiquidity = Math.min(availableLiquidity, maxWithdrawable);
         }
 
         // Check commitment time
