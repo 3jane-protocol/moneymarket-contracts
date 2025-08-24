@@ -54,17 +54,33 @@ contract ShutdownIntegrationTest is Setup {
         susd3Strategy = sUSD3(address(susd3Proxy));
 
         // Link strategies
+        // Set commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
+
+        // Configure restrictions
         vm.prank(management);
         usd3Strategy.setSUSD3(address(susd3Strategy));
 
-        // Configure restrictions
+        // Set config as the owner (test contract in this case)
+        MockProtocolConfig(protocolConfigAddress).setConfig(
+            USD3_COMMITMENT_TIME,
+            7 days
+        );
+
         vm.startPrank(management);
-        usd3Strategy.setMinCommitmentTime(7 days);
         usd3Strategy.setMinDeposit(100e6);
         usd3Strategy.setWhitelistEnabled(true);
         usd3Strategy.setWhitelist(alice, true);
         usd3Strategy.setWhitelist(bob, true);
         usd3Strategy.setWhitelist(charlie, true);
+        // Emergency admin is already set on usd3Strategy in parent setUp
+        // Set emergency admin on sUSD3 for shutdown tests
+        ITokenizedStrategy(address(susd3Strategy)).setEmergencyAdmin(
+            emergencyAdmin
+        );
         vm.stopPrank();
 
         // Setup test users with USDC
@@ -186,7 +202,7 @@ contract ShutdownIntegrationTest is Setup {
         vm.prank(emergencyAdmin);
         ITokenizedStrategy(address(usd3Strategy)).shutdownStrategy();
 
-        vm.prank(management);
+        vm.prank(emergencyAdmin);
         ITokenizedStrategy(address(susd3Strategy)).shutdownStrategy();
 
         // All users try to withdraw simultaneously
@@ -449,7 +465,7 @@ contract ShutdownIntegrationTest is Setup {
         vm.prank(emergencyAdmin);
         ITokenizedStrategy(address(usd3Strategy)).shutdownStrategy();
 
-        vm.prank(management);
+        vm.prank(emergencyAdmin);
         ITokenizedStrategy(address(susd3Strategy)).shutdownStrategy();
 
         // All users should be able to withdraw immediately
@@ -574,7 +590,7 @@ contract ShutdownIntegrationTest is Setup {
         vm.prank(emergencyAdmin);
         ITokenizedStrategy(address(usd3Strategy)).shutdownStrategy();
 
-        vm.prank(management);
+        vm.prank(emergencyAdmin);
         ITokenizedStrategy(address(susd3Strategy)).shutdownStrategy();
 
         // Alice should still be able to withdraw immediately despite config changes

@@ -61,6 +61,22 @@ contract USD3MorphoIntegrationTest is Setup {
         // Fund test contract for _triggerAccrual() calls
         deal(address(asset), address(this), 1000e6);
         asset.approve(address(morpho), type(uint256).max);
+
+        // Initialize market with payment cycle to prevent MarketFrozen errors
+        _initializeMarketWithCycle();
+    }
+
+    // Helper function to initialize market with a payment cycle
+    function _initializeMarketWithCycle() internal {
+        // Create an initial payment cycle to unfreeze the market
+        vm.prank(marketParams.creditLine);
+        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id,
+            block.timestamp, // End date is current time (cycle just ended)
+            new address[](0), // No borrowers yet
+            new uint256[](0), // No repayment bps
+            new uint256[](0) // No ending balances
+        );
     }
 
     // Custom helper to setup borrower with aToken loan
@@ -194,6 +210,16 @@ contract USD3MorphoIntegrationTest is Setup {
 
         // Wait for profit unlock
         skip(ITokenizedStrategy(address(usd3Strategy)).profitMaxUnlockTime());
+
+        // Create a new payment cycle since the old one expired
+        vm.prank(marketParams.creditLine);
+        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id,
+            block.timestamp, // End date is current time
+            new address[](0), // No borrowers yet
+            new uint256[](0), // No repayment bps
+            new uint256[](0) // No ending balances
+        );
 
         // First have borrower repay their loan to free up liquidity
         uint256 borrowerDebt = morpho.market(id).totalBorrowAssets;

@@ -3,6 +3,8 @@ pragma solidity ^0.8.18;
 
 import {Setup} from "../utils/Setup.sol";
 import {USD3} from "../../USD3.sol";
+import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
+import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {sUSD3} from "../../sUSD3.sol";
 import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
@@ -53,12 +55,23 @@ contract ShutdownSecurityTest is Setup {
         susd3Strategy = sUSD3(address(susd3Proxy));
 
         // Link strategies
+        // Set commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
+
+        // Configure restrictions
         vm.prank(management);
         usd3Strategy.setSUSD3(address(susd3Strategy));
 
-        // Configure restrictions
+        // Set config as the owner (test contract in this case)
+        MockProtocolConfig(protocolConfigAddress).setConfig(
+            USD3_COMMITMENT_TIME,
+            7 days
+        );
+
         vm.startPrank(management);
-        usd3Strategy.setMinCommitmentTime(7 days);
         usd3Strategy.setMinDeposit(100e6);
         usd3Strategy.setWhitelistEnabled(true);
         usd3Strategy.setWhitelist(alice, true);
@@ -284,6 +297,11 @@ contract ShutdownSecurityTest is Setup {
      */
     function test_double_deposit_attack() public {
         // Not whitelisted, so add to whitelist first
+        // Set commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
         vm.prank(management);
         usd3Strategy.setWhitelist(attacker, true);
 
@@ -347,6 +365,11 @@ contract ShutdownSecurityTest is Setup {
      */
     function test_fee_extraction_during_shutdown() public {
         // Set performance fee
+        // Set commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
         vm.prank(management);
         ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(1000); // 10%
 
@@ -376,13 +399,18 @@ contract ShutdownSecurityTest is Setup {
         if (feeShares > 0) {
             // Management can withdraw their fee shares even during shutdown
             // This is expected behavior - fees already earned should be withdrawable
-            vm.prank(management);
+            vm.startPrank(management);
+            IERC20(address(usd3Strategy)).approve(
+                address(usd3Strategy),
+                feeShares
+            );
             uint256 feeAmount = usd3Strategy.redeem(
                 feeShares,
                 management,
                 management
             );
             assertGt(feeAmount, 0, "Fee recipient can claim earned fees");
+            vm.stopPrank();
         }
 
         // New reports are blocked during shutdown
@@ -401,6 +429,11 @@ contract ShutdownSecurityTest is Setup {
         users[2] = charlie;
 
         // Charlie needs whitelist
+        // Set commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
         vm.prank(management);
         usd3Strategy.setWhitelist(charlie, true);
 
@@ -462,6 +495,11 @@ contract ShutdownSecurityTest is Setup {
      */
     function test_shutdown_with_pending_performance_fees() public {
         // Set performance fee
+        // Set commitment period via protocol config
+        address morphoAddress = address(usd3Strategy.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress)
+            .protocolConfig();
+        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
         vm.prank(management);
         ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(1000); // 10%
 
@@ -502,13 +540,18 @@ contract ShutdownSecurityTest is Setup {
             management
         );
         if (feeShares > 0) {
-            vm.prank(management);
+            vm.startPrank(management);
+            IERC20(address(usd3Strategy)).approve(
+                address(usd3Strategy),
+                feeShares
+            );
             uint256 feeAmount = usd3Strategy.redeem(
                 feeShares,
                 management,
                 management
             );
             assertGt(feeAmount, 0, "Should claim performance fees");
+            vm.stopPrank();
         }
     }
 }

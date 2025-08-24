@@ -160,22 +160,6 @@ contract AccessControlTest is Setup {
         );
     }
 
-    function test_setMinCommitmentTime_onlyManagement() public {
-        // Unauthorized user cannot set
-        vm.prank(unauthorizedUser);
-        vm.expectRevert();
-        usd3Strategy.setMinCommitmentTime(7 days);
-
-        // Management can set
-        vm.prank(management);
-        usd3Strategy.setMinCommitmentTime(7 days);
-        assertEq(
-            usd3Strategy.minCommitmentTime(),
-            7 days,
-            "Min commitment time should be updated"
-        );
-    }
-
     /*//////////////////////////////////////////////////////////////
                     USD3 KEEPER FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -198,27 +182,6 @@ contract AccessControlTest is Setup {
     /*//////////////////////////////////////////////////////////////
                     sUSD3 MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-
-    function test_setWithdrawalWindow_onlyManagement() public {
-        // Unauthorized user cannot set
-        vm.prank(unauthorizedUser);
-        vm.expectRevert();
-        susd3Strategy.setWithdrawalWindow(3 days);
-
-        // Keeper cannot set
-        vm.prank(keeper);
-        vm.expectRevert();
-        susd3Strategy.setWithdrawalWindow(3 days);
-
-        // Management can set
-        vm.prank(management);
-        susd3Strategy.setWithdrawalWindow(3 days);
-        assertEq(
-            susd3Strategy.withdrawalWindow(),
-            3 days,
-            "Withdrawal window should be updated"
-        );
-    }
 
     /*//////////////////////////////////////////////////////////////
                     INHERITED FUNCTIONS (FROM BaseStrategy)
