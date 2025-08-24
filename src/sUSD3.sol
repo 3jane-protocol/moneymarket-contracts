@@ -258,7 +258,10 @@ contract sUSD3 is BaseHooksUpgradeable {
             block.timestamp >= lockedUntil[msg.sender],
             "Still in lock period"
         );
-        // Note: Balance check will be enforced during actual withdrawal
+
+        // Validate shares against actual balance
+        uint256 userBalance = IERC20(address(this)).balanceOf(msg.sender);
+        require(shares <= userBalance, "Insufficient balance for cooldown");
 
         // Read cooldown duration from ProtocolConfig
         uint256 cooldownPeriod = cooldownDuration();
