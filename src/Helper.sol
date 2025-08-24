@@ -56,6 +56,7 @@ contract Helper is IHelper {
         uint256 waUsdcAmount = _wrap(msg.sender, assets);
 
         if (hop) {
+            require(IUSD3(USD3).whitelist(receiver), "!whitelist");
             assets = IUSD3(USD3).deposit(waUsdcAmount, address(this));
             assets = IERC4626(sUSD3).deposit(assets, receiver);
         } else {
