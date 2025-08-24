@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity 0.8.22;
 
-import {Id} from "../../interfaces/IMorpho.sol";
-
 // lib/openzeppelin-contracts/contracts/utils/Context.sol
 
 // OpenZeppelin Contracts (last updated v5.0.1) (utils/Context.sol)
@@ -113,17 +111,8 @@ library ErrorsLib {
     /// @notice Thrown when the liquidity is insufficient to `withdraw` or `borrow`.
     error InsufficientLiquidity();
 
-    /// @notice Thrown when the position to liquidate is healthy.
-    error HealthyPosition();
-
-    /// @notice Thrown when the authorization signature is invalid.
-    error InvalidSignature();
-
-    /// @notice Thrown when the authorization signature is expired.
-    error SignatureExpired();
-
-    /// @notice Thrown when the nonce is invalid.
-    error InvalidNonce();
+    /// @notice Thrown when borrowing shares would result in borrowing zero assets.
+    error InsufficientBorrowAmount();
 
     /// @notice Thrown when a token transfer reverted.
     error TransferReverted();
@@ -175,55 +164,35 @@ library ErrorsLib {
 
     /// @notice Thrown when the cover amount exceeds the assets amount.
     error InvalidCoverAmount();
+
+    /// @notice Thrown when attempting operations on a frozen market.
+    error MarketFrozen();
 }
 
 // lib/tokenized-strategy-periphery/src/Bases/Hooks/Hooks.sol
 
 contract DepositHooks {
-    function _preDepositHook(
-        uint256 assets,
-        uint256 shares,
-        address receiver
-    ) internal virtual {}
+    function _preDepositHook(uint256 assets, uint256 shares, address receiver) internal virtual {}
 
-    function _postDepositHook(
-        uint256 assets,
-        uint256 shares,
-        address receiver
-    ) internal virtual {}
+    function _postDepositHook(uint256 assets, uint256 shares, address receiver) internal virtual {}
 }
 
 contract WithdrawHooks {
-    function _preWithdrawHook(
-        uint256 assets,
-        uint256 shares,
-        address receiver,
-        address owner,
-        uint256 maxLoss
-    ) internal virtual {}
+    function _preWithdrawHook(uint256 assets, uint256 shares, address receiver, address owner, uint256 maxLoss)
+        internal
+        virtual
+    {}
 
-    function _postWithdrawHook(
-        uint256 assets,
-        uint256 shares,
-        address receiver,
-        address owner,
-        uint256 maxLoss
-    ) internal virtual {}
+    function _postWithdrawHook(uint256 assets, uint256 shares, address receiver, address owner, uint256 maxLoss)
+        internal
+        virtual
+    {}
 }
 
 contract TransferHooks {
-    function _preTransferHook(
-        address from,
-        address to,
-        uint256 amount
-    ) internal virtual {}
+    function _preTransferHook(address from, address to, uint256 amount) internal virtual {}
 
-    function _postTransferHook(
-        address from,
-        address to,
-        uint256 amount,
-        bool success
-    ) internal virtual {}
+    function _postTransferHook(address from, address to, uint256 amount, bool success) internal virtual {}
 }
 
 contract ReportHooks {
@@ -402,15 +371,8 @@ interface IERC20Permit {
      *
      * CAUTION: See Security Considerations above.
      */
-    function permit(
-        address owner,
-        address spender,
-        uint256 value,
-        uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external;
+    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+        external;
 
     /**
      * @dev Returns the current nonce for `owner`. This value must be
@@ -430,6 +392,7 @@ interface IERC20Permit {
 
 // lib/3jane-morpho-blue/src/interfaces/IMorpho.sol
 
+type Id is bytes32;
 
 struct MarketParams {
     address loanToken;
@@ -937,6 +900,12 @@ interface IProtocolConfig {
     /// @param value The configuration value
     function setConfig(bytes32 key, uint256 value) external;
 
+    // Credit Line getters
+    /// @dev Get the credit line parameters
+    /// @return The credit line parameters
+    function getCreditLineConfig() external view returns (CreditLineConfig memory);
+
+    // Market getters
     /// @dev Get the pause status
     /// @return The pause status value
     function getIsPaused() external view returns (uint256);
@@ -945,18 +914,20 @@ interface IProtocolConfig {
     /// @return The max on credit value
     function getMaxOnCredit() external view returns (uint256);
 
-    /// @dev Get the credit line parameters
-    /// @return The credit line parameters
-    function getCreditLineConfig() external view returns (CreditLineConfig memory);
-
     /// @dev Get the market parameters
     /// @return The market parameters
     function getMarketConfig() external view returns (MarketConfig memory);
 
+    /// @dev Get the cycle duration for payment cycles
+    /// @return The cycle duration in seconds
+    function getCycleDuration() external view returns (uint256);
+
+    // IRM getters
     /// @dev Get the IRM parameters
     /// @return The IRM parameters
     function getIRMConfig() external view returns (IRMConfig memory);
 
+    // USD3 & sUSD3 getters
     /// @dev Get the tranche ratio
     /// @return The tranche ratio value
     function getTrancheRatio() external view returns (uint256);
@@ -972,6 +943,14 @@ interface IProtocolConfig {
     /// @dev Get the SUSD3 cooldown period
     /// @return The SUSD3 cooldown period value
     function getSusd3CooldownPeriod() external view returns (uint256);
+
+    /// @dev Get the USD3 commitment time
+    /// @return The lock period in seconds
+    function getUsd3CommitmentTime() external view returns (uint256);
+
+    /// @dev Get the sUSD3 withdrawal window
+    /// @return The withdrawal window duration in seconds after cooldown
+    function getSusd3WithdrawalWindow() external view returns (uint256);
 
     /// @dev Get configuration value by key
     /// @param key The configuration key
@@ -2757,9 +2736,8 @@ library MorphoStorageLib {
     uint256 internal constant MARKET_SLOT = 3;
     uint256 internal constant IS_IRM_ENABLED_SLOT = 4;
     uint256 internal constant IS_LLTV_ENABLED_SLOT = 5;
-    uint256 internal constant IS_AUTHORIZED_SLOT = 6;
-    uint256 internal constant NONCE_SLOT = 7;
-    uint256 internal constant ID_TO_MARKET_PARAMS_SLOT = 8;
+    uint256 internal constant NONCE_SLOT = 6;
+    uint256 internal constant ID_TO_MARKET_PARAMS_SLOT = 7;
 
     /* SLOT OFFSETS */
 
@@ -2818,10 +2796,6 @@ library MorphoStorageLib {
 
     function isLltvEnabledSlot(uint256 lltv) internal pure returns (bytes32) {
         return keccak256(abi.encode(lltv, IS_LLTV_ENABLED_SLOT));
-    }
-
-    function isAuthorizedSlot(address authorizer, address authorizee) internal pure returns (bytes32) {
-        return keccak256(abi.encode(authorizee, keccak256(abi.encode(authorizer, IS_AUTHORIZED_SLOT))));
     }
 
     function nonceSlot(address authorizer) internal pure returns (bytes32) {
@@ -2944,11 +2918,7 @@ interface IERC4626 is IERC20, IERC20Metadata {
     event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares);
 
     event Withdraw(
-        address indexed sender,
-        address indexed receiver,
-        address indexed owner,
-        uint256 assets,
-        uint256 shares
+        address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares
     );
 
     /**
@@ -3172,6 +3142,7 @@ library Math {
         Ceil, // Toward positive infinity
         Trunc, // Toward zero
         Expand // Away from zero
+
     }
 
     /**
@@ -3603,11 +3574,11 @@ library Math {
     /**
      * @dev Variant of {tryModExp} that supports inputs of arbitrary length.
      */
-    function tryModExp(
-        bytes memory b,
-        bytes memory e,
-        bytes memory m
-    ) internal view returns (bool success, bytes memory result) {
+    function tryModExp(bytes memory b, bytes memory e, bytes memory m)
+        internal
+        view
+        returns (bool success, bytes memory result)
+    {
         if (_zeroBytes(m)) return (false, new bytes(0));
 
         uint256 mLen = m.length;
@@ -4332,7 +4303,9 @@ interface IERC1363 is IERC20, IERC165 {
      * @param data Additional data with no specified format, sent in call to `to`.
      * @return A boolean value indicating whether the operation succeeded unless throwing.
      */
-    function transferFromAndCall(address from, address to, uint256 value, bytes calldata data) external returns (bool);
+    function transferFromAndCall(address from, address to, uint256 value, bytes calldata data)
+        external
+        returns (bool);
 
     /**
      * @dev Sets a `value` amount of tokens as the allowance of `spender` over the
@@ -4481,13 +4454,9 @@ library SafeERC20 {
      *
      * Reverts if the returned value is other than `true`.
      */
-    function transferFromAndCallRelaxed(
-        IERC1363 token,
-        address from,
-        address to,
-        uint256 value,
-        bytes memory data
-    ) internal {
+    function transferFromAndCallRelaxed(IERC1363 token, address from, address to, uint256 value, bytes memory data)
+        internal
+    {
         if (to.code.length == 0) {
             safeTransferFrom(token, from, to, value);
         } else if (!token.transferFromAndCall(from, to, value, data)) {
@@ -4501,7 +4470,8 @@ library SafeERC20 {
      * targeting contracts.
      *
      * NOTE: When the recipient address (`to`) has no code (i.e. is an EOA), this function behaves as {forceApprove}.
-     * Opposedly, when the recipient address (`to`) has code, this function only attempts to call {ERC1363-approveAndCall}
+     * Opposedly, when the recipient address (`to`) has code, this function only attempts to call
+     * {ERC1363-approveAndCall}
      * once without retrying, and relies on the returned value to be true.
      *
      * Reverts if the returned value is other than `true`.
@@ -4580,8 +4550,7 @@ library TokenizedStrategyStorageLib {
      * @dev The main storage slot for the StrategyData struct.
      * This matches the BASE_STRATEGY_STORAGE constant in TokenizedStrategy.sol
      */
-    bytes32 internal constant BASE_STRATEGY_STORAGE =
-        bytes32(uint256(keccak256("yearn.base.strategy.storage")) - 1);
+    bytes32 internal constant BASE_STRATEGY_STORAGE = bytes32(uint256(keccak256("yearn.base.strategy.storage")) - 1);
 
     /**
      * @dev The StrategyData struct that holds all storage for TokenizedStrategy v3.0.4.
@@ -4676,17 +4645,14 @@ library TokenizedStrategyStorageLib {
      * @notice Get the storage slot for fullProfitUnlockDate and keeper (packed)
      * @return slot The storage slot containing fullProfitUnlockDate (uint96) and keeper (address)
      */
-    function fullProfitUnlockDateAndKeeperSlot()
-        internal
-        pure
-        returns (bytes32 slot)
-    {
+    function fullProfitUnlockDateAndKeeperSlot() internal pure returns (bytes32 slot) {
         return bytes32(uint256(BASE_STRATEGY_STORAGE) + 8);
     }
 
     /**
      * @notice Get the storage slot for profitMaxUnlockTime, performanceFee, and performanceFeeRecipient (packed)
-     * @return slot The storage slot containing profitMaxUnlockTime (uint32), performanceFee (uint16), and performanceFeeRecipient (address)
+     * @return slot The storage slot containing profitMaxUnlockTime (uint32), performanceFee (uint16), and
+     * performanceFeeRecipient (address)
      */
     function profitConfigSlot() internal pure returns (bytes32 slot) {
         return bytes32(uint256(BASE_STRATEGY_STORAGE) + 9);
@@ -4696,11 +4662,7 @@ library TokenizedStrategyStorageLib {
      * @notice Get the storage slot for lastReport and management (packed)
      * @return slot The storage slot containing lastReport (uint96) and management (address)
      */
-    function lastReportAndManagementSlot()
-        internal
-        pure
-        returns (bytes32 slot)
-    {
+    function lastReportAndManagementSlot() internal pure returns (bytes32 slot) {
         return bytes32(uint256(BASE_STRATEGY_STORAGE) + 10);
     }
 
@@ -4744,9 +4706,7 @@ library TokenizedStrategyStorageLib {
      * @param account The address to get the balance slot for
      * @return slot The storage slot for the account's balance
      */
-    function balancesSlot(
-        address account
-    ) internal pure returns (bytes32 slot) {
+    function balancesSlot(address account) internal pure returns (bytes32 slot) {
         // balances mapping is at slot position 4 from BASE_STRATEGY_STORAGE
         bytes32 balancesPosition = bytes32(uint256(BASE_STRATEGY_STORAGE) + 4);
         return keccak256(abi.encode(account, balancesPosition));
@@ -4758,14 +4718,9 @@ library TokenizedStrategyStorageLib {
      * @param spender The address that can spend the tokens
      * @return slot The storage slot for the allowance
      */
-    function allowancesSlot(
-        address owner,
-        address spender
-    ) internal pure returns (bytes32 slot) {
+    function allowancesSlot(address owner, address spender) internal pure returns (bytes32 slot) {
         // allowances mapping is at slot position 5 from BASE_STRATEGY_STORAGE
-        bytes32 allowancesPosition = bytes32(
-            uint256(BASE_STRATEGY_STORAGE) + 5
-        );
+        bytes32 allowancesPosition = bytes32(uint256(BASE_STRATEGY_STORAGE) + 5);
         // For nested mappings: keccak256(spender . keccak256(owner . slot))
         bytes32 ownerSlot = keccak256(abi.encode(owner, allowancesPosition));
         return keccak256(abi.encode(spender, ownerSlot));
@@ -4776,11 +4731,7 @@ library TokenizedStrategyStorageLib {
      * @dev This can be used in external contracts to load the full struct
      * @return S The StrategyData struct from storage
      */
-    function getStrategyStorage()
-        internal
-        pure
-        returns (StrategyData storage S)
-    {
+    function getStrategyStorage() internal pure returns (StrategyData storage S) {
         bytes32 slot = BASE_STRATEGY_STORAGE;
         assembly {
             S.slot := slot
@@ -4798,22 +4749,11 @@ interface ITokenizedStrategy is IERC4626, IERC20Permit {
 
     event StrategyShutdown();
 
-    event NewTokenizedStrategy(
-        address indexed strategy,
-        address indexed asset,
-        string apiVersion
-    );
+    event NewTokenizedStrategy(address indexed strategy, address indexed asset, string apiVersion);
 
-    event Reported(
-        uint256 profit,
-        uint256 loss,
-        uint256 protocolFees,
-        uint256 performanceFees
-    );
+    event Reported(uint256 profit, uint256 loss, uint256 protocolFees, uint256 performanceFees);
 
-    event UpdatePerformanceFeeRecipient(
-        address indexed newPerformanceFeeRecipient
-    );
+    event UpdatePerformanceFeeRecipient(address indexed newPerformanceFeeRecipient);
 
     event UpdateKeeper(address indexed newKeeper);
 
@@ -4843,29 +4783,13 @@ interface ITokenizedStrategy is IERC4626, IERC20Permit {
                     NON-STANDARD 4626 OPTIONS
     //////////////////////////////////////////////////////////////*/
 
-    function withdraw(
-        uint256 assets,
-        address receiver,
-        address owner,
-        uint256 maxLoss
-    ) external returns (uint256);
+    function withdraw(uint256 assets, address receiver, address owner, uint256 maxLoss) external returns (uint256);
 
-    function redeem(
-        uint256 shares,
-        address receiver,
-        address owner,
-        uint256 maxLoss
-    ) external returns (uint256);
+    function redeem(uint256 shares, address receiver, address owner, uint256 maxLoss) external returns (uint256);
 
-    function maxWithdraw(
-        address owner,
-        uint256 /*maxLoss*/
-    ) external view returns (uint256);
+    function maxWithdraw(address owner, uint256 /*maxLoss*/ ) external view returns (uint256);
 
-    function maxRedeem(
-        address owner,
-        uint256 /*maxLoss*/
-    ) external view returns (uint256);
+    function maxRedeem(address owner, uint256 /*maxLoss*/ ) external view returns (uint256);
 
     /*//////////////////////////////////////////////////////////////
                         MODIFIER HELPERS
@@ -4939,9 +4863,7 @@ interface ITokenizedStrategy is IERC4626, IERC20Permit {
 
     function setPerformanceFee(uint16 _performanceFee) external;
 
-    function setPerformanceFeeRecipient(
-        address _performanceFeeRecipient
-    ) external;
+    function setPerformanceFeeRecipient(address _performanceFeeRecipient) external;
 
     function setProfitMaxUnlockTime(uint256 _profitMaxUnlockTime) external;
 
@@ -5029,8 +4951,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * This address should be the same for every strategy, never be adjusted
      * and always be checked before any integration with the Strategy.
      */
-    address public constant tokenizedStrategyAddress =
-        0xD377919FA87120584B21279a491F82D5265A139c;
+    address public constant tokenizedStrategyAddress = 0xD377919FA87120584B21279a491F82D5265A139c;
 
     /*//////////////////////////////////////////////////////////////
                             STORAGE
@@ -5081,8 +5002,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
         // Initialize the strategy's storage variables via delegatecall.
         _delegateCall(
             abi.encodeCall(
-                ITokenizedStrategy.initialize,
-                (_asset, _name, _management, _performanceFeeRecipient, _keeper)
+                ITokenizedStrategy.initialize, (_asset, _name, _management, _performanceFeeRecipient, _keeper)
             )
         );
     }
@@ -5149,10 +5069,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @return _totalAssets A trusted and accurate account for the total
      * amount of 'asset' the strategy currently holds including idle funds.
      */
-    function _harvestAndReport()
-        internal
-        virtual
-        returns (uint256 _totalAssets);
+    function _harvestAndReport() internal virtual returns (uint256 _totalAssets);
 
     /*//////////////////////////////////////////////////////////////
                     OPTIONAL TO OVERRIDE BY STRATEGIST
@@ -5227,9 +5144,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @param . The address that is depositing into the strategy.
      * @return . The available amount the `_owner` can deposit in terms of `asset`
      */
-    function availableDepositLimit(
-        address /*_owner*/
-    ) public view virtual returns (uint256) {
+    function availableDepositLimit(address /*_owner*/ ) public view virtual returns (uint256) {
         return type(uint256).max;
     }
 
@@ -5251,9 +5166,7 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @param . The address that is withdrawing from the strategy.
      * @return . The available amount that can be withdrawn in terms of `asset`
      */
-    function availableWithdrawLimit(
-        address /*_owner*/
-    ) public view virtual returns (uint256) {
+    function availableWithdrawLimit(address /*_owner*/ ) public view virtual returns (uint256) {
         return type(uint256).max;
     }
 
@@ -5376,12 +5289,9 @@ abstract contract BaseStrategyUpgradeable is Initializable {
      * @param _calldata The abi encoded calldata to use in delegatecall.
      * @return . The return value if the call was successful in bytes.
      */
-    function _delegateCall(
-        bytes memory _calldata
-    ) internal returns (bytes memory) {
+    function _delegateCall(bytes memory _calldata) internal returns (bytes memory) {
         // Delegate call the tokenized strategy with provided calldata.
-        (bool success, bytes memory result) = tokenizedStrategyAddress
-            .delegatecall(_calldata);
+        (bool success, bytes memory result) = tokenizedStrategyAddress.delegatecall(_calldata);
 
         // If the call reverted. Return the error.
         if (!success) {
@@ -5416,24 +5326,13 @@ abstract contract BaseStrategyUpgradeable is Initializable {
             // Copy function selector and any arguments.
             calldatacopy(0, 0, calldatasize())
             // Execute function delegatecall.
-            let result := delegatecall(
-                gas(),
-                _tokenizedStrategyAddress,
-                0,
-                calldatasize(),
-                0,
-                0
-            )
+            let result := delegatecall(gas(), _tokenizedStrategyAddress, 0, calldatasize(), 0, 0)
             // Get any return value
             returndatacopy(0, 0, returndatasize())
             // Return any return value or error back to the caller
             switch result
-            case 0 {
-                revert(0, returndatasize())
-            }
-            default {
-                return(0, returndatasize())
-            }
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
         }
     }
 }
@@ -5579,19 +5478,10 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param receiver Address to receive the shares
      * @return shares Amount of shares minted
      */
-    function deposit(
-        uint256 assets,
-        address receiver
-    ) external virtual returns (uint256 shares) {
+    function deposit(uint256 assets, address receiver) external virtual returns (uint256 shares) {
         _preDepositHook(assets, shares, receiver);
         shares = abi.decode(
-            _delegateCall(
-                abi.encodeCall(
-                    ITokenizedStrategy(address(this)).deposit,
-                    (assets, receiver)
-                )
-            ),
-            (uint256)
+            _delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).deposit, (assets, receiver))), (uint256)
         );
         _postDepositHook(assets, shares, receiver);
     }
@@ -5602,19 +5492,10 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param receiver Address to receive the shares
      * @return assets Amount of assets deposited
      */
-    function mint(
-        uint256 shares,
-        address receiver
-    ) external virtual returns (uint256 assets) {
+    function mint(uint256 shares, address receiver) external virtual returns (uint256 assets) {
         _preDepositHook(assets, shares, receiver);
         assets = abi.decode(
-            _delegateCall(
-                abi.encodeCall(
-                    ITokenizedStrategy(address(this)).mint,
-                    (shares, receiver)
-                )
-            ),
-            (uint256)
+            _delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).mint, (shares, receiver))), (uint256)
         );
         _postDepositHook(assets, shares, receiver);
     }
@@ -5626,11 +5507,7 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param owner Address whose shares are burned
      * @return shares Amount of shares burned
      */
-    function withdraw(
-        uint256 assets,
-        address receiver,
-        address owner
-    ) external virtual returns (uint256 shares) {
+    function withdraw(uint256 assets, address receiver, address owner) external virtual returns (uint256 shares) {
         return withdraw(assets, receiver, owner, 0);
     }
 
@@ -5642,22 +5519,15 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param maxLoss Maximum acceptable loss in basis points
      * @return shares Amount of shares burned
      */
-    function withdraw(
-        uint256 assets,
-        address receiver,
-        address owner,
-        uint256 maxLoss
-    ) public virtual returns (uint256 shares) {
+    function withdraw(uint256 assets, address receiver, address owner, uint256 maxLoss)
+        public
+        virtual
+        returns (uint256 shares)
+    {
         _preWithdrawHook(assets, shares, receiver, owner, maxLoss);
         shares = abi.decode(
             _delegateCall(
-                abi.encodeWithSelector(
-                    ITokenizedStrategy.withdraw.selector,
-                    assets,
-                    receiver,
-                    owner,
-                    maxLoss
-                )
+                abi.encodeWithSelector(ITokenizedStrategy.withdraw.selector, assets, receiver, owner, maxLoss)
             ),
             (uint256)
         );
@@ -5671,11 +5541,7 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param owner Address whose shares are burned
      * @return assets Amount of assets withdrawn
      */
-    function redeem(
-        uint256 shares,
-        address receiver,
-        address owner
-    ) external virtual returns (uint256 assets) {
+    function redeem(uint256 shares, address receiver, address owner) external virtual returns (uint256 assets) {
         return redeem(shares, receiver, owner, MAX_BPS);
     }
 
@@ -5687,23 +5553,14 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param maxLoss Maximum acceptable loss in basis points
      * @return assets Amount of assets withdrawn
      */
-    function redeem(
-        uint256 shares,
-        address receiver,
-        address owner,
-        uint256 maxLoss
-    ) public virtual returns (uint256 assets) {
+    function redeem(uint256 shares, address receiver, address owner, uint256 maxLoss)
+        public
+        virtual
+        returns (uint256 assets)
+    {
         _preWithdrawHook(assets, shares, receiver, owner, maxLoss);
         assets = abi.decode(
-            _delegateCall(
-                abi.encodeWithSelector(
-                    ITokenizedStrategy.redeem.selector,
-                    shares,
-                    receiver,
-                    owner,
-                    maxLoss
-                )
-            ),
+            _delegateCall(abi.encodeWithSelector(ITokenizedStrategy.redeem.selector, shares, receiver, owner, maxLoss)),
             (uint256)
         );
         _postWithdrawHook(assets, shares, receiver, owner, maxLoss);
@@ -5715,20 +5572,10 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param amount Amount of shares to transfer
      * @return success Whether the transfer succeeded
      */
-    function transfer(
-        address to,
-        uint256 amount
-    ) external virtual returns (bool) {
+    function transfer(address to, uint256 amount) external virtual returns (bool) {
         _preTransferHook(msg.sender, to, amount);
-        bool success = abi.decode(
-            _delegateCall(
-                abi.encodeCall(
-                    ITokenizedStrategy(address(this)).transfer,
-                    (to, amount)
-                )
-            ),
-            (bool)
-        );
+        bool success =
+            abi.decode(_delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).transfer, (to, amount))), (bool));
         _postTransferHook(msg.sender, to, amount, success);
         return success;
     }
@@ -5740,20 +5587,10 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      * @param amount Amount of shares to transfer
      * @return success Whether the transfer succeeded
      */
-    function transferFrom(
-        address from,
-        address to,
-        uint256 amount
-    ) external virtual returns (bool) {
+    function transferFrom(address from, address to, uint256 amount) external virtual returns (bool) {
         _preTransferHook(from, to, amount);
         bool success = abi.decode(
-            _delegateCall(
-                abi.encodeCall(
-                    ITokenizedStrategy(address(this)).transferFrom,
-                    (from, to, amount)
-                )
-            ),
-            (bool)
+            _delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).transferFrom, (from, to, amount))), (bool)
         );
         _postTransferHook(from, to, amount, success);
         return success;
@@ -5766,12 +5603,8 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      */
     function report() external virtual returns (uint256 profit, uint256 loss) {
         _preReportHook();
-        (profit, loss) = abi.decode(
-            _delegateCall(
-                abi.encodeCall(ITokenizedStrategy(address(this)).report, ())
-            ),
-            (uint256, uint256)
-        );
+        (profit, loss) =
+            abi.decode(_delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).report, ())), (uint256, uint256));
         _postReportHook(profit, loss);
     }
 }
@@ -5813,6 +5646,7 @@ contract USD3 is BaseHooksUpgradeable {
     using MorphoLib for IMorpho;
     using MorphoBalancesLib for IMorpho;
     using SharesMathLib for uint256;
+    using Math for uint256;
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE - MORPHO PARAMETERS
@@ -5839,11 +5673,11 @@ contract USD3 is BaseHooksUpgradeable {
     /// @notice Whitelist status for addresses
     mapping(address => bool) public whitelist;
 
+    /// @notice Whitelist of depositors allowed to 3rd party deposit
+    mapping(address => bool) public depositorWhitelist;
+
     /// @notice Minimum deposit amount required
     uint256 public minDeposit;
-
-    /// @notice Minimum time funds must remain deposited (seconds)
-    uint256 public minCommitmentTime;
 
     /// @notice Timestamp of last deposit for each user
     /// @dev Used to enforce commitment periods
@@ -5854,6 +5688,7 @@ contract USD3 is BaseHooksUpgradeable {
     //////////////////////////////////////////////////////////////*/
     event SUSD3StrategyUpdated(address oldStrategy, address newStrategy);
     event WhitelistUpdated(address indexed user, bool allowed);
+    event DepositorWhitelistUpdated(address indexed depositor, bool allowed);
     event MinDepositUpdated(uint256 newMinDeposit);
     event TrancheShareSynced(uint256 trancheShare);
 
@@ -5869,12 +5704,10 @@ contract USD3 is BaseHooksUpgradeable {
      * @param _management Management address for the strategy
      * @param _keeper Keeper address for automated operations
      */
-    function initialize(
-        address _morphoCredit,
-        Id _marketId,
-        address _management,
-        address _keeper
-    ) external initializer {
+    function initialize(address _morphoCredit, Id _marketId, address _management, address _keeper)
+        external
+        initializer
+    {
         require(_morphoCredit != address(0), "!morpho");
 
         morphoCredit = IMorpho(_morphoCredit);
@@ -5887,13 +5720,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Initialize BaseStrategy with management as temporary performanceFeeRecipient
         // It will be updated to sUSD3 address after sUSD3 is deployed
-        __BaseStrategy_init(
-            params.loanToken,
-            "USD3",
-            _management,
-            _management,
-            _keeper
-        );
+        __BaseStrategy_init(params.loanToken, "USD3", _management, _management, _keeper);
 
         // Approve Morpho
         IERC20(asset).forceApprove(address(morphoCredit), type(uint256).max);
@@ -5933,15 +5760,9 @@ contract USD3 is BaseHooksUpgradeable {
     function getMarketLiquidity()
         internal
         view
-        returns (
-            uint256 totalSupplyAssets,
-            uint256 totalShares,
-            uint256 totalBorrowAssets,
-            uint256 liquidity
-        )
+        returns (uint256 totalSupplyAssets, uint256 totalShares, uint256 totalBorrowAssets, uint256 liquidity)
     {
-        (totalSupplyAssets, totalShares, totalBorrowAssets, ) = morphoCredit
-            .expectedMarketBalances(_marketParams);
+        (totalSupplyAssets, totalShares, totalBorrowAssets,) = morphoCredit.expectedMarketBalances(_marketParams);
         liquidity = totalSupplyAssets - totalBorrowAssets;
     }
 
@@ -5951,15 +5772,11 @@ contract USD3 is BaseHooksUpgradeable {
      * @return assetsMax Maximum assets that can be withdrawn
      * @return liquidity Available market liquidity
      */
-    function getPosition()
-        internal
-        view
-        returns (uint256 shares, uint256 assetsMax, uint256 liquidity)
-    {
+    function getPosition() internal view returns (uint256 shares, uint256 assetsMax, uint256 liquidity) {
         shares = morphoCredit.position(marketId, address(this)).supplyShares;
         uint256 totalSupplyAssets;
         uint256 totalShares;
-        (totalSupplyAssets, totalShares, , liquidity) = getMarketLiquidity();
+        (totalSupplyAssets, totalShares,, liquidity) = getMarketLiquidity();
         assetsMax = shares.toAssetsDown(totalSupplyAssets, totalShares);
     }
 
@@ -5987,10 +5804,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         uint256 totalValue = TokenizedStrategy.totalAssets();
         uint256 maxDeployable = (totalValue * maxOnCreditRatio) / 10_000;
-        uint256 currentlyDeployed = morphoCredit.expectedSupplyAssets(
-            _marketParams,
-            address(this)
-        );
+        uint256 currentlyDeployed = morphoCredit.expectedSupplyAssets(_marketParams, address(this));
 
         if (currentlyDeployed >= maxDeployable) {
             // Already at max deployment
@@ -6014,36 +5828,20 @@ contract USD3 is BaseHooksUpgradeable {
         (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
 
         // Calculate how much we can actually withdraw
-        uint256 availableToWithdraw = assetsMax > liquidity
-            ? liquidity
-            : assetsMax;
+        uint256 availableToWithdraw = assetsMax > liquidity ? liquidity : assetsMax;
 
         // If we can't withdraw anything, return early
         if (availableToWithdraw == 0) return;
 
         // Cap the requested amount to what's actually available
-        uint256 actualAmount = amount > availableToWithdraw
-            ? availableToWithdraw
-            : amount;
+        uint256 actualAmount = amount > availableToWithdraw ? availableToWithdraw : amount;
 
         if (actualAmount >= assetsMax) {
             // Withdraw all our shares
-            morphoCredit.withdraw(
-                _marketParams,
-                0,
-                shares,
-                address(this),
-                address(this)
-            );
+            morphoCredit.withdraw(_marketParams, 0, shares, address(this), address(this));
         } else {
             // Withdraw specific amount
-            morphoCredit.withdraw(
-                _marketParams,
-                actualAmount,
-                0,
-                address(this),
-                address(this)
-            );
+            morphoCredit.withdraw(_marketParams, actualAmount, 0, address(this), address(this));
         }
     }
 
@@ -6064,9 +5862,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         _tend(asset.balanceOf(address(this)));
 
-        return
-            morphoCredit.expectedSupplyAssets(params, address(this)) +
-            asset.balanceOf(address(this));
+        return morphoCredit.expectedSupplyAssets(params, address(this)) + asset.balanceOf(address(this));
     }
 
     /// @dev Rebalances between idle and deployed funds to maintain maxOnCredit ratio
@@ -6074,10 +5870,7 @@ contract USD3 is BaseHooksUpgradeable {
     function _tend(uint256 _totalIdle) internal virtual override {
         uint256 totalValue = TokenizedStrategy.totalAssets();
         uint256 targetDeployment = (totalValue * maxOnCredit()) / 10_000;
-        uint256 currentlyDeployed = morphoCredit.expectedSupplyAssets(
-            _marketParams,
-            address(this)
-        );
+        uint256 currentlyDeployed = morphoCredit.expectedSupplyAssets(_marketParams, address(this));
 
         if (currentlyDeployed > targetDeployment) {
             // Withdraw excess to maintain target ratio
@@ -6096,9 +5889,7 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Returns available withdraw limit, enforcing commitment time restrictions and subordination ratio
     /// @param _owner Address to check limit for
     /// @return Maximum amount that can be withdrawn
-    function availableWithdrawLimit(
-        address _owner
-    ) public view override returns (uint256) {
+    function availableWithdrawLimit(address _owner) public view override returns (uint256) {
         // Get available liquidity first
         (, uint256 assetsMax, uint256 liquidity) = getPosition();
         uint256 idle = asset.balanceOf(address(this));
@@ -6118,35 +5909,26 @@ contract USD3 is BaseHooksUpgradeable {
             uint256 susd3Holdings = TokenizedStrategy.balanceOf(sUSD3);
 
             // Get max subordination ratio from ProtocolConfig
-            uint256 maxSubRatio = maxSubordinationRatio();
+            uint256 maxSubRatio = maxSubordinationRatio(); // e.g., 1500 (15%)
 
-            // If maxSubRatio = 1500 (15%), then minUSD3Ratio = 8500 (85%)
-            uint256 minUSD3Ratio = MAX_BPS - maxSubRatio;
+            // Calculate the minimum total supply that maintains the ratio
+            // minTotalSupply = susd3Holdings / maxSubRatio
+            uint256 minTotalSupply = (susd3Holdings * MAX_BPS) / maxSubRatio;
 
-            // USD3 circulating (not held by sUSD3) must be at least minUSD3Ratio of total
-            uint256 usd3Circulating = usd3TotalSupply - susd3Holdings;
-            uint256 minUSD3Required = (usd3TotalSupply * minUSD3Ratio) /
-                MAX_BPS;
-
-            // Prevent withdrawals that would drop circulating USD3 below minimum
-            if (usd3Circulating <= minUSD3Required) {
+            if (usd3TotalSupply <= minTotalSupply) {
                 availableLiquidity = 0; // No withdrawals allowed
             } else {
-                uint256 maxWithdrawable = usd3Circulating - minUSD3Required;
-                availableLiquidity = Math.min(
-                    availableLiquidity,
-                    maxWithdrawable
-                );
+                // Only allow withdrawal down to the minimum supply
+                uint256 maxWithdrawable = usd3TotalSupply - minTotalSupply;
+                availableLiquidity = Math.min(availableLiquidity, maxWithdrawable);
             }
         }
 
         // Check commitment time
-        if (minCommitmentTime > 0) {
+        uint256 commitTime = minCommitmentTime();
+        if (commitTime > 0) {
             uint256 depositTime = depositTimestamp[_owner];
-            if (
-                depositTime > 0 &&
-                block.timestamp < depositTime + minCommitmentTime
-            ) {
+            if (depositTime > 0 && block.timestamp < depositTime + commitTime) {
                 return 0; // Commitment period not met
             }
         }
@@ -6157,9 +5939,7 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Returns available deposit limit, enforcing whitelist if enabled
     /// @param _owner Address to check limit for
     /// @return Maximum amount that can be deposited
-    function availableDepositLimit(
-        address _owner
-    ) public view override returns (uint256) {
+    function availableDepositLimit(address _owner) public view override returns (uint256) {
         // Check whitelist if enabled
         if (whitelistEnabled && !whitelist[_owner]) {
             return 0;
@@ -6175,13 +5955,14 @@ contract USD3 is BaseHooksUpgradeable {
     //////////////////////////////////////////////////////////////*/
 
     /// @dev Pre-deposit hook to enforce minimum deposit and track commitment time
-    function _preDepositHook(
-        uint256 assets,
-        uint256 shares,
-        address receiver
-    ) internal override {
+    function _preDepositHook(uint256 assets, uint256 shares, address receiver) internal override {
         if (assets == 0 && shares > 0) {
             assets = TokenizedStrategy.previewMint(shares);
+        }
+
+        // Handle type(uint256).max case - resolve to actual balance
+        if (assets == type(uint256).max) {
+            assets = asset.balanceOf(msg.sender);
         }
 
         // Enforce minimum deposit only for first-time depositors
@@ -6190,20 +5971,24 @@ contract USD3 is BaseHooksUpgradeable {
             require(assets >= minDeposit, "Below minimum deposit");
         }
 
-        // Each deposit extends commitment for entire balance
-        if (minCommitmentTime > 0) {
+        // Prevent commitment bypass and griefing attacks
+        if (minCommitmentTime() > 0) {
+            // Only allow self-deposits or whitelisted depositors
+            require(
+                msg.sender == receiver || depositorWhitelist[msg.sender],
+                "USD3: Only self or whitelisted deposits allowed"
+            );
+
+            // Always extend commitment for valid deposits
             depositTimestamp[receiver] = block.timestamp;
         }
     }
 
     /// @dev Post-withdraw hook to clear commitment on full exit
-    function _postWithdrawHook(
-        uint256 assets,
-        uint256 shares,
-        address receiver,
-        address owner,
-        uint256 maxLoss
-    ) internal override {
+    function _postWithdrawHook(uint256 assets, uint256 shares, address receiver, address owner, uint256 maxLoss)
+        internal
+        override
+    {
         // Clear commitment timestamp if user fully exited
         if (TokenizedStrategy.balanceOf(owner) == 0) {
             delete depositTimestamp[owner];
@@ -6218,8 +6003,13 @@ contract USD3 is BaseHooksUpgradeable {
 
             if (susd3Balance > 0) {
                 // Calculate how many shares are needed to cover the loss
-                // This ensures sUSD3 absorbs the actual loss amount, not just proportionally
-                uint256 sharesToBurn = TokenizedStrategy.convertToShares(loss);
+                // IMPORTANT: We must use pre-report values to calculate the correct share amount
+                // The report has already reduced totalAssets, so we add the loss back
+                uint256 totalSupply = TokenizedStrategy.totalSupply();
+                uint256 totalAssets = TokenizedStrategy.totalAssets();
+
+                // Calculate shares to burn using pre-loss exchange rate
+                uint256 sharesToBurn = loss.mulDiv(totalSupply, totalAssets + loss, Math.Rounding.Floor);
 
                 // Cap at sUSD3's actual balance - they can't lose more than they have
                 if (sharesToBurn > susd3Balance) {
@@ -6240,19 +6030,15 @@ contract USD3 is BaseHooksUpgradeable {
      * @param to Address receiving shares
      * @param amount Amount of shares being transferred
      */
-    function _preTransferHook(
-        address from,
-        address to,
-        uint256 amount
-    ) internal override {
+    function _preTransferHook(address from, address to, uint256 amount) internal override {
         // Allow minting (from == 0) and burning (to == 0)
         if (from == address(0) || to == address(0)) return;
 
-        // Allow transfers to sUSD3 (users can stake restricted USD3)
-        if (to == sUSD3) return;
+        // Allow transfers to/from sUSD3 (staking and withdrawals)
+        if (to == sUSD3 || from == sUSD3) return;
 
         // Check commitment period
-        uint256 commitmentEnd = depositTimestamp[from] + minCommitmentTime;
+        uint256 commitmentEnd = depositTimestamp[from] + minCommitmentTime();
         require(
             block.timestamp >= commitmentEnd || depositTimestamp[from] == 0,
             "USD3: Cannot transfer during commitment period"
@@ -6315,9 +6101,7 @@ contract USD3 is BaseHooksUpgradeable {
      *      it returns 0, effectively preventing deployment until explicitly configured.
      */
     function maxOnCredit() public view returns (uint256) {
-        IProtocolConfig config = IProtocolConfig(
-            IMorphoCredit(address(morphoCredit)).protocolConfig()
-        );
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
         return config.getMaxOnCredit();
     }
 
@@ -6326,11 +6110,18 @@ contract USD3 is BaseHooksUpgradeable {
      * @return Maximum subordination ratio in basis points
      */
     function maxSubordinationRatio() public view returns (uint256) {
-        IProtocolConfig config = IProtocolConfig(
-            IMorphoCredit(address(morphoCredit)).protocolConfig()
-        );
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
         uint256 ratio = config.getTrancheRatio();
         return ratio > 0 ? ratio : 1500; // Default to 15% if not set
+    }
+
+    /**
+     * @notice Get the minimum commitment time from ProtocolConfig
+     * @return Minimum commitment time in seconds
+     */
+    function minCommitmentTime() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        return config.getUsd3CommitmentTime();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -6367,12 +6158,19 @@ contract USD3 is BaseHooksUpgradeable {
      * @param _user Address to update
      * @param _allowed True to whitelist, false to remove from whitelist
      */
-    function setWhitelist(
-        address _user,
-        bool _allowed
-    ) external onlyManagement {
+    function setWhitelist(address _user, bool _allowed) external onlyManagement {
         whitelist[_user] = _allowed;
         emit WhitelistUpdated(_user, _allowed);
+    }
+
+    /**
+     * @notice Update depositor whitelist status for an address
+     * @param _depositor Address to update
+     * @param _allowed True to allow extending commitments, false to disallow
+     */
+    function setDepositorWhitelist(address _depositor, bool _allowed) external onlyManagement {
+        depositorWhitelist[_depositor] = _allowed;
+        emit DepositorWhitelistUpdated(_depositor, _allowed);
     }
 
     /**
@@ -6382,16 +6180,6 @@ contract USD3 is BaseHooksUpgradeable {
     function setMinDeposit(uint256 _minDeposit) external onlyManagement {
         minDeposit = _minDeposit;
         emit MinDepositUpdated(_minDeposit);
-    }
-
-    /**
-     * @notice Set minimum commitment time for deposits
-     * @param _minCommitmentTime Time in seconds funds must remain deposited
-     */
-    function setMinCommitmentTime(
-        uint256 _minCommitmentTime
-    ) external onlyManagement {
-        minCommitmentTime = _minCommitmentTime;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -6417,9 +6205,7 @@ contract USD3 is BaseHooksUpgradeable {
      */
     function syncTrancheShare() external onlyKeepers {
         // Get the protocol config through MorphoCredit
-        IProtocolConfig config = IProtocolConfig(
-            IMorphoCredit(address(morphoCredit)).protocolConfig()
-        );
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
 
         // Read the tranche share variant (yield share to sUSD3 in basis points)
         uint256 trancheShare = config.getTrancheShareVariant();
@@ -6436,8 +6222,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Clear the performanceFee bits (32-47) and set new value
         uint256 mask = ~(uint256(0xFFFF) << 32);
-        uint256 newSlotValue = (currentSlotValue & mask) |
-            (uint256(trancheShare) << 32);
+        uint256 newSlotValue = (currentSlotValue & mask) | (uint256(trancheShare) << 32);
 
         // Write back to storage
         assembly {
@@ -6458,4 +6243,3 @@ contract USD3 is BaseHooksUpgradeable {
      */
     uint256[40] private __gap;
 }
-

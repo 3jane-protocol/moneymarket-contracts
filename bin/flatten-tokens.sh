@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 3Jane Token Flattening Script
-# Clones required repositories and flattens token contracts for deployment
+# Clones USD3 repository and flattens USD3/sUSD3 contracts for deployment
 
 set -e  # Exit on error
 
@@ -11,6 +11,7 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+FOUNDRY_PROFILE=BUILD
 
 # Helper functions
 print_info() {
@@ -41,21 +42,7 @@ print_info "================================================"
 # Step 1: Clone repositories
 print_info "Step 1: Cloning required repositories..."
 
-# Clone Aave-Vault (for waUSDC)
-if [ ! -d "/tmp/aave-vault" ]; then
-    print_info "Cloning aave/Aave-Vault..."
-    gh repo clone aave/Aave-Vault /tmp/aave-vault -- --depth 1
-    if [ $? -eq 0 ]; then
-        print_success "Aave-Vault cloned successfully"
-    else
-        print_error "Failed to clone Aave-Vault"
-        exit 1
-    fi
-else
-    print_info "Aave-Vault already cloned, skipping..."
-fi
-
-# Clone USD3 repository (already cloned earlier)
+# Clone USD3 repository
 if [ ! -d "/tmp/usd3-repo" ]; then
     print_info "Cloning 3jane-protocol/usd3..."
     gh repo clone 3jane-protocol/usd3 /tmp/usd3-repo -- --depth 1
@@ -75,16 +62,7 @@ mkdir -p src/tokens/flattened
 mkdir -p src/tokens/deployable
 
 # Step 3: Build dependencies in cloned repos
-print_info "Step 3: Building dependencies in cloned repositories..."
-
-# Build Aave-Vault dependencies
-print_info "Building Aave-Vault dependencies..."
-cd /tmp/aave-vault
-if [ ! -d "lib" ]; then
-    forge install
-fi
-forge build --skip test --skip script
-cd - > /dev/null
+print_info "Step 3: Building dependencies in cloned repository..."
 
 # Build USD3 dependencies
 print_info "Building USD3 dependencies..."
@@ -97,17 +75,6 @@ cd - > /dev/null
 
 # Step 4: Flatten contracts
 print_info "Step 4: Flattening contracts..."
-
-# Flatten waUSDC (ATokenVault)
-print_info "Flattening waUSDC (ATokenVault)..."
-cd /tmp/aave-vault
-forge flatten src/ATokenVault.sol > $OLDPWD/src/tokens/flattened/waUSDC.sol 2>/dev/null
-if [ $? -eq 0 ]; then
-    print_success "waUSDC (ATokenVault) flattened successfully"
-else
-    print_warning "waUSDC flattening had warnings, checking output..."
-fi
-cd - > /dev/null
 
 # Flatten USD3
 print_info "Flattening USD3..."
@@ -145,8 +112,8 @@ for file in src/tokens/flattened/*.sol; do
         # Keep only the first SPDX license identifier
         awk '/^\/\/ SPDX-License-Identifier:/ && !found {found=1; print; next} !/^\/\/ SPDX-License-Identifier:/ {print}' "$file" > "$temp_file"
         
-        # Keep only the first pragma solidity statement
-        awk '/^pragma solidity/ && !found {found=1; print; next} !/^pragma solidity/ {print}' "$temp_file" > "${temp_file}2"
+        # Replace all pragma solidity statements with 0.8.22
+        sed 's/^pragma solidity.*;/pragma solidity 0.8.22;/' "$temp_file" > "${temp_file}2"
         
         # Keep only the first pragma abicoder statement if present
         awk '/^pragma abicoder/ && !found {found=1; print; next} !/^pragma abicoder/ {print}' "${temp_file}2" > "$temp_file"
@@ -174,6 +141,7 @@ for file in src/tokens/flattened/*.sol; do
         print_info "Testing compilation of $filename..."
         
         # Try to compile the flattened file
+        FOUNDRY_PROFILE=deploy
         forge build --contracts "$file" --skip test --skip script 2>/dev/null
         if [ $? -eq 0 ]; then
             print_success "$filename compiles successfully"
@@ -188,14 +156,13 @@ print_info "================================================"
 print_success "Token flattening process completed!"
 print_info ""
 print_info "Flattened contracts created in: src/tokens/flattened/"
-print_info "  - waUSDC.sol (StaticATokenLM wrapper for aUSDC)"
 print_info "  - USD3.sol (Senior tranche strategy)"
 print_info "  - sUSD3.sol (Subordinate tranche strategy)"
 print_info ""
 print_info "Next steps:"
 print_info "  1. Review flattened contracts for any compilation issues"
 print_info "  2. Create deployment adapters if needed"
-print_info "  3. Run deployment script: forge script script/deploy/08_DeployTokens.s.sol"
+print_info "  3. Run deployment script: forge script script/deploy/10_DeployUSD3.s.sol and 11_DeploySUSD3.s.sol"
 print_info ""
 
 # Check file sizes to ensure content exists
