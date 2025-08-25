@@ -29,6 +29,7 @@ contract DeploySUSD3 is Script {
         // Load required addresses from env variables
         address usd3Token = vm.envAddress("USD3_ADDRESS");
         address owner = vm.envAddress("OWNER_ADDRESS");
+        address multisig = vm.envAddress("MULTISIG_ADDRESS");
         address timelock = vm.envAddress("TIMELOCK_ADDRESS");
 
         console.log("Deploying sUSD3 (Subordinate Tranche)...");
@@ -51,7 +52,7 @@ contract DeploySUSD3 is Script {
                 (
                     usd3Token, // _usd3Token
                     owner, // _management
-                    owner // _keeper
+                    multisig // _keeper
                 )
             ),
             opts

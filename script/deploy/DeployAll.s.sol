@@ -3,8 +3,10 @@ pragma solidity 0.8.22;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
-import {Id} from "../../src/interfaces/IMorpho.sol";
+import {Id, IMorpho, IMorphoCredit} from "../../src/interfaces/IMorpho.sol";
 import {ICreditLine} from "../../src/interfaces/ICreditLine.sol";
+import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
+import {IMorphoCredit} from "../../src/interfaces/IMorpho.sol";
 
 import {DeployTimelock} from "./00_DeployTimelock.s.sol";
 import {DeployProtocolConfig} from "./01_DeployProtocolConfig.s.sol";
@@ -19,6 +21,7 @@ import {CreateMarket} from "./09_CreateMarket.s.sol";
 import {DeployUSD3} from "./10_DeployUSD3.s.sol";
 import {DeploySUSD3} from "./11_DeploySUSD3.s.sol";
 import {ConfigureTokens} from "./12_ConfigureTokens.s.sol";
+import {Ownable} from "../../lib/openzeppelin/contracts/access/Ownable.sol";
 
 contract DeployAll is Script {
     struct DeploymentAddresses {
@@ -107,8 +110,7 @@ contract DeployAll is Script {
         // Step 7: Deploy AdaptiveCurveIrm
         console.log(">>> Step 7: Deploying AdaptiveCurveIrm...");
         DeployAdaptiveCurveIrm deployAdaptiveCurveIrm = new DeployAdaptiveCurveIrm();
-        addresses.adaptiveCurveIrm = deployAdaptiveCurveIrm.run();
-        addresses.adaptiveCurveIrmImpl = address(0); // Not upgradeable
+        (addresses.adaptiveCurveIrm, addresses.adaptiveCurveIrmImpl) = deployAdaptiveCurveIrm.run();
         vm.setEnv("ADAPTIVE_CURVE_IRM_ADDRESS", vm.toString(addresses.adaptiveCurveIrm));
         console.log("");
 
@@ -121,34 +123,76 @@ contract DeployAll is Script {
 
         // Step 9: Deploy USD3 (Senior Tranche) - TEMPORARILY DISABLED
         console.log(">>> Step 9: Skipping USD3 deployment (temporarily disabled)...");
-        DeployUSD3 deployUSD3 = new DeployUSD3();
-        (addresses.usd3, addresses.usd3Impl) = deployUSD3.run();
-        vm.setEnv("USD3_ADDRESS", vm.toString(addresses.usd3));
+        // DeployUSD3 deployUSD3 = new DeployUSD3();
+        // (addresses.usd3, addresses.usd3Impl) = deployUSD3.run();
+        // vm.setEnv("USD3_ADDRESS", vm.toString(addresses.usd3));
         addresses.usd3 = address(0); // Placeholder
         addresses.usd3Impl = address(0); // Placeholder
         console.log("");
 
         // Step 10: Deploy sUSD3 (Subordinate Tranche) - TEMPORARILY DISABLED
         console.log(">>> Step 10: Skipping sUSD3 deployment (temporarily disabled)...");
-        DeploySUSD3 deploySUSD3 = new DeploySUSD3();
-        (addresses.susd3, addresses.susd3Impl) = deploySUSD3.run();
-        vm.setEnv("SUSD3_ADDRESS", vm.toString(addresses.susd3));
+        // DeploySUSD3 deploySUSD3 = new DeploySUSD3();
+        // (addresses.susd3, addresses.susd3Impl) = deploySUSD3.run();
+        // vm.setEnv("SUSD3_ADDRESS", vm.toString(addresses.susd3));
         addresses.susd3 = address(0); // Placeholder
         addresses.susd3Impl = address(0); // Placeholder
         console.log("");
 
         // Step 11: Deploy Helper - TEMPORARILY DISABLED (needs USD3/sUSD3)
         console.log(">>> Step 11: Skipping Helper deployment (needs USD3/sUSD3)...");
-        DeployHelper deployHelper = new DeployHelper();
-        addresses.helper = deployHelper.run();
-        vm.setEnv("HELPER_ADDRESS", vm.toString(addresses.helper));
+        // DeployHelper deployHelper = new DeployHelper();
+        // addresses.helper = deployHelper.run();
+        // vm.setEnv("HELPER_ADDRESS", vm.toString(addresses.helper));
         addresses.helper = address(0); // Placeholder
         console.log("");
 
         // Step 12: Configure Token Relationships - TEMPORARILY DISABLED (needs USD3/sUSD3)
         console.log(">>> Step 12: Skipping Token Configuration (needs USD3/sUSD3)...");
-        ConfigureTokens configureTokens = new ConfigureTokens();
-        configureTokens.run();
+        // ConfigureTokens configureTokens = new ConfigureTokens();
+        // configureTokens.run();
+        console.log("");
+
+        // Step 13: Configure MorphoCredit with Helper and USD3
+        console.log(">>> Step 13: Configuring MorphoCredit...");
+        if (addresses.helper != address(0) || addresses.usd3 != address(0)) {
+            vm.startBroadcast(owner);
+            if (addresses.helper != address(0)) {
+                IMorphoCredit(addresses.morphoCredit).setHelper(addresses.helper);
+                console.log("  - Set Helper in MorphoCredit");
+            }
+            if (addresses.usd3 != address(0)) {
+                IMorphoCredit(addresses.morphoCredit).setUsd3(addresses.usd3);
+                console.log("  - Set USD3 in MorphoCredit");
+            }
+            vm.stopBroadcast();
+        } else {
+            console.log("  - Skipping (Helper and USD3 not deployed)");
+        }
+        console.log("");
+
+        // Step 14: Transfer Ownerships to Multisig
+        console.log(">>> Step 14: Transferring Ownerships to Multisig...");
+        address multisig = vm.envAddress("MULTISIG_ADDRESS");
+        console.log("  Multisig:", multisig);
+
+        vm.startBroadcast(owner);
+
+        IMorphoCredit(addresses.morphoCredit).setUsd3(addresses.usd3);
+        IMorphoCredit(addresses.morphoCredit).setHelper(addresses.helper);
+        IMorpho(addresses.morphoCredit).setOwner(multisig);
+        console.log("  - Transferred MorphoCredit ownership");
+
+        // Transfer ProtocolConfig ownership
+        ProtocolConfig(addresses.protocolConfig).setOwner(multisig);
+        console.log("  - Transferred ProtocolConfig ownership");
+
+        // Transfer CreditLine ownership (via setOzd for owner control)
+        ICreditLine(addresses.creditLine).setOzd(address(0x1));
+        Ownable(addresses.creditLine).transferOwnership(multisig);
+        console.log("  - Transferred CreditLine ownership");
+
+        vm.stopBroadcast();
         console.log("");
 
         // Print summary
@@ -164,7 +208,8 @@ contract DeployAll is Script {
         console.log("MorphoCredit (Proxy):", addresses.morphoCredit);
         console.log("MorphoCredit (Impl):", addresses.morphoCreditImpl);
         console.log("");
-        console.log("AdaptiveCurveIrm:", addresses.adaptiveCurveIrm);
+        console.log("AdaptiveCurveIrm (Proxy):", addresses.adaptiveCurveIrm);
+        console.log("AdaptiveCurveIrm (Impl):", addresses.adaptiveCurveIrmImpl);
         console.log("");
         console.log("CreditLine:", addresses.creditLine);
         console.log("InsuranceFund:", addresses.insuranceFund);
@@ -179,6 +224,24 @@ contract DeployAll is Script {
         console.log("sUSD3 (Impl):", addresses.susd3Impl);
         console.log("");
         console.log("Helper:", addresses.helper);
+        console.log("-------------------------------");
+
+        // Print ownership summary
+        console.log("");
+        console.log("=== Final Ownership Status ===");
+        console.log("Timelock controls ProxyAdmins for:");
+        console.log("  - ProtocolConfig");
+        console.log("  - MorphoCredit");
+        console.log("  - AdaptiveCurveIrm");
+        console.log("  - USD3 (when deployed)");
+        console.log("  - sUSD3 (when deployed)");
+        console.log("");
+        console.log("Multisig controls:");
+        console.log("  - ProtocolConfig operations");
+        console.log("  - MorphoCredit operations");
+        console.log("  - CreditLine operations");
+        console.log("  - USD3 operations (when deployed)");
+        console.log("  - sUSD3 operations (when deployed)");
         console.log("-------------------------------");
 
         // Save deployment addresses to file

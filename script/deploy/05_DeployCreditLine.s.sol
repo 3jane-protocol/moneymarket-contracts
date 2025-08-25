@@ -12,20 +12,20 @@ contract DeployCreditLine is Script {
         address ozd = vm.envAddress("OZD_ADDRESS");
         address mm = vm.envAddress("MARKDOWN_MANAGER_ADDRESS");
         address prover = vm.envOr("PROVER_ADDRESS", address(0)); // Optional
-        
+
         vm.startBroadcast();
-        
+
         CreditLine creditLine = new CreditLine(morpho, owner, ozd, mm, prover);
-        
+
         console.log("CreditLine deployed at:", address(creditLine));
         console.log("MORPHO:", morpho);
         console.log("Owner:", owner);
         console.log("OZD:", ozd);
         console.log("Markdown Manager:", mm);
         console.log("Prover:", prover);
-        
+
         vm.stopBroadcast();
-        
+
         return address(creditLine);
     }
 }

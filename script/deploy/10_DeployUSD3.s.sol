@@ -33,6 +33,7 @@ contract DeployUSD3 is Script {
         bytes32 marketIdBytes = vm.envBytes32("MARKET_ID");
         Id marketId = Id.wrap(marketIdBytes);
         address owner = vm.envAddress("OWNER_ADDRESS");
+        address multisig = vm.envAddress("MULTISIG_ADDRESS");
         address timelock = vm.envAddress("TIMELOCK_ADDRESS");
 
         console.log("Deploying USD3 (Senior Tranche)...");
@@ -59,7 +60,7 @@ contract DeployUSD3 is Script {
                     morphoCredit, // _morphoCredit
                     marketId, // _marketId
                     owner, // _management
-                    owner // _keeper
+                    multisig // _keeper
                 )
             ),
             opts

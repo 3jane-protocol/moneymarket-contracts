@@ -8,13 +8,13 @@ import {MarkdownManager} from "../../src/MarkdownManager.sol";
 contract DeployMarkdownManager is Script {
     function run() external returns (address) {
         vm.startBroadcast();
-        
+
         MarkdownManager markdownManager = new MarkdownManager();
-        
+
         console.log("MarkdownManager deployed at:", address(markdownManager));
-        
+
         vm.stopBroadcast();
-        
+
         return address(markdownManager);
     }
 }
