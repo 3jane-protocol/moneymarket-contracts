@@ -24,12 +24,19 @@ contract USD3Mock is IERC4626 {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
+    // Whitelist state for USD3
+    mapping(address => bool) public whitelist;
+
     function setUnderlying(address _underlying) external {
         underlying = ERC20Mock(_underlying);
     }
 
     function setPricePerShare(uint256 _pricePerShare) external {
         pricePerShare = _pricePerShare;
+    }
+
+    function setWhitelist(address user, bool status) external {
+        whitelist[user] = status;
     }
 
     function deposit(uint256 assets, address receiver) external returns (uint256) {
@@ -526,6 +533,9 @@ contract HelperTest is BaseTest {
         // Give USD3 some balance to sUSD3 mock for deposits
         usd3.setBalance(address(sUsd3), DEPOSIT_AMOUNT * 10);
 
+        // Whitelist the user for USD3
+        usd3.setWhitelist(user, true);
+
         vm.startPrank(user);
         uint256 shares = helper.deposit(DEPOSIT_AMOUNT, user, true);
         vm.stopPrank();
@@ -550,6 +560,9 @@ contract HelperTest is BaseTest {
         // First deposit with hop to get sUSD3
         waUsdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 10);
         usd3.setBalance(address(sUsd3), DEPOSIT_AMOUNT * 10);
+
+        // Whitelist the user for USD3
+        usd3.setWhitelist(user, true);
 
         vm.startPrank(user);
         uint256 sUsd3Shares = helper.deposit(DEPOSIT_AMOUNT, user, true);
@@ -596,6 +609,9 @@ contract HelperTest is BaseTest {
         usd3.setBalance(address(sUsd3), DEPOSIT_AMOUNT * 20);
 
         uint256 initialUSDCBalance = usdc.balanceOf(user);
+
+        // Whitelist the user for USD3
+        usd3.setWhitelist(user, true);
 
         vm.startPrank(user);
         uint256 shares = helper.deposit(DEPOSIT_AMOUNT, user, true);
