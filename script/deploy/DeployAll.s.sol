@@ -122,35 +122,30 @@ contract DeployAll is Script {
         console.log("");
 
         // Step 9: Deploy USD3 (Senior Tranche) - TEMPORARILY DISABLED
-        console.log(">>> Step 9: Skipping USD3 deployment (temporarily disabled)...");
-        // DeployUSD3 deployUSD3 = new DeployUSD3();
-        // (addresses.usd3, addresses.usd3Impl) = deployUSD3.run();
-        // vm.setEnv("USD3_ADDRESS", vm.toString(addresses.usd3));
-        addresses.usd3 = address(0); // Placeholder
-        addresses.usd3Impl = address(0); // Placeholder
+        console.log(">>> Step 9: Skipping USD3 deployment...");
+        DeployUSD3 deployUSD3 = new DeployUSD3();
+        (addresses.usd3, addresses.usd3Impl) = deployUSD3.run();
+        vm.setEnv("USD3_ADDRESS", vm.toString(addresses.usd3));
         console.log("");
 
         // Step 10: Deploy sUSD3 (Subordinate Tranche) - TEMPORARILY DISABLED
         console.log(">>> Step 10: Skipping sUSD3 deployment (temporarily disabled)...");
-        // DeploySUSD3 deploySUSD3 = new DeploySUSD3();
-        // (addresses.susd3, addresses.susd3Impl) = deploySUSD3.run();
-        // vm.setEnv("SUSD3_ADDRESS", vm.toString(addresses.susd3));
-        addresses.susd3 = address(0); // Placeholder
-        addresses.susd3Impl = address(0); // Placeholder
+        DeploySUSD3 deploySUSD3 = new DeploySUSD3();
+        (addresses.susd3, addresses.susd3Impl) = deploySUSD3.run();
+        vm.setEnv("SUSD3_ADDRESS", vm.toString(addresses.susd3));
         console.log("");
 
         // Step 11: Deploy Helper - TEMPORARILY DISABLED (needs USD3/sUSD3)
         console.log(">>> Step 11: Skipping Helper deployment (needs USD3/sUSD3)...");
-        // DeployHelper deployHelper = new DeployHelper();
-        // addresses.helper = deployHelper.run();
-        // vm.setEnv("HELPER_ADDRESS", vm.toString(addresses.helper));
-        addresses.helper = address(0); // Placeholder
+        DeployHelper deployHelper = new DeployHelper();
+        addresses.helper = deployHelper.run();
+        vm.setEnv("HELPER_ADDRESS", vm.toString(addresses.helper));
         console.log("");
 
         // Step 12: Configure Token Relationships - TEMPORARILY DISABLED (needs USD3/sUSD3)
         console.log(">>> Step 12: Skipping Token Configuration (needs USD3/sUSD3)...");
-        // ConfigureTokens configureTokens = new ConfigureTokens();
-        // configureTokens.run();
+        ConfigureTokens configureTokens = new ConfigureTokens();
+        configureTokens.run();
         console.log("");
 
         // Step 13: Configure MorphoCredit with Helper and USD3
@@ -178,8 +173,6 @@ contract DeployAll is Script {
 
         vm.startBroadcast(owner);
 
-        IMorphoCredit(addresses.morphoCredit).setUsd3(addresses.usd3);
-        IMorphoCredit(addresses.morphoCredit).setHelper(addresses.helper);
         IMorpho(addresses.morphoCredit).setOwner(multisig);
         console.log("  - Transferred MorphoCredit ownership");
 
@@ -187,8 +180,7 @@ contract DeployAll is Script {
         ProtocolConfig(addresses.protocolConfig).setOwner(multisig);
         console.log("  - Transferred ProtocolConfig ownership");
 
-        // Transfer CreditLine ownership (via setOzd for owner control)
-        ICreditLine(addresses.creditLine).setOzd(address(0x1));
+        // Transfer CreditLine ownership
         Ownable(addresses.creditLine).transferOwnership(multisig);
         console.log("  - Transferred CreditLine ownership");
 

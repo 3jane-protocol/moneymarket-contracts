@@ -14,7 +14,7 @@ contract CreateMarket is Script {
         address USDC = vm.envAddress("USDC_ADDRESS"); // Load existing waUSDC from env
         address adaptiveCurveIrm = _loadAddressWithEnv("adaptiveCurveIrm", "ADAPTIVE_CURVE_IRM_ADDRESS");
         address creditLine = _loadAddressWithEnv("creditLine", "CREDIT_LINE_ADDRESS");
-        address usdcOracle = vm.envAddress("USDC_ORACLE"); // Load USDC oracle from env
+        address usdcOracle = address(0); //vm.envAddress("USDC_ORACLE"); // Load USDC oracle from env
         uint256 lltv = 1e18 - 1;
 
         console.log("Creating market in MorphoCredit...");

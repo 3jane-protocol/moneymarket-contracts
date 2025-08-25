@@ -5,7 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 
 interface IUSD3 {
-    function setManagement(address) external;
+    function setPendingManagement(address) external;
     function setSUSD3(address _sUSD3) external;
     function setPerformanceFeeRecipient(address recipient) external;
     function syncTrancheShare() external;
@@ -17,7 +17,7 @@ interface IUSD3 {
 }
 
 interface ISUSD3 {
-    function setManagement(address) external;
+    function setPendingManagement(address) external;
     function setMinDeposit(uint256 _minDeposit) external;
     function setWhitelistEnabled(bool _enabled) external;
     function setDepositorWhitelist(address _depositor, bool _allowed) external;
@@ -33,7 +33,7 @@ contract ConfigureTokens is Script {
         address multisig = vm.envAddress("MULTISIG_ADDRESS");
 
         // Load configuration parameters (with defaults for testnet)
-        uint256 minDeposit = vm.envOr("MIN_DEPOSIT", uint256(1_000e6)); // 100 USDC default
+        uint256 minDeposit = vm.envOr("MIN_DEPOSIT", uint256(100e6)); // 100 USDC default
         bool whitelistEnabled = vm.envOr("WHITELIST_ENABLED", true); // Disabled by default for testnet
 
         console.log("Configuring token relationships...");
@@ -68,6 +68,9 @@ contract ConfigureTokens is Script {
         IUSD3(usd3).setWhitelist(helper, true);
         console.log("  - Added Helper to whitelist");
 
+        //IUSD3(usd3).setWhitelist(owner, true);
+        //console.log("  - Added owner to whitelist");
+
         // Add Helper to depositor whitelist (allows it to extend commitments)
         IUSD3(usd3).setDepositorWhitelist(helper, true);
         console.log("  - Added Helper to depositor whitelist");
@@ -75,8 +78,8 @@ contract ConfigureTokens is Script {
         ISUSD3(susd3).setDepositorWhitelist(helper, true);
         console.log("  - Added Helper to depositor whitelist");
 
-        IUSD3(usd3).setManagement(multisig);
-        ISUSD3(susd3).setManagement(multisig);
+        IUSD3(usd3).setPendingManagement(multisig);
+        ISUSD3(susd3).setPendingManagement(multisig);
 
         vm.stopBroadcast();
 

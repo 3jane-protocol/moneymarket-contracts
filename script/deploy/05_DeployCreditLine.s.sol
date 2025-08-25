@@ -9,7 +9,7 @@ contract DeployCreditLine is Script {
     function run() external returns (address) {
         address morpho = vm.envAddress("MORPHO_ADDRESS");
         address owner = vm.envAddress("OWNER_ADDRESS");
-        address ozd = vm.envAddress("OZD_ADDRESS");
+        address ozd = address(0x1);
         address mm = vm.envAddress("MARKDOWN_MANAGER_ADDRESS");
         address prover = vm.envOr("PROVER_ADDRESS", address(0)); // Optional
 
