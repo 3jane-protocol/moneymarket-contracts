@@ -61,6 +61,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     address public helper;
 
     /// @notice Immutable protocol configuration contract
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     address public immutable protocolConfig;
 
     /// @inheritdoc IMorphoCredit

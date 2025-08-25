@@ -8,3 +8,6 @@
 	path = lib/openzeppelin
 	url = https://github.com/OpenZeppelin/openzeppelin-contracts.git
 	branch = release-v5.3
+[submodule "lib/openzeppelin-foundry-upgrades"]
+	path = lib/openzeppelin-foundry-upgrades
+	url = https://github.com/OpenZeppelin/openzeppelin-foundry-upgrades
