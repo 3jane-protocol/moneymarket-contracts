@@ -623,7 +623,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             uint256 currentDebt =
                 uint256(position[id][onBehalf].borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
             uint256 newDebt = currentDebt + assets;
-            if (newDebt > 0 && newDebt < minBorrow) revert ErrorsLib.BelowMinimumBorrow();
+            if (newDebt < minBorrow) revert ErrorsLib.BelowMinimumBorrow();
         }
     }
 
@@ -650,7 +650,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
                 uint256(position[id][onBehalf].borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
             if (currentDebt > assets) {
                 uint256 remainingDebt = currentDebt - assets;
-                if (remainingDebt > 0 && remainingDebt < minBorrow) revert ErrorsLib.BelowMinimumBorrow();
+                if (remainingDebt < minBorrow) revert ErrorsLib.BelowMinimumBorrow();
             }
         }
 
