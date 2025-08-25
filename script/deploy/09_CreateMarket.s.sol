@@ -28,9 +28,9 @@ contract CreateMarket is Script {
         MarketParams memory params = MarketParams({
             loanToken: waUSDC,
             collateralToken: USDC, // No collateral for unsecured lending
-            oracle: usdcOracle, // USDC price oracle for health checks
+            oracle: address(0), // USDC price oracle for health checks
             irm: adaptiveCurveIrm,
-            lltv: lltv, // 95% LLTV for unsecured lending (high value since no collateral)
+            lltv: lltv, // 99.999999% LLTV for unsecured lending (high value since no collateral)
             creditLine: creditLine // Enable credit line feature
         });
 

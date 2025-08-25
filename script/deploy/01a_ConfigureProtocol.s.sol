@@ -10,6 +10,7 @@ contract ConfigureProtocol is Script {
         // Load deployed addresses
         address protocolConfig = _loadAddressWithEnv("protocolConfig", "PROTOCOL_CONFIG");
         address owner = vm.envAddress("OWNER_ADDRESS");
+        address multisig = vm.envAddress("MULTISIG_ADDRESS");
 
         console.log("Configuring ProtocolConfig...");
         console.log("  ProtocolConfig:", protocolConfig);
@@ -30,9 +31,9 @@ contract ConfigureProtocol is Script {
 
         // Credit Line configurations
         console.log("Setting Credit Line configurations...");
-        config.setConfig(keccak256("MAX_LTV"), 0.15 * 10 ** 6); // 15% LTV
+        config.setConfig(keccak256("MAX_LTV"), 0.2 * 10 ** 6); // 20% LTV
         config.setConfig(keccak256("MAX_VV"), 10000000 ether); // 10M VV
-        config.setConfig(keccak256("MAX_CREDIT_LINE"), 500000e6); // 500K max
+        config.setConfig(keccak256("MAX_CREDIT_LINE"), 600000e6); // 600K max
         config.setConfig(keccak256("MIN_CREDIT_LINE"), 5000e6); // 5K min
         config.setConfig(keccak256("MAX_DRP"), uint256(0.1 ether / int256(365 days))); // 10% max DRP
 
@@ -48,12 +49,13 @@ contract ConfigureProtocol is Script {
 
         // USD3 & sUSD3 configurations
         console.log("Setting USD3 & sUSD3 configurations...");
-        config.setConfig(keccak256("TRANCHE_RATIO"), 0.8 ether); // 80% tranche ratio
-        config.setConfig(keccak256("TRANCHE_SHARE_VARIANT"), 0.75 * 10 ** 4); // 75% variant
+        config.setConfig(keccak256("TRANCHE_RATIO"), 0.2 ether); // 20% suborbination ratio
+        config.setConfig(keccak256("TRANCHE_SHARE_VARIANT"), 0.3 * 10 ** 4); // 75% variant
         config.setConfig(keccak256("SUSD3_LOCK_DURATION"), 30 days); // 30 days lock duration
         config.setConfig(keccak256("SUSD3_COOLDOWN_PERIOD"), 7 days); // 7 days cooldown period
         config.setConfig(keccak256("USD3_COMMITMENT_TIME"), 0); // 0 commitment time
-        config.setConfig(keccak256("SUSD3_WITHDRAWAL_WINDOW"), 1 days); // 1 day withdrawal window
+        config.setConfig(keccak256("SUSD3_WITHDRAWAL_WINDOW"), 2 days); // 2 day withdrawal window
+
         vm.stopBroadcast();
 
         console.log("ProtocolConfig configured successfully!");

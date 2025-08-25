@@ -69,11 +69,6 @@ contract ConfigureTokens is Script {
         IUSD3(usd3).setDepositorWhitelist(helper, true);
         console.log("  - Added Helper to depositor whitelist");
 
-        // Configure sUSD3 with same parameters
-        console.log("\nConfiguring sUSD3...");
-        ISUSD3(susd3).setMinDeposit(minDeposit);
-        console.log("  - Set minimum deposit to", minDeposit / 1e6, "USDC");
-
         ISUSD3(susd3).setDepositorWhitelist(helper, true);
         console.log("  - Added Helper to depositor whitelist");
 

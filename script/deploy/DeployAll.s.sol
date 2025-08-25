@@ -16,9 +16,8 @@ import {DeployCreditLine} from "./05_DeployCreditLine.s.sol";
 import {DeployInsuranceFund} from "./06_DeployInsuranceFund.s.sol";
 import {DeployMarkdownManager} from "./07_DeployMarkdownManager.s.sol";
 import {CreateMarket} from "./09_CreateMarket.s.sol";
-// Temporarily disabled - need to fix flattened contract imports
-// import {DeployUSD3} from "./10_DeployUSD3.s.sol";
-// import {DeploySUSD3} from "./11_DeploySUSD3.s.sol";
+import {DeployUSD3} from "./10_DeployUSD3.s.sol";
+import {DeploySUSD3} from "./11_DeploySUSD3.s.sol";
 import {ConfigureTokens} from "./12_ConfigureTokens.s.sol";
 
 contract DeployAll is Script {
@@ -122,34 +121,34 @@ contract DeployAll is Script {
 
         // Step 9: Deploy USD3 (Senior Tranche) - TEMPORARILY DISABLED
         console.log(">>> Step 9: Skipping USD3 deployment (temporarily disabled)...");
-        // DeployUSD3 deployUSD3 = new DeployUSD3();
-        // (addresses.usd3, addresses.usd3Impl) = deployUSD3.run();
-        // vm.setEnv("USD3_ADDRESS", vm.toString(addresses.usd3));
+        DeployUSD3 deployUSD3 = new DeployUSD3();
+        (addresses.usd3, addresses.usd3Impl) = deployUSD3.run();
+        vm.setEnv("USD3_ADDRESS", vm.toString(addresses.usd3));
         addresses.usd3 = address(0); // Placeholder
         addresses.usd3Impl = address(0); // Placeholder
         console.log("");
 
         // Step 10: Deploy sUSD3 (Subordinate Tranche) - TEMPORARILY DISABLED
         console.log(">>> Step 10: Skipping sUSD3 deployment (temporarily disabled)...");
-        // DeploySUSD3 deploySUSD3 = new DeploySUSD3();
-        // (addresses.susd3, addresses.susd3Impl) = deploySUSD3.run();
-        // vm.setEnv("SUSD3_ADDRESS", vm.toString(addresses.susd3));
+        DeploySUSD3 deploySUSD3 = new DeploySUSD3();
+        (addresses.susd3, addresses.susd3Impl) = deploySUSD3.run();
+        vm.setEnv("SUSD3_ADDRESS", vm.toString(addresses.susd3));
         addresses.susd3 = address(0); // Placeholder
         addresses.susd3Impl = address(0); // Placeholder
         console.log("");
 
         // Step 11: Deploy Helper - TEMPORARILY DISABLED (needs USD3/sUSD3)
         console.log(">>> Step 11: Skipping Helper deployment (needs USD3/sUSD3)...");
-        // DeployHelper deployHelper = new DeployHelper();
-        // addresses.helper = deployHelper.run();
-        // vm.setEnv("HELPER_ADDRESS", vm.toString(addresses.helper));
+        DeployHelper deployHelper = new DeployHelper();
+        addresses.helper = deployHelper.run();
+        vm.setEnv("HELPER_ADDRESS", vm.toString(addresses.helper));
         addresses.helper = address(0); // Placeholder
         console.log("");
 
         // Step 12: Configure Token Relationships - TEMPORARILY DISABLED (needs USD3/sUSD3)
         console.log(">>> Step 12: Skipping Token Configuration (needs USD3/sUSD3)...");
-        // ConfigureTokens configureTokens = new ConfigureTokens();
-        // configureTokens.run();
+        ConfigureTokens configureTokens = new ConfigureTokens();
+        configureTokens.run();
         console.log("");
 
         // Print summary
