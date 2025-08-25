@@ -8,6 +8,7 @@ import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {HelperMock} from "../../../src/mocks/HelperMock.sol";
 import {Market} from "../../../src/interfaces/IMorpho.sol";
 import {MathLib, WAD} from "../../../src/libraries/MathLib.sol";
+import {IProtocolConfig} from "../../../src/interfaces/IProtocolConfig.sol";
 
 /// @title MarkdownInvariantTest
 /// @notice Invariant tests to ensure markdown logic maintains critical properties
@@ -177,6 +178,28 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
         assertEq(totalBorrowSharesSum, m.totalBorrowShares, "Sum of borrow shares should match total");
 
         assertEq(totalSupplySharesSum, m.totalSupplyShares, "Sum of supply shares should match total");
+    }
+
+    /// @notice Invariant: All non-zero borrow positions should be above minimum borrow amount
+    /// @dev Ensures minBorrow constraint is enforced across all operations
+    function invariant_minBorrowEnforced() public {
+        uint256 minBorrow = protocolConfig.getMarketConfig().minBorrow;
+        if (minBorrow == 0) return; // Skip if no minimum is set
+
+        Market memory m = morpho.market(id);
+
+        for (uint256 i = 0; i < activeBorrowers.length; i++) {
+            address borrower = activeBorrowers[i];
+            uint256 borrowShares = morpho.position(id, borrower).borrowShares;
+
+            if (borrowShares > 0) {
+                // Calculate actual borrow assets from shares
+                uint256 borrowAssets = borrowShares.mulDivUp(m.totalBorrowAssets, m.totalBorrowShares);
+
+                // Assert that debt is at least minBorrow
+                assertGe(borrowAssets, minBorrow, "Non-zero borrow position must be at least minBorrow");
+            }
+        }
     }
 
     // Handler functions for invariant testing

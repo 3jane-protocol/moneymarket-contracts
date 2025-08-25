@@ -137,4 +137,7 @@ library ErrorsLib {
 
     /// @notice Thrown when attempting operations on a frozen market.
     error MarketFrozen();
+
+    /// @notice Thrown when borrow or repay would result in debt below minimum borrow amount.
+    error BelowMinimumBorrow();
 }

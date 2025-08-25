@@ -601,7 +601,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @inheritdoc Morpho
-    function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal virtual override {
+    function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256 assets, uint256)
+        internal
+        virtual
+        override
+    {
         if (msg.sender != helper) revert ErrorsLib.NotHelper();
         if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
         if (_isMarketFrozen(id)) revert ErrorsLib.MarketFrozen();
@@ -611,6 +615,16 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (status != RepaymentStatus.Current) revert ErrorsLib.OutstandingRepayment();
         _accrueBorrowerPremium(id, onBehalf);
         // No need to update markdown - borrower must be Current to borrow, so markdown is always 0
+
+        // Check minimum borrow requirement
+        uint256 minBorrow = IProtocolConfig(protocolConfig).getMarketConfig().minBorrow;
+        if (minBorrow > 0) {
+            Market memory m = market[id];
+            uint256 currentDebt =
+                uint256(position[id][onBehalf].borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+            uint256 newDebt = currentDebt + assets;
+            if (newDebt > 0 && newDebt < minBorrow) revert ErrorsLib.BelowMinimumBorrow();
+        }
     }
 
     /// @inheritdoc Morpho
@@ -627,6 +641,18 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // Accrue premium (including penalty if past grace period)
         _accrueBorrowerPremium(id, onBehalf);
         _updateBorrowerMarkdown(id, onBehalf); // TODO: decide whether to remove
+
+        // Check minimum borrow requirement for remaining debt
+        uint256 minBorrow = IProtocolConfig(protocolConfig).getMarketConfig().minBorrow;
+        if (minBorrow > 0) {
+            Market memory m = market[id];
+            uint256 currentDebt =
+                uint256(position[id][onBehalf].borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+            if (currentDebt > assets) {
+                uint256 remainingDebt = currentDebt - assets;
+                if (remainingDebt > 0 && remainingDebt < minBorrow) revert ErrorsLib.BelowMinimumBorrow();
+            }
+        }
 
         // Track payment against obligation
         _trackObligationPayment(id, onBehalf, assets);
