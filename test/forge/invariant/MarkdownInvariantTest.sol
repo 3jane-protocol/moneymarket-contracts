@@ -71,8 +71,8 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
             id, block.timestamp, borrowers, repaymentBps, endingBalances
         );
 
-        // Supply initial funds
-        totalSupplied = 1000 ether;
+        // Supply initial funds (more to accommodate larger minBorrow)
+        totalSupplied = 100000 ether;
         loanToken.setBalance(SUPPLIER, totalSupplied);
 
         vm.startPrank(SUPPLIER);
@@ -206,7 +206,8 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
 
     /// @notice Handler: Create a new borrower and borrow
     function handler_borrow(uint256 amount) public {
-        amount = bound(amount, 1 ether, 50 ether);
+        // Respect minBorrow constraint (1000e18)
+        amount = bound(amount, 1000e18, 50000e18);
         address borrower = makeAddr(string(abi.encodePacked("Borrower", activeBorrowers.length)));
 
         vm.prank(address(creditLine));
@@ -298,9 +299,25 @@ contract MarkdownInvariantTest is BaseTest, InvariantTest {
         Market memory m = morpho.market(id);
         uint256 actualDebt = uint256(pos.borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
 
-        // Bound amount to actual debt to prevent underflow
-        amount = bound(amount, 0, actualDebt);
-        if (amount == 0) return;
+        // Get minBorrow from protocol config
+        uint256 minBorrow = protocolConfig.getMarketConfig().minBorrow;
+
+        // Only allow full repayment or amounts that leave at least minBorrow
+        if (actualDebt <= minBorrow) {
+            // If debt is at or below minBorrow, only allow full repayment
+            amount = actualDebt;
+        } else {
+            // Either repay to leave at least minBorrow, or repay in full
+            uint256 maxPartialRepay = actualDebt > minBorrow * 2 ? actualDebt - minBorrow : 0;
+            if (maxPartialRepay == 0) {
+                // Debt is between minBorrow and 2*minBorrow, only allow full repayment
+                amount = actualDebt;
+            } else {
+                // Allow partial repayment that leaves at least minBorrow
+                amount = bound(amount, 0, maxPartialRepay);
+                if (amount == 0) return;
+            }
+        }
 
         loanToken.setBalance(borrower, amount);
         vm.startPrank(borrower);

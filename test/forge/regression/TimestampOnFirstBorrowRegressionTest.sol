@@ -22,7 +22,7 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
     uint256 constant CREDIT_LIMIT = 10_000e18;
     uint256 constant SUPPLY_AMOUNT = 100_000e18;
     uint256 constant WAIT_TIME_BEFORE_BORROW = 7 days;
-    uint256 constant BORROW_AMOUNT = 1_000e18;
+    uint256 constant BORROW_AMOUNT = 2_000e18;
     uint256 constant ACCRUAL_PERIOD = 1 days;
 
     uint256 premiumRatePerSecond;

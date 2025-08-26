@@ -323,6 +323,10 @@ contract MinBorrowTest is BaseTest {
         uint256 debtWithInterest = _getBorrowBalance(BORROWER_1);
         assertGt(debtWithInterest, MIN_BORROW_AMOUNT, "Debt should have grown with interest");
 
+        // Post new cycle since we're past cycle duration (market would be frozen)
+        vm.prank(marketParams.creditLine);
+        morphoCredit.closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
+
         // Can still perform operations
         _borrowAs(BORROWER_1, 100e18);
         assertGt(_getBorrowBalance(BORROWER_1), debtWithInterest, "Should be able to borrow more");

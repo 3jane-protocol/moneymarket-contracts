@@ -862,7 +862,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 lastCycleEnd = paymentCycle[id][cycleCount - 1].endDate;
         uint256 expectedNextCycleEnd = lastCycleEnd + cycleDuration;
 
-        return block.timestamp > expectedNextCycleEnd;
+        return block.timestamp >= expectedNextCycleEnd;
     }
 
     /// @notice Settle a borrower's account by writing off all remaining debt
