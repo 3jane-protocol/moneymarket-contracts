@@ -22,7 +22,7 @@ test = "/dev/null"
 script = "/dev/null"
 
 
-[profile.deploy]
+[profile.script]
 # Inherits from default profile but excludes tests for faster compilation
 test = "/dev/null"
 # Keep all the metadata needed for OpenZeppelin Upgrades
@@ -32,6 +32,7 @@ ast = true
 fs_permissions = [
   { access = "read-write", path = "./deployments" },
   { access = "read-write", path = "./out" },
+  { access = "read", path = "./data" },
 ]
 build_info = true
 extra_output = ["storageLayout"]
