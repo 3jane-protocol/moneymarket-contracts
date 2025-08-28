@@ -1,9 +1,0 @@
-@openzeppelin/=lib/openzeppelin-contracts/
-@openzeppelin-upgradeable/=lib/Aave-Vault/lib/openzeppelin-contracts-upgradeable/contracts/
-forge-std/=lib/forge-std/src/
-@tokenized-strategy/=lib/tokenized-strategy/src/
-@periphery/=lib/tokenized-strategy-periphery/src/
-@3jane-morpho-blue/=lib/3jane-morpho-blue/src/
-@aave-v3-core/=lib/Aave-Vault/lib/aave-v3-core/contracts/
-@aave-v3-periphery/=lib/Aave-Vault/lib/aave-v3-periphery/contracts/
-@aave-vault/=lib/Aave-Vault/src/
