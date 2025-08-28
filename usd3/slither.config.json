@@ -1,4 +1,0 @@
-{
-    "detectors_to_exclude": "naming-convention,unused-return",
-    "filter_paths": "(lib/|src/test)"
-}
