@@ -2,12 +2,12 @@
 pragma solidity ^0.8.18;
 
 import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IProtocolConfig} from "@3jane-morpho-blue/interfaces/IProtocolConfig.sol";
-import {IMorpho, IMorphoCredit} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
+import {ERC20} from "../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {SafeERC20} from "../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
+import {IERC20} from "../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
+import {IMorpho, IMorphoCredit} from "../interfaces/IMorpho.sol";
 import {USD3} from "./USD3.sol";
 
 /**

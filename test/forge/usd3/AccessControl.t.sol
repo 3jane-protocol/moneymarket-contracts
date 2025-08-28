@@ -3,12 +3,12 @@ pragma solidity ^0.8.18;
 
 import "forge-std/console2.sol";
 import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
-import {USD3} from "../USD3.sol";
-import {sUSD3} from "../sUSD3.sol";
+import {USD3} from "../../../src/usd3/USD3.sol";
+import {sUSD3} from "../../../src/usd3/sUSD3.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {TransparentUpgradeableProxy} from
-    "../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
+    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 /**
  * @title AccessControlTest

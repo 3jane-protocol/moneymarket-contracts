@@ -2,9 +2,9 @@
 pragma solidity ^0.8.18;
 
 import {Test} from "forge-std/Test.sol";
-import {USD3} from "../../USD3.sol";
-import {sUSD3} from "../../sUSD3.sol";
-import {ERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
+import {USD3} from "../../../../src/usd3/USD3.sol";
+import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
+import {ERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /**
  * @title InvariantHandler

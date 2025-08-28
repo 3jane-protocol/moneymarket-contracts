@@ -2,7 +2,7 @@
 pragma solidity ^0.8.18;
 
 import {IStrategy} from "@tokenized-strategy/interfaces/IStrategy.sol";
-import {IMorpho, MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
+import {IMorpho, MarketParams, Id} from "../../interfaces/IMorpho.sol";
 
 interface IUSD3 is IStrategy {
     /*//////////////////////////////////////////////////////////////

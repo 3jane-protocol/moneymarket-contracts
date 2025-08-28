@@ -2,16 +2,16 @@
 pragma solidity ^0.8.18;
 
 import {Setup} from "../utils/Setup.sol";
-import {USD3} from "../../USD3.sol";
-import {sUSD3} from "../../sUSD3.sol";
-import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {USD3} from "../../../../src/usd3/USD3.sol";
+import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
+import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
+    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {console2} from "forge-std/console2.sol";
-import {IMorpho, IMorphoCredit, MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
-import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBalancesLib.sol";
+import {IMorpho, IMorphoCredit, MarketParams, Id} from "../../../../src/interfaces/IMorpho.sol";
+import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
 
 /**
  * @title Test for Loss Share Calculation Bug

@@ -3,15 +3,16 @@ pragma solidity ^0.8.18;
 
 import "forge-std/Test.sol";
 import {Setup} from "../utils/Setup.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {USD3} from "../../USD3.sol";
-import {sUSD3} from "../../sUSD3.sol";
-import {IMorpho, MarketParams} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
-import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {USD3} from "../../../../src/usd3/USD3.sol";
+import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
+import {IMorpho, MarketParams} from "../../../../src/interfaces/IMorpho.sol";
+import {TransparentUpgradeableProxy} from
+    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
-import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
+import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
 
 /**
  * @title Storage Manipulation Validation Test

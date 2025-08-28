@@ -4,24 +4,24 @@ pragma solidity ^0.8.18;
 import "forge-std/console2.sol";
 import {Test} from "forge-std/Test.sol";
 
-import {ERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
-import {IUSD3} from "../../interfaces/IUSD3.sol";
+import {ERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IUSD3} from "../../../../src/usd3/interfaces/IUSD3.sol";
 
 // Inherit the events so they can be checked if desired.
 import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
 
 // Add imports for USD3 testing
-import {USD3} from "../../USD3.sol";
-import {IMorpho, MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
-import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
-import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
-import {IrmMock} from "@3jane-morpho-blue/mocks/IrmMock.sol";
-import {HelperMock} from "@3jane-morpho-blue/mocks/HelperMock.sol";
-import {CreditLineMock} from "@3jane-morpho-blue/mocks/CreditLineMock.sol";
-import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {USD3} from "../../../../src/usd3/USD3.sol";
+import {IMorpho, MarketParams, Id} from "../../../../src/interfaces/IMorpho.sol";
+import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
+import {IrmMock} from "../../../../src/mocks/IrmMock.sol";
+import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
+import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
+import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "../../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
+    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 

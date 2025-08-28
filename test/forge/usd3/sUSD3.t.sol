@@ -3,16 +3,16 @@ pragma solidity ^0.8.18;
 
 import "forge-std/console2.sol";
 import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
-import {sUSD3} from "../sUSD3.sol";
-import {USD3} from "../USD3.sol";
-import {ISUSD3} from "../interfaces/ISUSD3.sol";
+import {sUSD3} from "../../../src/usd3/sUSD3.sol";
+import {USD3} from "../../../src/usd3/USD3.sol";
+// import {ISUSD3} from "../interfaces/ISUSD3.sol"; // Interface not found, not used in test
 import {TransparentUpgradeableProxy} from
-    "../../lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "../../lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
+    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
-import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
-import {MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
-import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
+import {MorphoCredit} from "../../../src/MorphoCredit.sol";
+import {MarketParams, Id} from "../../../src/interfaces/IMorpho.sol";
+import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
 
 contract sUSD3Test is Setup {
     using MarketParamsLib for MarketParams;

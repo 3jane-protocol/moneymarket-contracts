@@ -2,10 +2,10 @@
 pragma solidity ^0.8.18;
 
 import {Setup} from "../utils/Setup.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {USD3} from "../../USD3.sol";
-import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
+import {USD3} from "../../../../src/usd3/USD3.sol";
+import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 
 /**

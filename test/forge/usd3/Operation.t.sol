@@ -3,13 +3,13 @@ pragma solidity ^0.8.18;
 
 import "forge-std/console2.sol";
 import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
-import {USD3} from "../USD3.sol";
-import {IMorpho} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
-import {MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
-import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
-import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBalancesLib.sol";
-import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
+import {USD3} from "../../../src/usd3/USD3.sol";
+import {IMorpho} from "../../../src/interfaces/IMorpho.sol";
+import {MarketParams, Id} from "../../../src/interfaces/IMorpho.sol";
+import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
+import {MorphoBalancesLib} from "../../../src/libraries/periphery/MorphoBalancesLib.sol";
+import {IERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 

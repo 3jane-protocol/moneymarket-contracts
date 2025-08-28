@@ -9,10 +9,10 @@ import {
     Market,
     Authorization,
     Signature
-} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
-import {SharesMathLib} from "@3jane-morpho-blue/libraries/SharesMathLib.sol";
-import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
-import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+} from "../../../../src/interfaces/IMorpho.sol";
+import {SharesMathLib} from "../../../../src/libraries/SharesMathLib.sol";
+import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title MockMorphoCredit

@@ -3,14 +3,14 @@ pragma solidity ^0.8.18;
 
 import {Setup} from "../utils/Setup.sol";
 import "forge-std/console2.sol";
-import {USD3} from "../../USD3.sol";
+import {USD3} from "../../../../src/usd3/USD3.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {IMorpho, MarketParams, Id} from "@3jane-morpho-blue/interfaces/IMorpho.sol";
-import {MarketParamsLib} from "@3jane-morpho-blue/libraries/MarketParamsLib.sol";
-import {MorphoCredit} from "@3jane-morpho-blue/MorphoCredit.sol";
-import {HelperMock} from "@3jane-morpho-blue/mocks/HelperMock.sol";
-import {MorphoBalancesLib} from "@3jane-morpho-blue/libraries/periphery/MorphoBalancesLib.sol";
-import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IMorpho, MarketParams, Id} from "../../../../src/interfaces/IMorpho.sol";
+import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
+import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
+import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
+import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract USD3MorphoIntegrationTest is Setup {
     using MarketParamsLib for MarketParams;

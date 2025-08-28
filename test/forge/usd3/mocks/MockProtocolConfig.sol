@@ -2,11 +2,8 @@
 pragma solidity ^0.8.18;
 
 import {
-    IProtocolConfig,
-    MarketConfig,
-    CreditLineConfig,
-    IRMConfig
-} from "@3jane-morpho-blue/interfaces/IProtocolConfig.sol";
+    IProtocolConfig, MarketConfig, CreditLineConfig, IRMConfig
+} from "../../../../src/interfaces/IProtocolConfig.sol";
 
 /**
  * @title MockProtocolConfig

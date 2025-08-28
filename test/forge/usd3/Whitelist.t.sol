@@ -3,7 +3,7 @@ pragma solidity ^0.8.18;
 
 import "forge-std/console2.sol";
 import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
-import {USD3} from "../USD3.sol";
+import {USD3} from "../../../src/usd3/USD3.sol";
 
 contract WhitelistTest is Setup {
     USD3 public usd3Strategy;
