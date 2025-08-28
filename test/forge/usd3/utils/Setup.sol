@@ -24,6 +24,8 @@ import {TransparentUpgradeableProxy} from
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {MockStrategyFactory} from "../mocks/MockStrategyFactory.sol";
+import {TokenizedStrategy} from "@tokenized-strategy/TokenizedStrategy.sol";
 
 interface IFactory {
     function governance() external view returns (address);
@@ -72,7 +74,8 @@ contract Setup is Test, IEvents {
         // Set underlying asset (USDC)
         underlyingAsset = ERC20(tokenAddrs["USDC"]);
 
-        // StrategyFactory not used in this test setup
+        // Deploy and etch TokenizedStrategy at the expected address
+        _deployTokenizedStrategy();
 
         // Deploy strategy and set variables
         strategy = IUSD3(setUpStrategy());
@@ -225,5 +228,26 @@ contract Setup is Test, IEvents {
         // Real USDC has proxy implementation that causes issues in tests
         MockERC20 mockUsdc = new MockERC20("USD Coin", "USDC", 6);
         tokenAddrs["USDC"] = address(mockUsdc);
+    }
+
+    function _deployTokenizedStrategy() internal {
+        // Deploy a mock factory for the TokenizedStrategy
+        MockStrategyFactory mockFactory = new MockStrategyFactory();
+
+        // Deploy the TokenizedStrategy implementation
+        TokenizedStrategy tokenizedStrategyImpl = new TokenizedStrategy(address(mockFactory));
+
+        // Etch the TokenizedStrategy bytecode at the expected hardcoded address
+        // This address is used by BaseStrategyUpgradeable for delegate calls
+        address expectedAddress = 0xD377919FA87120584B21279a491F82D5265A139c;
+        vm.etch(expectedAddress, address(tokenizedStrategyImpl).code);
+
+        // Also set the storage slot for the immutable FACTORY variable
+        // The FACTORY immutable is stored at the address itself in bytecode
+        // We need to ensure it's properly set in the etched code
+
+        // Label for debugging
+        vm.label(expectedAddress, "TokenizedStrategy");
+        vm.label(address(mockFactory), "MockStrategyFactory");
     }
 }
