@@ -284,14 +284,16 @@ contract TransferRestrictionHandler is Test {
     function deposit(uint256 seed, uint256 amount) public useRandomUser(seed) {
         amount = bound(amount, 100e6, 10000e6); // Reasonable deposit range
 
-        uint256 userBalance = usdc.balanceOf(users[seed % users.length]);
+        // Get user after modifier ensures users array is not empty
+        address user = msg.sender; // useRandomUser sets msg.sender via vm.startPrank
+        uint256 userBalance = usdc.balanceOf(user);
         if (userBalance < amount) {
             // Fund user if needed
-            deal(address(usdc), users[seed % users.length], amount);
+            deal(address(usdc), user, amount);
         }
 
         usdc.approve(address(usd3), amount);
-        try usd3.deposit(amount, users[seed % users.length]) {
+        try usd3.deposit(amount, user) {
             depositCount++;
         } catch {
             // Deposit might fail due to various reasons (whitelist, etc.)
@@ -299,7 +301,8 @@ contract TransferRestrictionHandler is Test {
     }
 
     function withdraw(uint256 seed, uint256 amount) public useRandomUser(seed) {
-        address user = users[seed % users.length];
+        // Get user after modifier ensures users array is not empty
+        address user = msg.sender; // useRandomUser sets msg.sender via vm.startPrank
         uint256 balance = IERC20(address(usd3)).balanceOf(user);
 
         if (balance > 0) {
@@ -314,7 +317,8 @@ contract TransferRestrictionHandler is Test {
     }
 
     function transfer(uint256 seed, uint256 amount, uint256 recipientSeed) public useRandomUser(seed) {
-        address sender = users[seed % users.length];
+        // Get sender after modifier ensures users array is not empty
+        address sender = msg.sender; // useRandomUser sets msg.sender via vm.startPrank
 
         // Ensure we have at least 2 users
         if (users.length < 2) {
@@ -343,7 +347,8 @@ contract TransferRestrictionHandler is Test {
     }
 
     function depositSUSD3(uint256 seed, uint256 amount) public useRandomUser(seed) {
-        address user = users[seed % users.length];
+        // Get user after modifier ensures users array is not empty
+        address user = msg.sender; // useRandomUser sets msg.sender via vm.startPrank
         uint256 usd3Balance = IERC20(address(usd3)).balanceOf(user);
 
         if (usd3Balance > 0) {
@@ -363,7 +368,8 @@ contract TransferRestrictionHandler is Test {
     }
 
     function startCooldown(uint256 seed, uint256 amount) public useRandomUser(seed) {
-        address user = users[seed % users.length];
+        // Get user after modifier ensures users array is not empty
+        address user = msg.sender; // useRandomUser sets msg.sender via vm.startPrank
         uint256 balance = IERC20(address(susd3)).balanceOf(user);
 
         if (balance > 0) {
