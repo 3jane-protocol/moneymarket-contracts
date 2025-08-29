@@ -39,6 +39,7 @@ contract ProtocolConfig is Initializable {
     bytes32 private constant SUSD3_COOLDOWN_PERIOD = keccak256("SUSD3_COOLDOWN_PERIOD");
     bytes32 private constant USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
     bytes32 private constant SUSD3_WITHDRAWAL_WINDOW = keccak256("SUSD3_WITHDRAWAL_WINDOW");
+    bytes32 private constant USD3_SUPPLY_CAP = keccak256("USD3_SUPPLY_CAP");
 
     /// @dev Configuration storage mapping
     mapping(bytes32 => uint256) public config;
@@ -142,5 +143,9 @@ contract ProtocolConfig is Initializable {
 
     function getSusd3WithdrawalWindow() external view returns (uint256) {
         return config[SUSD3_WITHDRAWAL_WINDOW];
+    }
+
+    function getUsd3SupplyCap() external view returns (uint256) {
+        return config[USD3_SUPPLY_CAP];
     }
 }
