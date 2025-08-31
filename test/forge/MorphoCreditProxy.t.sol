@@ -7,6 +7,7 @@ import {
     ITransparentUpgradeableProxy
 } from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {MorphoCreditMock} from "../../src/mocks/MorphoCreditMock.sol";
 import {MorphoCredit} from "../../src/MorphoCredit.sol";
 import {MarketParams, Id} from "../../src/interfaces/IMorpho.sol";
 import {MorphoStorageLib} from "../../src/libraries/periphery/MorphoStorageLib.sol";
@@ -46,7 +47,7 @@ contract MorphoCreditProxyTest is Test {
         irm = new IrmMock();
 
         // Deploy implementation
-        implementation = new MorphoCredit();
+        implementation = new MorphoCreditMock(address(1));
 
         // Deploy ProxyAdmin separately
         proxyAdmin = new ProxyAdmin(admin);
@@ -56,7 +57,7 @@ contract MorphoCreditProxyTest is Test {
         proxy = new TransparentUpgradeableProxy(address(implementation), address(proxyAdmin), initData);
 
         // Cast proxy to MorphoCredit
-        morphoCredit = MorphoCredit(address(proxy));
+        morphoCredit = MorphoCreditMock(address(proxy));
 
         // Setup market params
         marketParams = MarketParams({
@@ -93,7 +94,7 @@ contract MorphoCreditProxyTest is Test {
     }
 
     function testImplementationCannotBeInitialized() public {
-        MorphoCredit impl = new MorphoCredit();
+        MorphoCredit impl = new MorphoCreditMock(address(1));
         vm.expectRevert(bytes4(0xf92ee8a9)); // Initializable.InvalidInitialization()
         impl.initialize(owner);
     }
@@ -106,25 +107,29 @@ contract MorphoCreditProxyTest is Test {
         assertEq(uint256(bytes32(MorphoStorageLib.MARKET_SLOT)), 3);
         assertEq(uint256(bytes32(MorphoStorageLib.IS_IRM_ENABLED_SLOT)), 4);
         assertEq(uint256(bytes32(MorphoStorageLib.IS_LLTV_ENABLED_SLOT)), 5);
-        assertEq(uint256(bytes32(MorphoStorageLib.IS_AUTHORIZED_SLOT)), 6);
-        assertEq(uint256(bytes32(MorphoStorageLib.NONCE_SLOT)), 7);
-        assertEq(uint256(bytes32(MorphoStorageLib.ID_TO_MARKET_PARAMS_SLOT)), 8);
+        // IS_AUTHORIZED_SLOT removed - no isAuthorized mapping in Morpho
+        assertEq(uint256(bytes32(MorphoStorageLib.NONCE_SLOT)), 6);
+        assertEq(uint256(bytes32(MorphoStorageLib.ID_TO_MARKET_PARAMS_SLOT)), 7);
         // DOMAIN_SEPARATOR is now at slot 9
 
         // Test MorphoCredit storage slots (start after Morpho base + __gap)
-        assertEq(uint256(MorphoCreditStorageLib.helperSlot()), 20);
+        assertEq(uint256(MorphoCreditStorageLib.helperSlot()), 19);
+        // protocolConfigSlot removed - protocolConfig is immutable
+        assertEq(uint256(MorphoCreditStorageLib.usd3Slot()), 20);
         assertEq(uint256(bytes32(MorphoCreditStorageLib.BORROWER_PREMIUM_SLOT)), 21);
         assertEq(uint256(bytes32(MorphoCreditStorageLib.PAYMENT_CYCLE_SLOT)), 22);
         assertEq(uint256(bytes32(MorphoCreditStorageLib.REPAYMENT_OBLIGATION_SLOT)), 23);
         assertEq(uint256(bytes32(MorphoCreditStorageLib.MARKDOWN_STATE_SLOT)), 24);
-        assertEq(uint256(bytes32(MorphoCreditStorageLib.MARKDOWN_MANAGER_SLOT)), 25);
     }
 
     function testProxyStatePreservation() public {
         // Store some state
-        vm.prank(owner);
+        vm.startPrank(owner);
         morphoCredit.setHelper(user);
+        morphoCredit.setUsd3(user);
+        vm.stopPrank();
         assertEq(morphoCredit.helper(), user);
+        assertEq(morphoCredit.usd3(), user);
 
         // Create a market and supply
         vm.startPrank(user);
@@ -135,6 +140,7 @@ contract MorphoCreditProxyTest is Test {
 
         // Check state is preserved across multiple calls
         assertEq(morphoCredit.helper(), user);
+        assertEq(morphoCredit.usd3(), user);
         assertEq(morphoCredit.owner(), owner);
         (uint256 supplyShares,,) = morphoCredit.position(id, user);
         assertTrue(supplyShares > 0);
@@ -189,7 +195,7 @@ contract MorphoCreditProxyTest is Test {
 
     function testDirectImplementationCallsRevert() public {
         // Try to call implementation directly - should revert because it's disabled
-        MorphoCredit directImpl = new MorphoCredit();
+        MorphoCredit directImpl = new MorphoCreditMock(address(1));
 
         vm.expectRevert(bytes4(0xf92ee8a9)); // Initializable.InvalidInitialization()
         directImpl.initialize(owner);

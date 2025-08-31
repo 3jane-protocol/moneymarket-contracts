@@ -1,22 +1,23 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.19;
+pragma solidity ^0.8.18;
 
 import {IIrm} from "../../interfaces/IIrm.sol";
 import {IAdaptiveCurveIrm} from "./interfaces/IAdaptiveCurveIrm.sol";
-
+import {IProtocolConfig, IRMConfig, IRMConfigTyped} from "../../interfaces/IProtocolConfig.sol";
 import {UtilsLib} from "./libraries/UtilsLib.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {ExpLib} from "./libraries/ExpLib.sol";
 import {MathLib, WAD_INT as WAD} from "./libraries/MathLib.sol";
 import {ConstantsLib} from "./libraries/ConstantsLib.sol";
 import {MarketParamsLib} from "../../libraries/MarketParamsLib.sol";
-import {Id, MarketParams, Market} from "../../interfaces/IMorpho.sol";
+import {Id, MarketParams, Market, IMorphoCredit} from "../../interfaces/IMorpho.sol";
 import {MathLib as MorphoMathLib} from "../../libraries/MathLib.sol";
+import {Initializable} from "../../../lib/openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 /// @title AdaptiveCurveIrm
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
-contract AdaptiveCurveIrm is IAdaptiveCurveIrm {
+contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
     using MathLib for int256;
     using UtilsLib for int256;
     using MorphoMathLib for uint128;
@@ -37,6 +38,9 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm {
     /// @inheritdoc IAdaptiveCurveIrm
     mapping(Id => int256) public rateAtTarget;
 
+    /// @dev Storage gap for future upgrades (10 slots).
+    uint256[10] private __gap;
+
     /* CONSTRUCTOR */
 
     /// @notice Constructor.
@@ -45,7 +49,10 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm {
         require(morpho != address(0), ErrorsLib.ZERO_ADDRESS);
 
         MORPHO = morpho;
+        _disableInitializers();
     }
+
+    function initialize() external initializer {}
 
     /* BORROW RATES */
 
@@ -74,14 +81,15 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm {
     /// @dev Returns avgRate and endRateAtTarget.
     /// @dev Assumes that the inputs `marketParams` and `id` match.
     function _borrowRate(Id id, Market memory market) internal view returns (uint256, int256) {
+        IRMConfigTyped memory terms = _unpackIRMConfig();
+
         // Safe "unchecked" cast because the utilization is smaller than 1 (scaled by WAD).
         int256 utilization =
             int256(market.totalSupplyAssets > 0 ? market.totalBorrowAssets.wDivDown(market.totalSupplyAssets) : 0);
 
-        int256 errNormFactor = utilization > ConstantsLib.TARGET_UTILIZATION
-            ? WAD - ConstantsLib.TARGET_UTILIZATION
-            : ConstantsLib.TARGET_UTILIZATION;
-        int256 err = (utilization - ConstantsLib.TARGET_UTILIZATION).wDivToZero(errNormFactor);
+        int256 errNormFactor =
+            utilization > terms.targetUtilization ? WAD - terms.targetUtilization : terms.targetUtilization;
+        int256 err = (utilization - terms.targetUtilization).wDivToZero(errNormFactor);
 
         int256 startRateAtTarget = rateAtTarget[id];
 
@@ -90,12 +98,12 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm {
 
         if (startRateAtTarget == 0) {
             // First interaction.
-            avgRateAtTarget = ConstantsLib.INITIAL_RATE_AT_TARGET;
-            endRateAtTarget = ConstantsLib.INITIAL_RATE_AT_TARGET;
+            avgRateAtTarget = terms.initialRateAtTarget;
+            endRateAtTarget = terms.initialRateAtTarget;
         } else {
             // The speed is assumed constant between two updates, but it is in fact not constant because of interest.
             // So the rate is always underestimated.
-            int256 speed = ConstantsLib.ADJUSTMENT_SPEED.wMulToZero(err);
+            int256 speed = terms.adjustmentSpeed.wMulToZero(err);
             // market.lastUpdate != 0 because it is not the first interaction with this market.
             // Safe "unchecked" cast because block.timestamp - market.lastUpdate <= block.timestamp <= type(int256).max.
             int256 elapsed = int256(block.timestamp - market.lastUpdate);
@@ -119,33 +127,53 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm {
                 // With N = 2:
                 // avg ~= curve([(startRateAtTarget + endRateAtTarget)/2 + startRateAtTarget*exp(speed*T/2)] / 2, err)
                 // avg ~= curve([startRateAtTarget + endRateAtTarget + 2*startRateAtTarget*exp(speed*T/2)] / 4, err)
-                endRateAtTarget = _newRateAtTarget(startRateAtTarget, linearAdaptation);
-                int256 midRateAtTarget = _newRateAtTarget(startRateAtTarget, linearAdaptation / 2);
+                endRateAtTarget =
+                    _newRateAtTarget(startRateAtTarget, linearAdaptation, terms.minRateAtTarget, terms.maxRateAtTarget);
+                int256 midRateAtTarget = _newRateAtTarget(
+                    startRateAtTarget, linearAdaptation / 2, terms.minRateAtTarget, terms.maxRateAtTarget
+                );
                 avgRateAtTarget = (startRateAtTarget + endRateAtTarget + 2 * midRateAtTarget) / 4;
             }
         }
 
         // Safe "unchecked" cast because avgRateAtTarget >= 0.
-        return (uint256(_curve(avgRateAtTarget, err)), endRateAtTarget);
+        return (uint256(_curve(avgRateAtTarget, err, terms.curveSteepness)), endRateAtTarget);
     }
 
     /// @dev Returns the rate for a given `_rateAtTarget` and an `err`.
     /// The formula of the curve is the following:
     /// r = ((1-1/C)*err + 1) * rateAtTarget if err < 0
     ///     ((C-1)*err + 1) * rateAtTarget else.
-    function _curve(int256 _rateAtTarget, int256 err) private pure returns (int256) {
+    function _curve(int256 _rateAtTarget, int256 err, int256 curveSteepness) private pure returns (int256) {
         // Non negative because 1 - 1/C >= 0, C - 1 >= 0.
-        int256 coeff = err < 0 ? WAD - WAD.wDivToZero(ConstantsLib.CURVE_STEEPNESS) : ConstantsLib.CURVE_STEEPNESS - WAD;
+        int256 coeff = err < 0 ? WAD - WAD.wDivToZero(curveSteepness) : curveSteepness - WAD;
         // Non negative if _rateAtTarget >= 0 because if err < 0, coeff <= 1.
         return (coeff.wMulToZero(err) + WAD).wMulToZero(int256(_rateAtTarget));
     }
 
     /// @dev Returns the new rate at target, for a given `startRateAtTarget` and a given `linearAdaptation`.
     /// The formula is: max(min(startRateAtTarget * exp(linearAdaptation), maxRateAtTarget), minRateAtTarget).
-    function _newRateAtTarget(int256 startRateAtTarget, int256 linearAdaptation) private pure returns (int256) {
+    function _newRateAtTarget(
+        int256 startRateAtTarget,
+        int256 linearAdaptation,
+        int256 minRateAtTarget,
+        int256 maxRateAtTarget
+    ) internal view virtual returns (int256) {
         // Non negative because MIN_RATE_AT_TARGET > 0.
-        return startRateAtTarget.wMulToZero(ExpLib.wExp(linearAdaptation)).bound(
-            ConstantsLib.MIN_RATE_AT_TARGET, ConstantsLib.MAX_RATE_AT_TARGET
-        );
+        return startRateAtTarget.wMulToZero(ExpLib.wExp(linearAdaptation)).bound(minRateAtTarget, maxRateAtTarget);
+    }
+
+    /// @dev Unpacks IRMConfig into individual int256 values.
+    /// @return terms The IRMConfigTyped struct.
+    function _unpackIRMConfig() internal view returns (IRMConfigTyped memory) {
+        IRMConfig memory terms = IProtocolConfig(IMorphoCredit(MORPHO).protocolConfig()).getIRMConfig();
+        return IRMConfigTyped({
+            curveSteepness: int256(terms.curveSteepness),
+            adjustmentSpeed: int256(terms.adjustmentSpeed),
+            targetUtilization: int256(terms.targetUtilization),
+            initialRateAtTarget: int256(terms.initialRateAtTarget),
+            minRateAtTarget: int256(terms.minRateAtTarget),
+            maxRateAtTarget: int256(terms.maxRateAtTarget)
+        });
     }
 }

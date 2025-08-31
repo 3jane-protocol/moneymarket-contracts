@@ -47,6 +47,7 @@ contract SupplyIntegrationTest is BaseTest {
         vm.assume(token.code.length == 0);
 
         marketParams.loanToken = token;
+        vm.prank(OWNER);
         morpho.createMarket(marketParams);
 
         vm.expectRevert(ErrorsLib.NoCode.selector);

@@ -1,2 +1,4 @@
 forge-std/=lib/forge-std/src/
 halmos-cheatcodes/=lib/halmos-cheatcodes/src/
+@tokenized-strategy/=lib/tokenized-strategy/src/
+@periphery/=lib/tokenized-strategy-periphery/src/

@@ -13,12 +13,18 @@ contract MarkdownTest is BaseTest {
     using MarketParamsLib for MarketParams;
     using MorphoBalancesLib for IMorpho;
 
+    uint256 internal constant TEST_CYCLE_DURATION = 30 days;
+
     MarkdownManagerMock markdownManager;
     CreditLineMock creditLine;
     IMorphoCredit morphoCredit;
 
     function setUp() public override {
         super.setUp();
+
+        // Set cycle duration in protocol config
+        vm.prank(OWNER);
+        protocolConfig.setConfig(keccak256("CYCLE_DURATION"), TEST_CYCLE_DURATION);
 
         // Deploy markdown manager
         markdownManager = new MarkdownManagerMock();
@@ -40,12 +46,21 @@ contract MarkdownTest is BaseTest {
 
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
+        creditLine.setMm(address(markdownManager));
         vm.stopPrank();
+
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + TEST_CYCLE_DURATION);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(address(creditLine));
+        morphoCredit.closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
     }
 
     function testMarkdownManagerSet() public {
-        assertEq(MorphoCredit(address(morphoCredit)).markdownManager(id), address(markdownManager));
+        // Test that the markdown manager is set in the credit line
+        assertEq(creditLine.mm(), address(markdownManager));
     }
 
     function testMarkdownCalculation() public {
@@ -57,7 +72,7 @@ contract MarkdownTest is BaseTest {
 
         // Calculate markdown (10 days * 1% per day = 10%)
         uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
-        uint256 markdown = markdownManager.calculateMarkdown(borrowAmount, timeInDefault);
+        uint256 markdown = markdownManager.calculateMarkdown(BORROWER, borrowAmount, timeInDefault);
 
         assertEq(markdown, 100e18); // 10% of 1000 = 100
     }
@@ -93,7 +108,7 @@ contract MarkdownTest is BaseTest {
         uint256 currentMarkdown = 0;
         if (status == RepaymentStatus.Default && defaultStartTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
-            currentMarkdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+            currentMarkdown = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
         }
 
         assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default");
@@ -124,6 +139,9 @@ contract MarkdownTest is BaseTest {
 
         // Fast forward to default
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+
+        // Continue market cycles to keep market active
+        _continueMarketCycles(id, block.timestamp + 30 days);
 
         // Settle the debt
         loanToken.setBalance(address(creditLine), repayAmount);

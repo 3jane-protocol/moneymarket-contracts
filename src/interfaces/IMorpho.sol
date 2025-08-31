@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
+pragma solidity ^0.8.18;
 
 type Id is bytes32;
 
@@ -63,14 +63,6 @@ struct RepaymentObligation {
     uint128 endingBalance;
 }
 
-/// @notice Market-specific credit terms for borrowers
-struct MarketCreditTerms {
-    uint256 gracePeriodDuration; // Duration of grace period after cycle end
-    uint256 delinquencyPeriodDuration; // Duration of delinquency period before default
-    uint256 minOutstanding; // Minimum outstanding loan balance to prevent dust
-    uint256 penaltyRatePerSecond; // Penalty rate per second for delinquent borrowers
-}
-
 /// @notice Markdown state for tracking defaulted debt value reduction
 /// @param lastCalculatedMarkdown Last calculated markdown amount
 struct MarkdownState {
@@ -114,10 +106,6 @@ interface IMorphoBase {
 
     /// @notice Whether the `lltv` is enabled.
     function isLltvEnabled(uint256 lltv) external view returns (bool);
-
-    /// @notice Whether `authorized` is authorized to modify `authorizer`'s position on all markets.
-    /// @dev Anyone is authorized to modify their own positions, regardless of this variable.
-    function isAuthorized(address authorizer, address authorized) external view returns (bool);
 
     /// @notice The `authorizer`'s current nonce. Used to prevent replay attacks with EIP-712 signatures.
     function nonce(address authorizer) external view returns (uint256);
@@ -261,52 +249,6 @@ interface IMorphoBase {
         bytes memory data
     ) external returns (uint256 assetsRepaid, uint256 sharesRepaid);
 
-    /// @notice Liquidates the given `repaidShares` of debt asset or seize the given `seizedAssets` of collateral on the
-    /// given market `marketParams` of the given `borrower`'s position, optionally calling back the caller's
-    /// `onMorphoLiquidate` function with the given `data`.
-    /// @dev Either `seizedAssets` or `repaidShares` should be zero.
-    /// @dev Seizing more than the collateral balance will underflow and revert without any error message.
-    /// @dev Repaying more than the borrow balance will underflow and revert without any error message.
-    /// @dev An attacker can front-run a liquidation with a small repay making the transaction revert for underflow.
-    /// @param marketParams The market of the position.
-    /// @param borrower The owner of the position.
-    // Liquidation function removed - replaced by markdown system
-    // The markdown system handles debt write-offs through an external manager contract
-    // instead of traditional liquidations.
-    //
-    // function liquidate(
-    //     MarketParams memory marketParams,
-    //     address borrower,
-    //     uint256 seizedAssets,
-    //     uint256 repaidShares,
-    //     bytes memory data
-    // ) external returns (uint256, uint256);
-
-    /// @notice Executes a flash loan.
-    /// @dev Flash loans have access to the whole balance of the contract (the liquidity and deposited collateral of all
-    /// markets combined, plus donations).
-    /// @dev Warning: Not ERC-3156 compliant but compatibility is easily reached:
-    /// - `flashFee` is zero.
-    /// - `maxFlashLoan` is the token's balance of this contract.
-    /// - The receiver of `assets` is the caller.
-    /// @param token The token to flash loan.
-    /// @param assets The amount of assets to flash loan.
-    /// @param data Arbitrary data to pass to the `onMorphoFlashLoan` callback.
-    function flashLoan(address token, uint256 assets, bytes calldata data) external;
-
-    /// @notice Sets the authorization for `authorized` to manage `msg.sender`'s positions.
-    /// @param authorized The authorized address.
-    /// @param newIsAuthorized The new authorization status.
-    function setAuthorization(address authorized, bool newIsAuthorized) external;
-
-    /// @notice Sets the authorization for `authorization.authorized` to manage `authorization.authorizer`'s positions.
-    /// @dev Warning: Reverts if the signature has already been submitted.
-    /// @dev The signature is malleable, but it has no impact on the security here.
-    /// @dev The nonce is passed as argument to be able to revert with a different error message.
-    /// @param authorization The `Authorization` struct.
-    /// @param signature The signature.
-    function setAuthorizationWithSig(Authorization calldata authorization, Signature calldata signature) external;
-
     /// @notice Accrues interest for the given market `marketParams`.
     function accrueInterest(MarketParams memory marketParams) external;
 
@@ -390,21 +332,26 @@ interface IMorphoCredit {
     /// @notice The helper of the contract.
     function helper() external view returns (address);
 
+    /// @notice The usd3 contract
+    function usd3() external view returns (address);
+
+    /// @notice The protocol config of the contract.
+    function protocolConfig() external view returns (address);
+
     /// @notice Sets `helper` as `helper` of the contract.
     /// @param newHelper The new helper address
     function setHelper(address newHelper) external;
 
-    /// @notice Sets authorization for the helper
-    /// @param authorizee The address to authorize/unauthorize
-    /// @param newIsAuthorized Whether to authorize or unauthorize
-    function setAuthorizationV2(address authorizee, bool newIsAuthorized) external;
+    /// @notice Sets `usd3` as `usd3` of the contract.
+    /// @param newUsd3 The new usd3 address
+    function setUsd3(address newUsd3) external;
 
     /// @notice Sets the credit line and premium rate for a borrower
     /// @param id The market ID
     /// @param borrower The borrower address
     /// @param credit The credit line amount
-    /// @param premiumRate The premium rate per second in WAD
-    function setCreditLine(Id id, address borrower, uint256 credit, uint128 premiumRate) external;
+    /// @param drp The drp per second in WAD
+    function setCreditLine(Id id, address borrower, uint256 credit, uint128 drp) external;
 
     /// @notice Returns the premium data for a specific borrower in a market
     /// @param id The market ID
@@ -476,11 +423,6 @@ interface IMorphoCredit {
     /// @return endDate The cycle end date
     function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate);
 
-    /// @notice Get market-specific credit terms
-    /// @param id Market ID
-    /// @return terms The credit terms for the market
-    function getMarketCreditTerms(Id id) external pure returns (MarketCreditTerms memory terms);
-
     /// @notice Get repayment obligation for a borrower
     /// @param id Market ID
     /// @param borrower Borrower address
@@ -497,11 +439,6 @@ interface IMorphoCredit {
     /// @param cycleId Cycle ID
     /// @return endDate The cycle end date
     function paymentCycle(Id id, uint256 cycleId) external view returns (uint256 endDate);
-
-    /// @notice Set the markdown manager for a market
-    /// @param id Market ID
-    /// @param manager Address of the markdown manager contract
-    function setMarkdownManager(Id id, address manager) external;
 
     /// @notice Settle a borrower's account by writing off all remaining debt
     /// @dev Only callable by credit line contract

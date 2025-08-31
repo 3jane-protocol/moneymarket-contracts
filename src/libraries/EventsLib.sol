@@ -16,6 +16,10 @@ library EventsLib {
     /// @param newHelper The new helper of the contract.
     event SetHelper(address indexed newHelper);
 
+    /// @notice Emitted when setting a new usd3.
+    /// @param newUsd3 The new usd3 of the contract.
+    event SetUsd3(address indexed newUsd3);
+
     /// @notice Emitted when setting a new fee.
     /// @param id The market id.
     /// @param newFee The new fee.
@@ -92,27 +96,6 @@ library EventsLib {
     /// @param assets The amount of assets repaid. May be 1 over the corresponding market's `totalBorrowAssets`.
     /// @param shares The amount of shares burned.
     event Repay(Id indexed id, address indexed caller, address indexed onBehalf, uint256 assets, uint256 shares);
-
-    /// @notice Emitted on flash loan.
-    /// @param caller The caller.
-    /// @param token The token that was flash loaned.
-    /// @param assets The amount that was flash loaned.
-    event FlashLoan(address indexed caller, address indexed token, uint256 assets);
-
-    /// @notice Emitted when setting an authorization.
-    /// @param caller The caller.
-    /// @param authorizer The authorizer address.
-    /// @param authorized The authorized address.
-    /// @param newIsAuthorized The new authorization status.
-    event SetAuthorization(
-        address indexed caller, address indexed authorizer, address indexed authorized, bool newIsAuthorized
-    );
-
-    /// @notice Emitted when setting an authorization with a signature.
-    /// @param caller The caller.
-    /// @param authorizer The authorizer address.
-    /// @param usedNonce The nonce that was used.
-    event IncrementNonce(address indexed caller, address indexed authorizer, uint256 usedNonce);
 
     /// @notice Emitted when accruing interest.
     /// @param id The market id.

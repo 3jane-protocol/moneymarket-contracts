@@ -9,7 +9,6 @@ import {IrmMock} from "../../src/mocks/IrmMock.sol";
 import {ERC20Mock} from "../../src/mocks/ERC20Mock.sol";
 import {OracleMock} from "../../src/mocks/OracleMock.sol";
 import {CreditLineMock} from "../../src/mocks/CreditLineMock.sol";
-import {FlashBorrowerMock} from "../../src/mocks/FlashBorrowerMock.sol";
 
 import "../../src/Morpho.sol";
 import "../../src/MorphoCredit.sol";
@@ -37,13 +36,12 @@ contract HalmosTest is SymTest, Test {
     MarketParams internal marketParams;
 
     ERC20Mock internal otherToken;
-    FlashBorrowerMock internal flashBorrower;
 
     function setUp() public virtual {
         owner = address(0x1234); // Use fixed address instead of symbolic
 
         // For Halmos, deploy through proxy like other tests
-        MorphoCredit morphoImpl = new MorphoCredit();
+        MorphoCredit morphoImpl = new MorphoCredit(address(1));
 
         // Deploy minimal proxy setup for Halmos
         ProxyAdmin proxyAdmin = new ProxyAdmin(owner);
@@ -73,7 +71,6 @@ contract HalmosTest is SymTest, Test {
 
         // for flashLoan
         otherToken = new ERC20Mock();
-        flashBorrower = new FlashBorrowerMock(morpho);
 
         // Skip symbolic storage for now to isolate the issue
         // svm.enableSymbolicStorage(address(this));
@@ -84,7 +81,6 @@ contract HalmosTest is SymTest, Test {
         // svm.enableSymbolicStorage(address(irm));
         // svm.enableSymbolicStorage(address(creditLine));
         // svm.enableSymbolicStorage(address(otherToken));
-        // svm.enableSymbolicStorage(address(flashBorrower));
 
         // Use fixed values instead of symbolic
         vm.roll(1000);
@@ -108,10 +104,6 @@ contract HalmosTest is SymTest, Test {
             args = abi.encode(marketParams, assets, shares, onBehalf, emptyData);
         } else if (selector == morpho.withdraw.selector || selector == morpho.borrow.selector) {
             args = abi.encode(marketParams, assets, shares, onBehalf, receiver);
-        } else if (selector == morpho.flashLoan.selector) {
-            address token = address(loanToken); // Use actual token
-            bytes memory _data = hex"1234"; // Fixed data
-            args = abi.encode(token, assets, _data);
         } else if (selector == morpho.accrueInterest.selector) {
             args = abi.encode(marketParams);
         } else if (selector == morpho.setFee.selector) {

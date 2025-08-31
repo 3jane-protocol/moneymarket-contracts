@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import {Test} from "../../../lib/forge-std/src/Test.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {Morpho} from "../../../src/Morpho.sol";
-import {IMorpho, Id, MarketParams, Position, Market} from "../../../src/interfaces/IMorpho.sol";
+import {IMorpho, IMorphoCredit, Id, MarketParams, Position, Market} from "../../../src/interfaces/IMorpho.sol";
 import {MathLib, WAD} from "../../../src/libraries/MathLib.sol";
 import {SharesMathLib} from "../../../src/libraries/SharesMathLib.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
@@ -14,6 +14,7 @@ import {ERC20Mock} from "../../../src/mocks/ERC20Mock.sol";
 import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
+import {ProtocolConfig} from "../../../src/ProtocolConfig.sol";
 import {TransparentUpgradeableProxy} from
     "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
@@ -28,6 +29,7 @@ contract MorphoCreditTest is Test {
     address public supplier;
     address public feeRecipient;
     CreditLineMock public creditLine;
+    ProtocolConfig public protocolConfig;
 
     ERC20Mock public loanToken;
     ERC20Mock public collateralToken;
@@ -44,6 +46,9 @@ contract MorphoCreditTest is Test {
 
     event PremiumAccrued(Id indexed id, address indexed borrower, uint256 premiumAmount, uint256 feeAmount);
 
+    address public helper;
+    address public usd3;
+
     function setUp() public {
         // Setup accounts
         owner = makeAddr("owner");
@@ -51,8 +56,19 @@ contract MorphoCreditTest is Test {
         supplier = makeAddr("supplier");
         feeRecipient = makeAddr("feeRecipient");
 
+        // Deploy protocol config mock
+        ProtocolConfig protocolConfigImpl = new ProtocolConfig();
+        TransparentUpgradeableProxy protocolConfigProxy = new TransparentUpgradeableProxy(
+            address(protocolConfigImpl),
+            address(this), // Test contract acts as admin
+            abi.encodeWithSelector(ProtocolConfig.initialize.selector, owner)
+        );
+
+        // Set the protocolConfig to the proxy address
+        protocolConfig = ProtocolConfig(address(protocolConfigProxy));
+
         // Deploy contracts through proxy
-        MorphoCredit morphoImpl = new MorphoCredit();
+        MorphoCredit morphoImpl = new MorphoCredit(address(protocolConfig));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
             address(morphoImpl),
             address(this), // Test contract acts as admin
@@ -82,14 +98,23 @@ contract MorphoCreditTest is Test {
             creditLine: address(creditLine)
         });
 
-        vm.prank(owner);
+        vm.startPrank(owner);
         morpho.enableLltv(0.8e18);
-
-        vm.prank(owner);
         morpho.enableIrm(address(irm));
-
         morpho.createMarket(marketParams);
+        vm.stopPrank();
+
         marketId = marketParams.id();
+
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + 30 days);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(address(creditLine));
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            marketId, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
 
         // Set fee recipient
         vm.prank(owner);
@@ -104,6 +129,207 @@ contract MorphoCreditTest is Test {
         loanToken.approve(address(morpho), type(uint256).max);
         vm.prank(borrower);
         collateralToken.approve(address(morpho), type(uint256).max);
+
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setHelper(borrower);
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setUsd3(supplier);
+
+        // Verify that helper, usd3, and protocolConfig were set properly
+        assertEq(MorphoCredit(address(morpho)).helper(), borrower);
+        assertEq(MorphoCredit(address(morpho)).usd3(), supplier);
+        assertEq(MorphoCredit(address(morpho)).protocolConfig(), address(protocolConfig));
+        _setProtocolConfig(owner);
+    }
+
+    function _setProtocolConfig(address _owner) internal {
+        vm.startPrank(_owner);
+        // Market configurations
+        protocolConfig.setConfig(keccak256("IS_PAUSED"), 0); // Not paused
+        protocolConfig.setConfig(keccak256("MAX_ON_CREDIT"), 0.95 ether); // 95% max on credit
+        protocolConfig.setConfig(keccak256("IRP"), uint256(0.1 ether / int256(365 days))); // 10% IRP
+        protocolConfig.setConfig(keccak256("MIN_BORROW"), 1000e18); // 1 token minimum borrow
+        protocolConfig.setConfig(keccak256("GRACE_PERIOD"), 7 days); // 7 days grace period
+        protocolConfig.setConfig(keccak256("DELINQUENCY_PERIOD"), 23 days); // 23 days delinquency period
+        protocolConfig.setConfig(keccak256("CYCLE_DURATION"), 30 days); // 30 days cycle duration
+        vm.stopPrank();
+    }
+
+    // --- AUTHORIZATION TESTS ---
+    function testSupplyNotUsd3Reverts() public {
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setUsd3(usd3);
+        uint256 supplyAmount = 1000e18;
+        loanToken.setBalance(borrower, supplyAmount);
+        vm.prank(borrower);
+        loanToken.approve(address(morpho), supplyAmount);
+        vm.expectRevert(ErrorsLib.NotUsd3.selector);
+        vm.prank(borrower);
+        morpho.supply(marketParams, supplyAmount, 0, borrower, "");
+    }
+
+    function testSupplyIsPausedReverts() public {
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setUsd3(usd3);
+
+        uint256 supplyAmount = 1000e18;
+        loanToken.setBalance(usd3, supplyAmount);
+        vm.prank(usd3);
+        loanToken.approve(address(morpho), supplyAmount);
+
+        // Pause the protocol
+        vm.prank(owner);
+        protocolConfig.setConfig(keccak256("IS_PAUSED"), 1); // paused
+
+        vm.expectRevert(ErrorsLib.Paused.selector);
+        vm.prank(usd3);
+        morpho.supply(marketParams, supplyAmount, 0, borrower, "");
+    }
+
+    function testSupplyWithUsd3Succeeds() public {
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setUsd3(usd3);
+        uint256 supplyAmount = 1000e18;
+        loanToken.setBalance(usd3, supplyAmount);
+        vm.prank(usd3);
+        loanToken.approve(address(morpho), supplyAmount);
+        vm.prank(usd3);
+        morpho.supply(marketParams, supplyAmount, 0, borrower, "");
+        assertGt(morpho.position(marketId, borrower).supplyShares, 0);
+    }
+
+    function testWithdrawNotUsd3Reverts() public {
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setUsd3(usd3);
+        // First supply as usd3
+        uint256 supplyAmount = 1000e18;
+        loanToken.setBalance(usd3, supplyAmount);
+        vm.prank(usd3);
+        loanToken.approve(address(morpho), supplyAmount);
+        vm.prank(usd3);
+        morpho.supply(marketParams, supplyAmount, 0, borrower, "");
+        // Try to withdraw as non-usd3
+        vm.expectRevert(ErrorsLib.NotUsd3.selector);
+        vm.prank(borrower);
+        morpho.withdraw(marketParams, 100e18, 0, borrower, borrower);
+    }
+
+    function testWithdrawWithUsd3Succeeds() public {
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setUsd3(usd3);
+        uint256 supplyAmount = 1000e18;
+        loanToken.setBalance(usd3, supplyAmount);
+        vm.prank(usd3);
+        loanToken.approve(address(morpho), supplyAmount);
+        vm.prank(usd3);
+        morpho.supply(marketParams, supplyAmount, 0, borrower, "");
+        vm.prank(usd3);
+        morpho.withdraw(marketParams, 100e18, 0, borrower, borrower);
+        assertGt(loanToken.balanceOf(borrower), 0);
+    }
+
+    function testBorrowNotHelperReverts() public {
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setUsd3(usd3);
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setHelper(helper);
+        // Setup supply and credit line
+        uint256 supplyAmount = 1000e18;
+        loanToken.setBalance(usd3, supplyAmount);
+        vm.prank(usd3);
+        loanToken.approve(address(morpho), supplyAmount);
+        vm.prank(usd3);
+        morpho.supply(marketParams, supplyAmount, 0, borrower, "");
+        vm.prank(address(creditLine));
+        MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, 1000e18, 0);
+        vm.expectRevert(ErrorsLib.NotHelper.selector);
+        vm.prank(borrower);
+        morpho.borrow(marketParams, 100e18, 0, borrower, borrower);
+    }
+
+    function testBorrowIsPausedReverts() public {
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setUsd3(usd3);
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setHelper(helper);
+        // Setup supply and credit line
+        uint256 supplyAmount = 1000e18;
+        loanToken.setBalance(usd3, supplyAmount);
+        vm.prank(usd3);
+        loanToken.approve(address(morpho), supplyAmount);
+        vm.prank(usd3);
+        morpho.supply(marketParams, supplyAmount, 0, borrower, "");
+        vm.prank(address(creditLine));
+        MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, 1000e18, 0);
+
+        // Pause the protocol
+        vm.prank(owner);
+        protocolConfig.setConfig(keccak256("IS_PAUSED"), 1); // paused
+
+        vm.expectRevert(ErrorsLib.Paused.selector);
+        vm.prank(helper);
+        morpho.borrow(marketParams, 100e18, 0, borrower, borrower);
+    }
+
+    function testBorrowWithHelperSucceeds() public {
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setUsd3(usd3);
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setHelper(helper);
+        uint256 supplyAmount = 1000e18;
+        loanToken.setBalance(usd3, supplyAmount);
+        vm.prank(usd3);
+        loanToken.approve(address(morpho), supplyAmount);
+        vm.prank(usd3);
+        morpho.supply(marketParams, supplyAmount, 0, borrower, "");
+        vm.prank(address(creditLine));
+        MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, 1000e18, 0);
+        vm.prank(helper);
+        morpho.borrow(marketParams, 100e18, 0, borrower, borrower);
+        assertGt(morpho.position(marketId, borrower).borrowShares, 0);
+    }
+
+    function testBorrowWithHelperOutstandingRepaymentReverts() public {
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setUsd3(usd3);
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setHelper(helper);
+        uint256 supplyAmount = 1000e18;
+        loanToken.setBalance(usd3, supplyAmount);
+        vm.prank(usd3);
+        loanToken.approve(address(morpho), supplyAmount);
+        vm.prank(usd3);
+        morpho.supply(marketParams, supplyAmount, 0, borrower, "");
+        vm.prank(address(creditLine));
+        MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, 1000e18, 0);
+        // First, have the borrower actually borrow some funds
+        loanToken.setBalance(borrower, 0);
+        vm.prank(helper);
+        morpho.borrow(marketParams, 100e18, 0, borrower, borrower);
+
+        // Create a payment cycle with obligation
+        // Start the cycle at current time and end it 30 days later (matching CYCLE_DURATION)
+        uint256 cycleStartTime = block.timestamp;
+        uint256 cycleEndTime = cycleStartTime + 30 days;
+
+        // Warp to cycle end so we can close it
+        vm.warp(cycleEndTime + 1);
+
+        address[] memory borrowers = new address[](1);
+        uint256[] memory repaymentBps = new uint256[](1);
+        uint256[] memory endingBalances = new uint256[](1);
+        borrowers[0] = borrower;
+        repaymentBps[0] = 1000; // 10% repayment
+        endingBalances[0] = 100e18; // Current balance
+
+        vm.prank(address(creditLine));
+        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            marketId, cycleEndTime, borrowers, repaymentBps, endingBalances
+        );
+
+        vm.expectRevert(ErrorsLib.OutstandingRepayment.selector);
+        vm.prank(helper);
+        morpho.borrow(marketParams, 100e18, 0, borrower, borrower);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -121,7 +347,8 @@ contract MorphoCreditTest is Test {
 
         (uint128 lastAccrualTime, uint128 rate,) = MorphoCredit(address(morpho)).borrowerPremium(marketId, borrower);
         assertEq(rate, newRatePerSecond);
-        assertEq(lastAccrualTime, block.timestamp);
+        // With Issue #13 fix: timestamp is NOT set until first borrow
+        assertEq(lastAccrualTime, 0);
         // Credit line is set in market collateral
         Position memory pos = morpho.position(marketId, borrower);
         assertEq(pos.collateral, creditAmount);
@@ -294,6 +521,9 @@ contract MorphoCreditTest is Test {
 
         vm.prank(borrower);
         morpho.borrow(marketParams, 500e18, 0, borrower, borrower);
+
+        vm.prank(owner);
+        MorphoCredit(address(morpho)).setHelper(borrower2);
 
         vm.prank(borrower2);
         morpho.borrow(marketParams, 500e18, 0, borrower2, borrower2);

@@ -3,11 +3,51 @@ pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
 import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
+import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
+import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
+import {MorphoCredit} from "../../../src/MorphoCredit.sol";
+import {TransparentUpgradeableProxy} from
+    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 contract BorrowIntegrationTest is BaseTest {
     using MathLib for uint256;
     using MorphoLib for IMorpho;
     using SharesMathLib for uint256;
+    using MarketParamsLib for MarketParams;
+
+    CreditLineMock internal creditLine;
+
+    function setUp() public override {
+        super.setUp();
+
+        // Deploy credit line mock
+        creditLine = new CreditLineMock(address(morpho));
+
+        // Update marketParams to use the credit line
+        marketParams = MarketParams(
+            address(loanToken),
+            address(collateralToken),
+            address(oracle),
+            address(irm),
+            DEFAULT_TEST_LLTV,
+            address(creditLine)
+        );
+        id = marketParams.id();
+
+        // Create the market with credit line
+        vm.prank(OWNER);
+        morpho.createMarket(marketParams);
+
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + CYCLE_DURATION);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
+    }
 
     function testBorrowMarketNotCreated(MarketParams memory marketParamsFuzz, address borrowerFuzz, uint256 amount)
         public
@@ -49,19 +89,65 @@ contract BorrowIntegrationTest is BaseTest {
     }
 
     function testBorrowUnauthorized(address supplier, address attacker, uint256 amount) public {
-        vm.assume(supplier != attacker && supplier != address(0));
-        vm.assume(!_isProxyRelatedAddress(supplier) && !_isProxyRelatedAddress(attacker));
+        // Test that only helper contract can call borrow
+        // For this test, we need to use actual MorphoCredit, not the mock
         amount = bound(amount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
 
-        _supply(amount);
+        // Exclude proxy-related addresses from fuzzing
+        vm.assume(!_isProxyRelatedAddress(supplier));
+        vm.assume(!_isProxyRelatedAddress(attacker));
+        vm.assume(supplier != address(0));
+        vm.assume(supplier != attacker);
+        vm.assume(attacker != address(0));
 
-        // Set up credit line for supplier
-        vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).setCreditLine(id, supplier, amount, 0);
+        // Deploy a separate MorphoCredit instance (not mock) for this test
+        MorphoCredit morphoCreditImpl = new MorphoCredit(address(protocolConfig));
+        TransparentUpgradeableProxy morphoCreditProxy = new TransparentUpgradeableProxy(
+            address(morphoCreditImpl),
+            address(proxyAdmin),
+            abi.encodeWithSelector(MorphoCredit.initialize.selector, OWNER)
+        );
+        IMorpho morphoCredit = IMorpho(address(morphoCreditProxy));
 
-        vm.startPrank(attacker);
-        vm.expectRevert(ErrorsLib.Unauthorized.selector);
-        morpho.borrow(marketParams, amount, 0, supplier, RECEIVER);
+        // Set helper and usd3 addresses to allow supply
+        address mockUsd3 = makeAddr("MockUSD3");
+        vm.prank(OWNER);
+        IMorphoCredit(address(morphoCredit)).setUsd3(mockUsd3);
+
+        // Create a new market params for the isolated test
+        MarketParams memory isolatedMarketParams = MarketParams({
+            loanToken: address(loanToken),
+            collateralToken: address(collateralToken),
+            oracle: address(oracle),
+            irm: address(irm),
+            lltv: DEFAULT_TEST_LLTV,
+            creditLine: address(creditLine)
+        });
+
+        // Set up the market on the new instance
+        vm.startPrank(OWNER);
+        morphoCredit.enableIrm(address(irm));
+        morphoCredit.enableLltv(DEFAULT_TEST_LLTV);
+        morphoCredit.createMarket(isolatedMarketParams);
+        vm.stopPrank();
+
+        Id isolatedId = isolatedMarketParams.id();
+
+        // Supply to the market (through mockUsd3 to pass the check)
+        loanToken.setBalance(mockUsd3, amount);
+        vm.startPrank(mockUsd3);
+        loanToken.approve(address(morphoCredit), amount);
+        morphoCredit.supply(isolatedMarketParams, amount, 0, supplier, hex"");
+        vm.stopPrank();
+
+        // Set up credit line for attacker
+        vm.prank(isolatedMarketParams.creditLine);
+        IMorphoCredit(address(morphoCredit)).setCreditLine(isolatedId, attacker, amount, 0);
+
+        // Try to borrow directly (not through helper) - should fail
+        vm.prank(attacker);
+        vm.expectRevert(ErrorsLib.NotHelper.selector);
+        morphoCredit.borrow(isolatedMarketParams, amount, 0, attacker, attacker);
     }
 
     function testBorrowUnhealthyPosition(uint256 creditLimit, uint256 amountSupplied, uint256 amountBorrowed) public {

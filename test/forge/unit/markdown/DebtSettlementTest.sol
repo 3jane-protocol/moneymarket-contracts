@@ -51,8 +51,11 @@ contract DebtSettlementTest is BaseTest {
 
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
+        creditLine.setMm(address(markdownManager));
         vm.stopPrank();
+
+        // Initialize first cycle to unfreeze the market
+        _ensureMarketActive(id);
 
         // Setup initial supply
         loanToken.setBalance(SUPPLIER, 100_000e18);
@@ -68,7 +71,7 @@ contract DebtSettlementTest is BaseTest {
         _setupBorrowerWithLoan(BORROWER, borrowAmount);
 
         // Forward time to accrue some interest
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
         morpho.accrueInterest(marketParams);
 
         // Get current debt
@@ -118,7 +121,7 @@ contract DebtSettlementTest is BaseTest {
         _setupBorrowerWithLoan(BORROWER, borrowAmount);
 
         // Forward time to accrue interest
-        vm.warp(block.timestamp + 30 days);
+        _continueMarketCycles(id, block.timestamp + 30 days);
         morpho.accrueInterest(marketParams);
 
         // Get position details
@@ -230,7 +233,7 @@ contract DebtSettlementTest is BaseTest {
         _createPastObligation(BORROWER, 500, borrowAmount);
 
         // Fast forward to default
-        vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify markdown exists
@@ -239,7 +242,7 @@ contract DebtSettlementTest is BaseTest {
         uint256 markdownBefore = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
-            markdownBefore = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+            markdownBefore = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
         }
         assertTrue(markdownBefore > 0, "Should have markdown before settlement");
 
@@ -331,6 +334,16 @@ contract DebtSettlementTest is BaseTest {
         vm.prank(address(callbackHandler));
         morphoCredit.setCreditLine(callbackMarketId, BORROWER, borrowAmount * 2, 0);
 
+        // Initialize market cycles for the callback market directly
+        // since _ensureMarketActive uses the wrong marketParams
+        uint256 firstCycleEnd = block.timestamp + CYCLE_DURATION;
+        vm.warp(firstCycleEnd);
+        vm.prank(address(callbackHandler));
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            callbackMarketId, firstCycleEnd, new address[](0), new uint256[](0), new uint256[](0)
+        );
+        vm.warp(firstCycleEnd + 1);
+
         loanToken.setBalance(SUPPLIER, 20_000e18);
         vm.prank(SUPPLIER);
         morpho.supply(
@@ -379,12 +392,21 @@ contract DebtSettlementTest is BaseTest {
         assertTrue(writtenOffShares > 0, "Should have written off shares");
     }
 
-    /// @notice Test cannot settle non-existent debt
-    function testCannotSettleNonExistentDebt() public {
-        // Try to settle for borrower with no debt
+    /// @notice Test settling non-existent debt is idempotent and clears state
+    function testSettleNonExistentDebtIsIdempotent() public {
+        // After fix for Issue #12, settling non-existent debt is idempotent
+        // It returns (0, 0) and clears any remaining state to prevent re-borrowing
         vm.prank(address(creditLine));
-        vm.expectRevert(ErrorsLib.NoAccountToSettle.selector);
-        morphoCredit.settleAccount(marketParams, BORROWER);
+        (uint256 writtenOffAssets, uint256 writtenOffShares) = morphoCredit.settleAccount(marketParams, BORROWER);
+
+        // Should return zero values for non-existent debt
+        assertEq(writtenOffAssets, 0, "No assets should be written off");
+        assertEq(writtenOffShares, 0, "No shares should be written off");
+
+        // Verify state is cleared (important for preventing re-borrowing)
+        Position memory pos = morpho.position(id, BORROWER);
+        assertEq(pos.collateral, 0, "Collateral should be cleared");
+        assertEq(pos.borrowShares, 0, "Borrow shares should be zero");
     }
 
     /// @notice Test zero repayment settlement (100% write-off)
@@ -562,9 +584,11 @@ contract DebtSettlementTest is BaseTest {
         assertLe(actualRepaid, totalDebt + 1, "Should not take more than owed (accounting for rounding)");
 
         // Verify no debt left to settle
+        // After fix for Issue #12, this is idempotent and returns (0, 0)
         vm.prank(address(creditLine));
-        vm.expectRevert(ErrorsLib.NoAccountToSettle.selector);
-        morphoCredit.settleAccount(marketParams, BORROWER);
+        (uint256 writtenOffAssets, uint256 writtenOffShares) = morphoCredit.settleAccount(marketParams, BORROWER);
+        assertEq(writtenOffAssets, 0, "No assets should be written off after full repayment");
+        assertEq(writtenOffShares, 0, "No shares should be written off after full repayment");
     }
 }
 
@@ -574,10 +598,12 @@ contract SettlementCallbackHandler is IMorphoRepayCallback {
     address public immutable morpho;
     bool public callbackExecuted;
     uint256 public lastRepayAmount;
+    address public mm; // Market manager for credit line compatibility
 
     constructor(address _token, address _morpho) {
         token = _token;
         morpho = _morpho;
+        mm = address(0); // No markdown manager for this test
     }
 
     function onMorphoRepay(uint256 amount, bytes calldata data) external {

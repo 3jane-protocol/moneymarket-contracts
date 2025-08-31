@@ -3,11 +3,48 @@ pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
 import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
+import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
+import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
 
 contract RepayIntegrationTest is BaseTest {
     using MathLib for uint256;
     using MorphoLib for IMorpho;
     using SharesMathLib for uint256;
+    using MarketParamsLib for MarketParams;
+
+    CreditLineMock internal creditLine;
+
+    function setUp() public override {
+        super.setUp();
+
+        // Deploy credit line mock
+        creditLine = new CreditLineMock(address(morpho));
+
+        // Update marketParams to use the credit line
+        marketParams = MarketParams(
+            address(loanToken),
+            address(collateralToken),
+            address(oracle),
+            address(irm),
+            DEFAULT_TEST_LLTV,
+            address(creditLine)
+        );
+        id = marketParams.id();
+
+        // Create the market with credit line
+        vm.prank(OWNER);
+        morpho.createMarket(marketParams);
+
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + CYCLE_DURATION);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
+    }
 
     function testRepayMarketNotCreated(MarketParams memory marketParamsFuzz) public {
         vm.assume(neq(marketParamsFuzz, marketParams));

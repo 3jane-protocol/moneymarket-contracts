@@ -43,8 +43,18 @@ contract EffectiveSupplyTest is BaseTest {
 
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
-        morphoCredit.setMarkdownManager(id, address(markdownManager));
+        creditLine.setMm(address(markdownManager));
         vm.stopPrank();
+
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + CYCLE_DURATION);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
     }
 
     /// @notice Test withdraw uses effective supply for share/asset conversion
@@ -166,7 +176,7 @@ contract EffectiveSupplyTest is BaseTest {
             uint256 markdown = 0;
             if (status == RepaymentStatus.Default && defaultTime > 0) {
                 uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
-                markdown = markdownManager.calculateMarkdown(borrowAssets, timeInDefault);
+                markdown = markdownManager.calculateMarkdown(borrowers[i], borrowAssets, timeInDefault);
             }
             calculatedTotalMarkdown += markdown;
         }

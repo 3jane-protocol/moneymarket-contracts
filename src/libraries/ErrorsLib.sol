@@ -15,14 +15,29 @@ library ErrorsLib {
     /// @notice Thrown when the caller is not the market's helper.
     error NotHelper();
 
+    /// @notice Thrown when the caller is not the market's usd3.
+    error NotUsd3();
+
     /// @notice Thrown when the caller is not the owner or ozd.
     error NotOwnerOrOzd();
 
-    /// @notice Thrown when the TVV to enable exceeds the maximum TVV.
-    error UnsafeTvv();
+    /// @notice Thrown when the user is unverified.
+    error Unverified();
 
     /// @notice Thrown when the LLTV to enable exceeds the maximum LLTV.
     error MaxLltvExceeded();
+
+    /// @notice Thrown when the LTV to enable exceeds the maximum LTV.
+    error MaxLtvExceeded();
+
+    /// @notice Thrown when the VV to enable exceeds the maximum VV.
+    error MaxVvExceeded();
+
+    /// @notice Thrown when the credit to enable exceeds the maximum credit.
+    error MaxCreditLineExceeded();
+
+    /// @notice Thrown when the credit to enable is below the minimum credit.
+    error MinCreditLineExceeded();
 
     /// @notice Thrown when the fee to set exceeds the maximum fee.
     error MaxFeeExceeded();
@@ -54,6 +69,9 @@ library ErrorsLib {
     /// @notice Thrown when a zero address is passed as input.
     error ZeroAddress();
 
+    /// @notice Thrown when an array has an invalid length.
+    error InvalidArrayLength();
+
     /// @notice Thrown when the caller is not authorized to conduct an action.
     error Unauthorized();
 
@@ -63,17 +81,8 @@ library ErrorsLib {
     /// @notice Thrown when the liquidity is insufficient to `withdraw` or `borrow`.
     error InsufficientLiquidity();
 
-    /// @notice Thrown when the position to liquidate is healthy.
-    error HealthyPosition();
-
-    /// @notice Thrown when the authorization signature is invalid.
-    error InvalidSignature();
-
-    /// @notice Thrown when the authorization signature is expired.
-    error SignatureExpired();
-
-    /// @notice Thrown when the nonce is invalid.
-    error InvalidNonce();
+    /// @notice Thrown when borrowing shares would result in borrowing zero assets.
+    error InsufficientBorrowAmount();
 
     /// @notice Thrown when a token transfer reverted.
     error TransferReverted();
@@ -91,10 +100,13 @@ library ErrorsLib {
     error MaxUint128Exceeded();
 
     /// @notice Thrown when the premium rate exceeds the maximum allowed.
-    error PremiumRateTooHigh();
+    error MaxDrpExceeded();
 
     /// @notice Thrown when the borrower has outstanding repayment obligations.
     error OutstandingRepayment();
+
+    /// @notice Thrown when the protocol is paused.
+    error Paused();
 
     /// @notice Thrown when trying to close a future cycle.
     error CannotCloseFutureCycle();
@@ -119,4 +131,10 @@ library ErrorsLib {
 
     /// @notice Thrown when trying to settle non-existent debt.
     error NoAccountToSettle();
+
+    /// @notice Thrown when the cover amount exceeds the assets amount.
+    error InvalidCoverAmount();
+
+    /// @notice Thrown when attempting operations on a frozen market.
+    error MarketFrozen();
 }

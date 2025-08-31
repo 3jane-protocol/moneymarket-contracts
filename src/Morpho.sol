@@ -11,9 +11,7 @@ import {
     Authorization,
     Signature
 } from "./interfaces/IMorpho.sol";
-import {
-    IMorphoRepayCallback, IMorphoSupplyCallback, IMorphoFlashLoanCallback
-} from "./interfaces/IMorphoCallbacks.sol";
+import {IMorphoRepayCallback, IMorphoSupplyCallback} from "./interfaces/IMorphoCallbacks.sol";
 import {IIrm} from "./interfaces/IIrm.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IOracle} from "./interfaces/IOracle.sol";
@@ -55,8 +53,6 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
     /// @inheritdoc IMorphoBase
     mapping(uint256 => bool) public isLltvEnabled;
     /// @inheritdoc IMorphoBase
-    mapping(address => mapping(address => bool)) public isAuthorized;
-    /// @inheritdoc IMorphoBase
     mapping(address => uint256) public nonce;
     /// @inheritdoc IMorphoStaticTyping
     mapping(Id => MarketParams) public idToMarketParams;
@@ -71,8 +67,8 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
     constructor() {
         _disableInitializers();
     }
-    /// @param newOwner The initial owner of the contract.
 
+    /// @param newOwner The initial owner of the contract.
     function __Morpho_init(address newOwner) internal onlyInitializing {
         if (newOwner == address(0)) revert ErrorsLib.ZeroAddress();
 
@@ -148,7 +144,7 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
     /* MARKET CREATION */
 
     /// @inheritdoc IMorphoBase
-    function createMarket(MarketParams memory marketParams) external {
+    function createMarket(MarketParams memory marketParams) external onlyOwner {
         Id id = marketParams.id();
         if (!isIrmEnabled[marketParams.irm]) revert ErrorsLib.IrmNotEnabled();
         if (!isLltvEnabled[marketParams.lltv]) revert ErrorsLib.LltvNotEnabled();
@@ -183,6 +179,8 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         if (assets > 0) shares = assets.toSharesDown(market[id].totalSupplyAssets, market[id].totalSupplyShares);
         else assets = shares.toAssetsUp(market[id].totalSupplyAssets, market[id].totalSupplyShares);
 
+        _beforeSupply(marketParams, id, onBehalf, assets, shares, data);
+
         position[id][onBehalf].supplyShares += shares;
         market[id].totalSupplyShares += shares.toUint128();
         market[id].totalSupplyAssets += assets.toUint128();
@@ -208,13 +206,13 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
         if (!UtilsLib.exactlyOneZero(assets, shares)) revert ErrorsLib.InconsistentInput();
         if (receiver == address(0)) revert ErrorsLib.ZeroAddress();
-        // No need to verify that onBehalf != address(0) thanks to the following authorization check.
-        if (!_isSenderAuthorized(onBehalf)) revert ErrorsLib.Unauthorized();
 
         _accrueInterest(marketParams, id);
 
         if (assets > 0) shares = assets.toSharesUp(market[id].totalSupplyAssets, market[id].totalSupplyShares);
         else assets = shares.toAssetsDown(market[id].totalSupplyAssets, market[id].totalSupplyShares);
+
+        _beforeWithdraw(marketParams, id, onBehalf, assets, shares);
 
         position[id][onBehalf].supplyShares -= shares;
         market[id].totalSupplyShares -= shares.toUint128();
@@ -243,14 +241,15 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
         if (!UtilsLib.exactlyOneZero(assets, shares)) revert ErrorsLib.InconsistentInput();
         if (receiver == address(0)) revert ErrorsLib.ZeroAddress();
-        // No need to verify that onBehalf != address(0) thanks to the following authorization check.
-        if (!_isSenderAuthorized(onBehalf)) revert ErrorsLib.Unauthorized();
 
         _accrueInterest(marketParams, id);
-        _beforeBorrow(marketParams, id, onBehalf, assets, shares);
 
         if (assets > 0) shares = assets.toSharesUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
         else assets = shares.toAssetsDown(market[id].totalBorrowAssets, market[id].totalBorrowShares);
+
+        _beforeBorrow(marketParams, id, onBehalf, assets, shares);
+
+        if (assets == 0 && shares > 0) revert ErrorsLib.InsufficientBorrowAmount();
 
         position[id][onBehalf].borrowShares += shares.toUint128();
         market[id].totalBorrowShares += shares.toUint128();
@@ -282,10 +281,11 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         if (onBehalf == address(0)) revert ErrorsLib.ZeroAddress();
 
         _accrueInterest(marketParams, id);
-        _beforeRepay(marketParams, id, onBehalf, assets, shares);
 
         if (assets > 0) shares = assets.toSharesDown(market[id].totalBorrowAssets, market[id].totalBorrowShares);
         else assets = shares.toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
+
+        _beforeRepay(marketParams, id, onBehalf, assets, shares);
 
         position[id][onBehalf].borrowShares -= shares.toUint128();
         market[id].totalBorrowShares -= shares.toUint128();
@@ -309,57 +309,15 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
     // The markdown system replaces traditional liquidations with dynamic debt write-offs
     // managed by an external markdown manager contract.
 
-    /* FLASH LOANS */
+    /* FLASH LOANS - REMOVED */
 
-    /// @inheritdoc IMorphoBase
-    function flashLoan(address token, uint256 assets, bytes calldata data) external {
-        if (assets == 0) revert ErrorsLib.ZeroAssets();
+    // Flash loan logic has been removed in favor of multi-block unsecured loans.
 
-        emit EventsLib.FlashLoan(msg.sender, token, assets);
+    /* AUTHORIZATION - REMOVED */
 
-        IERC20(token).safeTransfer(msg.sender, assets);
-
-        IMorphoFlashLoanCallback(msg.sender).onMorphoFlashLoan(assets, data);
-
-        IERC20(token).safeTransferFrom(msg.sender, address(this), assets);
-    }
-
-    /* AUTHORIZATION */
-
-    /// @inheritdoc IMorphoBase
-    function setAuthorization(address authorized, bool newIsAuthorized) external {
-        if (newIsAuthorized == isAuthorized[msg.sender][authorized]) revert ErrorsLib.AlreadySet();
-
-        isAuthorized[msg.sender][authorized] = newIsAuthorized;
-
-        emit EventsLib.SetAuthorization(msg.sender, msg.sender, authorized, newIsAuthorized);
-    }
-
-    /// @inheritdoc IMorphoBase
-    function setAuthorizationWithSig(Authorization memory authorization, Signature calldata signature) external {
-        /// Do not check whether authorization is already set because the nonce increment is a desired side effect.
-        if (block.timestamp > authorization.deadline) revert ErrorsLib.SignatureExpired();
-        if (authorization.nonce != nonce[authorization.authorizer]++) revert ErrorsLib.InvalidNonce();
-
-        bytes32 hashStruct = keccak256(abi.encode(AUTHORIZATION_TYPEHASH, authorization));
-        bytes32 digest = keccak256(bytes.concat("\x19\x01", DOMAIN_SEPARATOR, hashStruct));
-        address signatory = ecrecover(digest, signature.v, signature.r, signature.s);
-
-        if (signatory == address(0) || authorization.authorizer != signatory) revert ErrorsLib.InvalidSignature();
-
-        emit EventsLib.IncrementNonce(msg.sender, authorization.authorizer, authorization.nonce);
-
-        isAuthorized[authorization.authorizer][authorization.authorized] = authorization.isAuthorized;
-
-        emit EventsLib.SetAuthorization(
-            msg.sender, authorization.authorizer, authorization.authorized, authorization.isAuthorized
-        );
-    }
-
-    /// @dev Returns whether the sender is authorized to manage `onBehalf`'s positions.
-    function _isSenderAuthorized(address onBehalf) internal view returns (bool) {
-        return msg.sender == onBehalf || isAuthorized[onBehalf][msg.sender];
-    }
+    // Authorization logic has been removed.
+    // All borrows will be executed via a wrapper helper which performs fraud checks.
+    // All withdraws will be executed by a single yield-bearing dollar contract.
 
     /* INTEREST MANAGEMENT */
 
@@ -438,6 +396,33 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
     }
 
     /* HOOKS */
+
+    /// @dev Hook called before supply operations to allow for particular pre-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param onBehalf The address that will receive the debt.
+    /// @param assets The amount of assets to borrow.
+    /// @param shares The amount of shares to borrow.
+    /// @param data Additional data to pass to the callback.
+    function _beforeSupply(
+        MarketParams memory marketParams,
+        Id id,
+        address onBehalf,
+        uint256 assets,
+        uint256 shares,
+        bytes calldata data
+    ) internal virtual {}
+
+    /// @dev Hook called before withdraw operations to allow for particular pre-processing.
+    /// @param marketParams The market parameters.
+    /// @param id The market id.
+    /// @param onBehalf The address that will receive the debt.
+    /// @param assets The amount of assets to borrow.
+    /// @param shares The amount of shares to borrow.
+    function _beforeWithdraw(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
+        internal
+        virtual
+    {}
 
     /// @dev Hook called before borrow operations to allow for premium accrual or other pre-processing.
     /// @param marketParams The market parameters.

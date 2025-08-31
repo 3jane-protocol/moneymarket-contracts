@@ -19,12 +19,23 @@ contract MorphoCreditIntegrationTest is BaseTest {
         super.setUp();
 
         // Deploy CreditLine contract
-        creditLine = new CreditLine(address(morpho), address(this), address(0), address(0));
+        creditLine = new CreditLine(address(morpho), address(this), address(1), address(1), address(1));
 
         // Create market with creditLine
         marketParams.creditLine = address(creditLine);
+        vm.prank(OWNER);
         morpho.createMarket(marketParams);
         id = marketParams.id();
+
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + CYCLE_DURATION);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(marketParams.creditLine);
+        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -125,7 +136,8 @@ contract MorphoCreditIntegrationTest is BaseTest {
         // Verify premium rate was set
         (uint128 lastAccrualTime, uint128 rate,) = IMorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
         assertEq(rate, premiumRate, "premium rate not set correctly");
-        assertEq(lastAccrualTime, block.timestamp, "last accrual time not set correctly");
+        // With Issue #13 fix: timestamp is NOT set until first borrow
+        assertEq(lastAccrualTime, 0, "timestamp should not be set until first borrow");
     }
 
     function testRemoveCreditLine(uint256 initialCredit) public {
