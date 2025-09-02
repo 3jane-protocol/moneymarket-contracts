@@ -74,12 +74,32 @@ contract CloseCycleSafe is Script, SafeHelper {
             );
         }
 
-        console2.log("All obligations validated successfully");
+        if (obligations.length > 0) {
+            console2.log("All obligations validated successfully");
+        }
         console2.log("");
 
         // Process in batches
-        uint256 totalBatches = (obligations.length + BATCH_SIZE - 1) / BATCH_SIZE;
+        uint256 totalBatches = obligations.length == 0 ? 1 : (obligations.length + BATCH_SIZE - 1) / BATCH_SIZE;
         console2.log("Processing in %d batches of up to %d obligations each", totalBatches, BATCH_SIZE);
+
+        // Handle empty obligations array - still need to close the cycle
+        if (obligations.length == 0) {
+            console2.log("No obligations to post - closing cycle with end date only");
+
+            // Create empty arrays
+            address[] memory emptyBorrowers = new address[](0);
+            uint256[] memory emptyRepaymentBps = new uint256[](0);
+            uint256[] memory emptyEndingBalances = new uint256[](0);
+
+            // Close cycle with empty obligations
+            bytes memory callData = abi.encodeCall(
+                creditLine.closeCycleAndPostObligations,
+                (MARKET_ID, endDate, emptyBorrowers, emptyRepaymentBps, emptyEndingBalances)
+            );
+
+            addToBatch(address(creditLine), callData);
+        }
 
         for (uint256 i = 0; i < obligations.length; i += BATCH_SIZE) {
             uint256 end = i + BATCH_SIZE > obligations.length ? obligations.length : i + BATCH_SIZE;

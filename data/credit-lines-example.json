@@ -1,0 +1,20 @@
+[
+  {
+    "borrower_address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0fA42",
+    "vv": 100000000000,
+    "credit": 10000000000,
+    "drp": 1585489599
+  },
+  {
+    "borrower_address": "0x853d955aCEf822Db058eb8505911ED77F175b99e",
+    "vv": 150000000000,
+    "credit": 15000000000,
+    "drp": 3170979198
+  },
+  {
+    "borrower_address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "vv": 200000000000,
+    "credit": 20000000000,
+    "drp": 2378234399
+  }
+]
