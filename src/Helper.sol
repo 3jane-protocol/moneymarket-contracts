@@ -78,8 +78,9 @@ contract Helper is IHelper {
 
     /// @inheritdoc IHelper
     function borrow(MarketParams memory marketParams, uint256 assets) external returns (uint256, uint256) {
+        uint256 waUsdcShares = IERC4626(WAUSDC).convertToShares(assets);
         (uint256 waUSDCAmount, uint256 shares) =
-            IMorpho(MORPHO).borrow(marketParams, assets, 0, msg.sender, address(this));
+            IMorpho(MORPHO).borrow(marketParams, waUsdcShares, 0, msg.sender, address(this));
         uint256 usdcAmount = IERC4626(WAUSDC).redeem(waUSDCAmount, msg.sender, address(this));
         return (usdcAmount, shares);
     }
