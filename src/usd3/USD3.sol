@@ -336,7 +336,7 @@ contract USD3 is BaseHooksUpgradeable {
         return availableLiquidity;
     }
 
-    /// @dev Returns available deposit limit, enforcing whitelist if enabled
+    /// @dev Returns available deposit limit, enforcing whitelist and supply cap
     /// @param _owner Address to check limit for
     /// @return Maximum amount that can be deposited
     function availableDepositLimit(address _owner) public view override returns (uint256) {
@@ -345,9 +345,16 @@ contract USD3 is BaseHooksUpgradeable {
             return 0;
         }
 
-        // Return max uint256 to indicate no limit
-        // (minDeposit will be checked in custom deposit/mint functions)
-        return type(uint256).max;
+        uint256 cap = supplyCap();
+        if (cap == 0 || cap == type(uint256).max) {
+            return type(uint256).max;
+        }
+
+        uint256 currentTotalAssets = TokenizedStrategy.totalAssets();
+        if (cap <= currentTotalAssets) {
+            return 0;
+        }
+        return cap - currentTotalAssets;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -522,6 +529,16 @@ contract USD3 is BaseHooksUpgradeable {
     function minCommitmentTime() public view returns (uint256) {
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
         return config.getUsd3CommitmentTime();
+    }
+
+    /**
+     * @notice Get the supply cap from ProtocolConfig
+     * @return Supply cap in asset units (0 means no cap)
+     */
+    function supplyCap() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        bytes32 supplyCapKey = 0x4bba860c0c28b1a4ae0214c01f08e53b00bfe2e087690d7a04d73a15360ec6a7; // keccak256("USD3_SUPPLY_CAP");
+        return config.config(supplyCapKey);
     }
 
     /*//////////////////////////////////////////////////////////////
