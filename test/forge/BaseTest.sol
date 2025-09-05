@@ -221,7 +221,7 @@ contract BaseTest is Test {
         protocolConfig.setConfig(keccak256("IS_PAUSED"), 0); // Not paused
         protocolConfig.setConfig(keccak256("MAX_ON_CREDIT"), 0.95 ether); // 95% max on credit
         protocolConfig.setConfig(keccak256("IRP"), uint256(0.1 ether / int256(365 days))); // 10% IRP
-        protocolConfig.setConfig(keccak256("MIN_BORROW"), 1000e18); // 1 token minimum borrow
+        protocolConfig.setConfig(keccak256("MIN_BORROW"), 1000e18); // 1000 token minimum borrow
         protocolConfig.setConfig(keccak256("GRACE_PERIOD"), 7 days); // 7 days grace period
         protocolConfig.setConfig(keccak256("DELINQUENCY_PERIOD"), 23 days); // 23 days delinquency period
         protocolConfig.setConfig(keccak256("CYCLE_DURATION"), CYCLE_DURATION); // 30 days cycle duration
@@ -283,6 +283,12 @@ contract BaseTest is Test {
         // This assumes the market has a creditLine contract configured
         vm.prank(marketParams.creditLine);
         IMorphoCredit(address(morpho)).setCreditLine(marketParams.id(), borrower, HIGH_COLLATERAL_AMOUNT, 0);
+    }
+
+    function _disableMinBorrow() internal {
+        // Helper to disable minBorrow for tests that need to test small amounts
+        vm.prank(OWNER);
+        protocolConfig.setConfig(keccak256("MIN_BORROW"), 0);
     }
 
     function _setupMockUsd3() internal returns (address) {

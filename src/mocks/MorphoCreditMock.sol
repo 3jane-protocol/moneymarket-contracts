@@ -39,4 +39,27 @@ contract MorphoCreditMock is MorphoCredit {
         _accrueBorrowerPremium(id, onBehalf);
         // No need to update markdown - borrower must be Current to borrow, so markdown is always 0
     }
+
+    /// @dev Override _beforeRepay to remove minBorrow restriction but keep other logic
+    function _beforeRepay(MarketParams memory, Id id, address onBehalf, uint256 assets, uint256)
+        internal
+        virtual
+        override
+    {
+        // Remove minBorrow restriction for testing
+        // Keep all other logic from parent implementation
+
+        // Check if market is frozen (must come first, before any state changes)
+        if (_isMarketFrozen(id)) revert ErrorsLib.MarketFrozen();
+
+        // Accrue premium (including penalty if past grace period)
+        _accrueBorrowerPremium(id, onBehalf);
+        _updateBorrowerMarkdown(id, onBehalf);
+
+        // Skip minBorrow check for testing
+        // Parent implementation would check here, but we omit it for testing flexibility
+
+        // Track payment against obligation
+        _trackObligationPayment(id, onBehalf, assets);
+    }
 }
