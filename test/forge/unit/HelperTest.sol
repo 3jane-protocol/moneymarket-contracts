@@ -24,12 +24,25 @@ contract USD3Mock is IERC4626 {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
+    // Whitelist functionality for USD3
+    mapping(address => bool) public whitelist;
+    bool public whitelistEnabled = false;
+
     function setUnderlying(address _underlying) external {
         underlying = ERC20Mock(_underlying);
     }
 
     function setPricePerShare(uint256 _pricePerShare) external {
         pricePerShare = _pricePerShare;
+    }
+
+    // Whitelist management functions
+    function setWhitelist(address user, bool allowed) external {
+        whitelist[user] = allowed;
+    }
+
+    function setWhitelistEnabled(bool enabled) external {
+        whitelistEnabled = enabled;
     }
 
     function deposit(uint256 assets, address receiver) external returns (uint256) {
@@ -422,6 +435,10 @@ contract HelperTest is BaseTest {
         // Configure USD3Mock with waUSDC as underlying
         usd3.setUnderlying(address(waUsdc));
         sUsd3.setUnderlying(address(usd3));
+
+        // Whitelist the user for USD3
+        usd3.setWhitelist(user, true);
+        usd3.setWhitelist(address(helper), true); // Also whitelist helper for intermediate deposits
 
         // Configure MorphoMock with tokens
         morphoMock.setTokens(address(waUsdc), address(usdc));
