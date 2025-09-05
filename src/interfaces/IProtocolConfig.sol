@@ -101,6 +101,10 @@ interface IProtocolConfig {
     /// @return The withdrawal window duration in seconds after cooldown
     function getSusd3WithdrawalWindow() external view returns (uint256);
 
+    /// @dev Get the USD3 supply cap
+    /// @return The supply cap in asset units (0 means no cap)
+    function getUsd3SupplyCap() external view returns (uint256);
+
     /// @dev Get configuration value by key
     /// @param key The configuration key
     /// @return The configuration value

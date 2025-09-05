@@ -11,10 +11,13 @@
   "scripts": {
     "prepare": "husky install && forge install",
     "build:forge": "FOUNDRY_PROFILE=build forge build",
+    "build:forge:size": "yarn test:forge --size",
     "build:hardhat": "npx hardhat compile",
     "test:forge": "FOUNDRY_PROFILE=test forge test",
     "test:forge:invariant": "FOUNDRY_MATCH_CONTRACT=InvariantTest yarn test:forge",
     "test:forge:integration": "FOUNDRY_MATCH_CONTRACT=IntegrationTest yarn test:forge",
+    "test:forge:coverage": "FOUNDRY_PROFILE=test forge coverage",
+    "test:forge:snapshot": "FOUNDRY_PROFILE=test forge snapshot",
     "test:hardhat": "npx hardhat test",
     "test:halmos": "FOUNDRY_PROFILE=test halmos --function check_",
     "script:forge": "FOUNDRY_PROFILE=script forge script",
