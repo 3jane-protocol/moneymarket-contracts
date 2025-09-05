@@ -34,3 +34,4 @@ extra_output = ["storageLayout"]
 
 [profile.test]
 via-ir = false
+script = "/dev/null"

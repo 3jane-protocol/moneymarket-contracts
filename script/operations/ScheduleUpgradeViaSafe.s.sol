@@ -8,7 +8,7 @@ import {ITimelockController} from "../../src/interfaces/ITimelockController.sol"
 import {
     ITransparentUpgradeableProxy,
     ProxyAdmin
-} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+} from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 /// @title ScheduleUpgradeViaSafe Script
 /// @notice Schedule a contract upgrade through TimelockController via Safe multisig
