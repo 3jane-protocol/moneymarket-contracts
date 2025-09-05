@@ -537,7 +537,8 @@ contract USD3 is BaseHooksUpgradeable {
      */
     function supplyCap() public view returns (uint256) {
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
-        return config.getUsd3SupplyCap();
+        bytes32 supplyCapKey = 0x4bba860c0c28b1a4ae0214c01f08e53b00bfe2e087690d7a04d73a15360ec6a7; // keccak256("USD3_SUPPLY_CAP");
+        return config.config(supplyCapKey);
     }
 
     /*//////////////////////////////////////////////////////////////
