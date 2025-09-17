@@ -8,6 +8,7 @@ import {IMorpho, IMorphoCredit, MarketParams, Id} from "../interfaces/IMorpho.so
 import {MorphoLib} from "../libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "../libraries/periphery/MorphoBalancesLib.sol";
 import {SharesMathLib} from "../libraries/SharesMathLib.sol";
+import {IStrategy} from "@tokenized-strategy/interfaces/IStrategy.sol";
 import {TokenizedStrategyStorageLib} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 
@@ -47,6 +48,8 @@ contract USD3 is BaseHooksUpgradeable {
     using MorphoBalancesLib for IMorpho;
     using SharesMathLib for uint256;
     using Math for uint256;
+
+    IStrategy public constant WAUSDC = 0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E;
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE - MORPHO PARAMETERS
@@ -126,6 +129,16 @@ contract USD3 is BaseHooksUpgradeable {
         IERC20(asset).forceApprove(address(morphoCredit), type(uint256).max);
     }
 
+    function reinitialize() external reinitializer(1) {
+        address usdc = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+        asset = ERC20(usdc);
+        bytes32 targetSlot = TokenizedStrategyStorageLib.assetSlot();
+        assembly {
+            sstore(targetSlot, usdc)
+        }
+        IERC20(usdc).forceApprove(address(WAUSDC), type(uint256).max);
+    }
+
     /*//////////////////////////////////////////////////////////////
                         EXTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -189,6 +202,8 @@ contract USD3 is BaseHooksUpgradeable {
     function _deployFunds(uint256 _amount) internal override {
         if (_amount == 0) return;
 
+        _amount = WAUSDC.deposit(_amount, address(this));
+
         uint256 maxOnCreditRatio = maxOnCredit();
 
         if (maxOnCreditRatio == 0) {
@@ -224,6 +239,9 @@ contract USD3 is BaseHooksUpgradeable {
     function _freeFunds(uint256 amount) internal override {
         if (amount == 0) return;
 
+        // Use previewWithdraw to round up.
+        uint256 wausdcAmount = vault.previewWithdraw(_amount);
+
         morphoCredit.accrueInterest(_marketParams);
         (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
 
@@ -234,7 +252,7 @@ contract USD3 is BaseHooksUpgradeable {
         if (availableToWithdraw == 0) return;
 
         // Cap the requested amount to what's actually available
-        uint256 actualAmount = amount > availableToWithdraw ? availableToWithdraw : amount;
+        uint256 actualAmount = wausdcAmount > availableToWithdraw ? availableToWithdraw : wausdcAmount;
 
         if (actualAmount >= assetsMax) {
             // Withdraw all our shares
@@ -243,6 +261,10 @@ contract USD3 is BaseHooksUpgradeable {
             // Withdraw specific amount
             morphoCredit.withdraw(_marketParams, actualAmount, 0, address(this), address(this));
         }
+
+        wausdcAmount = Math.min(wausdcAmount, balanceOfWaUSDC());
+
+        vault.redeem(wausdcAmount, address(this), address(this));
     }
 
     /// @dev Emergency withdraw function to free funds from MorphoCredit
@@ -262,7 +284,9 @@ contract USD3 is BaseHooksUpgradeable {
 
         _tend(asset.balanceOf(address(this)));
 
-        return morphoCredit.expectedSupplyAssets(params, address(this)) + asset.balanceOf(address(this));
+        uint256 totalWaUSDC = morphoCredit.expectedSupplyAssets(params, address(this)) + balanceOfWaUSDC();
+
+        return WAUSDC.convertToAssets(totalWaUSDC) + asset.balanceOf(address(this));
     }
 
     /// @dev Rebalances between idle and deployed funds to maintain maxOnCredit ratio
@@ -500,6 +524,10 @@ contract USD3 is BaseHooksUpgradeable {
     /*//////////////////////////////////////////////////////////////
                         PUBLIC VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
+
+    function balanceOfWaUSDC() public view returns (uint256) {
+        return WAUSDC.balanceOf(address(this));
+    }
 
     /**
      * @notice Get the maximum percentage of funds to deploy to credit markets from ProtocolConfig
