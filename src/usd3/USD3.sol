@@ -3,6 +3,7 @@ pragma solidity ^0.8.18;
 
 import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
 import {IERC20, SafeERC20} from "../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ERC20} from "../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {IMorpho, IMorphoCredit, MarketParams, Id} from "../interfaces/IMorpho.sol";
 import {MorphoLib} from "../libraries/periphery/MorphoLib.sol";
@@ -49,7 +50,7 @@ contract USD3 is BaseHooksUpgradeable {
     using SharesMathLib for uint256;
     using Math for uint256;
 
-    IStrategy public constant WAUSDC = 0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E;
+    IStrategy public constant WAUSDC = IStrategy(0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E);
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE - MORPHO PARAMETERS
@@ -240,7 +241,7 @@ contract USD3 is BaseHooksUpgradeable {
         if (amount == 0) return;
 
         // Use previewWithdraw to round up.
-        uint256 wausdcAmount = vault.previewWithdraw(_amount);
+        uint256 wausdcAmount = WAUSDC.previewWithdraw(amount);
 
         morphoCredit.accrueInterest(_marketParams);
         (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
@@ -264,7 +265,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         wausdcAmount = Math.min(wausdcAmount, balanceOfWaUSDC());
 
-        vault.redeem(wausdcAmount, address(this), address(this));
+        WAUSDC.redeem(wausdcAmount, address(this), address(this));
     }
 
     /// @dev Emergency withdraw function to free funds from MorphoCredit
@@ -294,7 +295,8 @@ contract USD3 is BaseHooksUpgradeable {
     function _tend(uint256 _totalIdle) internal virtual override {
         uint256 totalValue = TokenizedStrategy.totalAssets();
         uint256 targetDeployment = (totalValue * maxOnCredit()) / 10_000;
-        uint256 currentlyDeployed = morphoCredit.expectedSupplyAssets(_marketParams, address(this));
+        uint256 waUsdcDeployed = morphoCredit.expectedSupplyAssets(_marketParams, address(this));
+        uint256 currentlyDeployed = WAUSDC.convertToAssets(waUsdcDeployed);
 
         if (currentlyDeployed > targetDeployment) {
             // Withdraw excess to maintain target ratio
