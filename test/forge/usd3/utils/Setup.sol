@@ -19,13 +19,16 @@ import {IrmMock} from "../../../../src/mocks/IrmMock.sol";
 import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy,
+    ITransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockStrategyFactory} from "../mocks/MockStrategyFactory.sol";
 import {TokenizedStrategy} from "@tokenized-strategy/TokenizedStrategy.sol";
+import {MockWaUSDC} from "../mocks/MockWaUSDC.sol";
 
 interface IFactory {
     function governance() external view returns (address);
@@ -39,6 +42,7 @@ contract Setup is Test, IEvents {
     // Contract instances that we will use repeatedly.
     ERC20 public asset;
     ERC20 public underlyingAsset;
+    MockWaUSDC public waUSDC;
     IUSD3 public strategy;
 
     // StrategyFactory not used in this test setup
@@ -74,6 +78,9 @@ contract Setup is Test, IEvents {
         // Set underlying asset (USDC)
         underlyingAsset = ERC20(tokenAddrs["USDC"]);
 
+        // Deploy and etch MockWaUSDC at the expected address
+        _deployWaUSDC();
+
         // Deploy and etch TokenizedStrategy at the expected address
         _deployTokenizedStrategy();
 
@@ -90,6 +97,7 @@ contract Setup is Test, IEvents {
         vm.label(factory, "factory");
         vm.label(address(asset), "asset");
         vm.label(address(underlyingAsset), "underlyingAsset");
+        vm.label(address(waUSDC), "waUSDC");
         vm.label(management, "management");
         vm.label(address(strategy), "strategy");
         vm.label(performanceFeeRecipient, "performanceFeeRecipient");
@@ -114,7 +122,7 @@ contract Setup is Test, IEvents {
 
         IMorpho morpho = IMorpho(address(morphoProxy));
 
-        // Use USDC directly as the asset
+        // Use USDC as the asset (USD3 now accepts USDC)
         asset = underlyingAsset;
 
         // Deploy IRM mock for interest accrual
@@ -124,8 +132,9 @@ contract Setup is Test, IEvents {
         CreditLineMock creditLineMock = new CreditLineMock(address(morpho));
 
         // Set up market params for credit-based lending
+        // MorphoCredit uses waUSDC as loanToken
         MarketParams memory marketParams = MarketParams({
-            loanToken: address(asset),
+            loanToken: address(waUSDC),
             collateralToken: address(underlyingAsset), // Use USDC as collateral token
             oracle: address(0), // Not needed for credit
             irm: address(irm), // Use the IRM mock
@@ -153,6 +162,9 @@ contract Setup is Test, IEvents {
 
         TransparentUpgradeableProxy usd3Proxy =
             new TransparentUpgradeableProxy(address(usd3Implementation), address(usd3ProxyAdmin), usd3InitData);
+
+        // Upgrade and call reinitialize in a separate internal function to avoid stack too deep
+        _upgradeAndReinitialize(address(usd3Proxy), proxyAdminOwner, address(usd3ProxyAdmin));
 
         // Set emergency admin
         vm.prank(management);
@@ -224,10 +236,19 @@ contract Setup is Test, IEvents {
     }
 
     function _setTokenAddrs() internal {
-        // Use a mock ERC20 for testing instead of real USDC
-        // Real USDC has proxy implementation that causes issues in tests
+        // Deploy mock USDC at the mainnet address expected by reinitialize()
+        address expectedUsdcAddress = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+
+        // Deploy the mock USDC
         MockERC20 mockUsdc = new MockERC20("USD Coin", "USDC", 6);
-        tokenAddrs["USDC"] = address(mockUsdc);
+
+        // Etch it at the expected address
+        vm.etch(expectedUsdcAddress, address(mockUsdc).code);
+
+        // Store decimals in storage slot 2 (from MockERC20)
+        vm.store(expectedUsdcAddress, bytes32(uint256(2)), bytes32(uint256(6)));
+
+        tokenAddrs["USDC"] = expectedUsdcAddress;
     }
 
     function _deployTokenizedStrategy() internal {
@@ -249,5 +270,35 @@ contract Setup is Test, IEvents {
         // Label for debugging
         vm.label(expectedAddress, "TokenizedStrategy");
         vm.label(address(mockFactory), "MockStrategyFactory");
+    }
+
+    function _upgradeAndReinitialize(address usd3Proxy, address proxyAdminOwner, address proxyAdmin) internal {
+        // Since reinitializer(2) is used, we can call it directly after initialize()
+        // No need to upgrade the implementation for testing
+        USD3(usd3Proxy).reinitialize();
+    }
+
+    function _deployWaUSDC() internal {
+        // Deploy MockWaUSDC with USDC as underlying
+        address usdcAddress = tokenAddrs["USDC"];
+
+        // Deploy at the expected mainnet address
+        address expectedWaUSDCAddress = 0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E;
+
+        // Deploy the mock contract
+        MockWaUSDC mockWaUSDC = new MockWaUSDC(usdcAddress);
+
+        // Etch the bytecode at the expected address
+        vm.etch(expectedWaUSDCAddress, address(mockWaUSDC).code);
+
+        // Store the USDC address in storage slot 5 (where _asset is stored after ERC20 storage)
+        // ERC20 uses slots 0-4 for: _balances(0), _allowances(1), _totalSupply(2), _name(3), _symbol(4)
+        vm.store(expectedWaUSDCAddress, bytes32(uint256(5)), bytes32(uint256(uint160(usdcAddress))));
+
+        // Store the reference
+        waUSDC = MockWaUSDC(expectedWaUSDCAddress);
+
+        // Label for debugging
+        vm.label(expectedWaUSDCAddress, "MockWaUSDC");
     }
 }
