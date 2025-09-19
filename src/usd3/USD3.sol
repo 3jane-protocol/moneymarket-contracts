@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0
-pragma solidity ^0.8.18;
+pragma solidity 0.8.22;
 
 import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
 import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -132,12 +132,30 @@ contract USD3 is BaseHooksUpgradeable {
         IERC20(asset).forceApprove(address(morphoCredit), type(uint256).max);
     }
 
+    /**
+     * @notice Reinitialize the USD3 strategy to switch asset from waUSDC to USDC
+     * @dev This function is called during the upgrade from the previous USD3 implementation.
+     *      The upgrade process MUST follow this sequence to prevent user losses:
+     *      1. Set performance fee to 0 (via setPerformanceFee)
+     *      2. Set profit unlock time to 0 (via setProfitMaxUnlockTime)
+     *      3. Call report() to update totalAssets from stale waUSDC values
+     *      4. Call reinitialize() to switch the underlying asset
+     *      5. Call syncTrancheShare() to restore performance fees
+     *      6. Restore profit unlock time to previous value
+     *      This ensures totalAssets reflects the true USDC value before users can withdraw.
+     *      Without report() before reinitialize(), users would lose value as totalAssets
+     *      would not account for waUSDC pps versus usdc.
+     */
     function reinitialize() external reinitializer(2) {
         address usdc = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
         asset = ERC20(usdc);
         TokenizedStrategyStorageLib.StrategyData storage strategyData = TokenizedStrategyStorageLib.getStrategyStorage();
         strategyData.asset = ERC20(usdc);
+        // Approve waUSDC to spend our USDC for wrapping
         IERC20(usdc).forceApprove(address(WAUSDC), type(uint256).max);
+        // Approve ourselves to spend our own waUSDC for unwrapping (this is wrong - waUSDC needs approval)
+        // We need waUSDC to approve itself to be redeemed, which is handled by the waUSDC contract
+        // No additional approval needed here for waUSDC redemption
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -234,7 +252,9 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Withdraw funds from MorphoCredit market
     /// @param amount Amount of asset to free up
     function _freeFunds(uint256 amount) internal override {
-        if (amount == 0) return;
+        if (amount == 0) {
+            return;
+        }
 
         // Calculate how much waUSDC we need
         uint256 wausdcNeeded = WAUSDC.previewWithdraw(amount);
@@ -328,7 +348,10 @@ contract USD3 is BaseHooksUpgradeable {
         (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
 
         uint256 availableToWithdraw = Math.min(assetsMax, liquidity);
-        if (availableToWithdraw == 0) return 0;
+
+        if (availableToWithdraw == 0) {
+            return 0;
+        }
 
         amountWithdrawn = Math.min(amountRequested, availableToWithdraw);
 
@@ -353,8 +376,11 @@ contract USD3 is BaseHooksUpgradeable {
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
         // Get available liquidity first
         uint256 idleAsset = asset.balanceOf(address(this));
+
         (, uint256 waUsdcMax, uint256 liquidity) = getPosition();
+
         uint256 availableWaUSDC = balanceOfWaUSDC() + Math.min(waUsdcMax, liquidity);
+
         uint256 availableLiquidity = idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
 
         // During shutdown, bypass all checks

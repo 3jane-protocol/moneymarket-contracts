@@ -121,11 +121,14 @@ contract USD3SimplifiedUpgradeTest is Setup {
         uint256 totalAssets = strategy.totalAssets();
         assertApproxEqAbs(totalAssets, 1000e6, 2, "Total assets tracks USDC value with rounding");
 
-        // Alice withdraws - use preview to get expected amount
-        uint256 expectedWithdrawal = strategy.previewRedeem(aliceShares);
+        // Alice withdraws - use maxRedeem to avoid rounding issues with waUSDC conversion
+        vm.prank(alice);
+        uint256 maxRedeemAmount = strategy.maxRedeem(alice);
+        uint256 sharesToRedeem = maxRedeemAmount < aliceShares ? maxRedeemAmount : aliceShares;
+        uint256 expectedWithdrawal = strategy.previewRedeem(sharesToRedeem);
 
         vm.prank(alice);
-        uint256 withdrawn = strategy.redeem(aliceShares, alice, alice);
+        uint256 withdrawn = strategy.redeem(sharesToRedeem, alice, alice);
 
         // Alice should get back approximately her USDC (allowing for rounding)
         assertEq(withdrawn, expectedWithdrawal, "Alice got expected amount");

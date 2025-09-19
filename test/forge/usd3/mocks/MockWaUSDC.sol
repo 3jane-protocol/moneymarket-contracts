@@ -83,8 +83,9 @@ contract MockWaUSDC is ERC20 {
      * @dev Preview functions for ERC4626 compatibility
      */
     function convertToShares(uint256 assets) public view returns (uint256) {
-        if (totalSupply() == 0) {
-            return assets; // First deposit gets 1:1
+        // For first deposit, avoid rounding issues while still respecting share price
+        if (totalSupply() == 0 && sharePrice == 1e6) {
+            return assets; // 1:1 when price is exactly 1.0
         }
         return assets.mulDiv(1e6, sharePrice, Math.Rounding.Floor);
     }
