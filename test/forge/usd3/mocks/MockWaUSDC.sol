@@ -28,6 +28,13 @@ contract MockWaUSDC is ERC20 {
     }
 
     /**
+     * @dev Returns the decimals (6, matching USDC)
+     */
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
+    /**
      * @dev Deposit USDC to receive waUSDC shares
      */
     function deposit(uint256 assets, address receiver) public returns (uint256 shares) {

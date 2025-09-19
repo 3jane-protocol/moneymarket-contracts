@@ -62,6 +62,9 @@ contract Setup is Test, IEvents {
     // Helper contract for MorphoCredit operations
     HelperMock public helper;
 
+    // ProtocolConfig for managing protocol parameters (internal to avoid conflicts)
+    MockProtocolConfig internal testProtocolConfig;
+
     // Integer variables that will be used repeatedly.
     uint256 public decimals;
     uint256 public MAX_BPS = 10_000;
@@ -105,10 +108,10 @@ contract Setup is Test, IEvents {
 
     function setUpStrategy() public returns (address) {
         // Deploy MockProtocolConfig for testing
-        MockProtocolConfig protocolConfig = new MockProtocolConfig();
+        testProtocolConfig = new MockProtocolConfig();
 
         // Deploy real MorphoCredit with proxy pattern
-        MorphoCredit morphoImpl = new MorphoCredit(address(protocolConfig));
+        MorphoCredit morphoImpl = new MorphoCredit(address(testProtocolConfig));
 
         // Deploy proxy admin
         address morphoOwner = makeAddr("MorphoOwner");
@@ -235,6 +238,12 @@ contract Setup is Test, IEvents {
         strategy.setPerformanceFee(_performanceFee);
     }
 
+    function setMaxOnCredit(uint256 _maxOnCredit) public {
+        // Set maxOnCredit through ProtocolConfig
+        bytes32 MAX_ON_CREDIT_KEY = keccak256("MAX_ON_CREDIT");
+        testProtocolConfig.setConfig(MAX_ON_CREDIT_KEY, _maxOnCredit);
+    }
+
     function _setTokenAddrs() internal {
         // Deploy mock USDC at the mainnet address expected by reinitialize()
         address expectedUsdcAddress = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
@@ -245,8 +254,8 @@ contract Setup is Test, IEvents {
         // Etch it at the expected address
         vm.etch(expectedUsdcAddress, address(mockUsdc).code);
 
-        // Store decimals in storage slot 2 (from MockERC20)
-        vm.store(expectedUsdcAddress, bytes32(uint256(2)), bytes32(uint256(6)));
+        // Store decimals in storage slot 5 (after ERC20's slots 0-4)
+        vm.store(expectedUsdcAddress, bytes32(uint256(5)), bytes32(uint256(6)));
 
         tokenAddrs["USDC"] = expectedUsdcAddress;
     }

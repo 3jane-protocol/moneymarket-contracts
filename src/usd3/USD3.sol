@@ -2,15 +2,14 @@
 pragma solidity ^0.8.18;
 
 import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
-import {IERC20, SafeERC20} from "../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ERC20} from "../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {IMorpho, IMorphoCredit, MarketParams, Id} from "../interfaces/IMorpho.sol";
 import {MorphoLib} from "../libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "../libraries/periphery/MorphoBalancesLib.sol";
 import {SharesMathLib} from "../libraries/SharesMathLib.sol";
 import {IStrategy} from "@tokenized-strategy/interfaces/IStrategy.sol";
-import {TokenizedStrategyStorageLib} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
+import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 
 /**
@@ -136,10 +135,8 @@ contract USD3 is BaseHooksUpgradeable {
     function reinitialize() external reinitializer(2) {
         address usdc = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
         asset = ERC20(usdc);
-        bytes32 targetSlot = TokenizedStrategyStorageLib.assetSlot();
-        assembly {
-            sstore(targetSlot, usdc)
-        }
+        TokenizedStrategyStorageLib.StrategyData storage strategyData = TokenizedStrategyStorageLib.getStrategyStorage();
+        strategyData.asset = ERC20(usdc);
         IERC20(usdc).forceApprove(address(WAUSDC), type(uint256).max);
     }
 

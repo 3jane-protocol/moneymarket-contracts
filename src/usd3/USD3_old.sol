@@ -2,7 +2,7 @@
 pragma solidity ^0.8.18;
 
 import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
-import {IERC20, SafeERC20} from "../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {IMorpho, IMorphoCredit, MarketParams, Id} from "../interfaces/IMorpho.sol";
 import {MorphoLib} from "../libraries/periphery/MorphoLib.sol";
