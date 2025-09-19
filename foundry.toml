@@ -26,4 +26,10 @@ script = "/dev/null"
 via-ir = false
 
 
+[profile.fork]
+# Fork tests configuration
+test = "test/forge/usd3/fork"
+via_ir = false
+fork_block_number = 23400200  # Fixed block for reproducibility
+
 # See more config options https://github.com/foundry-rs/foundry/tree/master/crates/config
