@@ -304,6 +304,9 @@ contract Setup is Test, IEvents {
         // ERC20 uses slots 0-4 for: _balances(0), _allowances(1), _totalSupply(2), _name(3), _symbol(4)
         vm.store(expectedWaUSDCAddress, bytes32(uint256(5)), bytes32(uint256(uint160(usdcAddress))));
 
+        // Store the sharePrice in storage slot 6 (initialized to 1e6)
+        vm.store(expectedWaUSDCAddress, bytes32(uint256(6)), bytes32(uint256(1e6)));
+
         // Store the reference
         waUSDC = MockWaUSDC(expectedWaUSDCAddress);
 

@@ -8,13 +8,16 @@ import {Math} from "../../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 /**
  * @title MockWaUSDC
  * @notice Mock implementation of waUSDC (wrapped aave USDC)
- * @dev Simple ERC4626-like vault that wraps USDC for testing USD3 strategy
+ * @dev ERC4626-like vault with dynamic share pricing for testing USD3 upgrade scenarios
  */
 contract MockWaUSDC is ERC20 {
     using Math for uint256;
 
     // Storage slot 0 for underlying asset (avoiding immutables for etching)
     address private _asset;
+
+    // Share price in 6 decimals (1e6 = 1:1 ratio, 1.1e6 = 1.1:1 ratio)
+    uint256 public sharePrice = 1e6;
 
     constructor(address _usdc) ERC20("Wrapped Aave USDC", "waUSDC") {
         _asset = _usdc;
@@ -38,7 +41,7 @@ contract MockWaUSDC is ERC20 {
      * @dev Deposit USDC to receive waUSDC shares
      */
     function deposit(uint256 assets, address receiver) public returns (uint256 shares) {
-        shares = assets; // 1:1 for simplicity
+        shares = previewDeposit(assets);
         IERC20(_asset).transferFrom(msg.sender, address(this), assets);
         _mint(receiver, shares);
         return shares;
@@ -48,7 +51,7 @@ contract MockWaUSDC is ERC20 {
      * @dev Withdraw USDC by burning waUSDC shares
      */
     function withdraw(uint256 assets, address receiver, address owner) public returns (uint256 shares) {
-        shares = assets; // 1:1 for simplicity
+        shares = previewWithdraw(assets);
         if (msg.sender != owner) {
             uint256 allowed = allowance(owner, msg.sender);
             if (allowed != type(uint256).max) {
@@ -64,7 +67,7 @@ contract MockWaUSDC is ERC20 {
      * @dev Redeem waUSDC shares for USDC
      */
     function redeem(uint256 shares, address receiver, address owner) public returns (uint256 assets) {
-        assets = shares; // 1:1 for simplicity
+        assets = previewRedeem(shares);
         if (msg.sender != owner) {
             uint256 allowed = allowance(owner, msg.sender);
             if (allowed != type(uint256).max) {
@@ -79,24 +82,31 @@ contract MockWaUSDC is ERC20 {
     /**
      * @dev Preview functions for ERC4626 compatibility
      */
-    function convertToShares(uint256 assets) public pure returns (uint256) {
-        return assets; // 1:1 conversion
+    function convertToShares(uint256 assets) public view returns (uint256) {
+        if (totalSupply() == 0) {
+            return assets; // First deposit gets 1:1
+        }
+        return assets.mulDiv(1e6, sharePrice, Math.Rounding.Floor);
     }
 
-    function convertToAssets(uint256 shares) public pure returns (uint256) {
-        return shares; // 1:1 conversion
+    function convertToAssets(uint256 shares) public view returns (uint256) {
+        return shares.mulDiv(sharePrice, 1e6, Math.Rounding.Floor);
     }
 
-    function previewDeposit(uint256 assets) public pure returns (uint256) {
-        return assets;
+    function previewDeposit(uint256 assets) public view returns (uint256) {
+        return convertToShares(assets);
     }
 
-    function previewWithdraw(uint256 assets) public pure returns (uint256) {
-        return assets;
+    function previewWithdraw(uint256 assets) public view returns (uint256) {
+        return assets.mulDiv(1e6, sharePrice, Math.Rounding.Ceil);
     }
 
-    function previewRedeem(uint256 shares) public pure returns (uint256) {
-        return shares;
+    function previewRedeem(uint256 shares) public view returns (uint256) {
+        return convertToAssets(shares);
+    }
+
+    function previewMint(uint256 shares) public view returns (uint256) {
+        return shares.mulDiv(sharePrice, 1e6, Math.Rounding.Ceil);
     }
 
     /**
@@ -118,7 +128,7 @@ contract MockWaUSDC is ERC20 {
     }
 
     function maxWithdraw(address owner) public view returns (uint256) {
-        return balanceOf(owner);
+        return convertToAssets(balanceOf(owner));
     }
 
     function maxRedeem(address owner) public view returns (uint256) {
@@ -129,9 +139,26 @@ contract MockWaUSDC is ERC20 {
      * @dev Mint function for ERC4626 compatibility
      */
     function mint(uint256 shares, address receiver) public returns (uint256 assets) {
-        assets = shares; // 1:1 for simplicity
+        assets = previewMint(shares);
         IERC20(_asset).transferFrom(msg.sender, address(this), assets);
         _mint(receiver, shares);
         return assets;
+    }
+
+    /**
+     * @dev Simulate yield accumulation by increasing share price
+     * @param percentIncrease Percentage increase in basis points (100 = 1%)
+     */
+    function simulateYield(uint256 percentIncrease) external {
+        sharePrice = sharePrice.mulDiv(10000 + percentIncrease, 10000, Math.Rounding.Floor);
+    }
+
+    /**
+     * @dev Set share price directly for testing
+     * @param newPrice New share price in 6 decimals
+     */
+    function setSharePrice(uint256 newPrice) external {
+        require(newPrice > 0, "Invalid price");
+        sharePrice = newPrice;
     }
 }
