@@ -14,6 +14,7 @@ USD3 and sUSD3 are tokenized yield strategies built on Yearn V3's architecture f
 ### Key Features
 
 #### USD3 Strategy
+
 - Direct USDC deposits from users (not waUSDC)
 - Automatic internal wrapping of USDC to waUSDC for MorphoCredit deployment
 - Configurable commitment periods (locally managed by governance)
@@ -25,6 +26,7 @@ USD3 and sUSD3 are tokenized yield strategies built on Yearn V3's architecture f
 - Seamless upgrade path from waUSDC-based to USDC-based implementation via `reinitialize()`
 
 #### sUSD3 Strategy
+
 - Accepts USD3 tokens to provide subordinate capital
 - Configurable lock period for stability (via ProtocolConfig, default 90 days)
 - Configurable cooldown period (via ProtocolConfig, default 7 days) + withdrawal window (local, default 2 days)
@@ -46,6 +48,7 @@ The USD3 strategy now handles USDC directly from users while maintaining compati
 ### Risk Management
 
 The protocol implements multiple risk controls:
+
 - **Subordination Ratio**: sUSD3 holdings limited by configurable ratio (via ProtocolConfig)
 - **Commitment Periods**: Prevent deposit/withdrawal gaming
 - **Lock & Cooldown**: Ensure stable liquidity for lending
@@ -65,6 +68,7 @@ For existing deployments using waUSDC directly, the upgrade process is:
 4. **Critical**: Execute as atomic multisig batch with `report()` to prevent user losses
 
 **Important**: The upgrade MUST be executed as an atomic multisig batch transaction:
+
 ```solidity
 // Multisig Batch Transaction
 1. strategy.setPerformanceFee(0)              // Prevent fee distribution
@@ -208,6 +212,7 @@ function _harvestAndReport() internal override returns (uint256)
 ### Hooks System
 
 Both strategies use hooks for additional logic:
+
 - `_preDepositHook`: Track commitment/lock periods
 - `_postWithdrawHook`: Update cooldown states
 - `availableDepositLimit`: Enforce subordination ratio
@@ -239,6 +244,7 @@ test/forge/usd3/
 ## Integration with 3Jane Protocol
 
 ### MorphoCredit Markets
+
 - USD3 wraps USDC to waUSDC and supplies to credit-based lending markets
 - Interest accrues from unsecured loans to verified borrowers
 - Per-borrower risk premiums provide additional yield
@@ -247,6 +253,7 @@ test/forge/usd3/
 ### ProtocolConfig Integration
 
 Centrally managed parameters (with defaults):
+
 - **sUSD3 Parameters**:
   - Subordination ratio (default 15%)
   - Lock duration (default 90 days)
@@ -254,6 +261,7 @@ Centrally managed parameters (with defaults):
   - Interest distribution share
 
 Locally managed parameters:
+
 - **USD3 Parameters**:
   - Commitment period (setMinCommitmentTime)
   - Max deployment ratio (setMaxOnCredit)
