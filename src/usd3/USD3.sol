@@ -388,28 +388,24 @@ contract USD3 is BaseHooksUpgradeable {
             return availableLiquidity;
         }
 
-        // Check subordination ratio constraint only if sUSD3 is set
-        // Prevent withdrawals that would leave USD3 below minimum ratio
+        // Check subordination constraint based on market debt
         if (sUSD3 != address(0)) {
-            uint256 usd3TotalSupply = TokenizedStrategy.totalSupply();
+            // Get the subordinated debt cap in USDC terms
+            uint256 subordinatedDebtCapUSDC = getSubordinatedDebtCapInAssets();
 
-            // sUSD3 holds USD3 tokens, so we check USD3 balance of sUSD3
-            uint256 susd3Holdings = TokenizedStrategy.balanceOf(sUSD3);
+            if (subordinatedDebtCapUSDC > 0) {
+                // Get current USD3 total assets in USDC
+                uint256 currentTotalAssetsUSDC = TokenizedStrategy.totalAssets();
 
-            // Get max subordination ratio from ProtocolConfig
-            uint256 maxSubRatio = maxSubordinationRatio(); // e.g., 1500 (15%)
-
-            // Calculate the minimum total supply that maintains the ratio
-            // minTotalSupply = susd3Holdings / maxSubRatio
-            uint256 minTotalSupply = (susd3Holdings * MAX_BPS) / maxSubRatio;
-
-            if (usd3TotalSupply <= minTotalSupply) {
-                availableLiquidity = 0; // No withdrawals allowed
-            } else {
-                // Only allow withdrawal down to the minimum supply
-                uint256 maxWithdrawable = usd3TotalSupply - minTotalSupply;
-                availableLiquidity = Math.min(availableLiquidity, maxWithdrawable);
+                if (currentTotalAssetsUSDC <= subordinatedDebtCapUSDC) {
+                    availableLiquidity = 0; // Cannot withdraw, need to maintain coverage
+                } else {
+                    // Only allow withdrawal of excess above required coverage
+                    uint256 maxWithdrawableUSDC = currentTotalAssetsUSDC - subordinatedDebtCapUSDC;
+                    availableLiquidity = Math.min(availableLiquidity, maxWithdrawableUSDC);
+                }
             }
+            // If no debt (subordinatedDebtCapUSDC == 0), no subordination constraint
         }
 
         // Check commitment time
@@ -643,6 +639,28 @@ contract USD3 is BaseHooksUpgradeable {
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
         bytes32 supplyCapKey = 0x4bba860c0c28b1a4ae0214c01f08e53b00bfe2e087690d7a04d73a15360ec6a7; // keccak256("USD3_SUPPLY_CAP");
         return config.config(supplyCapKey);
+    }
+
+    /**
+     * @notice Calculate maximum debt that can be underwritten by subordinate tranche
+     * @dev Returns the cap on how much market debt sUSD3 can provide first-loss coverage for
+     * @return Maximum debt amount that can be subordinated, expressed in USDC
+     */
+    function getSubordinatedDebtCapInAssets() public view returns (uint256) {
+        (,, uint256 totalBorrowAssetsWaUSDC,) = getMarketLiquidity();
+
+        if (totalBorrowAssetsWaUSDC == 0) {
+            return 0; // No debt to subordinate
+        }
+
+        // Convert waUSDC debt to USDC value
+        uint256 totalBorrowAssetsUSDC = WAUSDC.convertToAssets(totalBorrowAssetsWaUSDC);
+
+        uint256 maxSubRatio = maxSubordinationRatio(); // e.g., 1500 (15%)
+
+        // Cap on subordinated debt = total debt * max ratio
+        // If debt is 10,000 USDC and ratio is 15%, max subordinated = 1,500 USDC
+        return (totalBorrowAssetsUSDC * maxSubRatio) / MAX_BPS;
     }
 
     /*//////////////////////////////////////////////////////////////

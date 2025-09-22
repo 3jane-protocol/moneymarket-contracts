@@ -98,34 +98,6 @@ contract sUSD3Coverage is Setup {
     }
 
     /**
-     * @notice Test maxSubordinationRatio function
-     * @dev Verifies the function returns correct values from ProtocolConfig
-     */
-    function test_maxSubordinationRatio() public {
-        // Get protocol config
-        address morphoAddress = address(usd3Strategy.morphoCredit());
-        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
-        MockProtocolConfig protocolConfig = MockProtocolConfig(protocolConfigAddress);
-
-        // Test default value
-        uint256 defaultRatio = susd3Strategy.maxSubordinationRatio();
-        assertEq(defaultRatio, 1500, "Default should be 15%");
-
-        // Set custom value in protocol config
-        bytes32 TRANCHE_RATIO = keccak256("TRANCHE_RATIO");
-        protocolConfig.setConfig(TRANCHE_RATIO, 2000); // 20%
-
-        // Verify it returns the new value
-        uint256 newRatio = susd3Strategy.maxSubordinationRatio();
-        assertEq(newRatio, 2000, "Should return updated ratio");
-
-        // Set to 0 to test fallback
-        protocolConfig.setConfig(TRANCHE_RATIO, 0);
-        uint256 zeroRatio = susd3Strategy.maxSubordinationRatio();
-        assertEq(zeroRatio, 1500, "Should fallback to 15% when 0");
-    }
-
-    /**
      * @notice Test with zero USD3 total supply
      * @dev Verifies availableDepositLimit returns 0 when USD3 has no supply
      */

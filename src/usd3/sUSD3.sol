@@ -1,14 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
-import {ERC20} from "../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {SafeERC20} from "../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
-import {IMorpho, IMorphoCredit} from "../interfaces/IMorpho.sol";
-import {USD3} from "./USD3.sol";
+import {
+    BaseHooksUpgradeable, IERC20, IMorphoCredit, IProtocolConfig, IStrategy, Math, SafeERC20, USD3
+} from "./USD3.sol";
 
 /**
  * @title sUSD3
@@ -27,7 +22,6 @@ import {USD3} from "./USD3.sol";
  * - Full withdrawal clears both lock and cooldown states
  */
 contract sUSD3 is BaseHooksUpgradeable {
-    using SafeERC20 for ERC20;
     using Math for uint256;
 
     /*//////////////////////////////////////////////////////////////
@@ -253,29 +247,32 @@ contract sUSD3 is BaseHooksUpgradeable {
     /// @param _owner Address to check limit for
     /// @return Maximum deposit amount allowed
     function availableDepositLimit(address _owner) public view override returns (uint256) {
-        // Check subordination ratio based on USD3 total supply
-        uint256 usd3TotalSupply = IERC20(asset).totalSupply();
+        // Get the subordinated debt cap in USDC terms from USD3
+        USD3 usd3 = USD3(address(asset));
+        uint256 subordinatedDebtCapUSDC = usd3.getSubordinatedDebtCapInAssets();
 
-        // If USD3 has no supply, no deposits allowed
-        if (usd3TotalSupply == 0) {
+        if (subordinatedDebtCapUSDC == 0) {
+            // No debt to subordinate, no deposits needed
             return 0;
         }
 
-        // Get current USD3 holdings by this sUSD3 contract
-        uint256 susd3Usd3Holdings = asset.balanceOf(address(this));
+        // Get current sUSD3 holdings of USD3 tokens
+        uint256 currentUSD3Holdings = asset.balanceOf(address(this));
 
-        // Get max subordination ratio from ProtocolConfig
-        uint256 maxRatio = maxSubordinationRatio();
+        // Convert USD3 holdings to USDC value
+        uint256 currentHoldingsUSDC = IStrategy(address(asset)).convertToAssets(currentUSD3Holdings);
 
-        // Calculate max USD3 that sUSD3 can hold (15% of USD3 total supply)
-        uint256 maxUsd3Allowed = (usd3TotalSupply * maxRatio) / MAX_BPS;
-
-        if (susd3Usd3Holdings >= maxUsd3Allowed) {
-            return 0; // Already at max subordination
+        if (currentHoldingsUSDC >= subordinatedDebtCapUSDC) {
+            // Already at or above the subordination cap
+            return 0;
         }
 
-        // Return remaining capacity (in USD3 tokens)
-        return maxUsd3Allowed - susd3Usd3Holdings;
+        // Calculate remaining capacity in USDC terms
+        uint256 remainingCapacityUSDC = subordinatedDebtCapUSDC - currentHoldingsUSDC;
+
+        // Convert USDC capacity back to USD3 shares
+        // This is the maximum USD3 tokens that can be deposited
+        return IStrategy(address(asset)).convertToShares(remainingCapacityUSDC);
     }
 
     /// @dev Enforces lock period, cooldown, and withdrawal window requirements
@@ -333,17 +330,6 @@ contract sUSD3 is BaseHooksUpgradeable {
     /*//////////////////////////////////////////////////////////////
                         MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Get the maximum subordination ratio from ProtocolConfig
-     * @return Maximum subordination ratio in basis points
-     */
-    function maxSubordinationRatio() public view returns (uint256) {
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
-
-        uint256 ratio = config.getTrancheRatio();
-        return ratio > 0 ? ratio : 1500; // Default to 15% if not set
-    }
 
     /**
      * @notice Get the lock duration from ProtocolConfig
