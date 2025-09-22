@@ -151,11 +151,7 @@ contract USD3 is BaseHooksUpgradeable {
         asset = ERC20(usdc);
         TokenizedStrategyStorageLib.StrategyData storage strategyData = TokenizedStrategyStorageLib.getStrategyStorage();
         strategyData.asset = ERC20(usdc);
-        // Approve waUSDC to spend our USDC for wrapping
         IERC20(usdc).forceApprove(address(WAUSDC), type(uint256).max);
-        // Approve ourselves to spend our own waUSDC for unwrapping (this is wrong - waUSDC needs approval)
-        // We need waUSDC to approve itself to be redeemed, which is handled by the waUSDC contract
-        // No additional approval needed here for waUSDC redemption
     }
 
     /*//////////////////////////////////////////////////////////////
