@@ -187,29 +187,29 @@ contract USD3 is BaseHooksUpgradeable {
      * @return totalSupplyAssets Total assets supplied to the market
      * @return totalShares Total supply shares in the market
      * @return totalBorrowAssets Total assets borrowed from the market
-     * @return liquidity Available liquidity in the market
+     * @return waUSDCLiquidity Available liquidity in the market
      */
     function getMarketLiquidity()
         internal
         view
-        returns (uint256 totalSupplyAssets, uint256 totalShares, uint256 totalBorrowAssets, uint256 liquidity)
+        returns (uint256 totalSupplyAssets, uint256 totalShares, uint256 totalBorrowAssets, uint256 waUSDCLiquidity)
     {
         (totalSupplyAssets, totalShares, totalBorrowAssets,) = morphoCredit.expectedMarketBalances(_marketParams);
-        liquidity = totalSupplyAssets - totalBorrowAssets;
+        waUSDCLiquidity = totalSupplyAssets - totalBorrowAssets;
     }
 
     /**
      * @dev Get strategy's position in the market
      * @return shares Number of supply shares held
-     * @return assetsMax Maximum assets that can be withdrawn
-     * @return liquidity Available market liquidity
+     * @return waUSDCMax Maximum waUSDC that can be withdrawn
+     * @return waUSDCLiquidity Available market liquidity in waUSDC
      */
-    function getPosition() internal view returns (uint256 shares, uint256 assetsMax, uint256 liquidity) {
+    function getPosition() internal view returns (uint256 shares, uint256 waUSDCMax, uint256 waUSDCLiquidity) {
         shares = morphoCredit.position(marketId, address(this)).supplyShares;
         uint256 totalSupplyAssets;
         uint256 totalShares;
-        (totalSupplyAssets, totalShares,, liquidity) = getMarketLiquidity();
-        assetsMax = shares.toAssetsDown(totalSupplyAssets, totalShares);
+        (totalSupplyAssets, totalShares,, waUSDCLiquidity) = getMarketLiquidity();
+        waUSDCMax = shares.toAssetsDown(totalSupplyAssets, totalShares);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -236,47 +236,47 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 totalWaUSDC = deployedWaUSDC + localWaUSDC;
 
         // Calculate max that should be deployed to MorphoCredit
-        uint256 maxDeployable = (totalWaUSDC * maxOnCreditRatio) / 10_000;
+        uint256 maxDeployableWaUSDC = (totalWaUSDC * maxOnCreditRatio) / 10_000;
 
-        if (maxDeployable <= deployedWaUSDC) {
+        if (maxDeployableWaUSDC <= deployedWaUSDC) {
             // Already at or above max, keep all new waUSDC local
             return;
         }
 
         // Deploy only the amount needed to reach max
-        uint256 toDeployToMorpho = Math.min(localWaUSDC, maxDeployable - deployedWaUSDC);
+        uint256 waUSDCToSupply = Math.min(localWaUSDC, maxDeployableWaUSDC - deployedWaUSDC);
 
-        _supplyToMorpho(toDeployToMorpho);
+        _supplyToMorpho(waUSDCToSupply);
     }
 
     /// @dev Withdraw funds from MorphoCredit market
-    /// @param amount Amount of asset to free up
-    function _freeFunds(uint256 amount) internal override {
-        if (amount == 0) {
+    /// @param _amount Amount of asset to free up
+    function _freeFunds(uint256 _amount) internal override {
+        if (_amount == 0) {
             return;
         }
 
         // Calculate how much waUSDC we need
-        uint256 wausdcNeeded = WAUSDC.previewWithdraw(amount);
+        uint256 waUSDCNeeded = WAUSDC.previewWithdraw(_amount);
 
         // Check local waUSDC balance first
         uint256 localWaUSDC = balanceOfWaUSDC();
 
-        if (localWaUSDC < wausdcNeeded) {
+        if (localWaUSDC < waUSDCNeeded) {
             // Need to withdraw from MorphoCredit
-            uint256 toWithdrawFromMorpho = wausdcNeeded - localWaUSDC;
+            uint256 waUSDCToWithdraw = waUSDCNeeded - localWaUSDC;
 
-            uint256 withdrawn = _withdrawFromMorpho(toWithdrawFromMorpho);
+            uint256 withdrawn = _withdrawFromMorpho(waUSDCToWithdraw);
 
             if (withdrawn > 0) {
                 localWaUSDC = balanceOfWaUSDC();
             }
         }
 
-        uint256 toUnwrap = Math.min(localWaUSDC, wausdcNeeded);
+        uint256 waUSDCToUnwrap = Math.min(localWaUSDC, waUSDCNeeded);
 
-        if (toUnwrap > 0) {
-            WAUSDC.redeem(toUnwrap, address(this), address(this));
+        if (waUSDCToUnwrap > 0) {
+            WAUSDC.redeem(waUSDCToUnwrap, address(this), address(this));
         }
     }
 
@@ -315,16 +315,16 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 localWaUSDC = balanceOfWaUSDC();
         uint256 totalWaUSDC = deployedWaUSDC + localWaUSDC;
 
-        uint256 targetDeployment = (totalWaUSDC * maxOnCredit()) / 10_000;
+        uint256 targetDeployedWaUSDC = (totalWaUSDC * maxOnCredit()) / 10_000;
 
-        if (deployedWaUSDC > targetDeployment) {
+        if (deployedWaUSDC > targetDeployedWaUSDC) {
             // Withdraw excess from MorphoCredit
-            uint256 toWithdraw = deployedWaUSDC - targetDeployment;
-            _withdrawFromMorpho(toWithdraw);
-        } else if (targetDeployment > deployedWaUSDC && localWaUSDC > 0) {
+            uint256 waUSDCToWithdraw = deployedWaUSDC - targetDeployedWaUSDC;
+            _withdrawFromMorpho(waUSDCToWithdraw);
+        } else if (targetDeployedWaUSDC > deployedWaUSDC && localWaUSDC > 0) {
             // Deploy more if we have local waUSDC
-            uint256 toDeploy = Math.min(localWaUSDC, targetDeployment - deployedWaUSDC);
-            _supplyToMorpho(toDeploy);
+            uint256 waUSDCToDeploy = Math.min(localWaUSDC, targetDeployedWaUSDC - deployedWaUSDC);
+            _supplyToMorpho(waUSDCToDeploy);
         }
     }
 
@@ -345,18 +345,18 @@ contract USD3 is BaseHooksUpgradeable {
         if (amountRequested == 0) return 0;
 
         morphoCredit.accrueInterest(_marketParams);
-        (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
+        (uint256 shares, uint256 waUSDCMax, uint256 waUSDCLiquidity) = getPosition();
 
-        uint256 availableToWithdraw = Math.min(assetsMax, liquidity);
+        uint256 availableWaUSDC = Math.min(waUSDCMax, waUSDCLiquidity);
 
-        if (availableToWithdraw == 0) {
+        if (availableWaUSDC == 0) {
             return 0;
         }
 
-        amountWithdrawn = Math.min(amountRequested, availableToWithdraw);
+        amountWithdrawn = Math.min(amountRequested, availableWaUSDC);
 
         if (amountWithdrawn > 0) {
-            if (amountWithdrawn >= assetsMax) {
+            if (amountWithdrawn >= waUSDCMax) {
                 morphoCredit.withdraw(_marketParams, 0, shares, address(this), address(this));
             } else {
                 morphoCredit.withdraw(_marketParams, amountWithdrawn, 0, address(this), address(this));
@@ -377,9 +377,9 @@ contract USD3 is BaseHooksUpgradeable {
         // Get available liquidity first
         uint256 idleAsset = asset.balanceOf(address(this));
 
-        (, uint256 waUsdcMax, uint256 liquidity) = getPosition();
+        (, uint256 waUSDCMax, uint256 waUSDCLiquidity) = getPosition();
 
-        uint256 availableWaUSDC = balanceOfWaUSDC() + Math.min(waUsdcMax, liquidity);
+        uint256 availableWaUSDC = balanceOfWaUSDC() + Math.min(waUSDCMax, waUSDCLiquidity);
 
         uint256 availableLiquidity = idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
 
