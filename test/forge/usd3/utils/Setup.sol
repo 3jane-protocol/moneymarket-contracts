@@ -244,6 +244,29 @@ contract Setup is Test, IEvents {
         testProtocolConfig.setConfig(MAX_ON_CREDIT_KEY, _maxOnCredit);
     }
 
+    /**
+     * @notice Create market debt by setting up a borrower with a credit line and borrowing
+     * @param borrower Address that will borrow
+     * @param borrowAmountUSDC Amount to borrow in USDC terms
+     */
+    function createMarketDebt(address borrower, uint256 borrowAmountUSDC) public {
+        // Get the market ID from USD3 strategy
+        Id marketId = USD3(address(strategy)).marketId();
+        MarketParams memory marketParams = USD3(address(strategy)).marketParams();
+        IMorpho morpho = USD3(address(strategy)).morphoCredit();
+
+        // Convert USDC amount to waUSDC amount
+        uint256 borrowAmountWaUSDC = waUSDC.convertToShares(borrowAmountUSDC);
+
+        // Set credit line for borrower (double the borrow amount for safety)
+        vm.prank(marketParams.creditLine);
+        MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, borrowAmountWaUSDC * 2, 0);
+
+        // Execute borrow through helper - only helper is authorized to borrow
+        vm.prank(borrower);
+        helper.borrow(marketParams, borrowAmountWaUSDC, 0, borrower, borrower);
+    }
+
     function _setTokenAddrs() internal {
         // Deploy mock USDC at the mainnet address expected by reinitialize()
         address expectedUsdcAddress = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;

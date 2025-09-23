@@ -45,6 +45,9 @@ contract sUSD3Coverage is Setup {
         vm.prank(management);
         usd3Strategy.setSUSD3(address(susd3Strategy));
 
+        // Set MAX_ON_CREDIT to allow deployment to MorphoCredit
+        setMaxOnCredit(8000); // 80% max deployment
+
         // Setup test users
         airdrop(asset, alice, 100000e6);
         airdrop(asset, bob, 100000e6);
@@ -65,6 +68,9 @@ contract sUSD3Coverage is Setup {
         asset.approve(address(usd3Strategy), type(uint256).max);
         usd3Strategy.deposit(10000e6, charlie);
         vm.stopPrank();
+
+        // Note: With debt-based subordination, sUSD3 deposits are limited by market debt.
+        // If there's no debt, sUSD3 deposit limit will be 0, which is correct behavior.
     }
 
     /**

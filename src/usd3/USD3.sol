@@ -370,7 +370,7 @@ contract USD3 is BaseHooksUpgradeable {
                     PUBLIC VIEW FUNCTIONS (OVERRIDES)
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Returns available withdraw limit, enforcing commitment time restrictions and subordination ratio
+    /// @dev Returns available withdraw limit, enforcing commitment time and MAX_ON_CREDIT constraints
     /// @param _owner Address to check limit for
     /// @return Maximum amount that can be withdrawn
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
@@ -388,24 +388,28 @@ contract USD3 is BaseHooksUpgradeable {
             return availableLiquidity;
         }
 
-        // Check subordination constraint based on market debt
-        if (sUSD3 != address(0)) {
-            // Get the subordinated debt cap in USDC terms
-            uint256 subordinatedDebtCapUSDC = getSubordinatedDebtCapInAssets();
+        // Check MAX_ON_CREDIT constraint
+        // Ensure withdrawal doesn't push utilized ratio above MAX_ON_CREDIT
+        uint256 maxOnCreditRatio = maxOnCredit();
+        if (maxOnCreditRatio > 0 && maxOnCreditRatio < MAX_BPS) {
+            // Get actual utilized amount (borrowed funds that can't be recalled)
+            (,, uint256 totalBorrowAssetsWaUSDC,) = getMarketLiquidity();
+            uint256 utilizedUSDC = WAUSDC.convertToAssets(totalBorrowAssetsWaUSDC);
 
-            if (subordinatedDebtCapUSDC > 0) {
-                // Get current USD3 total assets in USDC
-                uint256 currentTotalAssetsUSDC = TokenizedStrategy.totalAssets();
+            uint256 currentTotalUSDC = TokenizedStrategy.totalAssets();
 
-                if (currentTotalAssetsUSDC <= subordinatedDebtCapUSDC) {
-                    availableLiquidity = 0; // Cannot withdraw, need to maintain coverage
-                } else {
-                    // Only allow withdrawal of excess above required coverage
-                    uint256 maxWithdrawableUSDC = currentTotalAssetsUSDC - subordinatedDebtCapUSDC;
-                    availableLiquidity = Math.min(availableLiquidity, maxWithdrawableUSDC);
-                }
+            // Calculate minimum total assets needed to maintain MAX_ON_CREDIT ratio
+            // utilizedUSDC / minTotal <= maxOnCreditRatio / MAX_BPS
+            // minTotal = utilizedUSDC * MAX_BPS / maxOnCreditRatio
+            uint256 minRequiredTotal = (utilizedUSDC * MAX_BPS) / maxOnCreditRatio;
+
+            if (currentTotalUSDC <= minRequiredTotal) {
+                // Cannot withdraw without exceeding MAX_ON_CREDIT
+                return 0;
             }
-            // If no debt (subordinatedDebtCapUSDC == 0), no subordination constraint
+            // Can only withdraw the excess
+            uint256 maxWithdrawable = currentTotalUSDC - minRequiredTotal;
+            availableLiquidity = Math.min(availableLiquidity, maxWithdrawable);
         }
 
         // Check commitment time
@@ -647,20 +651,31 @@ contract USD3 is BaseHooksUpgradeable {
      * @return Maximum debt amount that can be subordinated, expressed in USDC
      */
     function getSubordinatedDebtCapInAssets() public view returns (uint256) {
+        // Get actual borrowed amount
         (,, uint256 totalBorrowAssetsWaUSDC,) = getMarketLiquidity();
+        uint256 actualDebtUSDC = WAUSDC.convertToAssets(totalBorrowAssetsWaUSDC);
 
-        if (totalBorrowAssetsWaUSDC == 0) {
+        // Calculate potential debt based on MAX_ON_CREDIT
+        uint256 totalAssetsUSDC = TokenizedStrategy.totalAssets();
+        uint256 maxOnCreditRatio = maxOnCredit();
+        uint256 potentialDebtUSDC = 0;
+
+        if (maxOnCreditRatio > 0) {
+            potentialDebtUSDC = (totalAssetsUSDC * maxOnCreditRatio) / MAX_BPS;
+        }
+
+        // Use the maximum of actual or potential debt
+        // This handles cases where interest has pushed debt above MAX_ON_CREDIT
+        uint256 maxDebtUSDC = actualDebtUSDC > potentialDebtUSDC ? actualDebtUSDC : potentialDebtUSDC;
+
+        if (maxDebtUSDC == 0) {
             return 0; // No debt to subordinate
         }
 
-        // Convert waUSDC debt to USDC value
-        uint256 totalBorrowAssetsUSDC = WAUSDC.convertToAssets(totalBorrowAssetsWaUSDC);
-
         uint256 maxSubRatio = maxSubordinationRatio(); // e.g., 1500 (15%)
 
-        // Cap on subordinated debt = total debt * max ratio
-        // If debt is 10,000 USDC and ratio is 15%, max subordinated = 1,500 USDC
-        return (totalBorrowAssetsUSDC * maxSubRatio) / MAX_BPS;
+        // Cap on subordinated debt = max(actual, potential) * subordination ratio
+        return (maxDebtUSDC * maxSubRatio) / MAX_BPS;
     }
 
     /*//////////////////////////////////////////////////////////////
