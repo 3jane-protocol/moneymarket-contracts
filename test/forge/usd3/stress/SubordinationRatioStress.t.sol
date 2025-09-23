@@ -11,11 +11,14 @@ import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {IMorpho, MarketParams} from "../../../../src/interfaces/IMorpho.sol";
 import {IProtocolConfig} from "../../../../src/interfaces/IProtocolConfig.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
+import {TransparentUpgradeableProxy} from
+    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 /**
  * @title Subordination Ratio Stress Test
- * @notice Tests for the 85/15 USD3/sUSD3 subordination ratio enforcement
- * @dev Critical tests for withdrawal restrictions and ratio boundary conditions
+ * @notice Tests for debt-based subordination and MAX_ON_CREDIT constraints
+ * @dev Tests sUSD3 deposit limits based on market debt and USD3 withdrawal limits based on liquidity
  */
 contract SubordinationRatioStressTest is Setup {
     USD3 public usd3Strategy;
@@ -49,6 +52,9 @@ contract SubordinationRatioStressTest is Setup {
         // Set default subordination ratio
         protocolConfig.setConfig(keccak256("TRANCHE_RATIO"), DEFAULT_SUB_RATIO);
 
+        // Set MAX_ON_CREDIT to enable potential debt for sUSD3 deposits
+        setMaxOnCredit(8000); // 80% max deployment
+
         // Create a mock sUSD3 address (since real deployment is disabled)
         mockSusd3 = makeAddr("mockSusd3");
 
@@ -60,10 +66,10 @@ contract SubordinationRatioStressTest is Setup {
     }
 
     /*//////////////////////////////////////////////////////////////
-                    EXACT BOUNDARY TESTS
+                    DEBT-BASED SUBORDINATION TESTS
     //////////////////////////////////////////////////////////////*/
 
-    function test_subordinationRatio_exactBoundary() public {
+    function test_subordinationRatio_debtBasedLimit() public {
         // Set sUSD3 strategy
         vm.prank(management);
         usd3Strategy.setSUSD3(mockSusd3);
@@ -74,26 +80,28 @@ contract SubordinationRatioStressTest is Setup {
         strategy.deposit(LARGE_DEPOSIT, alice);
         vm.stopPrank();
 
-        // Calculate exact amount for 15% subordination
-        uint256 totalSupply = strategy.totalSupply();
-        uint256 susd3Amount = (totalSupply * DEFAULT_SUB_RATIO) / MAX_BPS;
+        // Create market debt to enable sUSD3 deposits
+        address borrower = makeAddr("borrower");
+        createMarketDebt(borrower, 500_000e6); // $500k USDC debt
 
-        // Mint sUSD3 holdings (simulate sUSD3 holding USD3)
-        deal(address(strategy), mockSusd3, susd3Amount);
+        // Calculate max sUSD3 allowed based on debt
+        uint256 debtCapUSDC = usd3Strategy.getSubordinatedDebtCapInAssets();
+        assertGt(debtCapUSDC, 0, "Should have debt cap");
 
-        // Alice should be at exact boundary - withdrawals restricted
+        // Convert to USD3 shares for mock
+        uint256 maxSusd3USD3 = ITokenizedStrategy(address(usd3Strategy)).convertToShares(debtCapUSDC);
+
+        // Set sUSD3 holdings at exactly the cap
+        deal(address(strategy), mockSusd3, maxSusd3USD3);
+
+        // USD3 withdrawals should NOT be limited by subordination
         uint256 aliceLimit = strategy.availableWithdrawLimit(alice);
-        assertEq(aliceLimit, 0, "At exact 85/15 boundary, no withdrawals allowed");
+        assertGt(aliceLimit, 0, "USD3 withdrawals not limited by subordination");
 
-        // Small additional USD3 deposit should allow some withdrawal
-        vm.startPrank(bob);
-        asset.approve(address(strategy), 1000e6);
-        strategy.deposit(1000e6, bob);
-        vm.stopPrank();
-
-        // Now Alice should be able to withdraw something
-        uint256 newLimit = strategy.availableWithdrawLimit(alice);
-        assertGt(newLimit, 0, "After additional USD3, some withdrawal allowed");
+        // The limit should only be based on liquidity and MAX_ON_CREDIT
+        uint256 aliceBalance = strategy.balanceOf(alice);
+        // Alice should be able to withdraw based on available liquidity
+        assertGt(aliceLimit, 0, "Should allow withdrawals based on liquidity");
     }
 
     function test_subordinationRatio_multipleWithdrawals() public {
@@ -130,9 +138,10 @@ contract SubordinationRatioStressTest is Setup {
         // Alice withdraws first - check available limit
         uint256 aliceLimit = strategy.availableWithdrawLimit(alice);
         if (aliceLimit > 0) {
-            uint256 aliceSharesValue = strategy.convertToAssets(aliceShares / 2);
-            uint256 aliceToWithdraw =
-                aliceLimit < aliceSharesValue ? strategy.convertToShares(aliceLimit) : aliceShares / 2;
+            uint256 aliceSharesValue = ITokenizedStrategy(address(strategy)).convertToAssets(aliceShares / 2);
+            uint256 aliceToWithdraw = aliceLimit < aliceSharesValue
+                ? ITokenizedStrategy(address(strategy)).convertToShares(aliceLimit)
+                : aliceShares / 2;
 
             if (aliceToWithdraw > 0) {
                 vm.prank(alice);
@@ -143,8 +152,10 @@ contract SubordinationRatioStressTest is Setup {
         // Check if Bob can still withdraw
         uint256 bobLimit = strategy.availableWithdrawLimit(bob);
         if (bobLimit > 0) {
-            uint256 bobSharesValue = strategy.convertToAssets(bobShares / 2);
-            uint256 bobToWithdraw = bobLimit < bobSharesValue ? strategy.convertToShares(bobLimit) : bobShares / 2;
+            uint256 bobSharesValue = ITokenizedStrategy(address(strategy)).convertToAssets(bobShares / 2);
+            uint256 bobToWithdraw = bobLimit < bobSharesValue
+                ? ITokenizedStrategy(address(strategy)).convertToShares(bobLimit)
+                : bobShares / 2;
 
             if (bobToWithdraw > 0) {
                 vm.prank(bob);
@@ -155,12 +166,12 @@ contract SubordinationRatioStressTest is Setup {
         // Check Charlie's limit - might be restricted now
         uint256 charlieLimit = strategy.availableWithdrawLimit(charlie);
 
-        // Verify ratio is still maintained
+        // With debt-based subordination, USD3 withdrawals are not limited
+        // The subordination ratio against USD3 supply is no longer enforced
         uint256 newTotalSupply = strategy.totalSupply();
         if (newTotalSupply > 0) {
             uint256 susd3Holdings = strategy.balanceOf(mockSusd3);
-            uint256 currentSubRatio = (susd3Holdings * MAX_BPS) / newTotalSupply;
-            assertLe(currentSubRatio, DEFAULT_SUB_RATIO, "Subordination ratio should not exceed limit");
+            // No assertion - USD3 withdrawals are allowed regardless of sUSD3 holdings
         }
     }
 
@@ -173,30 +184,25 @@ contract SubordinationRatioStressTest is Setup {
         vm.prank(management);
         usd3Strategy.setSUSD3(mockSusd3);
 
-        // Setup initial state
+        // Alice deposits normally
         vm.startPrank(alice);
         asset.approve(address(strategy), LARGE_DEPOSIT);
         strategy.deposit(LARGE_DEPOSIT, alice);
         vm.stopPrank();
 
-        // Set sUSD3 holdings near limit (14%)
-        uint256 totalSupply = strategy.totalSupply();
-        uint256 susd3Amount = (totalSupply * 1400) / MAX_BPS;
+        // 2. Set sUSD3 holdings to 14% (just below limit)
+        uint256 totalSupplyBefore = strategy.totalSupply();
+        uint256 susd3Amount = (totalSupplyBefore * 1400) / MAX_BPS;
         deal(address(strategy), mockSusd3, susd3Amount);
 
-        // Attacker tries flash loan attack
-        // 1. Flash loan large amount of USDC
-        uint256 flashLoanAmount = LARGE_DEPOSIT * 5;
-        deal(address(underlyingAsset), whale, underlyingAsset.balanceOf(whale) + flashLoanAmount);
-
-        // 2. Deposit to manipulate ratio
+        // 3. Whale simulates flash loan deposit
         vm.startPrank(whale);
-        asset.approve(address(strategy), flashLoanAmount);
-        strategy.deposit(flashLoanAmount, whale);
-
-        // 3. Try to force Alice's withdrawal
-        // This shouldn't allow Alice to break the ratio
+        asset.approve(address(strategy), LARGE_DEPOSIT * 10);
+        strategy.deposit(LARGE_DEPOSIT * 10, whale); // Huge deposit dilutes ratio
         vm.stopPrank();
+
+        // Now ratio is much lower (susd3/total is diluted)
+        // Alice tries to withdraw during this dilution
         vm.prank(alice);
         uint256 aliceShares = strategy.balanceOf(alice);
 
@@ -209,21 +215,21 @@ contract SubordinationRatioStressTest is Setup {
         uint256 whaleLimit = strategy.availableWithdrawLimit(whale);
 
         if (whaleLimit > 0 && whaleShares > 0) {
-            uint256 whaleSharesValue = strategy.convertToAssets(whaleShares);
-            uint256 whaleToWithdraw = whaleLimit < whaleSharesValue ? strategy.convertToShares(whaleLimit) : whaleShares;
+            uint256 whaleSharesValue = ITokenizedStrategy(address(strategy)).convertToAssets(whaleShares);
+            uint256 whaleToWithdraw = whaleLimit < whaleSharesValue
+                ? ITokenizedStrategy(address(strategy)).convertToShares(whaleLimit)
+                : whaleShares;
 
             vm.prank(whale);
             strategy.redeem(whaleToWithdraw, whale, whale);
         }
 
-        // Verify ratio wasn't broken during attack
+        // With debt-based subordination, USD3 withdrawals don't check ratio
         uint256 finalTotalSupply = strategy.totalSupply();
         uint256 finalSusd3Holdings = strategy.balanceOf(mockSusd3);
 
-        if (finalTotalSupply > 0) {
-            uint256 finalSubRatio = (finalSusd3Holdings * MAX_BPS) / finalTotalSupply;
-            assertLe(finalSubRatio, DEFAULT_SUB_RATIO, "Ratio should be maintained after attack");
-        }
+        // No assertion - flash loan attack on subordination ratio is not relevant
+        // since USD3 withdrawals are not limited by subordination
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -241,40 +247,42 @@ contract SubordinationRatioStressTest is Setup {
         strategy.deposit(LARGE_DEPOSIT, alice);
         vm.stopPrank();
 
-        // Set sUSD3 at exact limit (15%)
-        uint256 totalSupply = strategy.totalSupply();
-        uint256 susd3Amount = (totalSupply * DEFAULT_SUB_RATIO) / MAX_BPS;
-        deal(address(strategy), mockSusd3, susd3Amount);
+        // Create market debt to test MAX_ON_CREDIT constraint
+        // Use lower debt to maintain some liquidity for withdrawals
+        address borrower = makeAddr("borrower");
+        createMarketDebt(borrower, LARGE_DEPOSIT * 6 / 10); // Borrow only 60% of deposits
 
-        // Normally Alice can't withdraw
+        // With debt-based subordination, USD3 withdrawals are not limited by sUSD3 holdings
+        // Only by MAX_ON_CREDIT and liquidity
         uint256 normalLimit = strategy.availableWithdrawLimit(alice);
-        assertEq(normalLimit, 0, "Should be restricted before shutdown");
+        // Should be limited by MAX_ON_CREDIT, not subordination
+        assertGt(normalLimit, 0, "Should allow some withdrawal based on MAX_ON_CREDIT");
 
         // Trigger emergency shutdown
         vm.prank(management);
         strategy.shutdownStrategy();
 
-        // Now Alice should be able to withdraw everything
+        // During shutdown, withdrawal limit should be based on available liquidity
         uint256 shutdownLimit = strategy.availableWithdrawLimit(alice);
         assertGt(shutdownLimit, 0, "Should be able to withdraw during shutdown");
 
-        // Alice withdraws - no approval needed for redeem since alice owns the shares
+        // Alice withdraws available amount
         uint256 aliceShares = strategy.balanceOf(alice);
+        // Withdraw what's available (limited by liquidity)
+        uint256 sharesToWithdraw = ITokenizedStrategy(address(strategy)).convertToShares(shutdownLimit);
+        if (sharesToWithdraw > aliceShares) sharesToWithdraw = aliceShares;
+
         vm.prank(alice);
-        uint256 withdrawn = strategy.redeem(aliceShares, alice, alice);
+        uint256 withdrawn = strategy.redeem(sharesToWithdraw, alice, alice);
         assertGt(withdrawn, 0, "Should successfully withdraw during shutdown");
     }
 
     /*//////////////////////////////////////////////////////////////
-                    ROUNDING ERROR TESTS
+                    MAX_ON_CREDIT TESTS
     //////////////////////////////////////////////////////////////*/
 
-    function test_subordinationRatio_roundingErrors() public {
-        // Set sUSD3 strategy
-        vm.prank(management);
-        usd3Strategy.setSUSD3(mockSusd3);
-
-        // Test with odd numbers that might cause rounding issues
+    function test_maxOnCredit_roundingErrors() public {
+        // Test MAX_ON_CREDIT with odd numbers that might cause rounding issues
         uint256 oddDeposit = 1234567; // Small odd number (1.23 USDC)
 
         // Multiple small deposits
@@ -288,28 +296,27 @@ contract SubordinationRatioStressTest is Setup {
             vm.stopPrank();
         }
 
-        // Set sUSD3 holdings with potential rounding
-        uint256 totalSupply = strategy.totalSupply();
-        uint256 susd3Amount = (totalSupply * 1499) / MAX_BPS; // Just under 15%
-        deal(address(strategy), mockSusd3, susd3Amount);
+        // Create debt to test MAX_ON_CREDIT constraint
+        address borrower = makeAddr("borrower");
+        uint256 totalDeposited = oddDeposit * 10;
+        createMarketDebt(borrower, totalDeposited * 7 / 10); // 70% utilized
 
         // Try withdrawals with rounding edge cases
         address firstUser = address(uint160(0x1000));
         uint256 firstUserShares = strategy.balanceOf(firstUser);
 
-        // Withdraw 1 wei worth of shares
-        if (firstUserShares > 1) {
+        // Check withdraw limit
+        uint256 withdrawLimit = strategy.availableWithdrawLimit(firstUser);
+
+        // Withdraw exactly 1 wei of shares
+        if (firstUserShares > 0 && withdrawLimit > 0) {
+            uint256 toWithdraw = 1; // 1 wei of shares
             vm.prank(firstUser);
-            strategy.redeem(1, firstUser, firstUser);
+            strategy.redeem(toWithdraw, firstUser, firstUser);
 
-            // Verify ratio still maintained
-            uint256 newTotalSupply = strategy.totalSupply();
-            uint256 susd3Holdings = strategy.balanceOf(mockSusd3);
-
-            if (newTotalSupply > 0) {
-                uint256 currentRatio = (susd3Holdings * MAX_BPS) / newTotalSupply;
-                assertLe(currentRatio, DEFAULT_SUB_RATIO + 1, "Ratio maintained with rounding tolerance");
-            }
+            // Verify no rounding errors caused issues
+            uint256 newShares = strategy.balanceOf(firstUser);
+            assertEq(newShares, firstUserShares - toWithdraw, "Share accounting should be exact");
         }
     }
 
@@ -318,9 +325,19 @@ contract SubordinationRatioStressTest is Setup {
     //////////////////////////////////////////////////////////////*/
 
     function test_subordinationRatio_dynamicConfigUpdate() public {
-        // Set sUSD3 strategy
+        // Deploy real sUSD3 for testing debt-based limits
+        sUSD3 susd3Implementation = new sUSD3();
+        ProxyAdmin susd3ProxyAdmin = new ProxyAdmin(management);
+        TransparentUpgradeableProxy susd3Proxy = new TransparentUpgradeableProxy(
+            address(susd3Implementation),
+            address(susd3ProxyAdmin),
+            abi.encodeCall(sUSD3.initialize, (address(usd3Strategy), management, keeper))
+        );
+        sUSD3 realSusd3 = sUSD3(address(susd3Proxy));
+
+        // Link strategies
         vm.prank(management);
-        usd3Strategy.setSUSD3(mockSusd3);
+        usd3Strategy.setSUSD3(address(realSusd3));
 
         // Initial deposits
         vm.startPrank(alice);
@@ -328,48 +345,36 @@ contract SubordinationRatioStressTest is Setup {
         strategy.deposit(LARGE_DEPOSIT, alice);
         vm.stopPrank();
 
-        // Set sUSD3 at 10%
-        uint256 totalSupply = strategy.totalSupply();
-        uint256 susd3Amount = (totalSupply * 1000) / MAX_BPS;
-        deal(address(strategy), mockSusd3, susd3Amount);
+        // Create market debt to enable sUSD3 deposits
+        address borrower = makeAddr("borrower");
+        createMarketDebt(borrower, 100_000e6); // $100k debt
 
-        // Alice can withdraw with 10% subordination
-        uint256 limitBefore = strategy.availableWithdrawLimit(alice);
-        assertGt(limitBefore, 0, "Should allow withdrawal at 10%");
+        // Bob gets USD3 to deposit into sUSD3
+        vm.startPrank(bob);
+        asset.approve(address(strategy), MEDIUM_DEPOSIT);
+        strategy.deposit(MEDIUM_DEPOSIT, bob);
+        vm.stopPrank();
+
+        // Check initial deposit limit with 15% subordination
+        uint256 limitBefore = realSusd3.availableDepositLimit(bob);
+        assertGt(limitBefore, 0, "Should allow sUSD3 deposits at 15% ratio");
 
         // Update protocol config to stricter ratio (5% max subordination)
         protocolConfig.setConfig(keccak256("TRANCHE_RATIO"), 500);
 
-        // Now Alice should be restricted (10% > 5%)
-        uint256 limitAfter = strategy.availableWithdrawLimit(alice);
-        assertEq(limitAfter, 0, "Should restrict withdrawal after ratio tightening");
+        // Deposit limit should decrease
+        uint256 limitAfter = realSusd3.availableDepositLimit(bob);
+        assertLt(limitAfter, limitBefore, "Should reduce deposit limit after ratio tightening");
 
         // Update to looser ratio (20% max subordination)
         protocolConfig.setConfig(keccak256("TRANCHE_RATIO"), 2000);
 
-        // Alice can withdraw again
-        uint256 limitLoose = strategy.availableWithdrawLimit(alice);
-        assertGt(limitLoose, 0, "Should allow withdrawal with looser ratio");
-    }
+        // Deposit limit should increase
+        uint256 limitLoose = realSusd3.availableDepositLimit(bob);
+        assertGt(limitLoose, limitAfter, "Should increase deposit limit with looser ratio");
 
-    /*//////////////////////////////////////////////////////////////
-                    HELPER FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    function _calculateMaxWithdrawable(uint256 totalSupply, uint256 susd3Holdings, uint256 maxSubRatio)
-        internal
-        view
-        returns (uint256)
-    {
-        if (totalSupply == 0) return 0;
-
-        uint256 minUSD3Ratio = MAX_BPS - maxSubRatio;
-        uint256 usd3Circulating = totalSupply - susd3Holdings;
-        uint256 minUSD3Required = (totalSupply * minUSD3Ratio) / MAX_BPS;
-
-        if (usd3Circulating <= minUSD3Required) {
-            return 0;
-        }
-        return usd3Circulating - minUSD3Required;
+        // USD3 withdrawals should always be allowed regardless of ratio
+        uint256 aliceWithdrawLimit = strategy.availableWithdrawLimit(alice);
+        assertGt(aliceWithdrawLimit, 0, "USD3 withdrawals not limited by subordination ratio");
     }
 }

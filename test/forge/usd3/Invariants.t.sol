@@ -53,6 +53,9 @@ contract InvariantsTest is Setup {
         vm.prank(management);
         usd3Strategy.setSUSD3(address(susd3Strategy));
 
+        // Set MAX_ON_CREDIT to enable potential debt calculation for sUSD3 deposits
+        setMaxOnCredit(8000); // 80% max deployment
+
         // Setup test actors
         _setupActors();
 
@@ -85,20 +88,40 @@ contract InvariantsTest is Setup {
             }
         }
 
+        // Create market debt to enable sUSD3 deposits (debt-based subordination)
+        // Only create debt if there were USD3 deposits
+        if (totalDepositedUSD3 > 0) {
+            address borrower = makeAddr("marketBorrower");
+            // Create debt smaller than deposits to ensure liquidity
+            uint256 debtAmount = totalDepositedUSD3 / 2; // 50% of deposits
+            if (debtAmount > 100e6) {
+                // At least $100 debt
+                createMarketDebt(borrower, debtAmount);
+            }
+        }
+
         // Give some actors USD3 to deposit into sUSD3 (smaller amounts to respect subordination ratio)
         for (uint256 i = 0; i < 2; i++) {
             address actor = actors[i];
             uint256 usd3Balance = ERC20(address(usd3Strategy)).balanceOf(actor);
 
             if (usd3Balance > 0) {
-                // Only deposit 10% into sUSD3 to stay well below 15% subordination limit
-                uint256 depositAmount = usd3Balance / 10;
-                vm.prank(actor);
-                ERC20(address(usd3Strategy)).approve(address(susd3Strategy), depositAmount);
+                // Check available deposit limit based on debt-based subordination
+                uint256 availableLimit = susd3Strategy.availableDepositLimit(actor);
+                if (availableLimit > 0) {
+                    // Only deposit 10% of balance or the available limit, whichever is smaller
+                    uint256 depositAmount = usd3Balance / 10;
+                    if (depositAmount > availableLimit) {
+                        depositAmount = availableLimit;
+                    }
 
-                vm.prank(actor);
-                susd3Strategy.deposit(depositAmount, actor);
-                totalDepositedSUSD3 += depositAmount;
+                    vm.prank(actor);
+                    ERC20(address(usd3Strategy)).approve(address(susd3Strategy), depositAmount);
+
+                    vm.prank(actor);
+                    susd3Strategy.deposit(depositAmount, actor);
+                    totalDepositedSUSD3 += depositAmount;
+                }
             }
         }
     }
@@ -141,115 +164,72 @@ contract InvariantsTest is Setup {
 
     /**
      * @notice Invariant: Subordination deposit limit is correctly enforced
-     * @dev Verifies that sUSD3 deposit limits are properly enforced based on the subordination ratio
-     * @dev The ratio can exceed 15% due to USD3 withdrawals, but new deposits must be blocked when ratio >= 15%
+     * @dev Verifies that sUSD3 deposit limits are properly enforced based on debt-based subordination
+     * @dev sUSD3 can only back up to maxSubRatio of the market debt
      */
     function invariant_subordinationDepositEnforcement() public {
-        uint256 usd3TotalSupply = ERC20(address(usd3Strategy)).totalSupply();
+        // Get the subordinated debt cap from USD3
+        uint256 debtCapUSDC = usd3Strategy.getSubordinatedDebtCapInAssets();
 
-        if (usd3TotalSupply == 0) {
-            // When USD3 has no supply, sUSD3 should not allow deposits
-            uint256 limitWhenZero = susd3Strategy.availableDepositLimit(address(this));
-            assertEq(limitWhenZero, 0, "Should not allow deposits when USD3 supply is zero");
-            return;
-        }
-
+        // Get current sUSD3 holdings of USD3
         uint256 susd3Usd3Holdings = ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
-        uint256 ratioBps = (susd3Usd3Holdings * 10_000) / usd3TotalSupply;
 
-        uint256 depositLimit = susd3Strategy.availableDepositLimit(address(this));
+        // Convert USD3 holdings to USDC value
+        uint256 susd3HoldingsUSDC = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(susd3Usd3Holdings);
 
-        if (ratioBps >= 1500) {
-            // 15% or higher
-            assertEq(depositLimit, 0, "Should not allow deposits when ratio >= 15%");
+        // Get deposit limit for an actual actor, not the test contract
+        address testActor = actors.length > 0 ? actors[0] : address(this);
+        uint256 depositLimit = susd3Strategy.availableDepositLimit(testActor);
+
+        if (debtCapUSDC == 0) {
+            // No debt to subordinate, no deposits should be allowed
+            assertEq(depositLimit, 0, "Should not allow deposits when no debt exists");
+        } else if (susd3HoldingsUSDC >= debtCapUSDC) {
+            // Already at or above cap
+            assertEq(depositLimit, 0, "Should not allow deposits when at debt cap");
         } else {
-            assertGt(depositLimit, 0, "Should allow deposits when ratio < 15%");
-
-            // Additionally verify the limit is calculated correctly
-            uint256 maxAllowed = (usd3TotalSupply * 1500) / 10_000;
-            uint256 expectedLimit = maxAllowed > susd3Usd3Holdings ? maxAllowed - susd3Usd3Holdings : 0;
-            assertEq(depositLimit, expectedLimit, "Deposit limit calculation incorrect");
+            // Should allow deposits up to the cap
+            uint256 remainingCapacityUSDC = debtCapUSDC - susd3HoldingsUSDC;
+            uint256 expectedLimitUSD3 = ITokenizedStrategy(address(usd3Strategy)).convertToShares(remainingCapacityUSDC);
+            assertEq(depositLimit, expectedLimitUSD3, "Deposit limit calculation incorrect");
         }
     }
 
     /**
-     * @notice Invariant: USD3 withdrawals respect subordination ratio
-     * @dev Ensures USD3 holders cannot withdraw if it would violate minimum ratio
-     * @dev This test verifies the subordination math without calling availableWithdrawLimit
-     */
-    function invariant_subordinationWithdrawalEnforcement() public {
-        uint256 usd3TotalSupply = ERC20(address(usd3Strategy)).totalSupply();
-
-        // Skip if no supply
-        if (usd3TotalSupply == 0) {
-            return;
-        }
-
-        // Get sUSD3 address through a view call
-        address susd3Addr = address(susd3Strategy);
-
-        // Skip if sUSD3 not set (should always be set in our test setup)
-        if (susd3Addr == address(0)) {
-            return;
-        }
-
-        uint256 susd3Holdings = ERC20(address(usd3Strategy)).balanceOf(susd3Addr);
-
-        // Get the max subordination ratio from USD3
-        uint256 maxSubRatio = usd3Strategy.maxSubordinationRatio();
-        uint256 minUSD3Ratio = 10_000 - maxSubRatio; // e.g., 8500 for 85%
-
-        // Calculate what the circulating USD3 would be
-        uint256 usd3Circulating = usd3TotalSupply - susd3Holdings;
-        uint256 minUSD3Required = (usd3TotalSupply * minUSD3Ratio) / 10_000;
-
-        // During shutdown, limits should not apply
-        if (ITokenizedStrategy(address(usd3Strategy)).isShutdown()) {
-            return;
-        }
-
-        // Verify the subordination ratio is maintained
-        // The circulating USD3 should be at least the minimum required
-        if (usd3Circulating < minUSD3Required) {
-            // This should only happen if the ratio has been violated through some edge case
-            // In normal operations, withdrawals should have been blocked before reaching this state
-            assertFalse(true, "Subordination ratio violated - circulating USD3 below minimum");
-        }
-
-        // Also verify that sUSD3 holdings don't exceed the maximum subordination ratio
-        uint256 actualSubRatioBps = susd3Holdings > 0 ? (susd3Holdings * 10_000) / usd3TotalSupply : 0;
-
-        assertLe(actualSubRatioBps, maxSubRatio, "sUSD3 holdings exceed maximum subordination ratio");
-    }
-
-    /**
-     * @notice Invariant: Combined subordination ratio is always maintained
-     * @dev Verifies the total system maintains proper senior/subordinate balance
+     * @notice Invariant: Subordination ratio is maintained based on debt
+     * @dev Verifies sUSD3 holdings don't exceed the debt-based subordination cap
      */
     function invariant_totalSubordinationRatio() public {
-        uint256 usd3TotalSupply = ERC20(address(usd3Strategy)).totalSupply();
+        // Get the subordinated debt cap from USD3
+        uint256 debtCapUSDC = usd3Strategy.getSubordinatedDebtCapInAssets();
 
-        // Use the susd3Strategy address directly instead of calling sUSD3()
+        // Get current sUSD3 holdings of USD3
         address susd3Addr = address(susd3Strategy);
-        if (usd3TotalSupply == 0 || susd3Addr == address(0)) {
-            return;
-        }
-
         uint256 susd3Holdings = ERC20(address(usd3Strategy)).balanceOf(susd3Addr);
 
-        uint256 maxSubRatio = usd3Strategy.maxSubordinationRatio();
+        if (susd3Holdings == 0) {
+            return; // No subordination to check
+        }
 
-        // The ratio of sUSD3's USD3 holdings to total USD3 supply should never exceed maxSubRatio
-        uint256 actualRatioBps = (susd3Holdings * 10_000) / usd3TotalSupply;
+        // Convert USD3 holdings to USDC value
+        uint256 susd3HoldingsUSDC = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(susd3Holdings);
 
-        assertLe(actualRatioBps, maxSubRatio, "Subordination ratio exceeded maximum allowed");
-
-        // Also verify that USD3 circulating maintains minimum ratio
-        uint256 minUSD3Ratio = 10_000 - maxSubRatio;
-        uint256 usd3Circulating = usd3TotalSupply - susd3Holdings;
-        uint256 circulatingRatioBps = (usd3Circulating * 10_000) / usd3TotalSupply;
-
-        assertGe(circulatingRatioBps, minUSD3Ratio, "USD3 circulating ratio below minimum required");
+        // sUSD3 holdings should not exceed the debt-based cap
+        // Note: The cap can be temporarily exceeded if debt decreases
+        // but new deposits will be blocked
+        if (debtCapUSDC > 0) {
+            // This is a soft invariant - holdings can exceed cap if debt decreases
+            // but availableDepositLimit should be 0 when at/above cap
+            if (susd3HoldingsUSDC > debtCapUSDC) {
+                // Check deposit limit for one of the actors instead of this contract
+                if (actors.length > 0) {
+                    uint256 depositLimit = susd3Strategy.availableDepositLimit(actors[0]);
+                    // Allow for small rounding tolerance (0.01% of cap)
+                    uint256 tolerance = debtCapUSDC / 10000;
+                    assertLe(depositLimit, tolerance, "Deposits should be effectively blocked when above debt cap");
+                }
+            }
+        }
     }
 
     /**

@@ -255,6 +255,24 @@ contract Setup is Test, IEvents {
         MarketParams memory marketParams = USD3(address(strategy)).marketParams();
         IMorpho morpho = USD3(address(strategy)).morphoCredit();
 
+        // First ensure USD3 has deployed funds to the market by calling report
+        // This moves idle USDC to the lending market
+        vm.prank(keeper);
+        strategy.report();
+
+        // Create a payment cycle to allow borrowing
+        // CreditLineMock can call closeCycleAndPostObligations
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+
+        // Set cycle end date to current timestamp (closing the cycle "now")
+        uint256 cycleEndDate = block.timestamp;
+        vm.prank(marketParams.creditLine);
+        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            marketId, cycleEndDate, borrowers, repaymentBps, endingBalances
+        );
+
         // Convert USDC amount to waUSDC amount
         uint256 borrowAmountWaUSDC = waUSDC.convertToShares(borrowAmountUSDC);
 

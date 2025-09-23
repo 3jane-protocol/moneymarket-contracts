@@ -658,7 +658,7 @@ contract USD3 is BaseHooksUpgradeable {
         // Calculate potential debt based on MAX_ON_CREDIT
         uint256 totalAssetsUSDC = TokenizedStrategy.totalAssets();
         uint256 maxOnCreditRatio = maxOnCredit();
-        uint256 potentialDebtUSDC = 0;
+        uint256 potentialDebtUSDC;
 
         if (maxOnCreditRatio > 0) {
             potentialDebtUSDC = (totalAssetsUSDC * maxOnCreditRatio) / MAX_BPS;
@@ -666,7 +666,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Use the maximum of actual or potential debt
         // This handles cases where interest has pushed debt above MAX_ON_CREDIT
-        uint256 maxDebtUSDC = actualDebtUSDC > potentialDebtUSDC ? actualDebtUSDC : potentialDebtUSDC;
+        uint256 maxDebtUSDC = Math.max(actualDebtUSDC, potentialDebtUSDC);
 
         if (maxDebtUSDC == 0) {
             return 0; // No debt to subordinate
