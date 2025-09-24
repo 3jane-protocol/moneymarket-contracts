@@ -56,6 +56,9 @@ contract InvariantsTest is Setup {
         // Set MAX_ON_CREDIT to enable potential debt calculation for sUSD3 deposits
         setMaxOnCredit(8000); // 80% max deployment
 
+        // Set MORPHO_DEBT_CAP for debt-based subordination
+        setMorphoDebtCap(10_000e6); // 10K USDC debt cap
+
         // Setup test actors
         _setupActors();
 
@@ -169,7 +172,7 @@ contract InvariantsTest is Setup {
      */
     function invariant_subordinationDepositEnforcement() public {
         // Get the subordinated debt cap from USD3
-        uint256 debtCapUSDC = usd3Strategy.getSubordinatedDebtCapInAssets();
+        uint256 debtCapUSDC = susd3Strategy.getSubordinatedDebtCapInAssets();
 
         // Get current sUSD3 holdings of USD3
         uint256 susd3Usd3Holdings = ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
@@ -201,7 +204,7 @@ contract InvariantsTest is Setup {
      */
     function invariant_totalSubordinationRatio() public {
         // Get the subordinated debt cap from USD3
-        uint256 debtCapUSDC = usd3Strategy.getSubordinatedDebtCapInAssets();
+        uint256 debtCapUSDC = susd3Strategy.getSubordinatedDebtCapInAssets();
 
         // Get current sUSD3 holdings of USD3
         address susd3Addr = address(susd3Strategy);
@@ -332,8 +335,12 @@ contract InvariantsTest is Setup {
         uint256 susd3Supply = ERC20(address(susd3Strategy)).totalSupply();
 
         if (susd3Supply > 0 && usd3Supply > 0) {
-            uint256 maxAllowedSusd3 = (usd3Supply * 1500) / 8500; // 15% ratio
-            uint256 availableRoom = maxAllowedSusd3 > susd3Supply ? maxAllowedSusd3 - susd3Supply : 0;
+            // Get debt-based cap from sUSD3
+            uint256 debtCap = susd3Strategy.getSubordinatedDebtCapInAssets();
+            uint256 susd3HoldingsInAssets = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(
+                ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy))
+            );
+            uint256 availableRoom = debtCap > susd3HoldingsInAssets ? debtCap - susd3HoldingsInAssets : 0;
 
             assertLe(
                 susd3MaxDeposit,

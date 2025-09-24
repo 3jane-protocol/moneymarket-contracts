@@ -11,6 +11,7 @@ import {SharesMathLib} from "../libraries/SharesMathLib.sol";
 import {IStrategy} from "@tokenized-strategy/interfaces/IStrategy.sol";
 import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
+import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 
 /**
  * @title USD3
@@ -190,7 +191,7 @@ contract USD3 is BaseHooksUpgradeable {
      * @return waUSDCLiquidity Available liquidity in the market
      */
     function getMarketLiquidity()
-        internal
+        public
         view
         returns (uint256 totalSupplyAssets, uint256 totalShares, uint256 totalBorrowAssets, uint256 waUSDCLiquidity)
     {
@@ -617,16 +618,6 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Get the maximum subordination ratio from ProtocolConfig
-     * @return Maximum subordination ratio in basis points
-     */
-    function maxSubordinationRatio() public view returns (uint256) {
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
-        uint256 ratio = config.getTrancheRatio();
-        return ratio > 0 ? ratio : 1500; // Default to 15% if not set
-    }
-
-    /**
      * @notice Get the minimum commitment time from ProtocolConfig
      * @return Minimum commitment time in seconds
      */
@@ -641,41 +632,7 @@ contract USD3 is BaseHooksUpgradeable {
      */
     function supplyCap() public view returns (uint256) {
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
-        bytes32 supplyCapKey = 0x4bba860c0c28b1a4ae0214c01f08e53b00bfe2e087690d7a04d73a15360ec6a7; // keccak256("USD3_SUPPLY_CAP");
-        return config.config(supplyCapKey);
-    }
-
-    /**
-     * @notice Calculate maximum debt that can be underwritten by subordinate tranche
-     * @dev Returns the cap on how much market debt sUSD3 can provide first-loss coverage for
-     * @return Maximum debt amount that can be subordinated, expressed in USDC
-     */
-    function getSubordinatedDebtCapInAssets() public view returns (uint256) {
-        // Get actual borrowed amount
-        (,, uint256 totalBorrowAssetsWaUSDC,) = getMarketLiquidity();
-        uint256 actualDebtUSDC = WAUSDC.convertToAssets(totalBorrowAssetsWaUSDC);
-
-        // Calculate potential debt based on MAX_ON_CREDIT
-        uint256 totalAssetsUSDC = TokenizedStrategy.totalAssets();
-        uint256 maxOnCreditRatio = maxOnCredit();
-        uint256 potentialDebtUSDC;
-
-        if (maxOnCreditRatio > 0) {
-            potentialDebtUSDC = (totalAssetsUSDC * maxOnCreditRatio) / MAX_BPS;
-        }
-
-        // Use the maximum of actual or potential debt
-        // This handles cases where interest has pushed debt above MAX_ON_CREDIT
-        uint256 maxDebtUSDC = Math.max(actualDebtUSDC, potentialDebtUSDC);
-
-        if (maxDebtUSDC == 0) {
-            return 0; // No debt to subordinate
-        }
-
-        uint256 maxSubRatio = maxSubordinationRatio(); // e.g., 1500 (15%)
-
-        // Cap on subordinated debt = max(actual, potential) * subordination ratio
-        return (maxDebtUSDC * maxSubRatio) / MAX_BPS;
+        return config.config(ProtocolConfigLib.USD3_SUPPLY_CAP);
     }
 
     /*//////////////////////////////////////////////////////////////

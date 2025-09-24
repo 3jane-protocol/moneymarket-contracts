@@ -3,10 +3,14 @@ pragma solidity ^0.8.18;
 
 import "forge-std/Test.sol";
 import {Setup} from "../utils/Setup.sol";
+import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {ERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
+import {TransparentUpgradeableProxy} from
+    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {IMorpho, MarketParams} from "../../../../src/interfaces/IMorpho.sol";
 import {IProtocolConfig} from "../../../../src/interfaces/IProtocolConfig.sol";
@@ -22,6 +26,7 @@ import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transpare
  */
 contract SubordinationRatioStressTest is Setup {
     USD3 public usd3Strategy;
+    sUSD3 public susd3Strategy;
     address public mockSusd3;
     MockProtocolConfig public protocolConfig;
 
@@ -50,13 +55,21 @@ contract SubordinationRatioStressTest is Setup {
         protocolConfig = MockProtocolConfig(MorphoCredit(morphoAddress).protocolConfig());
 
         // Set default subordination ratio
-        protocolConfig.setConfig(keccak256("TRANCHE_RATIO"), DEFAULT_SUB_RATIO);
+        protocolConfig.setConfig(ProtocolConfigLib.TRANCHE_RATIO, DEFAULT_SUB_RATIO);
 
         // Set MAX_ON_CREDIT to enable potential debt for sUSD3 deposits
         setMaxOnCredit(8000); // 80% max deployment
 
-        // Create a mock sUSD3 address (since real deployment is disabled)
-        mockSusd3 = makeAddr("mockSusd3");
+        // Deploy and link sUSD3
+        sUSD3 susd3Implementation = new sUSD3();
+        ProxyAdmin susd3ProxyAdmin = new ProxyAdmin(management);
+        TransparentUpgradeableProxy susd3Proxy = new TransparentUpgradeableProxy(
+            address(susd3Implementation),
+            address(susd3ProxyAdmin),
+            abi.encodeCall(sUSD3.initialize, (address(usd3Strategy), management, keeper))
+        );
+        susd3Strategy = sUSD3(address(susd3Proxy));
+        mockSusd3 = address(susd3Strategy);
 
         // Fund test users using deal directly (not airdrop which doesn't work with USDC proxy)
         deal(address(underlyingAsset), alice, LARGE_DEPOSIT);
@@ -70,9 +83,9 @@ contract SubordinationRatioStressTest is Setup {
     //////////////////////////////////////////////////////////////*/
 
     function test_subordinationRatio_debtBasedLimit() public {
-        // Set sUSD3 strategy
+        // Link sUSD3 to USD3
         vm.prank(management);
-        usd3Strategy.setSUSD3(mockSusd3);
+        usd3Strategy.setSUSD3(address(susd3Strategy));
 
         // Alice deposits to USD3
         vm.startPrank(alice);
@@ -85,7 +98,7 @@ contract SubordinationRatioStressTest is Setup {
         createMarketDebt(borrower, 500_000e6); // $500k USDC debt
 
         // Calculate max sUSD3 allowed based on debt
-        uint256 debtCapUSDC = usd3Strategy.getSubordinatedDebtCapInAssets();
+        uint256 debtCapUSDC = susd3Strategy.getSubordinatedDebtCapInAssets();
         assertGt(debtCapUSDC, 0, "Should have debt cap");
 
         // Convert to USD3 shares for mock
@@ -105,9 +118,9 @@ contract SubordinationRatioStressTest is Setup {
     }
 
     function test_subordinationRatio_multipleWithdrawals() public {
-        // Set sUSD3 strategy
+        // Link sUSD3 to USD3
         vm.prank(management);
-        usd3Strategy.setSUSD3(mockSusd3);
+        usd3Strategy.setSUSD3(address(susd3Strategy));
 
         // Multiple users deposit
         vm.startPrank(alice);
@@ -180,9 +193,9 @@ contract SubordinationRatioStressTest is Setup {
     //////////////////////////////////////////////////////////////*/
 
     function test_subordinationRatio_flashLoanResistance() public {
-        // Set sUSD3 strategy
+        // Link sUSD3 to USD3
         vm.prank(management);
-        usd3Strategy.setSUSD3(mockSusd3);
+        usd3Strategy.setSUSD3(address(susd3Strategy));
 
         // Alice deposits normally
         vm.startPrank(alice);
@@ -237,9 +250,9 @@ contract SubordinationRatioStressTest is Setup {
     //////////////////////////////////////////////////////////////*/
 
     function test_subordinationRatio_emergencyShutdownBypass() public {
-        // Set sUSD3 strategy
+        // Link sUSD3 to USD3
         vm.prank(management);
-        usd3Strategy.setSUSD3(mockSusd3);
+        usd3Strategy.setSUSD3(address(susd3Strategy));
 
         // Setup positions
         vm.startPrank(alice);
@@ -360,14 +373,14 @@ contract SubordinationRatioStressTest is Setup {
         assertGt(limitBefore, 0, "Should allow sUSD3 deposits at 15% ratio");
 
         // Update protocol config to stricter ratio (5% max subordination)
-        protocolConfig.setConfig(keccak256("TRANCHE_RATIO"), 500);
+        protocolConfig.setConfig(ProtocolConfigLib.TRANCHE_RATIO, 500);
 
         // Deposit limit should decrease
         uint256 limitAfter = realSusd3.availableDepositLimit(bob);
         assertLt(limitAfter, limitBefore, "Should reduce deposit limit after ratio tightening");
 
         // Update to looser ratio (20% max subordination)
-        protocolConfig.setConfig(keccak256("TRANCHE_RATIO"), 2000);
+        protocolConfig.setConfig(ProtocolConfigLib.TRANCHE_RATIO, 2000);
 
         // Deposit limit should increase
         uint256 limitLoose = realSusd3.availableDepositLimit(bob);

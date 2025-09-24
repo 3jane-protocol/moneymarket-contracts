@@ -6,6 +6,9 @@ import {USD3} from "../../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
+import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
+import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
+import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {TransparentUpgradeableProxy} from
     "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
@@ -64,6 +67,12 @@ contract DebtBasedSubordinationLimitsTest is Setup {
         // Set MAX_ON_CREDIT to allow deployment to MorphoCredit
         setMaxOnCredit(8000); // 80% max deployment
 
+        // Set default debt cap for potential debt calculation
+        // Will be adjusted per test as needed
+        MockProtocolConfig config =
+            MockProtocolConfig(MorphoCredit(address(usd3Strategy.morphoCredit())).protocolConfig());
+        config.setConfig(ProtocolConfigLib.MORPHO_DEBT_CAP, 800e6); // Default 800 USDC debt cap
+
         // Set up initial positions
         deal(address(asset), alice, INITIAL_USD3_DEPOSIT);
         deal(address(asset), bob, INITIAL_SUSD3_DEPOSIT);
@@ -102,11 +111,11 @@ contract DebtBasedSubordinationLimitsTest is Setup {
         createMarketDebt(borrower, debtAmount);
 
         // Calculate expected sUSD3 deposit limit based on debt
-        uint256 maxSubRatio = usd3Strategy.maxSubordinationRatio(); // 1500 = 15%
+        uint256 maxSubRatio = susd3Strategy.maxSubordinationRatio(); // 1500 = 15%
         uint256 expectedDepositCapUSDC = (debtAmount * maxSubRatio) / MAX_BPS; // 500 * 0.15 = 75 USDC
 
         // Get actual deposit limit
-        uint256 subordinatedDebtCapUSDC = usd3Strategy.getSubordinatedDebtCapInAssets();
+        uint256 subordinatedDebtCapUSDC = susd3Strategy.getSubordinatedDebtCapInAssets();
 
         console2.log("\n=== Debt-Based Subordination Test ===");
         console2.log("Market debt:", debtAmount);
@@ -134,7 +143,7 @@ contract DebtBasedSubordinationLimitsTest is Setup {
         uint256 debtAmount = 600e6; // $600 USDC of debt
         createMarketDebt(borrower, debtAmount);
 
-        uint256 maxSubRatio = usd3Strategy.maxSubordinationRatio(); // 1500 = 15%
+        uint256 maxSubRatio = susd3Strategy.maxSubordinationRatio(); // 1500 = 15%
         uint256 maxOnCredit = usd3Strategy.maxOnCredit(); // 8000 = 80%
         uint256 totalAssets = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
 
@@ -145,7 +154,7 @@ contract DebtBasedSubordinationLimitsTest is Setup {
         uint256 effectiveDebt = Math.max(debtAmount, potentialDebt);
         uint256 expectedCap = (effectiveDebt * maxSubRatio) / MAX_BPS;
 
-        uint256 actualCap = usd3Strategy.getSubordinatedDebtCapInAssets();
+        uint256 actualCap = susd3Strategy.getSubordinatedDebtCapInAssets();
 
         console2.log("\n=== Mathematical Limits Analysis ===");
         console2.log("Actual debt:", debtAmount);
@@ -188,7 +197,7 @@ contract DebtBasedSubordinationLimitsTest is Setup {
         vm.stopPrank();
 
         uint256 susd3Holdings = ITokenizedStrategy(address(usd3Strategy)).balanceOf(address(susd3Strategy));
-        uint256 maxSubRatio = usd3Strategy.maxSubordinationRatio();
+        uint256 maxSubRatio = susd3Strategy.maxSubordinationRatio();
 
         console2.log("\n=== USD3 Withdrawal Freedom Test ===");
         console2.log("Starting USD3 supply:", ITokenizedStrategy(address(usd3Strategy)).totalSupply());
@@ -238,6 +247,11 @@ contract DebtBasedSubordinationLimitsTest is Setup {
      * @dev Multiple users cannot exceed the debt-based subordination cap
      */
     function test_susd3_deposits_respect_debt_limits() public {
+        // Increase debt cap for this test which creates 1000e6 debt
+        MockProtocolConfig config =
+            MockProtocolConfig(MorphoCredit(address(usd3Strategy.morphoCredit())).protocolConfig());
+        config.setConfig(ProtocolConfigLib.MORPHO_DEBT_CAP, 2000e6); // Increase cap for this test
+
         // First ensure USD3 has more funds to support larger debt
         vm.startPrank(charlie);
         asset.approve(address(usd3Strategy), 500e6);
@@ -258,7 +272,7 @@ contract DebtBasedSubordinationLimitsTest is Setup {
         uint256 maxOnCredit = usd3Strategy.maxOnCredit();
         uint256 potentialDebt = (totalAssetsAfterDeposit * maxOnCredit) / MAX_BPS;
         uint256 effectiveDebt = Math.max(debtAmount, potentialDebt);
-        uint256 maxSubRatio = usd3Strategy.maxSubordinationRatio();
+        uint256 maxSubRatio = susd3Strategy.maxSubordinationRatio();
         uint256 maxSusd3Capacity = (effectiveDebt * maxSubRatio) / MAX_BPS;
 
         console2.log("\n=== sUSD3 Deposit Limits Test ===");
@@ -310,7 +324,7 @@ contract DebtBasedSubordinationLimitsTest is Setup {
         // Total deposits should respect the debt-based limit
         // Note: The capacity can increase slightly as users deposit USD3 (increasing potential debt)
         // We allow for this dynamic by checking against the final capacity
-        uint256 finalDebtCap = usd3Strategy.getSubordinatedDebtCapInAssets();
+        uint256 finalDebtCap = susd3Strategy.getSubordinatedDebtCapInAssets();
         assertLe(totalDeposited, finalDebtCap + 100, "Total sUSD3 should not exceed final debt-based limit");
 
         console2.log("[PASS] sUSD3 deposits respect debt-based limits");
@@ -337,7 +351,7 @@ contract DebtBasedSubordinationLimitsTest is Setup {
         address borrower = makeAddr("borrower");
         createMarketDebt(borrower, maxDebt / 2);
 
-        uint256 debtCap = usd3Strategy.getSubordinatedDebtCapInAssets();
+        uint256 debtCap = susd3Strategy.getSubordinatedDebtCapInAssets();
         assertGt(debtCap, 0, "Should have positive debt cap with debt");
         console2.log("[PASS] Debt at MAX_ON_CREDIT handled correctly");
 
@@ -382,8 +396,8 @@ contract DebtBasedSubordinationLimitsTest is Setup {
         console2.log("Remaining deposit limit:", remainingLimit);
 
         // The system should prevent excessive deposits even with debt manipulation
-        uint256 maxSubRatio = usd3Strategy.maxSubordinationRatio();
-        uint256 debtCap = usd3Strategy.getSubordinatedDebtCapInAssets();
+        uint256 maxSubRatio = susd3Strategy.maxSubordinationRatio();
+        uint256 debtCap = susd3Strategy.getSubordinatedDebtCapInAssets();
 
         // Current holdings plus remaining limit should not exceed debt cap
         assertLe(
@@ -419,7 +433,7 @@ contract DebtBasedSubordinationLimitsTest is Setup {
 
         // Verify the getSubordinatedDebtCapInAssets returns 0 when no debt
         // This would happen after full repayment
-        uint256 debtCap = usd3Strategy.getSubordinatedDebtCapInAssets();
+        uint256 debtCap = susd3Strategy.getSubordinatedDebtCapInAssets();
         assertGt(debtCap, 0, "Debt cap should be positive with outstanding debt");
 
         console2.log("[PASS] Zero debt blocking mechanism verified");

@@ -293,9 +293,12 @@ contract sUSD3Coverage is Setup {
      * @dev Verifies behavior when sUSD3 is at max subordination
      */
     function test_subordinationAtMaxCapacity() public {
-        // Calculate max allowed sUSD3 deposits
+        // Set debt cap to enable sUSD3 deposits
         uint256 usd3Supply = IERC20(address(usd3Strategy)).totalSupply();
-        uint256 maxSubordination = (usd3Supply * 1500) / 10000; // 15%
+        setMorphoDebtCap(usd3Supply); // Set debt cap to match USD3 supply
+
+        // Calculate max allowed sUSD3 deposits (now debt-based)
+        uint256 maxSubordination = (usd3Supply * 1500) / 10000; // 15% of debt cap
 
         // Have Bob deposit close to max
         uint256 availableLimit = susd3Strategy.availableDepositLimit(bob);

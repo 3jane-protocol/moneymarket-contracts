@@ -25,6 +25,7 @@ import {
 } from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
+import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockStrategyFactory} from "../mocks/MockStrategyFactory.sol";
 import {TokenizedStrategy} from "@tokenized-strategy/TokenizedStrategy.sol";
@@ -109,6 +110,10 @@ contract Setup is Test, IEvents {
     function setUpStrategy() public returns (address) {
         // Deploy MockProtocolConfig for testing
         testProtocolConfig = new MockProtocolConfig();
+
+        // Set a high default debt cap to allow sUSD3 deposits in tests
+        // Tests that need specific debt cap scenarios can override this
+        testProtocolConfig.setConfig(ProtocolConfigLib.MORPHO_DEBT_CAP, 100_000_000e6); // 100M USDC default
 
         // Deploy real MorphoCredit with proxy pattern
         MorphoCredit morphoImpl = new MorphoCredit(address(testProtocolConfig));
@@ -244,6 +249,11 @@ contract Setup is Test, IEvents {
         testProtocolConfig.setConfig(MAX_ON_CREDIT_KEY, _maxOnCredit);
     }
 
+    function setMorphoDebtCap(uint256 _debtCap) public {
+        // Set MORPHO_DEBT_CAP through ProtocolConfig
+        testProtocolConfig.setConfig(ProtocolConfigLib.MORPHO_DEBT_CAP, _debtCap);
+    }
+
     /**
      * @notice Create market debt by setting up a borrower with a credit line and borrowing
      * @param borrower Address that will borrow
@@ -273,8 +283,8 @@ contract Setup is Test, IEvents {
             marketId, cycleEndDate, borrowers, repaymentBps, endingBalances
         );
 
-        // Convert USDC amount to waUSDC amount
-        uint256 borrowAmountWaUSDC = waUSDC.convertToShares(borrowAmountUSDC);
+        // Use USDC amount directly as waUSDC amount (they're 1:1 initially)
+        uint256 borrowAmountWaUSDC = borrowAmountUSDC;
 
         // Set credit line for borrower (double the borrow amount for safety)
         vm.prank(marketParams.creditLine);
