@@ -84,7 +84,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /* CONSTANTS */
 
-    /// @notice Minimum premium amount to accrue (prevents precision loss)
     uint256 internal constant MIN_PREMIUM_THRESHOLD = 1;
 
     /// @notice Maximum elapsed time for premium accrual (365 days)
@@ -303,8 +302,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// 5. Update timestamp to prevent double accrual
     /// @dev MUST be called after _accrueInterest to ensure base rate is current
     function _accrueBorrowerPremium(Id id, address borrower) internal {
-        RepaymentObligation memory obligation = repaymentObligation[id][borrower];
-        (RepaymentStatus status,) = _getRepaymentStatus(id, borrower, obligation);
+        (RepaymentStatus status,) = getRepaymentStatus(id, borrower);
 
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
         if (premium.rate == 0 && status == RepaymentStatus.Current) return;
@@ -540,7 +538,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @return status The borrower's current repayment status
     /// @return statusStartTime The timestamp when the current status began
     function getRepaymentStatus(Id id, address borrower) public view returns (RepaymentStatus, uint256) {
-        return _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
+        return _getRepaymentStatus(id, repaymentObligation[id][borrower]);
     }
 
     /// @notice Get repayment status for a borrower
@@ -548,7 +546,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param obligation the borrower repaymentObligation struct
     /// @return _status The borrower's current repayment status
     /// @return _statusStartTime The timestamp when the current status began
-    function _getRepaymentStatus(Id id, address, RepaymentObligation memory obligation)
+    function _getRepaymentStatus(Id id, RepaymentObligation memory obligation)
         internal
         view
         returns (RepaymentStatus _status, uint256 _statusStartTime)
@@ -748,8 +746,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (manager == address(0)) return; // No markdown manager set
 
         uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
-        (RepaymentStatus status, uint256 statusStartTime) =
-            _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
+        (RepaymentStatus status, uint256 statusStartTime) = getRepaymentStatus(id, borrower);
 
         // Check if in default and emit status change events
         bool isInDefault = status == RepaymentStatus.Default && statusStartTime > 0;
