@@ -33,4 +33,7 @@ library ProtocolConfigLib {
 
     // Supply Cap Keys
     bytes32 internal constant USD3_SUPPLY_CAP = keccak256("USD3_SUPPLY_CAP");
+
+    // Markdown Keys
+    bytes32 internal constant FULL_MARKDOWN_DURATION = keccak256("FULL_MARKDOWN_DURATION");
 }

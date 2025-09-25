@@ -27,7 +27,7 @@ contract BorrowerJourneyTest is BaseTest {
         super.setUp();
 
         // Deploy markdown manager
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
 
         // Deploy credit line
         creditLine = new CreditLineMock(morphoAddress);
@@ -47,6 +47,13 @@ contract BorrowerJourneyTest is BaseTest {
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
         creditLine.setMm(address(markdownManager));
+
+        // Enable markdown for test borrowers
+        markdownManager.setEnableMarkdown(BORROWER, true);
+        markdownManager.setEnableMarkdown(address(0x1234), true);
+        markdownManager.setEnableMarkdown(address(0x5678), true);
+        markdownManager.setEnableMarkdown(address(0x9999), true);
+
         vm.stopPrank();
 
         // Initialize first cycle to unfreeze the market

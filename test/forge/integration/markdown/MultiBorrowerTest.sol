@@ -27,7 +27,7 @@ contract MultiBorrowerTest is BaseTest {
         super.setUp();
 
         // Deploy markdown manager
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
 
         // Deploy credit line
         creditLine = new CreditLineMock(morphoAddress);
@@ -55,11 +55,14 @@ contract MultiBorrowerTest is BaseTest {
         // Move forward to allow for creating past obligations in tests
         _continueMarketCycles(id, block.timestamp + CYCLE_DURATION + 7 days);
 
-        // Setup borrowers array
+        // Setup borrowers array and enable markdown for all
         borrowers = new address[](NUM_BORROWERS);
+        vm.startPrank(OWNER);
         for (uint256 i = 0; i < NUM_BORROWERS; i++) {
             borrowers[i] = makeAddr(string.concat("Borrower", vm.toString(i)));
+            markdownManager.setEnableMarkdown(borrowers[i], true);
         }
+        vm.stopPrank();
 
         // Setup large initial supply
         loanToken.setBalance(SUPPLIER, 10_000_000e18);

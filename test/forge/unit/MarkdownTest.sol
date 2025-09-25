@@ -27,7 +27,7 @@ contract MarkdownTest is BaseTest {
         protocolConfig.setConfig(keccak256("CYCLE_DURATION"), TEST_CYCLE_DURATION);
 
         // Deploy markdown manager
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
 
         // Deploy credit line
         creditLine = new CreditLineMock(morphoAddress);

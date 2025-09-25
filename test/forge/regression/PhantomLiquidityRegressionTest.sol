@@ -31,7 +31,7 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         super.setUp();
 
         // Recreate exact POC setup
-        maliciousMarkdownManager = new MarkdownManagerMock();
+        maliciousMarkdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
         maliciousCreditLine = new CreditLineMock(morphoAddress);
         morphoCredit = IMorphoCredit(morphoAddress);
         helper = new HelperMock(morphoAddress);

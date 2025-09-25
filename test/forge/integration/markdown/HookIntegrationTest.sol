@@ -25,7 +25,7 @@ contract HookIntegrationTest is BaseTest {
         super.setUp();
 
         // Deploy markdown manager
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
 
         // Deploy credit line
         creditLine = new CreditLineMock(morphoAddress);
@@ -45,6 +45,16 @@ contract HookIntegrationTest is BaseTest {
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
         creditLine.setMm(address(markdownManager));
+
+        // Enable markdown for test borrowers
+        markdownManager.setEnableMarkdown(BORROWER, true);
+        address borrower1 = address(0xBEEF1);
+        address borrower2 = address(0xBEEF2);
+        address borrower3 = address(0xBEEF3);
+        markdownManager.setEnableMarkdown(borrower1, true);
+        markdownManager.setEnableMarkdown(borrower2, true);
+        markdownManager.setEnableMarkdown(borrower3, true);
+
         vm.stopPrank();
 
         // Initialize first cycle to unfreeze the market
