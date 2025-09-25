@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0
-pragma solidity 0.8.22;
+pragma solidity ^0.8.18;
 
 import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
 import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -8,8 +8,7 @@ import {IMorpho, IMorphoCredit, MarketParams, Id} from "../interfaces/IMorpho.so
 import {MorphoLib} from "../libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "../libraries/periphery/MorphoBalancesLib.sol";
 import {SharesMathLib} from "../libraries/SharesMathLib.sol";
-import {IStrategy} from "@tokenized-strategy/interfaces/IStrategy.sol";
-import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
+import {TokenizedStrategyStorageLib} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 
 /**
@@ -48,11 +47,6 @@ contract USD3 is BaseHooksUpgradeable {
     using MorphoBalancesLib for IMorpho;
     using SharesMathLib for uint256;
     using Math for uint256;
-
-    /*//////////////////////////////////////////////////////////////
-                        CONSTANTS 
-    //////////////////////////////////////////////////////////////*/
-    IStrategy public constant WAUSDC = IStrategy(0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E);
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE - MORPHO PARAMETERS
@@ -132,28 +126,6 @@ contract USD3 is BaseHooksUpgradeable {
         IERC20(asset).forceApprove(address(morphoCredit), type(uint256).max);
     }
 
-    /**
-     * @notice Reinitialize the USD3 strategy to switch asset from waUSDC to USDC
-     * @dev This function is called during the upgrade from the previous USD3 implementation.
-     *      The upgrade process MUST follow this sequence to prevent user losses:
-     *      1. Set performance fee to 0 (via setPerformanceFee)
-     *      2. Set profit unlock time to 0 (via setProfitMaxUnlockTime)
-     *      3. Call report() to update totalAssets from stale waUSDC values
-     *      4. Call reinitialize() to switch the underlying asset
-     *      5. Call syncTrancheShare() to restore performance fees
-     *      6. Restore profit unlock time to previous value
-     *      This ensures totalAssets reflects the true USDC value before users can withdraw.
-     *      Without report() before reinitialize(), users would lose value as totalAssets
-     *      would not account for waUSDC pps versus usdc.
-     */
-    function reinitialize() external reinitializer(2) {
-        address usdc = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-        asset = ERC20(usdc);
-        TokenizedStrategyStorageLib.StrategyData storage strategyData = TokenizedStrategyStorageLib.getStrategyStorage();
-        strategyData.asset = ERC20(usdc);
-        IERC20(usdc).forceApprove(address(WAUSDC), type(uint256).max);
-    }
-
     /*//////////////////////////////////////////////////////////////
                         EXTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -183,29 +155,29 @@ contract USD3 is BaseHooksUpgradeable {
      * @return totalSupplyAssets Total assets supplied to the market
      * @return totalShares Total supply shares in the market
      * @return totalBorrowAssets Total assets borrowed from the market
-     * @return waUSDCLiquidity Available liquidity in the market
+     * @return liquidity Available liquidity in the market
      */
     function getMarketLiquidity()
         internal
         view
-        returns (uint256 totalSupplyAssets, uint256 totalShares, uint256 totalBorrowAssets, uint256 waUSDCLiquidity)
+        returns (uint256 totalSupplyAssets, uint256 totalShares, uint256 totalBorrowAssets, uint256 liquidity)
     {
         (totalSupplyAssets, totalShares, totalBorrowAssets,) = morphoCredit.expectedMarketBalances(_marketParams);
-        waUSDCLiquidity = totalSupplyAssets - totalBorrowAssets;
+        liquidity = totalSupplyAssets - totalBorrowAssets;
     }
 
     /**
      * @dev Get strategy's position in the market
      * @return shares Number of supply shares held
-     * @return waUSDCMax Maximum waUSDC that can be withdrawn
-     * @return waUSDCLiquidity Available market liquidity in waUSDC
+     * @return assetsMax Maximum assets that can be withdrawn
+     * @return liquidity Available market liquidity
      */
-    function getPosition() internal view returns (uint256 shares, uint256 waUSDCMax, uint256 waUSDCLiquidity) {
+    function getPosition() internal view returns (uint256 shares, uint256 assetsMax, uint256 liquidity) {
         shares = morphoCredit.position(marketId, address(this)).supplyShares;
         uint256 totalSupplyAssets;
         uint256 totalShares;
-        (totalSupplyAssets, totalShares,, waUSDCLiquidity) = getMarketLiquidity();
-        waUSDCMax = shares.toAssetsDown(totalSupplyAssets, totalShares);
+        (totalSupplyAssets, totalShares,, liquidity) = getMarketLiquidity();
+        assetsMax = shares.toAssetsDown(totalSupplyAssets, totalShares);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -217,62 +189,59 @@ contract USD3 is BaseHooksUpgradeable {
     function _deployFunds(uint256 _amount) internal override {
         if (_amount == 0) return;
 
-        // Wrap USDC to waUSDC
-        _amount = WAUSDC.deposit(_amount, address(this));
-
         uint256 maxOnCreditRatio = maxOnCredit();
+
         if (maxOnCreditRatio == 0) {
-            // Don't deploy anything when set to 0%, keep all waUSDC local
+            // Don't deploy anything when set to 0%
             return;
         }
 
-        // Calculate total waUSDC (deployed + local)
-        uint256 deployedWaUSDC = suppliedWaUSDC();
-        uint256 localWaUSDC = balanceOfWaUSDC();
-        uint256 totalWaUSDC = deployedWaUSDC + localWaUSDC;
-
-        // Calculate max that should be deployed to MorphoCredit
-        uint256 maxDeployableWaUSDC = (totalWaUSDC * maxOnCreditRatio) / 10_000;
-
-        if (maxDeployableWaUSDC <= deployedWaUSDC) {
-            // Already at or above max, keep all new waUSDC local
+        if (maxOnCreditRatio == 10_000) {
+            // Deploy everything when set to 100%
+            morphoCredit.supply(_marketParams, _amount, 0, address(this), "");
             return;
         }
 
-        // Deploy only the amount needed to reach max
-        uint256 waUSDCToSupply = Math.min(localWaUSDC, maxDeployableWaUSDC - deployedWaUSDC);
+        uint256 totalValue = TokenizedStrategy.totalAssets();
+        uint256 maxDeployable = (totalValue * maxOnCreditRatio) / 10_000;
+        uint256 currentlyDeployed = morphoCredit.expectedSupplyAssets(_marketParams, address(this));
 
-        _supplyToMorpho(waUSDCToSupply);
+        if (currentlyDeployed >= maxDeployable) {
+            // Already at max deployment
+            return;
+        }
+
+        uint256 deployableAmount = maxDeployable - currentlyDeployed;
+        uint256 toDeploy = Math.min(_amount, deployableAmount);
+
+        if (toDeploy > 0) {
+            morphoCredit.supply(_marketParams, toDeploy, 0, address(this), "");
+        }
     }
 
     /// @dev Withdraw funds from MorphoCredit market
-    /// @param _amount Amount of asset to free up
-    function _freeFunds(uint256 _amount) internal override {
-        if (_amount == 0) {
-            return;
-        }
+    /// @param amount Amount of asset to free up
+    function _freeFunds(uint256 amount) internal override {
+        if (amount == 0) return;
 
-        // Calculate how much waUSDC we need
-        uint256 waUSDCNeeded = WAUSDC.previewWithdraw(_amount);
+        morphoCredit.accrueInterest(_marketParams);
+        (uint256 shares, uint256 assetsMax, uint256 liquidity) = getPosition();
 
-        // Check local waUSDC balance first
-        uint256 localWaUSDC = balanceOfWaUSDC();
+        // Calculate how much we can actually withdraw
+        uint256 availableToWithdraw = assetsMax > liquidity ? liquidity : assetsMax;
 
-        if (localWaUSDC < waUSDCNeeded) {
-            // Need to withdraw from MorphoCredit
-            uint256 waUSDCToWithdraw = waUSDCNeeded - localWaUSDC;
+        // If we can't withdraw anything, return early
+        if (availableToWithdraw == 0) return;
 
-            uint256 withdrawn = _withdrawFromMorpho(waUSDCToWithdraw);
+        // Cap the requested amount to what's actually available
+        uint256 actualAmount = amount > availableToWithdraw ? availableToWithdraw : amount;
 
-            if (withdrawn > 0) {
-                localWaUSDC = balanceOfWaUSDC();
-            }
-        }
-
-        uint256 waUSDCToUnwrap = Math.min(localWaUSDC, waUSDCNeeded);
-
-        if (waUSDCToUnwrap > 0) {
-            WAUSDC.redeem(waUSDCToUnwrap, address(this), address(this));
+        if (actualAmount >= assetsMax) {
+            // Withdraw all our shares
+            morphoCredit.withdraw(_marketParams, 0, shares, address(this), address(this));
+        } else {
+            // Withdraw specific amount
+            morphoCredit.withdraw(_marketParams, actualAmount, 0, address(this), address(this));
         }
     }
 
@@ -293,73 +262,24 @@ contract USD3 is BaseHooksUpgradeable {
 
         _tend(asset.balanceOf(address(this)));
 
-        uint256 totalWaUSDC = suppliedWaUSDC() + balanceOfWaUSDC();
-
-        return WAUSDC.convertToAssets(totalWaUSDC) + asset.balanceOf(address(this));
+        return morphoCredit.expectedSupplyAssets(params, address(this)) + asset.balanceOf(address(this));
     }
 
     /// @dev Rebalances between idle and deployed funds to maintain maxOnCredit ratio
     /// @param _totalIdle Current idle funds available
     function _tend(uint256 _totalIdle) internal virtual override {
-        // First wrap any idle USDC to waUSDC
-        if (_totalIdle > 0) {
-            WAUSDC.deposit(_totalIdle, address(this));
+        uint256 totalValue = TokenizedStrategy.totalAssets();
+        uint256 targetDeployment = (totalValue * maxOnCredit()) / 10_000;
+        uint256 currentlyDeployed = morphoCredit.expectedSupplyAssets(_marketParams, address(this));
+
+        if (currentlyDeployed > targetDeployment) {
+            // Withdraw excess to maintain target ratio
+            uint256 toWithdraw = currentlyDeployed - targetDeployment;
+            _freeFunds(toWithdraw);
+        } else {
+            // Deploy more if under target (reuses existing logic)
+            _deployFunds(_totalIdle);
         }
-
-        // Calculate based on waUSDC amounts
-        uint256 deployedWaUSDC = suppliedWaUSDC();
-        uint256 localWaUSDC = balanceOfWaUSDC();
-        uint256 totalWaUSDC = deployedWaUSDC + localWaUSDC;
-
-        uint256 targetDeployedWaUSDC = (totalWaUSDC * maxOnCredit()) / 10_000;
-
-        if (deployedWaUSDC > targetDeployedWaUSDC) {
-            // Withdraw excess from MorphoCredit
-            uint256 waUSDCToWithdraw = deployedWaUSDC - targetDeployedWaUSDC;
-            _withdrawFromMorpho(waUSDCToWithdraw);
-        } else if (targetDeployedWaUSDC > deployedWaUSDC && localWaUSDC > 0) {
-            // Deploy more if we have local waUSDC
-            uint256 waUSDCToDeploy = Math.min(localWaUSDC, targetDeployedWaUSDC - deployedWaUSDC);
-            _supplyToMorpho(waUSDCToDeploy);
-        }
-    }
-
-    /// @dev Helper function to supply waUSDC to MorphoCredit
-    /// @param amount Amount of waUSDC to supply
-    /// @return supplied Actual amount supplied (for consistency with withdraw helper)
-    function _supplyToMorpho(uint256 amount) internal returns (uint256 supplied) {
-        if (amount == 0) return 0;
-
-        morphoCredit.supply(_marketParams, amount, 0, address(this), "");
-        return amount;
-    }
-
-    /// @dev Helper function to withdraw waUSDC from MorphoCredit
-    /// @param amountRequested Amount of waUSDC to withdraw
-    /// @return amountWithdrawn Actual amount withdrawn (may be less than requested)
-    function _withdrawFromMorpho(uint256 amountRequested) internal returns (uint256 amountWithdrawn) {
-        if (amountRequested == 0) return 0;
-
-        morphoCredit.accrueInterest(_marketParams);
-        (uint256 shares, uint256 waUSDCMax, uint256 waUSDCLiquidity) = getPosition();
-
-        uint256 availableWaUSDC = Math.min(waUSDCMax, waUSDCLiquidity);
-
-        if (availableWaUSDC == 0) {
-            return 0;
-        }
-
-        amountWithdrawn = Math.min(amountRequested, availableWaUSDC);
-
-        if (amountWithdrawn > 0) {
-            if (amountWithdrawn >= waUSDCMax) {
-                morphoCredit.withdraw(_marketParams, 0, shares, address(this), address(this));
-            } else {
-                morphoCredit.withdraw(_marketParams, amountWithdrawn, 0, address(this), address(this));
-            }
-        }
-
-        return amountWithdrawn;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -371,13 +291,9 @@ contract USD3 is BaseHooksUpgradeable {
     /// @return Maximum amount that can be withdrawn
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
         // Get available liquidity first
-        uint256 idleAsset = asset.balanceOf(address(this));
-
-        (, uint256 waUSDCMax, uint256 waUSDCLiquidity) = getPosition();
-
-        uint256 availableWaUSDC = balanceOfWaUSDC() + Math.min(waUSDCMax, waUSDCLiquidity);
-
-        uint256 availableLiquidity = idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
+        (, uint256 assetsMax, uint256 liquidity) = getPosition();
+        uint256 idle = asset.balanceOf(address(this));
+        uint256 availableLiquidity = idle + Math.min(liquidity, assetsMax);
 
         // During shutdown, bypass all checks
         if (TokenizedStrategy.isShutdown()) {
@@ -584,22 +500,6 @@ contract USD3 is BaseHooksUpgradeable {
     /*//////////////////////////////////////////////////////////////
                         PUBLIC VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Get the balance of waUSDC held locally (not deployed to MorphoCredit)
-     * @return Amount of waUSDC held in this contract
-     */
-    function balanceOfWaUSDC() public view returns (uint256) {
-        return WAUSDC.balanceOf(address(this));
-    }
-
-    /**
-     * @notice Get the amount of waUSDC supplied to MorphoCredit
-     * @return Amount of waUSDC deployed to the lending market
-     */
-    function suppliedWaUSDC() public view returns (uint256) {
-        return morphoCredit.expectedSupplyAssets(_marketParams, address(this));
-    }
 
     /**
      * @notice Get the maximum percentage of funds to deploy to credit markets from ProtocolConfig

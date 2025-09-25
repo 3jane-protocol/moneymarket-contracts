@@ -109,8 +109,8 @@ contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupp
 
     function testFlashActions(uint256 loanAmount) public {
         loanAmount = bound(loanAmount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
-        uint256 creditLine;
-        (creditLine, loanAmount,) = _boundHealthyPosition(0, loanAmount, oracle.price());
+        uint256 creditLineAmount;
+        (creditLineAmount, loanAmount,) = _boundHealthyPosition(0, loanAmount, oracle.price());
 
         oracle.setPrice(ORACLE_PRICE_SCALE);
 
@@ -119,7 +119,7 @@ contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupp
 
         // Set up credit line
         vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).setCreditLine(id, address(this), creditLine, 0);
+        IMorphoCredit(address(morpho)).setCreditLine(id, address(this), creditLineAmount, 0);
 
         // Borrow directly since we can't use the supplyCollateral callback pattern
         morpho.borrow(marketParams, loanAmount, 0, address(this), address(this));
@@ -131,6 +131,6 @@ contract CallbacksIntegrationTest is BaseTest, IMorphoRepayCallback, IMorphoSupp
         morpho.repay(marketParams, loanAmount, 0, address(this), hex"");
 
         // In 3Jane, credit line remains even after full repayment
-        assertEq(morpho.collateral(marketParams.id(), address(this)), creditLine, "credit line should remain");
+        assertEq(morpho.collateral(marketParams.id(), address(this)), creditLineAmount, "credit line should remain");
     }
 }

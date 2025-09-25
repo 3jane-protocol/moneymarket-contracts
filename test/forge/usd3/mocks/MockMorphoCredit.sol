@@ -196,10 +196,10 @@ contract MockMorphoCredit is IMorpho {
         external
         view
         returns (
-            uint256 totalSupplyAssets,
-            uint256 totalSupplyShares,
-            uint256 totalBorrowAssets,
-            uint256 totalBorrowShares
+            uint256 _totalSupplyAssets,
+            uint256 _totalSupplyShares,
+            uint256 _totalBorrowAssets,
+            uint256 _totalBorrowShares
         )
     {
         Id id = marketParams.id();
