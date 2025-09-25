@@ -72,7 +72,7 @@ contract MarkdownManager is IMarkdownManager, Ownable {
             return borrowAmount;
         }
 
-        return (borrowAmount * timeInDefault) / markdownduration;
+        return (borrowAmount * timeInDefault) / markdownDuration;
     }
 
     /// @notice Get the markdown multiplier for a given time in default
