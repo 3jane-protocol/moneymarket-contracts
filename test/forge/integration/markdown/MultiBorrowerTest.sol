@@ -179,11 +179,6 @@ contract MultiBorrowerTest is BaseTest {
         // Move to default period
         vm.warp(cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1 days);
 
-        // Set markdown values for all borrowers (5% of their borrow amount)
-        for (uint256 i = 0; i < NUM_BORROWERS; i++) {
-            markdownManager.setMarkdownForBorrower(borrowers[i], 5_000e18); // 5k markdown for 100k loan
-        }
-
         // First, update half the borrowers to trigger markdown
         uint256 halfBorrowers = NUM_BORROWERS / 2;
         uint256[] memory initialMarkdowns = new uint256[](halfBorrowers);

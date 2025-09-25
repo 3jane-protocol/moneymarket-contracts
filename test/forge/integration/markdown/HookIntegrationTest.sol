@@ -343,6 +343,12 @@ contract HookIntegrationTest is BaseTest {
         address borrower1 = makeAddr("Borrower1");
         address borrower2 = makeAddr("Borrower2");
 
+        // Enable markdown for borrowers
+        vm.startPrank(OWNER);
+        markdownManager.setEnableMarkdown(borrower1, true);
+        markdownManager.setEnableMarkdown(borrower2, true);
+        vm.stopPrank();
+
         // Setup both borrowers with loans
         _setupBorrowerWithLoan(borrower1, borrowAmount);
         _setupBorrowerWithLoan(borrower2, borrowAmount);

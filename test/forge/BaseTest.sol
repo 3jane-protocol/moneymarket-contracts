@@ -11,6 +11,7 @@ import {ERC20Mock} from "../../src/mocks/ERC20Mock.sol";
 import {OracleMock} from "../../src/mocks/OracleMock.sol";
 import {MorphoCreditMock} from "../../src/mocks/MorphoCreditMock.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
+import {ProtocolConfigLib} from "../../src/libraries/ProtocolConfigLib.sol";
 
 import "../../src/Morpho.sol";
 import "../../src/MorphoCredit.sol";
@@ -242,6 +243,9 @@ contract BaseTest is Test {
         protocolConfig.setConfig(keccak256("TRANCHE_SHARE_VARIANT"), 1); // Variant 1
         protocolConfig.setConfig(keccak256("SUSD3_LOCK_DURATION"), 30 days); // 30 days lock duration
         protocolConfig.setConfig(keccak256("SUSD3_COOLDOWN_PERIOD"), 7 days); // 7 days cooldown period
+
+        // Markdown configuration
+        protocolConfig.setConfig(ProtocolConfigLib.FULL_MARKDOWN_DURATION, 70 days); // 70 days for 100% markdown
 
         vm.stopPrank();
     }

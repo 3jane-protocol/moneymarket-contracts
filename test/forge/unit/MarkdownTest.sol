@@ -47,6 +47,9 @@ contract MarkdownTest is BaseTest {
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
         creditLine.setMm(address(markdownManager));
+
+        // Enable markdown for test borrower
+        markdownManager.setEnableMarkdown(BORROWER, true);
         vm.stopPrank();
 
         // Initialize first cycle to unfreeze the market
@@ -70,11 +73,13 @@ contract MarkdownTest is BaseTest {
         // Fast forward 10 days
         vm.warp(block.timestamp + 10 days);
 
-        // Calculate markdown (10 days * 1% per day = 10%)
+        // Calculate markdown (10 days out of 70 days = ~14.3%)
         uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
         uint256 markdown = markdownManager.calculateMarkdown(BORROWER, borrowAmount, timeInDefault);
 
-        assertEq(markdown, 100e18); // 10% of 1000 = 100
+        // Expected: 10/70 * 1000 = ~142.857
+        uint256 expectedMarkdown = (borrowAmount * 10 days) / (70 days);
+        assertEq(markdown, expectedMarkdown);
     }
 
     function testBorrowerMarkdownUpdate() public {
