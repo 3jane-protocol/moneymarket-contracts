@@ -62,34 +62,34 @@ contract MarkdownManager is IMarkdownManager, Ownable {
             return 0;
         }
 
-        uint256 duration = fullMarkdownDuration();
+        uint256 markdownDuration = fullMarkdownDuration();
 
-        if (duration == 0) {
+        if (markdownDuration == 0) {
             return 0;
         }
 
-        if (timeInDefault >= duration) {
+        if (timeInDefault >= markdownDuration) {
             return borrowAmount;
         }
 
-        return (borrowAmount * timeInDefault) / duration;
+        return (borrowAmount * timeInDefault) / markdownduration;
     }
 
     /// @notice Get the markdown multiplier for a given time in default
     /// @param timeInDefault The duration in seconds since the borrower entered default
     /// @return . The value multiplier (1e18 = 100% value, 0 = 0% value)
     function getMarkdownMultiplier(uint256 timeInDefault) external view returns (uint256) {
-        uint256 duration = fullMarkdownDuration();
+        uint256 markdownDuration = fullMarkdownDuration();
 
-        if (duration == 0 || timeInDefault == 0) {
+        if (markdownDuration == 0 || timeInDefault == 0) {
             return WAD;
         }
 
-        if (timeInDefault >= duration) {
+        if (timeInDefault >= markdownDuration) {
             return 0;
         }
 
-        uint256 markdownPercentage = (WAD * timeInDefault) / duration;
+        uint256 markdownPercentage = (WAD * timeInDefault) / markdownDuration;
         return WAD - markdownPercentage;
     }
 }
