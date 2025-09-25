@@ -535,22 +535,15 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Get repayment status for a borrower
     /// @param id Market ID
     /// @param borrower Borrower address
-    /// @return status The borrower's current repayment status
-    /// @return statusStartTime The timestamp when the current status began
-    function getRepaymentStatus(Id id, address borrower) public view returns (RepaymentStatus, uint256) {
-        return _getRepaymentStatus(id, repaymentObligation[id][borrower]);
-    }
-
-    /// @notice Get repayment status for a borrower
-    /// @param id Market ID
-    /// @param obligation the borrower repaymentObligation struct
     /// @return _status The borrower's current repayment status
     /// @return _statusStartTime The timestamp when the current status began
-    function _getRepaymentStatus(Id id, RepaymentObligation memory obligation)
-        internal
+    function getRepaymentStatus(Id id, address borrower)
+        public
         view
         returns (RepaymentStatus _status, uint256 _statusStartTime)
     {
+        RepaymentObligation memory obligation = repaymentObligation[id][borrower];
+
         if (obligation.amountDue == 0) return (RepaymentStatus.Current, 0);
 
         // Validate cycleId is within bounds
