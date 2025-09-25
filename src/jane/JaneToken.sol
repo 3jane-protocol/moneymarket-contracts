@@ -20,7 +20,6 @@ contract JaneToken is ERC20, AccessControl {
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
     bytes32 public constant TRANSFER_ROLE = keccak256("TRANSFER_ROLE");
-    bytes32 public constant TRANSFER_TO_ROLE = keccak256("TRANSFER_TO_ROLE");
 
     event TransferableStatusChanged(bool indexed newStatus);
 
@@ -94,6 +93,6 @@ contract JaneToken is ERC20, AccessControl {
      * @return bool True if the transfer is allowed
      */
     function _canTransfer(address from, address to) internal view returns (bool) {
-        return transferable || hasRole(TRANSFER_ROLE, from) || hasRole(TRANSFER_TO_ROLE, to);
+        return transferable || hasRole(TRANSFER_ROLE, from) || hasRole(TRANSFER_ROLE, to);
     }
 }
