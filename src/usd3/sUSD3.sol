@@ -1,14 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
-import {ERC20} from "../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {SafeERC20} from "../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
-import {IMorpho, IMorphoCredit} from "../interfaces/IMorpho.sol";
-import {USD3} from "./USD3.sol";
+import {
+    BaseHooksUpgradeable, IERC20, IMorphoCredit, IProtocolConfig, IStrategy, Math, SafeERC20, USD3
+} from "./USD3.sol";
+import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 
 /**
  * @title sUSD3
@@ -27,7 +23,6 @@ import {USD3} from "./USD3.sol";
  * - Full withdrawal clears both lock and cooldown states
  */
 contract sUSD3 is BaseHooksUpgradeable {
-    using SafeERC20 for ERC20;
     using Math for uint256;
 
     /*//////////////////////////////////////////////////////////////
@@ -253,29 +248,28 @@ contract sUSD3 is BaseHooksUpgradeable {
     /// @param _owner Address to check limit for
     /// @return Maximum deposit amount allowed
     function availableDepositLimit(address _owner) public view override returns (uint256) {
-        // Check subordination ratio based on USD3 total supply
-        uint256 usd3TotalSupply = IERC20(asset).totalSupply();
+        // Get the subordinated debt cap in USDC terms
+        uint256 subordinatedDebtCapUSDC = getSubordinatedDebtCapInUSDC();
 
-        // If USD3 has no supply, no deposits allowed
-        if (usd3TotalSupply == 0) {
+        if (subordinatedDebtCapUSDC == 0) {
+            // No debt to subordinate, no deposits needed
             return 0;
         }
 
-        // Get current USD3 holdings by this sUSD3 contract
-        uint256 susd3Usd3Holdings = asset.balanceOf(address(this));
+        uint256 currentUSD3Holdings = asset.balanceOf(address(this));
+        uint256 currentHoldingsUSDC = IStrategy(address(asset)).convertToAssets(currentUSD3Holdings);
 
-        // Get max subordination ratio from ProtocolConfig
-        uint256 maxRatio = maxSubordinationRatio();
-
-        // Calculate max USD3 that sUSD3 can hold (15% of USD3 total supply)
-        uint256 maxUsd3Allowed = (usd3TotalSupply * maxRatio) / MAX_BPS;
-
-        if (susd3Usd3Holdings >= maxUsd3Allowed) {
-            return 0; // Already at max subordination
+        if (currentHoldingsUSDC >= subordinatedDebtCapUSDC) {
+            // Already at or above the subordination cap
+            return 0;
         }
 
-        // Return remaining capacity (in USD3 tokens)
-        return maxUsd3Allowed - susd3Usd3Holdings;
+        // Calculate remaining capacity in USDC terms
+        uint256 remainingCapacityUSDC = subordinatedDebtCapUSDC - currentHoldingsUSDC;
+
+        // Convert USDC capacity back to USD3 shares
+        // This is the maximum USD3 tokens that can be deposited
+        return IStrategy(address(asset)).convertToShares(remainingCapacityUSDC);
     }
 
     /// @dev Enforces lock period, cooldown, and withdrawal window requirements
@@ -310,8 +304,31 @@ contract sUSD3 is BaseHooksUpgradeable {
             return 0;
         }
 
-        // Within valid withdrawal window - return withdrawable amount in assets
-        return TokenizedStrategy.convertToAssets(cooldown.shares);
+        // Within valid withdrawal window - check backing requirement
+        uint256 cooldownAmount = TokenizedStrategy.convertToAssets(cooldown.shares);
+
+        uint256 subordinatedDebtFloorUSDC = getSubordinatedDebtFloorInUSDC();
+
+        if (subordinatedDebtFloorUSDC == 0) {
+            return cooldownAmount;
+        }
+
+        uint256 currentUSD3Holdings = asset.balanceOf(address(this));
+        uint256 currentAssetsUSDC = IStrategy(address(asset)).convertToAssets(currentUSD3Holdings);
+
+        if (currentAssetsUSDC <= subordinatedDebtFloorUSDC) {
+            // Cannot withdraw without going below minimum backing
+            return 0;
+        }
+
+        // Calculate maximum withdrawable while maintaining backing
+        uint256 maxWithdrawable = currentAssetsUSDC - subordinatedDebtFloorUSDC;
+
+        // Convert back to USD3 shares for withdrawal
+        uint256 maxWithdrawableUSD3 = IStrategy(address(asset)).convertToShares(maxWithdrawable);
+
+        // Return minimum of cooldown amount and max withdrawable
+        return Math.min(cooldownAmount, maxWithdrawableUSD3);
     }
 
     /**
@@ -333,17 +350,6 @@ contract sUSD3 is BaseHooksUpgradeable {
     /*//////////////////////////////////////////////////////////////
                         MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Get the maximum subordination ratio from ProtocolConfig
-     * @return Maximum subordination ratio in basis points
-     */
-    function maxSubordinationRatio() public view returns (uint256) {
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
-
-        uint256 ratio = config.getTrancheRatio();
-        return ratio > 0 ? ratio : 1500; // Default to 15% if not set
-    }
 
     /**
      * @notice Get the lock duration from ProtocolConfig
@@ -385,6 +391,85 @@ contract sUSD3 is BaseHooksUpgradeable {
     function setDepositorWhitelist(address _depositor, bool _allowed) external onlyManagement {
         depositorWhitelist[_depositor] = _allowed;
         emit DepositorWhitelistUpdated(_depositor, _allowed);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    SUBORDINATION CALCULATION FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Get the maximum subordination ratio from ProtocolConfig
+     * @return Maximum subordination ratio in basis points (e.g., 1500 = 15%)
+     */
+    function maxSubordinationRatio() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
+        uint256 ratio = config.getTrancheRatio();
+        return ratio > 0 ? ratio : 1500; // Default to 15% if not set
+    }
+
+    /**
+     * @notice Get the minimum backing ratio from ProtocolConfig
+     * @return Minimum backing ratio in basis points
+     */
+    function minBackingRatio() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
+        return config.config(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO);
+    }
+
+    /**
+     * @notice Calculate maximum sUSD3 deposits allowed based on debt and subordination ratio
+     * @dev Returns the cap amount for subordinated debt based on actual or potential market debt
+     * @return Maximum subordinated debt cap, expressed in USDC
+     */
+    function getSubordinatedDebtCapInUSDC() public view returns (uint256) {
+        USD3 usd3 = USD3(address(asset));
+
+        // Get actual borrowed amount
+        (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
+        uint256 actualDebtUSDC =
+            IStrategy(address(asset)).convertToAssets(usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC));
+
+        // Get potential debt based on debt ceiling
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
+        uint256 debtCap = config.config(ProtocolConfigLib.DEBT_CAP);
+
+        uint256 potentialDebtUSDC;
+        if (debtCap > 0) {
+            potentialDebtUSDC = IStrategy(address(asset)).convertToAssets(usd3.WAUSDC().convertToAssets(debtCap));
+        }
+        uint256 maxDebtUSDC = Math.max(actualDebtUSDC, potentialDebtUSDC);
+
+        if (maxDebtUSDC == 0) {
+            return 0; // No debt to subordinate
+        }
+
+        uint256 maxSubRatio = maxSubordinationRatio(); // e.g., 1500 (15%)
+
+        // Cap on subordinated debt = max(actual, potential) * subordination ratio
+        return (maxDebtUSDC * maxSubRatio) / MAX_BPS;
+    }
+
+    /**
+     * @notice Calculate minimum sUSD3 backing required for current market debt
+     * @dev Returns the floor amount of sUSD3 assets needed based on MIN_SUSD3_BACKING_RATIO
+     * @return Minimum backing amount required, expressed in USDC
+     */
+    function getSubordinatedDebtFloorInUSDC() public view returns (uint256) {
+        // Get minimum backing ratio
+        uint256 backingRatio = minBackingRatio();
+
+        // If backing ratio is 0, no minimum backing required
+        if (backingRatio == 0) return 0;
+
+        USD3 usd3 = USD3(address(asset));
+
+        // Get actual borrowed amount
+        (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
+        uint256 debtUSDC =
+            IStrategy(address(asset)).convertToAssets(usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC));
+
+        // Calculate minimum required backing
+        return (debtUSDC * backingRatio) / MAX_BPS;
     }
 
     /*//////////////////////////////////////////////////////////////

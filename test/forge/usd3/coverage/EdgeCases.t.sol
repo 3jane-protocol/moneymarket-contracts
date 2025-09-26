@@ -125,8 +125,11 @@ contract EdgeCases is Setup {
         bytes32 TRANCHE_RATIO = keccak256("TRANCHE_RATIO");
         protocolConfig.setConfig(TRANCHE_RATIO, ratio);
 
-        // Calculate expected limit
+        // Set debt cap to match USD3 supply for predictable test behavior
         uint256 usd3Supply = IERC20(address(usd3Strategy)).totalSupply();
+        setMorphoDebtCap(usd3Supply);
+
+        // Calculate expected limit based on debt cap
         uint256 expectedMaxDeposit = ratio == 0 ? 0 : (usd3Supply * ratio) / 10000;
 
         // Check deposit limit
