@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.22;
 
 import {AccessControl} from "../../lib/openzeppelin/contracts/access/AccessControl.sol";
-import {ERC20} from "../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20, ERC20Permit} from "../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+import {ERC20Burnable} from "../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 
 /**
  * @title JaneToken
@@ -10,13 +11,13 @@ import {ERC20} from "../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
  * @dev Implements role-based access control for minting, burning, and transfer restrictions.
  * Transfer logic:
  * - When transferable = true: Anyone can transfer tokens
- * - When transferable = false: Only addresses with TRANSFER_ROLE can send, or addresses with TRANSFER_TO_ROLE can
- * receive
+ * - When transferable = false: Only addresses with TRANSFER_ROLE can be one of the sender or receiver
  */
-contract JaneToken is ERC20, AccessControl {
+contract JaneToken is ERC20, ERC20Permit, ERC20Burnable, AccessControl {
     error TransferNotAllowed();
     error InvalidAddress();
 
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
     bytes32 public constant TRANSFER_ROLE = keccak256("TRANSFER_ROLE");
@@ -30,19 +31,21 @@ contract JaneToken is ERC20, AccessControl {
      * @notice Initializes the JANE token with an initial admin
      * @param _initialAdmin Address that will receive the DEFAULT_ADMIN_ROLE
      */
-    constructor(address _initialAdmin) ERC20("3Jane", "JANE") {
+    constructor(address _initialAdmin, address _minter, address _burner) ERC20("JANE", "JANE") ERC20Permit("JANE") {
         if (_initialAdmin == address(0)) revert InvalidAddress();
-        _grantRole(DEFAULT_ADMIN_ROLE, _initialAdmin);
+        _grantRole(ADMIN_ROLE, _initialAdmin);
+        _grantRole(MINTER_ROLE, _minter);
+        _grantRole(BURNER_ROLE, _burner);
+        _setRoleAdmin(ADMIN_ROLE, ADMIN_ROLE);
+        _setRoleAdmin(TRANSFER_ROLE, ADMIN_ROLE);
     }
 
     /**
-     * @notice Updates the global transferable status
-     * @dev Only callable by addresses with DEFAULT_ADMIN_ROLE
-     * @param _transferable New transferable status
+     * @notice Updates the global transferable to true
      */
-    function setTransferable(bool _transferable) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        transferable = _transferable;
-        emit TransferableStatusChanged(_transferable);
+    function setTransferable() external onlyRole(ADMIN_ROLE) {
+        transferable = true;
+        emit TransferableStatusChanged(true);
     }
 
     /**
