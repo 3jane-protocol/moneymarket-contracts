@@ -122,7 +122,7 @@ contract DebtFloorComprehensiveTest is Setup {
         assertEq(withdrawLimit, bobAssets, "Should allow full withdrawal with zero backing ratio");
 
         // Verify debt floor is indeed zero
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
         assertEq(debtFloor, 0, "Debt floor should be zero");
     }
 
@@ -169,7 +169,7 @@ contract DebtFloorComprehensiveTest is Setup {
 
         // Now withdrawal should be limited
         uint256 withdrawLimit2 = susd3Strategy.availableWithdrawLimit(bob);
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
 
         assertGt(debtFloor, 0, "Debt floor should be non-zero after change");
         assertLt(withdrawLimit2, bobAssets, "Withdrawal should be limited after backing ratio change");
@@ -212,7 +212,7 @@ contract DebtFloorComprehensiveTest is Setup {
         skip(8 days);
 
         // Calculate exact floor
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
         uint256 currentAssetsUSDC =
             ITokenizedStrategy(address(usd3Strategy)).convertToAssets(strategy.balanceOf(address(susd3Strategy)));
 
@@ -274,7 +274,7 @@ contract DebtFloorComprehensiveTest is Setup {
         uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
 
         // Get current floor and total assets
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
         uint256 currentAssetsUSDC =
             ITokenizedStrategy(address(usd3Strategy)).convertToAssets(strategy.balanceOf(address(susd3Strategy)));
 
@@ -342,7 +342,7 @@ contract DebtFloorComprehensiveTest is Setup {
         assertLt(withdrawLimit2, withdrawLimit1, "Withdrawal limit should decrease after debt increase");
 
         // Verify new floor
-        uint256 newDebtFloor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 newDebtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
         assertApproxEqRel(
             newDebtFloor,
             (250_000e6 * 4000) / 10000,
@@ -390,7 +390,7 @@ contract DebtFloorComprehensiveTest is Setup {
         assertLt(withdrawLimit2, withdrawLimit1, "Stricter backing ratio should reduce withdrawal limit");
 
         // Verify floor increased
-        uint256 newFloor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 newFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
         assertApproxEqRel(
             newFloor,
             (200_000e6 * 6000) / 10000,
@@ -458,7 +458,7 @@ contract DebtFloorComprehensiveTest is Setup {
         // sUSD3 holds USD3 tokens (which is 'strategy'), so get the balance and convert to USDC value
         uint256 remainingUSD3Tokens = strategy.balanceOf(address(susd3Strategy));
         uint256 remainingAssetsUSDC = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(remainingUSD3Tokens);
-        uint256 floor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 floor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
 
         assertGe(remainingAssetsUSDC, floor, "Should maintain minimum floor after first withdrawal");
     }
@@ -512,7 +512,7 @@ contract DebtFloorComprehensiveTest is Setup {
         // sUSD3 holds USD3 tokens (which is 'strategy'), so get the balance and convert to USDC value
         uint256 totalUSD3Tokens = strategy.balanceOf(address(susd3Strategy));
         uint256 totalAssetsUSDC = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(totalUSD3Tokens);
-        uint256 floor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 floor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
 
         assertGt(totalAssetsUSDC, floor, "Total assets should be above floor after recovery");
     }

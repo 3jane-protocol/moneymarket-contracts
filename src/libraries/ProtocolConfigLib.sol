@@ -8,7 +8,7 @@ library ProtocolConfigLib {
     // Market Control Keys
     bytes32 internal constant IS_PAUSED = keccak256("IS_PAUSED");
     bytes32 internal constant MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
-    bytes32 internal constant MORPHO_DEBT_CAP = keccak256("MORPHO_DEBT_CAP");
+    bytes32 internal constant DEBT_CAP = keccak256("DEBT_CAP");
 
     // Credit Line Keys
     bytes32 internal constant MIN_LOAN_DURATION = keccak256("MIN_LOAN_DURATION");

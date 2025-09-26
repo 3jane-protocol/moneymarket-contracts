@@ -371,7 +371,7 @@ contract USD3 is BaseHooksUpgradeable {
                     PUBLIC VIEW FUNCTIONS (OVERRIDES)
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Returns available withdraw limit, enforcing commitment time and MAX_ON_CREDIT constraints
+    /// @dev Returns available withdraw limit, enforcing commitment time
     /// @param _owner Address to check limit for
     /// @return Maximum amount that can be withdrawn
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
@@ -387,30 +387,6 @@ contract USD3 is BaseHooksUpgradeable {
         // During shutdown, bypass all checks
         if (TokenizedStrategy.isShutdown()) {
             return availableLiquidity;
-        }
-
-        // Check MAX_ON_CREDIT constraint
-        // Ensure withdrawal doesn't push utilized ratio above MAX_ON_CREDIT
-        uint256 maxOnCreditRatio = maxOnCredit();
-        if (maxOnCreditRatio > 0 && maxOnCreditRatio < MAX_BPS) {
-            // Get actual utilized amount (borrowed funds that can't be recalled)
-            (,, uint256 totalBorrowAssetsWaUSDC,) = getMarketLiquidity();
-            uint256 utilizedUSDC = WAUSDC.convertToAssets(totalBorrowAssetsWaUSDC);
-
-            uint256 currentTotalUSDC = TokenizedStrategy.totalAssets();
-
-            // Calculate minimum total assets needed to maintain MAX_ON_CREDIT ratio
-            // utilizedUSDC / minTotal <= maxOnCreditRatio / MAX_BPS
-            // minTotal = utilizedUSDC * MAX_BPS / maxOnCreditRatio
-            uint256 minRequiredTotal = (utilizedUSDC * MAX_BPS) / maxOnCreditRatio;
-
-            if (currentTotalUSDC <= minRequiredTotal) {
-                // Cannot withdraw without exceeding MAX_ON_CREDIT
-                return 0;
-            }
-            // Can only withdraw the excess
-            uint256 maxWithdrawable = currentTotalUSDC - minRequiredTotal;
-            availableLiquidity = Math.min(availableLiquidity, maxWithdrawable);
         }
 
         // Check commitment time

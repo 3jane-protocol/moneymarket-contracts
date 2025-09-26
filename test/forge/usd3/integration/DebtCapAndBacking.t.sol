@@ -74,7 +74,7 @@ contract DebtCapAndBackingTest is Setup {
 
     function test_debtCap_preventsExcessiveBorrowing() public {
         // Set debt cap directly (waUSDC and USDC are 1:1 initially)
-        protocolConfig.setConfig(ProtocolConfigLib.MORPHO_DEBT_CAP, DEBT_CAP_USDC);
+        protocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, DEBT_CAP_USDC);
 
         // Alice deposits to provide liquidity
         vm.prank(alice);
@@ -117,7 +117,7 @@ contract DebtCapAndBackingTest is Setup {
 
     function test_debtCap_allowsBorrowingUpToCap() public {
         // Set debt cap directly (waUSDC and USDC are 1:1 initially)
-        protocolConfig.setConfig(ProtocolConfigLib.MORPHO_DEBT_CAP, DEBT_CAP_USDC);
+        protocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, DEBT_CAP_USDC);
 
         // Alice deposits to provide liquidity
         vm.prank(alice);
@@ -134,7 +134,7 @@ contract DebtCapAndBackingTest is Setup {
 
     function test_debtCap_zeroDisablesLimit() public {
         // Set debt cap to 0 (disabled)
-        protocolConfig.setConfig(ProtocolConfigLib.MORPHO_DEBT_CAP, 0);
+        protocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, 0);
 
         // Alice deposits to provide liquidity
         vm.prank(alice);
@@ -202,7 +202,7 @@ contract DebtCapAndBackingTest is Setup {
         uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
 
         // Calculate expected limit based on backing requirement
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
         assertGt(debtFloor, 0, "Should have debt floor");
 
         // Bob shouldn't be able to withdraw everything
@@ -251,7 +251,7 @@ contract DebtCapAndBackingTest is Setup {
 
         // Bob should be able to withdraw most funds
         uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
 
         // Should be able to withdraw everything except the floor
         // Note: toDeposit might be less than bobUSD3 due to deposit limits
@@ -272,7 +272,7 @@ contract DebtCapAndBackingTest is Setup {
 
     function test_debtCeilingLimitsSubordinateDeposits() public {
         // Set debt cap and subordination ratio
-        protocolConfig.setConfig(ProtocolConfigLib.MORPHO_DEBT_CAP, DEBT_CAP_USDC);
+        protocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, DEBT_CAP_USDC);
         protocolConfig.setConfig(ProtocolConfigLib.TRANCHE_RATIO, 1500); // 15%
 
         // Alice deposits to USD3

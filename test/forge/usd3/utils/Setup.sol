@@ -113,7 +113,7 @@ contract Setup is Test, IEvents {
 
         // Set a high default debt cap to allow sUSD3 deposits in tests
         // Tests that need specific debt cap scenarios can override this
-        testProtocolConfig.setConfig(ProtocolConfigLib.MORPHO_DEBT_CAP, 100_000_000e6); // 100M USDC default
+        testProtocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, 100_000_000e6); // 100M USDC default
 
         // Deploy real MorphoCredit with proxy pattern
         MorphoCredit morphoImpl = new MorphoCredit(address(testProtocolConfig));
@@ -250,8 +250,8 @@ contract Setup is Test, IEvents {
     }
 
     function setMorphoDebtCap(uint256 _debtCap) public {
-        // Set MORPHO_DEBT_CAP through ProtocolConfig
-        testProtocolConfig.setConfig(ProtocolConfigLib.MORPHO_DEBT_CAP, _debtCap);
+        // Set DEBT_CAP through ProtocolConfig
+        testProtocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, _debtCap);
     }
 
     /**

@@ -39,7 +39,7 @@ contract DebtCapSimpleTest is Setup {
 
     function test_debtCap_simple() public {
         // Set debt cap in waUSDC terms (same as USDC since 1:1 initially)
-        protocolConfig.setConfig(ProtocolConfigLib.MORPHO_DEBT_CAP, DEBT_CAP_USDC);
+        protocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, DEBT_CAP_USDC);
 
         // Alice deposits to provide liquidity
         vm.prank(alice);

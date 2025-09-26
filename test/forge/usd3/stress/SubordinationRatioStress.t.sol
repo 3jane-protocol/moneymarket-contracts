@@ -98,7 +98,7 @@ contract SubordinationRatioStressTest is Setup {
         createMarketDebt(borrower, 500_000e6); // $500k USDC debt
 
         // Calculate max sUSD3 allowed based on debt
-        uint256 debtCapUSDC = susd3Strategy.getSubordinatedDebtCapInAssets();
+        uint256 debtCapUSDC = susd3Strategy.getSubordinatedDebtCapInUSDC();
         assertGt(debtCapUSDC, 0, "Should have debt cap");
 
         // Convert to USD3 shares for mock

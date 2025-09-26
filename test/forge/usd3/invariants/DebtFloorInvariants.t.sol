@@ -96,7 +96,7 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
     function invariant_assetsAboveFloorWhenDebtExists() public view {
         if (isShutdown) return; // Skip during shutdown
 
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
         // Get sUSD3's USD3 holdings and convert to USDC value
         uint256 currentAssetsUSDC =
             ITokenizedStrategy(address(usd3Strategy)).convertToAssets(asset.balanceOf(address(susd3Strategy)));
@@ -119,7 +119,7 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
      * @notice Invariant: Debt floor calculation is always correct
      */
     function invariant_debtFloorCalculationCorrect() public view {
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
 
         // Get current debt
         (,, uint256 totalBorrowAssetsWaUSDC,) = usd3Strategy.getMarketLiquidity();
@@ -144,7 +144,7 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         // For any actor that might have sUSD3 positions
         // their withdrawal limit should respect the debt floor
 
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
         uint256 currentAssetsUSDC =
             ITokenizedStrategy(address(usd3Strategy)).convertToAssets(asset.balanceOf(address(susd3Strategy)));
 
@@ -163,7 +163,7 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
      * @notice Invariant: Floor changes proportionally with debt
      */
     function invariant_floorScalesWithDebt() public view {
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInAssets();
+        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
 
         (,, uint256 totalBorrowAssetsWaUSDC,) = usd3Strategy.getMarketLiquidity();
         uint256 currentDebtUSDC = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(

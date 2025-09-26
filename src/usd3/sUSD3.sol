@@ -249,7 +249,7 @@ contract sUSD3 is BaseHooksUpgradeable {
     /// @return Maximum deposit amount allowed
     function availableDepositLimit(address _owner) public view override returns (uint256) {
         // Get the subordinated debt cap in USDC terms
-        uint256 subordinatedDebtCapUSDC = getSubordinatedDebtCapInAssets();
+        uint256 subordinatedDebtCapUSDC = getSubordinatedDebtCapInUSDC();
 
         if (subordinatedDebtCapUSDC == 0) {
             // No debt to subordinate, no deposits needed
@@ -307,7 +307,7 @@ contract sUSD3 is BaseHooksUpgradeable {
         // Within valid withdrawal window - check backing requirement
         uint256 cooldownAmount = TokenizedStrategy.convertToAssets(cooldown.shares);
 
-        uint256 subordinatedDebtFloorUSDC = getSubordinatedDebtFloorInAssets();
+        uint256 subordinatedDebtFloorUSDC = getSubordinatedDebtFloorInUSDC();
 
         if (subordinatedDebtFloorUSDC == 0) {
             return cooldownAmount;
@@ -421,7 +421,7 @@ contract sUSD3 is BaseHooksUpgradeable {
      * @dev Returns the cap amount for subordinated debt based on actual or potential market debt
      * @return Maximum subordinated debt cap, expressed in USDC
      */
-    function getSubordinatedDebtCapInAssets() public view returns (uint256) {
+    function getSubordinatedDebtCapInUSDC() public view returns (uint256) {
         USD3 usd3 = USD3(address(asset));
 
         // Get actual borrowed amount
@@ -431,7 +431,7 @@ contract sUSD3 is BaseHooksUpgradeable {
 
         // Get potential debt based on debt ceiling
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
-        uint256 debtCap = config.config(ProtocolConfigLib.MORPHO_DEBT_CAP);
+        uint256 debtCap = config.config(ProtocolConfigLib.DEBT_CAP);
 
         uint256 potentialDebtUSDC;
         if (debtCap > 0) {
@@ -454,7 +454,7 @@ contract sUSD3 is BaseHooksUpgradeable {
      * @dev Returns the floor amount of sUSD3 assets needed based on MIN_SUSD3_BACKING_RATIO
      * @return Minimum backing amount required, expressed in USDC
      */
-    function getSubordinatedDebtFloorInAssets() public view returns (uint256) {
+    function getSubordinatedDebtFloorInUSDC() public view returns (uint256) {
         // Get minimum backing ratio
         uint256 backingRatio = minBackingRatio();
 

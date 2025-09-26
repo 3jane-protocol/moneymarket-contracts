@@ -618,7 +618,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // No need to update markdown - borrower must be Current to borrow, so markdown is always 0
 
         // Check debt cap
-        uint256 debtCap = IProtocolConfig(protocolConfig).config(ProtocolConfigLib.MORPHO_DEBT_CAP);
+        uint256 debtCap = IProtocolConfig(protocolConfig).config(ProtocolConfigLib.DEBT_CAP);
         if (debtCap > 0 && market[id].totalBorrowAssets + assets > debtCap) {
             revert ErrorsLib.DebtCapExceeded();
         }
