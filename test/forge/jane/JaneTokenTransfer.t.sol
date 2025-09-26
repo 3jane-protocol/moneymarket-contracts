@@ -86,15 +86,15 @@ contract JaneTokenTransferTest is JaneSetup {
         setTransferable();
         assertTrue(token.transferable());
 
-        vm.prank(admin);
+        vm.prank(owner);
         token.setTransferable();
         assertTrue(token.transferable());
     }
 
     function test_setTransferable_emitsEvent() public {
-        vm.prank(admin);
+        vm.prank(owner);
         vm.expectEmit(true, false, false, true);
-        emit TransferableStatusChanged(true);
+        emit TransferEnabled();
         token.setTransferable();
     }
 
@@ -137,8 +137,8 @@ contract JaneTokenTransferTest is JaneSetup {
         bool grantRoleToReceiver
     ) public {
         vm.assume(from != address(0) && to != address(0));
-        vm.assume(from != minter && from != burner && from != admin);
-        vm.assume(to != minter && to != burner && to != admin);
+        vm.assume(from != minter && from != burner && from != owner);
+        vm.assume(to != minter && to != burner && to != owner);
         vm.assume(amount <= 1000e18);
 
         mintTokens(from, 1000e18);

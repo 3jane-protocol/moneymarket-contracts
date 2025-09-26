@@ -5,15 +5,15 @@ import {JaneSetup} from "./utils/JaneSetup.sol";
 import {JaneToken} from "../../../src/jane/JaneToken.sol";
 
 contract JaneTokenBaseTest is JaneSetup {
-    function test_constructor_setsCorrectRoles() public view {
-        assertTrue(token.hasRole(ADMIN_ROLE, admin));
-        assertTrue(token.hasRole(MINTER_ROLE, minter));
-        assertTrue(token.hasRole(BURNER_ROLE, burner));
-        assertFalse(token.hasRole(TRANSFER_ROLE, admin));
+    function test_constructor_setsCorrectAddresses() public view {
+        assertEq(token.owner(), owner);
+        assertEq(token.minter(), minter);
+        assertEq(token.burner(), burner);
+        assertFalse(token.hasTransferRole(owner));
     }
 
-    function test_constructor_revertsWithZeroAdmin() public {
-        vm.expectRevert(JaneToken.InvalidAddress.selector);
+    function test_constructor_revertsWithZeroOwner() public {
+        vm.expectRevert();
         new JaneToken(address(0), minter, burner);
     }
 
@@ -35,7 +35,7 @@ contract JaneTokenBaseTest is JaneSetup {
 
     function test_mint_revertsUnauthorized() public {
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(JaneToken.NotMinter.selector);
         token.mint(bob, 1000e18);
     }
 
@@ -57,19 +57,39 @@ contract JaneTokenBaseTest is JaneSetup {
         assertEq(token.totalSupply(), 1300e18);
     }
 
-    function test_setTransferable_onlyAdmin() public {
-        vm.prank(admin);
+    function test_setTransferable_onlyOwner() public {
+        vm.prank(owner);
         vm.expectEmit(true, false, false, true);
-        emit TransferableStatusChanged(true);
+        emit TransferEnabled();
         token.setTransferable();
 
         assertTrue(token.transferable());
     }
 
-    function test_setTransferable_revertsNonAdmin() public {
+    function test_setTransferable_revertsNonOwner() public {
         vm.prank(alice);
         vm.expectRevert();
         token.setTransferable();
+    }
+
+    function test_finalizeMinting_onlyOwner() public {
+        assertFalse(token.mintFinalized());
+
+        vm.prank(owner);
+        vm.expectEmit(true, false, false, true);
+        emit MintingFinalized();
+        token.finalizeMinting();
+
+        assertTrue(token.mintFinalized());
+    }
+
+    function test_finalizeMinting_preventsFutureMinting() public {
+        vm.prank(owner);
+        token.finalizeMinting();
+
+        vm.prank(minter);
+        vm.expectRevert(JaneToken.MintFinalized.selector);
+        token.mint(alice, 1000e18);
     }
 
     function testFuzz_mint_variousAmounts(uint256 amount) public {
