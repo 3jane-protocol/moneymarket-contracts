@@ -53,6 +53,9 @@ contract Helper is IHelper {
 
     /// @inheritdoc IHelper
     function deposit(uint256 assets, address receiver, bool hop) external returns (uint256) {
+        // Check if msg.sender is allowed to deposit this amount to USD3
+        require(IUSD3(USD3).availableDepositLimit(msg.sender) >= assets, "Deposit exceeds limit");
+
         // USD3 now accepts USDC directly after reinitialize()
         IERC20(USDC).safeTransferFrom(msg.sender, address(this), assets);
 
