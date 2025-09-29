@@ -8,10 +8,6 @@ import {ERC20Burnable} from "../../lib/openzeppelin/contracts/token/ERC20/extens
 /**
  * @title JaneToken
  * @notice 3Jane protocol governance and rewards token with controlled transfer capabilities
- * @dev Implements ownership-based access control for minting, burning, and transfer restrictions.
- * Transfer logic:
- * - When transferable = true: Anyone can transfer tokens
- * - When transferable = false: Only addresses with transfer role can be one of the sender or receiver
  */
 contract JaneToken is ERC20, ERC20Permit, ERC20Burnable, Ownable {
     error TransferNotAllowed();
@@ -24,11 +20,24 @@ contract JaneToken is ERC20, ERC20Permit, ERC20Burnable, Ownable {
     event MintingFinalized();
     event TransferRoleUpdated(address indexed account, bool indexed hasRole);
 
-    /// @notice Global transfer toggle - when true, anyone can transfer
-    bool public transferable;
-    bool public mintFinalized;
+    /// @notice The address authorized to mint new tokens
+    /// @dev Immutable after deployment. Can mint tokens until minting is finalized
     address public immutable minter;
+
+    /// @notice The address authorized to burn tokens from any account
+    /// @dev Immutable after deployment. Can always burn tokens regardless of transfer restrictions
     address public immutable burner;
+
+    /// @notice Whether transfers are globally enabled for all users
+    /// @dev When true, anyone can transfer. When false, only addresses with transfer role can participate in transfers
+    bool public transferable;
+
+    /// @notice Whether minting has been permanently disabled
+    /// @dev Once set to true, no new tokens can ever be minted
+    bool public mintFinalized;
+
+    /// @notice Tracks which addresses have the transfer role
+    /// @dev When transferable is false, addresses with this role can still participate in transfers
     mapping(address => bool) public hasTransferRole;
 
     /**

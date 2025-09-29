@@ -140,6 +140,8 @@ contract JaneTokenBurnTest is JaneSetup {
     function testFuzz_burnMechanisms(address account, uint256 burnAmount) public {
         vm.assume(account != address(0));
         vm.assume(account != minter && account != burner && account != owner);
+        // Exclude addresses that already have tokens from setUp
+        vm.assume(account != alice && account != bob && account != charlie);
         vm.assume(burnAmount <= 1000e18);
 
         mintTokens(account, 1000e18);

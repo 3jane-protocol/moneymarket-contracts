@@ -30,6 +30,9 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
     /// @param claimant The address that initiated the claim (can be different from user)
     event Claimed(address indexed user, uint256 indexed campaignId, uint256 amount, address indexed claimant);
 
+    /// @notice Emitted when a campaign is invalidated
+    event CampaignInvalidated(uint256 indexed campaignId);
+
     /// @notice The JANE token being distributed
     IERC20 public immutable jane;
 
@@ -68,9 +71,11 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
      */
     function claim(uint256 rootId, bytes32[] memory proof, address addr, uint256 amount) public nonReentrant {
         if (rootId >= merkleRoots.length) revert InvalidCampaign();
+        bytes32 root = merkleRoots[rootId];
+        if (root == bytes32(0)) revert InvalidCampaign();
         if (claimed(addr, rootId)) revert AlreadyClaimed();
 
-        verify(rootId, proof, addr, amount);
+        _verify(root, proof, addr, amount);
         _setClaimed(addr, rootId);
         jane.transfer(addr, amount);
 
@@ -101,6 +106,17 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
     }
 
     /**
+     * @notice Invalidates a campaign by setting its merkle root to zero
+     * @dev Once invalidated, no claims can be made from this campaign
+     * @param campaignId The ID of the campaign to invalidate
+     */
+    function invalidateCampaign(uint256 campaignId) external onlyOwner {
+        if (campaignId >= merkleRoots.length) revert InvalidCampaign();
+        merkleRoots[campaignId] = bytes32(0);
+        emit CampaignInvalidated(campaignId);
+    }
+
+    /**
      * @notice Returns the total number of campaigns
      * @return The number of merkle roots stored
      */
@@ -116,8 +132,12 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
      * @param amount The amount in the claim
      */
     function verify(uint256 rootId, bytes32[] memory proof, address addr, uint256 amount) public view {
+        _verify(merkleRoots[rootId], proof, addr, amount);
+    }
+
+    function _verify(bytes32 root, bytes32[] memory proof, address addr, uint256 amount) internal pure {
         bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(addr, amount))));
-        if (!MerkleProof.verify(proof, merkleRoots[rootId], leaf)) revert InvalidProof();
+        if (!MerkleProof.verify(proof, root, leaf)) revert InvalidProof();
     }
 
     /**
@@ -140,8 +160,7 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Recovers tokens sent to this contract by mistake
-     * @dev Only callable by owner, typically used to recover accidentally sent tokens
+     * @notice Recovers tokens sent to this contract
      * @param token The ERC20 token to recover
      */
     function sweep(IERC20 token) external onlyOwner {

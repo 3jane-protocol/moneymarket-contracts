@@ -139,6 +139,9 @@ contract JaneTokenTransferTest is JaneSetup {
         vm.assume(from != address(0) && to != address(0));
         vm.assume(from != minter && from != burner && from != owner);
         vm.assume(to != minter && to != burner && to != owner);
+        // Exclude addresses that already have tokens from setUp
+        vm.assume(from != alice && from != bob);
+        vm.assume(to != alice && to != bob);
         vm.assume(amount <= 1000e18);
 
         mintTokens(from, 1000e18);
