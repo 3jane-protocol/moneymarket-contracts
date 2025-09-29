@@ -5,7 +5,7 @@ import "forge-std/console2.sol";
 import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
 import {USD3} from "../../../src/usd3/USD3.sol";
 import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
-import {IMorpho, IMorphoCredit, MarketParams} from "../../../src/interfaces/IMorpho.sol";
+import {IMorpho, IMorphoCredit, MarketParams, Id} from "../../../src/interfaces/IMorpho.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {HelperMock} from "../../../src/mocks/HelperMock.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
@@ -49,7 +49,10 @@ contract USD3BorrowerRestrictionTest is Setup {
         // Get the protocol config and morpho instance
         morpho = IMorpho(address(usd3Strategy.morphoCredit()));
         protocolConfig = MockProtocolConfig(IMorphoCredit(address(morpho)).protocolConfig());
-        marketParams = usd3Strategy.marketParams();
+
+        // Get the actual market params from morpho using the market ID
+        // This ensures we have the correct creditLine address
+        marketParams = morpho.idToMarketParams(usd3Strategy.marketId());
 
         // Deploy sUSD3 mock for testing hop functionality
         sUSD3 = makeAddr("sUSD3");
@@ -114,9 +117,14 @@ contract USD3BorrowerRestrictionTest is Setup {
 
     function _setupBorrowerWithLoan(address _borrower, uint256 _borrowAmount) internal {
         // First need to close a payment cycle to unfreeze the market
+        Id marketId = usd3Strategy.marketId();
+        console2.log("_setupBorrowerWithLoan marketId:");
+        console2.logBytes32(Id.unwrap(marketId));
+        console2.log("_setupBorrowerWithLoan creditLine:", marketParams.creditLine);
+
         vm.prank(marketParams.creditLine);
         MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            usd3Strategy.marketId(),
+            marketId,
             block.timestamp, // End date is current time
             new address[](0), // No borrowers yet
             new uint256[](0), // No repayment bps
@@ -199,7 +207,7 @@ contract USD3BorrowerRestrictionTest is Setup {
 
         // Try to deposit through Helper without hop - should fail
         vm.prank(borrower);
-        vm.expectRevert("Deposit exceeds limit");
+        vm.expectRevert("ERC4626: deposit more than max");
         helperContract.deposit(TEST_AMOUNT, borrower, false);
     }
 
@@ -300,7 +308,7 @@ contract USD3BorrowerRestrictionTest is Setup {
 
         // Helper deposit should also fail
         vm.prank(borrower);
-        vm.expectRevert("Deposit exceeds limit");
+        vm.expectRevert("ERC4626: deposit more than max");
         helperContract.deposit(TEST_AMOUNT, borrower, false);
     }
 

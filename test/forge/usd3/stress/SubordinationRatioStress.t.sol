@@ -296,7 +296,8 @@ contract SubordinationRatioStressTest is Setup {
 
     function test_maxOnCredit_roundingErrors() public {
         // Test MAX_ON_CREDIT with odd numbers that might cause rounding issues
-        uint256 oddDeposit = 1234567; // Small odd number (1.23 USDC)
+        // Use larger amount to ensure we have enough liquidity for minimum borrow
+        uint256 oddDeposit = 20000001; // ~20 USDC with odd amount for rounding
 
         // Multiple small deposits
         for (uint256 i = 0; i < 10; i++) {
@@ -311,8 +312,9 @@ contract SubordinationRatioStressTest is Setup {
 
         // Create debt to test MAX_ON_CREDIT constraint
         address borrower = makeAddr("borrower");
-        uint256 totalDeposited = oddDeposit * 10;
-        createMarketDebt(borrower, totalDeposited * 7 / 10); // 70% utilized
+        uint256 totalDeposited = oddDeposit * 10; // 200 USDC total
+        uint256 borrowAmount = 100e6; // Use minimum borrow amount (100 USDC)
+        createMarketDebt(borrower, borrowAmount);
 
         // Try withdrawals with rounding edge cases
         address firstUser = address(uint160(0x1000));
