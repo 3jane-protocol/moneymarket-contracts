@@ -32,7 +32,7 @@ contract DebtSettlementTest is BaseTest {
         super.setUp();
 
         // Deploy markdown manager
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
 
         // Deploy credit line
         creditLine = new CreditLineMock(morphoAddress);
@@ -52,6 +52,10 @@ contract DebtSettlementTest is BaseTest {
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
         creditLine.setMm(address(markdownManager));
+
+        // Enable markdown for test borrowers
+        markdownManager.setEnableMarkdown(BORROWER, true);
+
         vm.stopPrank();
 
         // Initialize first cycle to unfreeze the market
@@ -492,6 +496,9 @@ contract DebtSettlementTest is BaseTest {
 
         // Setup grace period borrower
         address graceBorrower = makeAddr("GraceBorrower");
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(graceBorrower, true);
+        vm.stopPrank();
         _setupBorrowerWithLoan(graceBorrower, borrowAmount);
         _createPastObligation(graceBorrower, 500, borrowAmount);
 
@@ -524,6 +531,9 @@ contract DebtSettlementTest is BaseTest {
 
         // Setup delinquent borrower
         address delinquentBorrower = makeAddr("DelinquentBorrower");
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(delinquentBorrower, true);
+        vm.stopPrank();
         _setupBorrowerWithLoan(delinquentBorrower, borrowAmount);
         _createPastObligation(delinquentBorrower, 500, borrowAmount);
 

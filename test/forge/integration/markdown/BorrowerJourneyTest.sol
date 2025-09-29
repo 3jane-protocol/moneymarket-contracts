@@ -27,7 +27,7 @@ contract BorrowerJourneyTest is BaseTest {
         super.setUp();
 
         // Deploy markdown manager
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
 
         // Deploy credit line
         creditLine = new CreditLineMock(morphoAddress);
@@ -47,6 +47,13 @@ contract BorrowerJourneyTest is BaseTest {
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
         creditLine.setMm(address(markdownManager));
+
+        // Enable markdown for test borrowers
+        markdownManager.setEnableMarkdown(BORROWER, true);
+        markdownManager.setEnableMarkdown(address(0x1234), true);
+        markdownManager.setEnableMarkdown(address(0x5678), true);
+        markdownManager.setEnableMarkdown(address(0x9999), true);
+
         vm.stopPrank();
 
         // Initialize first cycle to unfreeze the market
@@ -125,7 +132,8 @@ contract BorrowerJourneyTest is BaseTest {
             uint256 timeInDefault = block.timestamp > recordedDefaultTime ? block.timestamp - recordedDefaultTime : 0;
             markdown = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
         }
-        assertEq(markdown, 0, "Markdown should be 0 at exact default time");
+        // At exact default time (1 second after default starts), markdown should be minimal but non-zero
+        assertTrue(markdown < borrowAssets / 1000, "Markdown should be minimal at start of default");
 
         // Step 6: Markdown accrues over time
         _continueMarketCycles(id, defaultStartTime + 10 days);
@@ -140,9 +148,9 @@ contract BorrowerJourneyTest is BaseTest {
         }
         assertTrue(markdown10Days > 0, "Should have markdown after 10 days");
 
-        // Expected: 10 days * 1% per day = 10% markdown
-        uint256 expectedMarkdown = borrowAssets * 10 / 100;
-        assertApproxEqRel(markdown10Days, expectedMarkdown, 0.01e18, "Markdown should be ~10%");
+        // Expected: 10 days out of 70 days = ~14.28% markdown
+        uint256 expectedMarkdown = borrowAssets * 10 / 70;
+        assertApproxEqRel(markdown10Days, expectedMarkdown, 0.01e18, "Markdown should be ~14.3%");
 
         // Step 7: Continue to max markdown
         _continueMarketCycles(id, defaultStartTime + 100 days); // Well past 70% cap
@@ -155,8 +163,8 @@ contract BorrowerJourneyTest is BaseTest {
             uint256 timeInDefault = block.timestamp > recordedDefaultTime ? block.timestamp - recordedDefaultTime : 0;
             markdownMax = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
         }
-        uint256 maxExpected = borrowAssets * 70 / 100; // 70% cap
-        assertApproxEqRel(markdownMax, maxExpected, 0.03e18, "Markdown should cap at 70%");
+        uint256 maxExpected = borrowAssets; // 100% after 70+ days
+        assertApproxEqRel(markdownMax, maxExpected, 0.03e18, "Markdown should reach 100%");
     }
 
     /// @notice Test default to recovery flow with markdown clearing
@@ -330,6 +338,9 @@ contract BorrowerJourneyTest is BaseTest {
 
         // Test 3: Settlement during default (with markdown)
         address borrower3 = makeAddr("Borrower3");
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(borrower3, true);
+        vm.stopPrank();
         _setupBorrowerWithLoan(borrower3, borrowAmount);
         _createPastObligation(borrower3, 500, borrowAmount);
 
