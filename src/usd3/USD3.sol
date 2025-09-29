@@ -406,6 +406,11 @@ contract USD3 is BaseHooksUpgradeable {
             return 0;
         }
 
+        // Block deposits from borrowers
+        if (morphoCredit.borrowShares(marketId, _owner) > 0) {
+            return 0;
+        }
+
         uint256 cap = supplyCap();
         if (cap == 0 || cap == type(uint256).max) {
             return type(uint256).max;

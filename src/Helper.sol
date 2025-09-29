@@ -49,19 +49,21 @@ contract Helper is IHelper {
         WAUSDC = wausdc;
 
         // Set max approvals
-        IERC20(USDC).approve(WAUSDC, type(uint256).max); // For borrow/repay operations
-        IERC20(USDC).approve(USD3, type(uint256).max); // USD3 uses USDC after reinitialize()
-        IERC20(WAUSDC).approve(MORPHO, type(uint256).max); // MorphoCredit still uses waUSDC
-        IERC20(USD3).approve(sUSD3, type(uint256).max); // For hop from USD3 -> sUSD3
+        IERC20(USDC).approve(WAUSDC, type(uint256).max);
+        IERC20(USDC).approve(USD3, type(uint256).max);
+        IERC20(WAUSDC).approve(MORPHO, type(uint256).max);
+        IERC20(USD3).approve(sUSD3, type(uint256).max);
     }
 
     /// @inheritdoc IHelper
     function deposit(uint256 assets, address receiver, bool hop) external returns (uint256) {
-        // USD3 now accepts USDC directly after reinitialize()
         IERC20(USDC).safeTransferFrom(msg.sender, address(this), assets);
 
         if (hop) {
-            require(IUSD3(USD3).whitelist(receiver), "!whitelist");
+            // Check if receiver is allowed to deposit this amount to USD3
+            // This is needed for hop because USD3.deposit checks address(this), not receiver
+            require(IUSD3(USD3).availableDepositLimit(receiver) >= assets, "Deposit exceeds limit");
+
             assets = IUSD3(USD3).deposit(assets, address(this));
             assets = IERC4626(sUSD3).deposit(assets, receiver);
         } else {
