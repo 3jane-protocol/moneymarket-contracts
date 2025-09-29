@@ -82,7 +82,7 @@ contract MarkdownManagerMock is IMarkdownManager, Ownable {
         returns (uint256 markdownAmount)
     {
         if (customMarkdowns[borrower] > 0) {
-            return customMarkdowns[borrower];
+            return customMarkdowns[borrower] > borrowAmount ? borrowAmount : customMarkdowns[borrower];
         }
 
         if (!markdownEnabled[borrower]) {
