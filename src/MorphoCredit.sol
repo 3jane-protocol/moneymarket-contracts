@@ -613,6 +613,16 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (debtCap > 0 && market[id].totalBorrowAssets + assets > debtCap) {
             revert ErrorsLib.DebtCapExceeded();
         }
+
+        // Check minimum borrow requirement
+        uint256 minBorrow = IProtocolConfig(protocolConfig).getMarketConfig().minBorrow;
+        if (minBorrow > 0) {
+            Market memory m = market[id];
+            uint256 currentDebt =
+                uint256(position[id][onBehalf].borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+            uint256 newDebt = currentDebt + assets;
+            if (newDebt < minBorrow) revert ErrorsLib.BelowMinimumBorrow();
+        }
     }
 
     /// @inheritdoc Morpho
@@ -629,6 +639,18 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // Accrue premium (including penalty if past grace period)
         _accrueBorrowerPremium(id, onBehalf);
         _updateBorrowerMarkdown(id, onBehalf); // TODO: decide whether to remove
+
+        // Check minimum borrow requirement for remaining debt
+        uint256 minBorrow = IProtocolConfig(protocolConfig).getMarketConfig().minBorrow;
+        if (minBorrow > 0) {
+            Market memory m = market[id];
+            uint256 currentDebt =
+                uint256(position[id][onBehalf].borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+            if (currentDebt > assets) {
+                uint256 remainingDebt = currentDebt - assets;
+                if (remainingDebt < minBorrow) revert ErrorsLib.BelowMinimumBorrow();
+            }
+        }
 
         // Track payment against obligation
         _trackObligationPayment(id, onBehalf, assets);
@@ -837,7 +859,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 lastCycleEnd = paymentCycle[id][cycleCount - 1].endDate;
         uint256 expectedNextCycleEnd = lastCycleEnd + cycleDuration;
 
-        return block.timestamp > expectedNextCycleEnd;
+        return block.timestamp >= expectedNextCycleEnd;
     }
 
     /// @notice Settle a borrower's account by writing off all remaining debt

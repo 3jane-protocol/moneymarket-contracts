@@ -140,4 +140,7 @@ library ErrorsLib {
 
     /// @notice Thrown when a borrow would exceed the protocol debt cap.
     error DebtCapExceeded();
+
+    /// @notice Thrown when borrow or repay would result in debt below minimum borrow amount.
+    error BelowMinimumBorrow();
 }

@@ -221,6 +221,11 @@ contract USD3Mock is IERC4626 {
         else totalSupply -= balanceOf[account] - amount;
         balanceOf[account] = amount;
     }
+
+    // Add whitelist function for Helper contract
+    function whitelist(address) external pure returns (bool) {
+        return true; // Always return true for testing
+    }
 }
 
 contract WrapMock is IERC4626 {
