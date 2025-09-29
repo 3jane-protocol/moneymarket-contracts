@@ -49,22 +49,23 @@ contract Helper is IHelper {
         WAUSDC = wausdc;
 
         // Set max approvals
-        IERC20(USDC).approve(WAUSDC, type(uint256).max);
-        IERC20(WAUSDC).approve(USD3, type(uint256).max);
-        IERC20(WAUSDC).approve(MORPHO, type(uint256).max);
-        IERC20(USD3).approve(sUSD3, type(uint256).max);
+        IERC20(USDC).approve(WAUSDC, type(uint256).max); // For borrow/repay operations
+        IERC20(USDC).approve(USD3, type(uint256).max); // USD3 uses USDC after reinitialize()
+        IERC20(WAUSDC).approve(MORPHO, type(uint256).max); // MorphoCredit still uses waUSDC
+        IERC20(USD3).approve(sUSD3, type(uint256).max); // For hop from USD3 -> sUSD3
     }
 
     /// @inheritdoc IHelper
     function deposit(uint256 assets, address receiver, bool hop) external returns (uint256) {
-        uint256 waUsdcAmount = _wrap(msg.sender, assets);
+        // USD3 now accepts USDC directly after reinitialize()
+        IERC20(USDC).safeTransferFrom(msg.sender, address(this), assets);
 
         if (hop) {
             require(IUSD3(USD3).whitelist(receiver), "!whitelist");
-            assets = IUSD3(USD3).deposit(waUsdcAmount, address(this));
+            assets = IUSD3(USD3).deposit(assets, address(this));
             assets = IERC4626(sUSD3).deposit(assets, receiver);
         } else {
-            assets = IUSD3(USD3).deposit(waUsdcAmount, receiver);
+            assets = IUSD3(USD3).deposit(assets, receiver);
         }
 
         return assets;
@@ -72,8 +73,9 @@ contract Helper is IHelper {
 
     /// @inheritdoc IHelper
     function redeem(uint256 shares, address receiver) external returns (uint256) {
-        uint256 waUsdcAssets = IUSD3(USD3).redeem(shares, address(this), msg.sender);
-        return IERC4626(WAUSDC).redeem(waUsdcAssets, receiver, address(this));
+        // USD3 now returns USDC directly after reinitialize()
+        uint256 usdcAssets = IUSD3(USD3).redeem(shares, receiver, msg.sender);
+        return usdcAssets;
     }
 
     /// @inheritdoc IHelper
