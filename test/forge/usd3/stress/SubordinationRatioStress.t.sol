@@ -15,9 +15,6 @@ import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {IMorpho, MarketParams} from "../../../../src/interfaces/IMorpho.sol";
 import {IProtocolConfig} from "../../../../src/interfaces/IProtocolConfig.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 /**
  * @title Subordination Ratio Stress Test

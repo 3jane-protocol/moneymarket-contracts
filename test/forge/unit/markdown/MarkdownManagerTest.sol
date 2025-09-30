@@ -4,19 +4,12 @@ pragma solidity ^0.8.0;
 import "../../BaseTest.sol";
 import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
-import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
-import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
-import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
-import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {IMarkdownManager} from "../../../../src/interfaces/IMarkdownManager.sol";
-import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {Market} from "../../../../src/interfaces/IMorpho.sol";
-import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
-import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 
 /// @title MarkdownManagerTest
 /// @notice Tests for markdown manager integration including validation, external calls, and error handling

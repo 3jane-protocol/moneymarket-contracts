@@ -4,15 +4,10 @@ pragma solidity ^0.8.0;
 import "../../BaseTest.sol";
 import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
-import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
-import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
-import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
-import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {Market, MarkdownState, RepaymentStatus, PaymentCycle} from "../../../../src/interfaces/IMorpho.sol";
-import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 
 /// @title MarkdownStateTest
 /// @notice Tests for markdown state management including default timestamp tracking and state transitions

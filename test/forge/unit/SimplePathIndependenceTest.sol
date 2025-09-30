@@ -4,11 +4,8 @@ pragma solidity ^0.8.0;
 import {BaseTest} from "../BaseTest.sol";
 import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
-import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
-import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
-import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {
     Id,
     MarketParams,
@@ -19,11 +16,8 @@ import {
     RepaymentObligation
 } from "../../../src/interfaces/IMorpho.sol";
 import {MathLib, WAD} from "../../../src/libraries/MathLib.sol";
-import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {EventsLib} from "../../../src/libraries/EventsLib.sol";
-import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
-import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 
 contract SimplePathIndependenceTest is BaseTest {
     using MathLib for uint256;
