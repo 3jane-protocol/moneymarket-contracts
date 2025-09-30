@@ -74,7 +74,7 @@ contract PYTLockerMultiTokenTest is PYTLockerSetup {
 
         approveToken(alice, address(pyt1), depositAmount);
         vm.expectEmit(true, true, false, true, address(locker));
-        emit Deposited(alice, address(pyt1), depositAmount);
+        emit Deposit(address(pyt1), alice, depositAmount);
         vm.prank(alice);
         locker.deposit(address(pyt1), depositAmount);
 
@@ -168,7 +168,7 @@ contract PYTLockerMultiTokenTest is PYTLockerSetup {
         uint256 balanceBefore = getTokenBalance(alice, address(pyt1));
 
         vm.expectEmit(true, true, false, true);
-        emit Withdrawn(alice, address(pyt1), depositAmount);
+        emit Withdraw(address(pyt1), alice, depositAmount);
         withdraw(alice, address(pyt1), depositAmount);
 
         assertEq(getLockedBalance(alice, address(pyt1)), 0);
@@ -197,7 +197,7 @@ contract PYTLockerMultiTokenTest is PYTLockerSetup {
         deposit(alice, address(pyt1), 100e18);
         advanceToExpiry(address(pyt1));
 
-        vm.expectRevert(PYTLocker.InsufficientBalance.selector);
+        vm.expectRevert(abi.encodeWithSignature("Panic(uint256)", 0x11));
         withdraw(alice, address(pyt1), 200e18);
     }
 
@@ -301,12 +301,11 @@ contract PYTLockerMultiTokenTest is PYTLockerSetup {
         assertEq(locker.timeUntilExpiry(address(pyt1)), 0);
     }
 
-    function test_viewFunctions_unsupportedToken() public {
-        // Unsupported token returns 0/false
-        assertEq(locker.expiry(address(pyt1)), 0);
-        assertFalse(locker.isExpired(address(pyt1)));
-        assertEq(locker.timeUntilExpiry(address(pyt1)), 0);
+    function test_viewFunctions_unsupportedToken() public view {
+        // isSupported correctly returns false for unsupported tokens
         assertFalse(locker.isSupported(address(pyt1)));
+        assertFalse(locker.isSupported(address(pyt2)));
+        assertFalse(locker.isSupported(address(0)));
     }
 
     function test_viewFunctions_enumeration() public {

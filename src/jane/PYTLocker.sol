@@ -28,13 +28,12 @@ contract PYTLocker is Ownable, ReentrancyGuard {
     error InvalidToken();
     error TokenExpired();
     error TokenNotExpired();
-    error InsufficientBalance();
     error ZeroAmount();
 
     // Events
     event TokenAdded(address indexed pytToken, uint256 expiry);
-    event Deposited(address indexed user, address indexed pytToken, uint256 amount);
-    event Withdrawn(address indexed user, address indexed pytToken, uint256 amount);
+    event Deposit(address indexed asset, address indexed owner, uint256 amount);
+    event Withdraw(address indexed asset, address indexed owner, uint256 amount);
 
     // State variables
     /// @notice Tracks user balances for each PYT token
@@ -100,7 +99,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
         balances[pytToken][msg.sender] += amount;
         totalSupply[pytToken] += amount;
 
-        emit Deposited(msg.sender, pytToken, amount);
+        emit Deposit(pytToken, msg.sender, amount);
     }
 
     /**
@@ -113,17 +112,14 @@ contract PYTLocker is Ownable, ReentrancyGuard {
         if (amount == 0) revert ZeroAmount();
         if (!isExpired(pytToken)) revert TokenNotExpired();
 
-        uint256 balance = balances[pytToken][msg.sender];
-        if (balance < amount) revert InsufficientBalance();
-
-        // Update balances
-        balances[pytToken][msg.sender] = balance - amount;
+        // Update balances (will revert due to underflow if insufficient balance)
+        balances[pytToken][msg.sender] -= amount;
         totalSupply[pytToken] -= amount;
 
         // Transfer tokens to user
         IERC20(pytToken).safeTransfer(msg.sender, amount);
 
-        emit Withdrawn(msg.sender, pytToken, amount);
+        emit Withdraw(pytToken, msg.sender, amount);
     }
 
     // View functions
@@ -134,17 +130,15 @@ contract PYTLocker is Ownable, ReentrancyGuard {
      * @return True if the token has expired, false otherwise
      */
     function isExpired(address pytToken) public view returns (bool) {
-        if (!supportedTokens.contains(pytToken)) return false;
         return IPYieldToken(pytToken).expiry() <= block.timestamp;
     }
 
     /**
      * @notice Returns the time remaining until a PYT expires
      * @param pytToken The PYT token to check
-     * @return Seconds until expiry, or 0 if already expired or not supported
+     * @return Seconds until expiry, or 0 if already expired
      */
-    function timeUntilExpiry(address pytToken) public view returns (uint256) {
-        if (!supportedTokens.contains(pytToken)) return 0;
+    function timeUntilExpiry(address pytToken) external view returns (uint256) {
         uint256 expiryTime = IPYieldToken(pytToken).expiry();
         if (expiryTime <= block.timestamp) return 0;
         return expiryTime - block.timestamp;
@@ -153,20 +147,19 @@ contract PYTLocker is Ownable, ReentrancyGuard {
     /**
      * @notice Returns the expiry timestamp of a PYT token
      * @param pytToken The PYT token to check
-     * @return The expiry timestamp, or 0 if not supported
+     * @return The expiry timestamp
      */
-    function expiry(address pytToken) public view returns (uint256) {
-        if (!supportedTokens.contains(pytToken)) return 0;
+    function expiry(address pytToken) external view returns (uint256) {
         return IPYieldToken(pytToken).expiry();
     }
 
     /**
      * @notice Returns the balance of a user for a specific PYT token
-     * @param user The user address
      * @param pytToken The PYT token
+     * @param user The user address
      * @return The user's balance
      */
-    function balanceOf(address user, address pytToken) public view returns (uint256) {
+    function balanceOf(address pytToken, address user) external view returns (uint256) {
         return balances[pytToken][user];
     }
 
@@ -174,7 +167,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
      * @notice Returns the total number of supported tokens
      * @return The length of the token list
      */
-    function supportedTokenCount() public view returns (uint256) {
+    function supportedTokenCount() external view returns (uint256) {
         return supportedTokens.length();
     }
 
@@ -183,7 +176,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
      * @param index The index in the token list
      * @return The token address
      */
-    function supportedTokenAt(uint256 index) public view returns (address) {
+    function supportedTokenAt(uint256 index) external view returns (address) {
         return supportedTokens.at(index);
     }
 
@@ -191,7 +184,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
      * @notice Returns all supported tokens
      * @return An array of all supported token addresses
      */
-    function getSupportedTokens() public view returns (address[] memory) {
+    function getSupportedTokens() external view returns (address[] memory) {
         return supportedTokens.values();
     }
 
@@ -200,7 +193,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
      * @param pytToken The token to check
      * @return True if supported, false otherwise
      */
-    function isSupported(address pytToken) public view returns (bool) {
+    function isSupported(address pytToken) external view returns (bool) {
         return supportedTokens.contains(pytToken);
     }
 }

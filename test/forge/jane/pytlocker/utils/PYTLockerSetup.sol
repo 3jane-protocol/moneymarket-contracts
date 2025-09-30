@@ -31,8 +31,8 @@ contract PYTLockerSetup is Test {
 
     // Events
     event TokenAdded(address indexed pytToken, uint256 expiry);
-    event Deposited(address indexed user, address indexed pytToken, uint256 amount);
-    event Withdrawn(address indexed user, address indexed pytToken, uint256 amount);
+    event Deposit(address indexed asset, address indexed owner, uint256 amount);
+    event Withdraw(address indexed asset, address indexed owner, uint256 amount);
 
     function setUp() public virtual {
         // Set up users
@@ -156,6 +156,6 @@ contract PYTLockerSetup is Test {
      * @notice Helper to check locked balance
      */
     function getLockedBalance(address user, address pytToken) internal view returns (uint256) {
-        return locker.balanceOf(user, pytToken);
+        return locker.balanceOf(pytToken, user);
     }
 }
