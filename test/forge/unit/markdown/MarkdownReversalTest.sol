@@ -2,12 +2,19 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {SharesMathLib} from "../../../../src/libraries/SharesMathLib.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {Market, MarkdownState, RepaymentStatus} from "../../../../src/interfaces/IMorpho.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 
 /// @title MarkdownReversalTest
 /// @notice Tests for markdown reversal scenarios when borrowers cure their defaults
@@ -75,7 +82,7 @@ contract MarkdownReversalTest is BaseTest {
 
         // Verify markdown applied
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdownApplied = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
@@ -100,7 +107,8 @@ contract MarkdownReversalTest is BaseTest {
 
         // Verify markdown reversed
         borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus statusAfter, uint256 defaultTimeAfter) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus statusAfter, uint256 defaultTimeAfter) =
+            MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdownAfter = 0;
         if (statusAfter == RepaymentStatus.Default && defaultTimeAfter > 0) {
             uint256 timeInDefault = block.timestamp > defaultTimeAfter ? block.timestamp - defaultTimeAfter : 0;
@@ -132,7 +140,7 @@ contract MarkdownReversalTest is BaseTest {
 
         // Record initial markdown
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdown1 = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
@@ -146,7 +154,7 @@ contract MarkdownReversalTest is BaseTest {
 
         // Verify markdown increased
         borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (status, defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (status, defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdown2 = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
@@ -160,7 +168,7 @@ contract MarkdownReversalTest is BaseTest {
 
         // Verify markdown continues to increase
         borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (status, defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (status, defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdown3 = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;

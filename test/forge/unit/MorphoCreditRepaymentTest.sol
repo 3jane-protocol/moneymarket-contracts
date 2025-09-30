@@ -13,6 +13,7 @@ import {
 } from "../../../src/interfaces/IMorpho.sol";
 import {EventsLib} from "../../../src/libraries/EventsLib.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 
 contract MorphoCreditRepaymentTest is BaseTest {
     using MarketParamsLib for MarketParams;
@@ -92,7 +93,7 @@ contract MorphoCreditRepaymentTest is BaseTest {
         );
 
         // Verify cycle was created
-        uint256 paymentCycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
+        uint256 paymentCycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
         assertEq(paymentCycleLength, 1); // First cycle created, so length is 1
 
         // Verify obligations were posted (10% of ending balance)
@@ -293,7 +294,7 @@ contract MorphoCreditRepaymentTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, endDate, borrowers, repaymentBps, balances);
 
-        uint256 paymentCycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
+        uint256 paymentCycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
         assertEq(paymentCycleLength, 1); // First cycle created, so length is 1
 
         // Create another cycle
@@ -304,14 +305,14 @@ contract MorphoCreditRepaymentTest is BaseTest {
             id, secondEndDate, borrowers, repaymentBps, balances
         );
 
-        paymentCycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
+        paymentCycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
         assertEq(paymentCycleLength, 2); // Second cycle created
     }
 
     function testGetLatestCycleId_NoCycles() public {
         // Test removed as getLatestCycleId function was removed
         // Users should check paymentCycleLength == 0 instead
-        uint256 paymentCycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
+        uint256 paymentCycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
         assertEq(paymentCycleLength, 0);
     }
 
@@ -324,7 +325,8 @@ contract MorphoCreditRepaymentTest is BaseTest {
         vm.prank(address(creditLine));
         IMorphoCredit(address(morpho)).closeCycleAndPostObligations(id, endDate, borrowers, repaymentBps, balances);
 
-        (uint256 startDate, uint256 returnedEndDate) = IMorphoCredit(address(morpho)).getCycleDates(id, 0);
+        (uint256 startDate, uint256 returnedEndDate) =
+            MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, 0);
 
         assertEq(startDate, 0); // First cycle starts at 0
         assertEq(returnedEndDate, endDate);
@@ -347,14 +349,31 @@ contract MorphoCreditRepaymentTest is BaseTest {
             id, secondEndDate, borrowers, repaymentBps, balances
         );
 
-        (uint256 startDate, uint256 returnedEndDate) = IMorphoCredit(address(morpho)).getCycleDates(id, 1);
+        (uint256 startDate, uint256 returnedEndDate) =
+            MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, 1);
 
         assertEq(startDate, firstEndDate + 1 days);
         assertEq(returnedEndDate, secondEndDate);
     }
 
     function testGetCycleDates_InvalidCycleId() public {
-        vm.expectRevert(ErrorsLib.InvalidCycleId.selector);
-        IMorphoCredit(address(morpho)).getCycleDates(id, 0);
+        // Note: expectRevert doesn't work well with internal library functions that make external calls
+        // The revert happens after extSloads succeeds, so expectRevert is consumed by the external call
+        // Instead, we verify the revert happens by wrapping in a try/catch
+        try this.getCycleDatesExternal(IMorphoCredit(address(morpho)), id, 0) {
+            revert("Expected revert");
+        } catch (bytes memory reason) {
+            // Verify it's the correct error
+            assertEq(bytes4(reason), ErrorsLib.InvalidCycleId.selector);
+        }
+    }
+
+    // Helper function to make the library call externally testable
+    function getCycleDatesExternal(IMorphoCredit morpho, Id _id, uint256 cycleId)
+        external
+        view
+        returns (uint256, uint256)
+    {
+        return MorphoCreditLib.getCycleDates(morpho, _id, cycleId);
     }
 }

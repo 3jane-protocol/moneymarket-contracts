@@ -6,6 +6,7 @@ import {MarkdownManagerMock} from "../../mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {Market, Position, RepaymentStatus} from "../../../../src/interfaces/IMorpho.sol";
 
 /// @title MultiBorrowerTest
@@ -95,8 +96,8 @@ contract MultiBorrowerTest is BaseTest {
         _createMultipleObligations(id, defaultingBorrowers, bpsList, balances, 0);
 
         // Get the cycle end date that was just created
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 cycleEndDate) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 cycleEndDate) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
 
         // Move to default period (30 days past cycle end)
         vm.warp(cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
@@ -111,12 +112,12 @@ contract MultiBorrowerTest is BaseTest {
             morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
 
             // Verify status
-            (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default");
 
             // Get individual markdown
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
-            (, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             uint256 markdown = 0;
             if (status == RepaymentStatus.Default && defaultTime > 0) {
                 uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
@@ -140,7 +141,7 @@ contract MultiBorrowerTest is BaseTest {
         // Verify non-defaulted borrowers have no markdown
         for (uint256 i = numDefaulting; i < NUM_BORROWERS; i++) {
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
-            (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             uint256 markdown = 0;
             // Non-defaulted borrowers should have no markdown
             assertEq(markdown, 0, "Non-defaulted should have no markdown");
@@ -170,8 +171,8 @@ contract MultiBorrowerTest is BaseTest {
         _createMultipleObligations(id, obligationBorrowers, bpsList, balances, 0);
 
         // Get the cycle end date from the created obligations
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 cycleEndDate) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 cycleEndDate) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
 
         // Move to default period
         vm.warp(cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1 days);
@@ -188,7 +189,8 @@ contract MultiBorrowerTest is BaseTest {
         for (uint256 i = 0; i < halfBorrowers; i++) {
             morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
-            (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (RepaymentStatus status, uint256 defaultTime) =
+                MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             uint256 markdown = 0;
             if (status == RepaymentStatus.Default && defaultTime > 0) {
                 uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
@@ -206,7 +208,8 @@ contract MultiBorrowerTest is BaseTest {
         for (uint256 i = 0; i < halfBorrowers; i++) {
             morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
-            (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (RepaymentStatus status, uint256 defaultTime) =
+                MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             uint256 newMarkdown = 0;
             if (status == RepaymentStatus.Default && defaultTime > 0) {
                 uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
@@ -221,7 +224,8 @@ contract MultiBorrowerTest is BaseTest {
         uint256 expectedTotal = 0;
         for (uint256 i = 0; i < halfBorrowers; i++) {
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
-            (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (RepaymentStatus status, uint256 defaultTime) =
+                MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             uint256 markdown = 0;
             if (status == RepaymentStatus.Default && defaultTime > 0) {
                 uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
@@ -239,7 +243,8 @@ contract MultiBorrowerTest is BaseTest {
 
             // But we can calculate current markdown for defaulted borrowers
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
-            (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (RepaymentStatus status, uint256 defaultTime) =
+                MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             uint256 calculatedMarkdown = 0;
             if (status == RepaymentStatus.Default && defaultTime > 0) {
                 uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
@@ -281,20 +286,20 @@ contract MultiBorrowerTest is BaseTest {
         _createMultipleObligations(id, obligationBorrowers, bpsList, balances, 0);
 
         // Get cycle info
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 cycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 cycleEnd) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
 
         // Move to grace period (borrowers 3-4)
         vm.warp(cycleEnd + 1 hours);
 
         // Verify grace period borrowers
         for (uint256 i = 3; i <= 4; i++) {
-            (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             assertEq(uint8(status), uint8(RepaymentStatus.GracePeriod), "Should be in grace");
 
             morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
-            (status,) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             uint256 markdown = 0;
             // Grace period borrowers should have no markdown
             assertEq(markdown, 0, "No markdown in grace period");
@@ -305,12 +310,12 @@ contract MultiBorrowerTest is BaseTest {
 
         // Verify delinquent borrowers
         for (uint256 i = 5; i <= 6; i++) {
-            (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             assertEq(uint8(status), uint8(RepaymentStatus.Delinquent), "Should be delinquent");
 
             morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
-            (status,) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             uint256 markdown = 0;
             // Delinquent borrowers should have no markdown
             assertEq(markdown, 0, "No markdown when delinquent");
@@ -330,11 +335,11 @@ contract MultiBorrowerTest is BaseTest {
         for (uint256 i = 7; i <= 9; i++) {
             morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
 
-            (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default");
 
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
-            (, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             uint256 markdown = 0;
             if (status == RepaymentStatus.Default && defaultTime > 0) {
                 uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
@@ -399,7 +404,7 @@ contract MultiBorrowerTest is BaseTest {
         markdownManager.setMarkdownForBorrower(borrowers[2], 1_000e18); // 2% of 50k
 
         // Get the actual default start time from the first borrower
-        (, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, borrowers[0]);
+        (, uint256 defaultStartTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[0]);
 
         // Let them default for different periods from now
         uint256 baseTime = block.timestamp;
@@ -427,7 +432,8 @@ contract MultiBorrowerTest is BaseTest {
 
         for (uint256 i = 0; i < 3; i++) {
             borrowAmounts[i] = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
-            (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (RepaymentStatus status, uint256 defaultTime) =
+                MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
 
             // All borrowers should be in default after _moveToDefault()
             assertEq(uint8(status), uint8(RepaymentStatus.Default), "Borrower should be in default");

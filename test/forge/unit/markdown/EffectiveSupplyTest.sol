@@ -2,11 +2,17 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {Market, Position, RepaymentStatus} from "../../../../src/interfaces/IMorpho.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 
 /// @title EffectiveSupplyTest
 /// @notice Tests for effective supply calculations accounting for markdowns
@@ -172,7 +178,8 @@ contract EffectiveSupplyTest is BaseTest {
         uint256 calculatedTotalMarkdown = 0;
         for (uint256 i = 0; i < borrowers.length; i++) {
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
-            (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (RepaymentStatus status, uint256 defaultTime) =
+                MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             uint256 markdown = 0;
             if (status == RepaymentStatus.Default && defaultTime > 0) {
                 uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;

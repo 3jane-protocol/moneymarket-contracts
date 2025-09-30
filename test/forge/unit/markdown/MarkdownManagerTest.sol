@@ -2,13 +2,21 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {IMarkdownManager} from "../../../../src/interfaces/IMarkdownManager.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {Market} from "../../../../src/interfaces/IMorpho.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 
 /// @title MarkdownManagerTest
 /// @notice Tests for markdown manager integration including validation, external calls, and error handling
@@ -93,7 +101,8 @@ contract MarkdownManagerTest is BaseTest {
         vm.warp(expectedDefaultTime + timeInDefault);
 
         // Get repayment status and borrow assets
-        (RepaymentStatus status, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultStartTime) =
+            MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
 
         // Calculate markdown using the manager
@@ -128,7 +137,8 @@ contract MarkdownManagerTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Check repayment status
-        (RepaymentStatus status, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultStartTime) =
+            MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdown = 0; // No manager set, so no markdown calculation
 
         // Without a manager, borrower should still be in default status with proper timestamp
@@ -198,7 +208,8 @@ contract MarkdownManagerTest is BaseTest {
         morphoCredit.accrueBorrowerPremium(id, BORROWER);
 
         // Verify borrower is in default with no markdown
-        (RepaymentStatus status, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultStartTime) =
+            MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default");
         assertEq(defaultStartTime, expectedDefaultTime, "Should track default start time");
 
@@ -254,7 +265,7 @@ contract MarkdownManagerTest is BaseTest {
 
         // Get initial markdown
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdownBefore = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
@@ -276,7 +287,7 @@ contract MarkdownManagerTest is BaseTest {
 
         // Markdown should increase with new rate
         borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (status, defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (status, defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdownAfter = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;

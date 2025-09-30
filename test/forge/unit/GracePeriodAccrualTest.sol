@@ -2,12 +2,19 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {Id, MarketParams, RepaymentStatus, IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {EventsLib} from "../../../src/libraries/EventsLib.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MathLib} from "../../../src/libraries/MathLib.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 
 /// @title Grace Period Accrual Test
 /// @notice Tests to verify accrual behavior during grace period
@@ -100,7 +107,7 @@ contract GracePeriodAccrualTest is BaseTest {
         _createPastObligation(ALICE, OBLIGATION_BPS, ENDING_BALANCE);
 
         // Verify we're in grace period
-        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod), "Should be in grace period");
 
         // Accrue again after obligation creation to reset the accounting
@@ -195,7 +202,7 @@ contract GracePeriodAccrualTest is BaseTest {
 
         // Should still be in grace period
         {
-            (RepaymentStatus _status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+            (RepaymentStatus _status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
             assertEq(uint256(_status), uint256(RepaymentStatus.GracePeriod), "Should be in grace period");
         }
 
@@ -207,7 +214,7 @@ contract GracePeriodAccrualTest is BaseTest {
 
         // Now should be delinquent
         {
-            (RepaymentStatus _status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+            (RepaymentStatus _status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
             assertEq(uint256(_status), uint256(RepaymentStatus.Delinquent), "Should be delinquent");
         }
 
@@ -269,7 +276,7 @@ contract GracePeriodAccrualTest is BaseTest {
 
         // Verify status is now Current
         {
-            (RepaymentStatus _status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+            (RepaymentStatus _status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
             assertEq(uint256(_status), uint256(RepaymentStatus.Current), "Should be current after payment");
         }
 
