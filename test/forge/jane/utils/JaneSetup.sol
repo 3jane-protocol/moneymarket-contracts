@@ -20,6 +20,8 @@ contract JaneSetup is Test {
     event TransferEnabled();
     event MintingFinalized();
     event TransferRoleUpdated(address indexed account, bool indexed hasRole);
+    event MinterUpdated(address indexed oldMinter, address indexed newMinter);
+    event BurnerUpdated(address indexed oldBurner, address indexed newBurner);
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
@@ -62,6 +64,16 @@ contract JaneSetup is Test {
     function setTransferable() internal {
         vm.prank(owner);
         token.setTransferable();
+    }
+
+    function setMinter(address newMinter) internal {
+        vm.prank(owner);
+        token.setMinter(newMinter);
+    }
+
+    function setBurner(address newBurner) internal {
+        vm.prank(owner);
+        token.setBurner(newBurner);
     }
 
     function createPermitSignature(uint256 privateKey, address spender, uint256 value, uint256 deadline)

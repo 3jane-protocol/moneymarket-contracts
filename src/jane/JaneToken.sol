@@ -19,14 +19,16 @@ contract JaneToken is ERC20, ERC20Permit, ERC20Burnable, Ownable {
     event TransferEnabled();
     event MintingFinalized();
     event TransferRoleUpdated(address indexed account, bool indexed hasRole);
+    event MinterUpdated(address indexed oldMinter, address indexed newMinter);
+    event BurnerUpdated(address indexed oldBurner, address indexed newBurner);
 
     /// @notice The address authorized to mint new tokens
-    /// @dev Immutable after deployment. Can mint tokens until minting is finalized
-    address public immutable minter;
+    /// @dev Can be updated by owner. Can mint tokens until minting is finalized
+    address public minter;
 
     /// @notice The address authorized to burn tokens from any account
-    /// @dev Immutable after deployment. Can always burn tokens regardless of transfer restrictions
-    address public immutable burner;
+    /// @dev Can be updated by owner. Can always burn tokens regardless of transfer restrictions
+    address public burner;
 
     /// @notice Whether transfers are globally enabled for all users
     /// @dev When true, anyone can transfer. When false, only addresses with transfer role can participate in transfers
@@ -81,6 +83,28 @@ contract JaneToken is ERC20, ERC20Permit, ERC20Burnable, Ownable {
     function setTransferRole(address account, bool hasRole) external onlyOwner {
         hasTransferRole[account] = hasRole;
         emit TransferRoleUpdated(account, hasRole);
+    }
+
+    /**
+     * @notice Updates the minter address
+     * @param _minter New minter address
+     * @dev set to address(0) to temporarily disable minting
+     */
+    function setMinter(address _minter) external onlyOwner {
+        address oldMinter = minter;
+        minter = _minter;
+        emit MinterUpdated(oldMinter, _minter);
+    }
+
+    /**
+     * @notice Updates the burner address
+     * @param _burner New burner address
+     * @dev set to address(0) to temporarily disable burning
+     */
+    function setBurner(address _burner) external onlyOwner {
+        address oldBurner = burner;
+        burner = _burner;
+        emit BurnerUpdated(oldBurner, _burner);
     }
 
     /**
