@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import {JaneToken} from "./JaneToken.sol";
+import {Jane} from "./Jane.sol";
 
 contract JaneBurner {
     error NotOwner();
@@ -9,12 +9,12 @@ contract JaneBurner {
 
     event AuthorizationUpdated(address indexed account, bool status);
 
-    JaneToken public immutable JANE;
+    Jane public immutable JANE;
 
     mapping(address => bool) public authorized;
 
     constructor(address jane) {
-        JANE = JaneToken(jane);
+        JANE = Jane(jane);
     }
 
     function owner() public view returns (address) {

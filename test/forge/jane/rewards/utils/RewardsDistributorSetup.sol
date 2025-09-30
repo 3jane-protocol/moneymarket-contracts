@@ -4,7 +4,7 @@ pragma solidity ^0.8.22;
 import {JaneSetup} from "../../utils/JaneSetup.sol";
 import {RewardsDistributor} from "../../../../../src/jane/RewardsDistributor.sol";
 import {MerkleTreeHelper} from "../mocks/MerkleTreeHelper.sol";
-import {JaneToken} from "../../../../../src/jane/JaneToken.sol";
+import {Jane} from "../../../../../src/jane/Jane.sol";
 
 contract RewardsDistributorSetup is JaneSetup {
     RewardsDistributor public distributor;
@@ -172,7 +172,7 @@ contract RewardsDistributorSetup is JaneSetup {
      */
     function sweep(address tokenAddress) internal {
         vm.prank(owner);
-        distributor.sweep(JaneToken(tokenAddress));
+        distributor.sweep(Jane(tokenAddress));
     }
 
     /**

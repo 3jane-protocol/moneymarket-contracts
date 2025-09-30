@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {SettlementController} from "../../../src/SettlementController.sol";
 import {CreditLine} from "../../../src/CreditLine.sol";
 import {JaneBurner} from "../../../src/jane/JaneBurner.sol";
-import {JaneToken} from "../../../src/jane/JaneToken.sol";
+import {Jane} from "../../../src/jane/Jane.sol";
 import {MarketParams, Id} from "../../../src/interfaces/IMorpho.sol";
 
 contract MockCreditLine {
@@ -38,7 +38,7 @@ contract SettlementControllerTest is Test {
     SettlementController public controller;
     MockCreditLineWithOwner public creditLine;
     JaneBurner public burner;
-    JaneToken public jane;
+    Jane public jane;
 
     address public owner;
     address public minter;
@@ -55,7 +55,7 @@ contract SettlementControllerTest is Test {
         alice = makeAddr("alice");
         bob = makeAddr("bob");
 
-        jane = new JaneToken(owner, minter, address(0));
+        jane = new Jane(owner, minter, address(0));
         burner = new JaneBurner(address(jane));
         creditLine = new MockCreditLineWithOwner(owner);
         controller = new SettlementController(address(creditLine), address(burner), address(jane));

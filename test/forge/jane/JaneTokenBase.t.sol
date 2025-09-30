@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {JaneSetup} from "./utils/JaneSetup.sol";
-import {JaneToken} from "../../../src/jane/JaneToken.sol";
+import {Jane} from "../../../src/jane/Jane.sol";
 
 contract JaneTokenBaseTest is JaneSetup {
     function test_constructor_setsCorrectAddresses() public view {
@@ -14,7 +14,7 @@ contract JaneTokenBaseTest is JaneSetup {
 
     function test_constructor_revertsWithZeroOwner() public {
         vm.expectRevert();
-        new JaneToken(address(0), minter, burner);
+        new Jane(address(0), minter, burner);
     }
 
     function test_tokenMetadata() public view {
@@ -35,13 +35,13 @@ contract JaneTokenBaseTest is JaneSetup {
 
     function test_mint_revertsUnauthorized() public {
         vm.prank(alice);
-        vm.expectRevert(JaneToken.NotMinter.selector);
+        vm.expectRevert(Jane.NotMinter.selector);
         token.mint(bob, 1000e18);
     }
 
     function test_mint_revertsToZeroAddress() public {
         vm.prank(minter);
-        vm.expectRevert(JaneToken.InvalidAddress.selector);
+        vm.expectRevert(Jane.InvalidAddress.selector);
         token.mint(address(0), 1000e18);
     }
 
@@ -88,7 +88,7 @@ contract JaneTokenBaseTest is JaneSetup {
         token.finalizeMinting();
 
         vm.prank(minter);
-        vm.expectRevert(JaneToken.MintFinalized.selector);
+        vm.expectRevert(Jane.MintFinalized.selector);
         token.mint(alice, 1000e18);
     }
 

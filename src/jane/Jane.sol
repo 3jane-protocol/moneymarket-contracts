@@ -6,10 +6,10 @@ import {ERC20, ERC20Permit} from "../../lib/openzeppelin/contracts/token/ERC20/e
 import {ERC20Burnable} from "../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 
 /**
- * @title JaneToken
+ * @title Jane
  * @notice 3Jane protocol governance and rewards token with controlled transfer capabilities
  */
-contract JaneToken is ERC20, ERC20Permit, ERC20Burnable, Ownable {
+contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
     error TransferNotAllowed();
     error MintFinalized();
     error NotMinter();

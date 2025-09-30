@@ -5,7 +5,7 @@ import {RewardsDistributorSetup} from "./utils/RewardsDistributorSetup.sol";
 import {RewardsDistributor} from "../../../../src/jane/RewardsDistributor.sol";
 import {MerkleTreeHelper} from "./mocks/MerkleTreeHelper.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {JaneToken} from "../../../../src/jane/JaneToken.sol";
+import {Jane} from "../../../../src/jane/Jane.sol";
 
 contract RewardsDistributorUnitTest is RewardsDistributorSetup {
     function setUp() public override {
@@ -292,7 +292,7 @@ contract RewardsDistributorUnitTest is RewardsDistributorSetup {
     /// @notice Test sweep function
     function test_sweep() public {
         // Deploy a different token for sweeping
-        JaneToken otherToken = new JaneToken(owner, minter, burner);
+        Jane otherToken = new Jane(owner, minter, burner);
         vm.prank(owner);
         otherToken.setTransferable();
 
@@ -344,7 +344,7 @@ contract RewardsDistributorUnitTest is RewardsDistributorSetup {
         assertTrue(distributor.claimed(alice, campaignId));
     }
 
-    /// @notice Test claiming with zero address reverts (JaneToken doesn't allow transfers to zero)
+    /// @notice Test claiming with zero address reverts (Jane doesn't allow transfers to zero)
     function test_claim_zeroAddress() public {
         address zeroUser = address(0);
         MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](1);
@@ -352,7 +352,7 @@ contract RewardsDistributorUnitTest is RewardsDistributorSetup {
 
         (uint256 campaignId,, bytes32[][] memory proofs) = createCampaign(claims);
 
-        // JaneToken will revert with ERC20InvalidReceiver for zero address
+        // Jane will revert with ERC20InvalidReceiver for zero address
         vm.expectRevert(abi.encodeWithSignature("ERC20InvalidReceiver(address)", address(0)));
         distributor.claim(campaignId, proofs[0], zeroUser, 100e18);
     }

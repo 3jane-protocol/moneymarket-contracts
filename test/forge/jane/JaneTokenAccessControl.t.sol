@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {JaneSetup} from "./utils/JaneSetup.sol";
-import {JaneToken} from "../../../src/jane/JaneToken.sol";
+import {Jane} from "../../../src/jane/Jane.sol";
 
 contract JaneTokenOwnershipTest is JaneSetup {
     function test_owner_canGrantTransferRole() public {
@@ -66,7 +66,7 @@ contract JaneTokenOwnershipTest is JaneSetup {
         assertEq(token.balanceOf(alice), 100e18);
 
         vm.prank(minter);
-        vm.expectRevert(JaneToken.NotMinter.selector);
+        vm.expectRevert(Jane.NotMinter.selector);
         token.mint(bob, 100e18);
     }
 
@@ -108,7 +108,7 @@ contract JaneTokenOwnershipTest is JaneSetup {
         assertEq(token.balanceOf(alice), 900e18);
 
         vm.prank(burner);
-        vm.expectRevert(JaneToken.NotBurner.selector);
+        vm.expectRevert(Jane.NotBurner.selector);
         token.burn(alice, 100e18);
     }
 

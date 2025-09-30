@@ -2,10 +2,10 @@
 pragma solidity ^0.8.22;
 
 import {Test} from "forge-std/Test.sol";
-import {JaneToken} from "../../../../src/jane/JaneToken.sol";
+import {Jane} from "../../../../src/jane/Jane.sol";
 
 contract JaneSetup is Test {
-    JaneToken public token;
+    Jane public token;
 
     address public owner;
     address public minter;
@@ -34,7 +34,7 @@ contract JaneSetup is Test {
         charlie = makeAddr("charlie");
         treasury = makeAddr("treasury");
 
-        token = new JaneToken(owner, minter, burner);
+        token = new Jane(owner, minter, burner);
 
         vm.label(address(token), "JaneToken");
         vm.label(owner, "Owner");

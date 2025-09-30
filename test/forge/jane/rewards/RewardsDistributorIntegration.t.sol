@@ -4,7 +4,7 @@ pragma solidity ^0.8.22;
 import {RewardsDistributorSetup} from "./utils/RewardsDistributorSetup.sol";
 import {RewardsDistributor} from "../../../../src/jane/RewardsDistributor.sol";
 import {MerkleTreeHelper} from "./mocks/MerkleTreeHelper.sol";
-import {JaneToken} from "../../../../src/jane/JaneToken.sol";
+import {Jane} from "../../../../src/jane/Jane.sol";
 
 contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
     function setUp() public override {
@@ -278,8 +278,8 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
     /// @notice Test sweep functionality with multiple tokens
     function test_sweepMultipleTokens() public {
         // Deploy additional tokens
-        JaneToken token2 = new JaneToken(owner, minter, burner);
-        JaneToken token3 = new JaneToken(owner, minter, burner);
+        Jane token2 = new Jane(owner, minter, burner);
+        Jane token3 = new Jane(owner, minter, burner);
 
         vm.startPrank(owner);
         token2.setTransferable();

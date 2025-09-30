@@ -3,7 +3,7 @@ pragma solidity ^0.8.22;
 
 import {CreditLine} from "./CreditLine.sol";
 import {JaneBurner} from "./jane/JaneBurner.sol";
-import {JaneToken} from "./jane/JaneToken.sol";
+import {Jane} from "./jane/Jane.sol";
 import {MarketParams} from "./interfaces/IMorpho.sol";
 
 /// @title SettlementController
@@ -19,7 +19,7 @@ contract SettlementController {
 
     CreditLine public immutable creditLine;
     JaneBurner public immutable burner;
-    JaneToken public immutable JANE;
+    Jane public immutable JANE;
 
     /// @notice Initializes the settlement controller
     /// @param _creditLine Address of the CreditLine contract
@@ -28,7 +28,7 @@ contract SettlementController {
     constructor(address _creditLine, address _burner, address _jane) {
         creditLine = CreditLine(_creditLine);
         burner = JaneBurner(_burner);
-        JANE = JaneToken(_jane);
+        JANE = Jane(_jane);
     }
 
     /// @notice Returns the owner address from the CreditLine contract

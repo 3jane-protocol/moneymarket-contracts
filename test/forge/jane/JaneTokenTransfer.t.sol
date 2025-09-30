@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {JaneSetup} from "./utils/JaneSetup.sol";
-import {JaneToken} from "../../../src/jane/JaneToken.sol";
+import {Jane} from "../../../src/jane/Jane.sol";
 
 contract JaneTokenTransferTest is JaneSetup {
     function setUp() public override {
@@ -54,7 +54,7 @@ contract JaneTokenTransferTest is JaneSetup {
         assertFalse(token.transferable());
 
         vm.prank(alice);
-        vm.expectRevert(JaneToken.TransferNotAllowed.selector);
+        vm.expectRevert(Jane.TransferNotAllowed.selector);
         token.transfer(charlie, 100e18);
     }
 
@@ -65,7 +65,7 @@ contract JaneTokenTransferTest is JaneSetup {
         token.approve(charlie, 200e18);
 
         vm.prank(charlie);
-        vm.expectRevert(JaneToken.TransferNotAllowed.selector);
+        vm.expectRevert(Jane.TransferNotAllowed.selector);
         token.transferFrom(alice, bob, 100e18);
 
         grantTransferRole(bob);
@@ -166,7 +166,7 @@ contract JaneTokenTransferTest is JaneSetup {
                 assertEq(token.balanceOf(from), 1000e18 - amount);
             }
         } else {
-            vm.expectRevert(JaneToken.TransferNotAllowed.selector);
+            vm.expectRevert(Jane.TransferNotAllowed.selector);
             token.transfer(to, amount);
         }
     }

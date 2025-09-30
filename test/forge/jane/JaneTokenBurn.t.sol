@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {JaneSetup} from "./utils/JaneSetup.sol";
-import {JaneToken} from "../../../src/jane/JaneToken.sol";
+import {Jane} from "../../../src/jane/Jane.sol";
 
 contract JaneTokenBurnTest is JaneSetup {
     function setUp() public override {
@@ -89,7 +89,7 @@ contract JaneTokenBurnTest is JaneSetup {
 
     function test_burn_zeroAddress() public {
         vm.prank(burner);
-        vm.expectRevert(JaneToken.InvalidAddress.selector);
+        vm.expectRevert(Jane.InvalidAddress.selector);
         token.burn(address(0), 100e18);
     }
 
@@ -103,7 +103,7 @@ contract JaneTokenBurnTest is JaneSetup {
         assertFalse(token.transferable());
 
         vm.prank(alice);
-        vm.expectRevert(JaneToken.TransferNotAllowed.selector);
+        vm.expectRevert(Jane.TransferNotAllowed.selector);
         token.transfer(bob, 100e18);
 
         vm.prank(alice);
