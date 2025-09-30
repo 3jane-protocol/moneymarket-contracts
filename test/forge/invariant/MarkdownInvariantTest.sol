@@ -6,6 +6,7 @@ import {MarkdownManagerMock} from "../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
 import {MorphoBalancesLib} from "../../../src/libraries/periphery/MorphoBalancesLib.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {SharesMathLib} from "../../../src/libraries/SharesMathLib.sol";
 import {Market, RepaymentStatus} from "../../../src/interfaces/IMorpho.sol";
 
@@ -14,6 +15,7 @@ import {Market, RepaymentStatus} from "../../../src/interfaces/IMorpho.sol";
 contract MarkdownInvariantTest is BaseTest {
     using MarketParamsLib for MarketParams;
     using MorphoBalancesLib for IMorpho;
+    using MorphoCreditLib for IMorphoCredit;
     using SharesMathLib for uint256;
 
     MarkdownManagerMock markdownManager;
@@ -145,7 +147,8 @@ contract MarkdownInvariantTest is BaseTest {
             morphoCredit.accrueBorrowerPremium(id, borrower);
 
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrower);
-            (RepaymentStatus status, uint256 recordedDefaultTime) = morphoCredit.getRepaymentStatus(id, borrower);
+            (RepaymentStatus status, uint256 recordedDefaultTime) =
+                MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrower);
 
             if (status == RepaymentStatus.Default && recordedDefaultTime > 0) {
                 uint256 timeInDefault =

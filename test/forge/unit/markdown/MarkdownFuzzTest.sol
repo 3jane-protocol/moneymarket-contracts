@@ -6,6 +6,7 @@ import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {Market} from "../../../../src/interfaces/IMorpho.sol";
 
 /// @title MarkdownFuzzTest
@@ -13,6 +14,7 @@ import {Market} from "../../../../src/interfaces/IMorpho.sol";
 contract MarkdownFuzzTest is BaseTest {
     using MarketParamsLib for MarketParams;
     using MorphoBalancesLib for IMorpho;
+    using MorphoCreditLib for IMorphoCredit;
 
     MarkdownManagerMock markdownManager;
     CreditLineMock creditLine;
@@ -195,7 +197,7 @@ contract MarkdownFuzzTest is BaseTest {
 
         // Get markdown through actual system
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
 
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;

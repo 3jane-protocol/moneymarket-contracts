@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {BaseTest} from "../BaseTest.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
@@ -83,7 +84,7 @@ contract SimplePathIndependenceTest is BaseTest {
         _createRepaymentObligation(id, BORROWER, 5000e18, 10_000e18, 1);
 
         // Check status - should be in grace period
-        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, BORROWER);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod), "Should be in grace period");
 
         // Get initial borrow shares

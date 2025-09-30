@@ -538,7 +538,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @return _status The borrower's current repayment status
     /// @return _statusStartTime The timestamp when the current status began
     function getRepaymentStatus(Id id, address borrower)
-        public
+        internal
         view
         returns (RepaymentStatus _status, uint256 _statusStartTime)
     {
@@ -684,30 +684,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         repaymentObligation[id][borrower].amountDue = 0;
 
         emit EventsLib.RepaymentTracked(id, borrower, payment, 0);
-    }
-
-    /* EXTERNAL VIEW FUNCTIONS */
-
-    /// @notice Get the total number of payment cycles for a market
-    /// @param id Market ID
-    /// @return The number of payment cycles
-    function getPaymentCycleLength(Id id) external view returns (uint256) {
-        return paymentCycle[id].length;
-    }
-
-    /// @notice Get both start and end dates for a given cycle
-    /// @param id Market ID
-    /// @param cycleId Cycle ID
-    /// @return startDate The cycle start date
-    /// @return endDate The cycle end date
-    function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate) {
-        if (cycleId >= paymentCycle[id].length) revert ErrorsLib.InvalidCycleId();
-
-        endDate = paymentCycle[id][cycleId].endDate;
-
-        if (cycleId != 0) {
-            startDate = paymentCycle[id][cycleId - 1].endDate + 1 days;
-        }
     }
 
     /* INTERNAL FUNCTIONS - HEALTH CHECK OVERRIDES */

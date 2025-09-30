@@ -7,6 +7,7 @@ import {CreditLine} from "../../../../src/CreditLine.sol";
 import {AdaptiveCurveIrm} from "../../../../src/irm/adaptive-curve-irm/AdaptiveCurveIrm.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {SharesMathLib} from "../../../../src/libraries/SharesMathLib.sol";
 import {MathLib} from "../../../../src/libraries/MathLib.sol";
 import {Market, RepaymentStatus} from "../../../../src/interfaces/IMorpho.sol";
@@ -24,6 +25,7 @@ contract SimpleInsuranceFund {
 contract RealComponentsTest is BaseTest {
     using MarketParamsLib for MarketParams;
     using MorphoBalancesLib for IMorpho;
+    using MorphoCreditLib for IMorphoCredit;
     using SharesMathLib for uint256;
     using MathLib for uint256;
 
@@ -119,7 +121,7 @@ contract RealComponentsTest is BaseTest {
 
         // Check markdown with actual interest accrual
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
 
         assertTrue(status == RepaymentStatus.Default, "Should be in default");
 
@@ -192,7 +194,8 @@ contract RealComponentsTest is BaseTest {
             morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
 
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
-            (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (RepaymentStatus status, uint256 defaultTime) =
+                MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
 
             if (status == RepaymentStatus.Default && defaultTime > 0) {
                 uint256 timeInDefault = block.timestamp - defaultTime;
@@ -227,7 +230,7 @@ contract RealComponentsTest is BaseTest {
 
         // Check markdown still works correctly
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
 
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp - defaultTime;
@@ -379,7 +382,7 @@ contract RealComponentsTest is BaseTest {
 
         // Calculate markdown before settlement
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 timeInDefault = block.timestamp - defaultTime;
         uint256 expectedMarkdown = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
 
