@@ -2,7 +2,6 @@
 pragma solidity ^0.8.22;
 
 import {CreditLine} from "./CreditLine.sol";
-import {JaneBurner} from "./jane/JaneBurner.sol";
 import {Jane} from "./jane/Jane.sol";
 import {MarketParams} from "./interfaces/IMorpho.sol";
 
@@ -18,16 +17,13 @@ contract SettlementController {
     );
 
     CreditLine public immutable creditLine;
-    JaneBurner public immutable burner;
     Jane public immutable JANE;
 
     /// @notice Initializes the settlement controller
     /// @param _creditLine Address of the CreditLine contract
-    /// @param _burner Address of the JaneBurner contract
     /// @param _jane Address of the JANE token contract
-    constructor(address _creditLine, address _burner, address _jane) {
+    constructor(address _creditLine, address _jane) {
         creditLine = CreditLine(_creditLine);
-        burner = JaneBurner(_burner);
         JANE = Jane(_jane);
     }
 
@@ -43,7 +39,8 @@ contract SettlementController {
     /// @param cover Amount of assets to cover from insurance fund
     /// @return writtenOffAssets Amount of assets written off
     /// @return writtenOffShares Amount of shares written off
-    /// @dev Only callable by the owner. Burns JANE before settling to ensure atomic execution
+    /// @dev Only callable by the owner. Burns JANE before settling to ensure atomic execution.
+    ///      SettlementController must have burner role on JANE token.
     function settleAndBurn(MarketParams memory marketParams, address borrower, uint256 assets, uint256 cover)
         external
         returns (uint256 writtenOffAssets, uint256 writtenOffShares)
@@ -52,7 +49,7 @@ contract SettlementController {
 
         uint256 burnedAmount = JANE.balanceOf(borrower);
         if (burnedAmount > 0) {
-            burner.burn(borrower, burnedAmount);
+            JANE.burn(borrower, burnedAmount);
         }
 
         (writtenOffAssets, writtenOffShares) = creditLine.settle(marketParams, borrower, assets, cover);

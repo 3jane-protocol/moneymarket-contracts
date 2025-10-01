@@ -19,9 +19,9 @@ contract JaneSetup is Test {
 
     event TransferEnabled();
     event MintingFinalized();
-    event TransferRoleUpdated(address indexed account, bool indexed hasRole);
-    event MinterUpdated(address indexed oldMinter, address indexed newMinter);
-    event BurnerUpdated(address indexed oldBurner, address indexed newBurner);
+    event TransferAuthorized(address indexed account, bool indexed authorized);
+    event MinterAuthorized(address indexed account, bool indexed authorized);
+    event BurnerAuthorized(address indexed account, bool indexed authorized);
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
@@ -53,12 +53,12 @@ contract JaneSetup is Test {
 
     function grantTransferRole(address account) internal {
         vm.prank(owner);
-        token.setTransferRole(account, true);
+        token.addTransferRole(account);
     }
 
     function revokeTransferRole(address account) internal {
         vm.prank(owner);
-        token.setTransferRole(account, false);
+        token.removeTransferRole(account);
     }
 
     function setTransferable() internal {
@@ -66,14 +66,24 @@ contract JaneSetup is Test {
         token.setTransferable();
     }
 
-    function setMinter(address newMinter) internal {
+    function addMinter(address account) internal {
         vm.prank(owner);
-        token.setMinter(newMinter);
+        token.addMinter(account);
     }
 
-    function setBurner(address newBurner) internal {
+    function removeMinter(address account) internal {
         vm.prank(owner);
-        token.setBurner(newBurner);
+        token.removeMinter(account);
+    }
+
+    function addBurner(address account) internal {
+        vm.prank(owner);
+        token.addBurner(account);
+    }
+
+    function removeBurner(address account) internal {
+        vm.prank(owner);
+        token.removeBurner(account);
     }
 
     function createPermitSignature(uint256 privateKey, address spender, uint256 value, uint256 deadline)

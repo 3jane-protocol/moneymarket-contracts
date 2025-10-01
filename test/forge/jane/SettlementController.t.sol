@@ -4,7 +4,6 @@ pragma solidity ^0.8.22;
 import {Test} from "forge-std/Test.sol";
 import {SettlementController} from "../../../src/SettlementController.sol";
 import {CreditLine} from "../../../src/CreditLine.sol";
-import {JaneBurner} from "../../../src/jane/JaneBurner.sol";
 import {Jane} from "../../../src/jane/Jane.sol";
 import {MarketParams, Id} from "../../../src/interfaces/IMorpho.sol";
 
@@ -37,11 +36,11 @@ contract MockCreditLineWithOwner {
 contract SettlementControllerTest is Test {
     SettlementController public controller;
     MockCreditLineWithOwner public creditLine;
-    JaneBurner public burner;
     Jane public jane;
 
     address public owner;
     address public minter;
+    address public burner;
     address public alice;
     address public bob;
 
@@ -52,19 +51,16 @@ contract SettlementControllerTest is Test {
     function setUp() public {
         owner = makeAddr("owner");
         minter = makeAddr("minter");
+        burner = makeAddr("burner");
         alice = makeAddr("alice");
         bob = makeAddr("bob");
 
-        jane = new Jane(owner, minter, address(0));
-        burner = new JaneBurner(address(jane));
+        jane = new Jane(owner, minter, burner);
         creditLine = new MockCreditLineWithOwner(owner);
-        controller = new SettlementController(address(creditLine), address(burner), address(jane));
+        controller = new SettlementController(address(creditLine), address(jane));
 
         vm.prank(owner);
-        burner.setAuthorized(address(controller), true);
-
-        vm.prank(owner);
-        jane.setBurner(address(burner));
+        jane.addBurner(address(controller));
 
         vm.prank(minter);
         jane.mint(alice, 1000e18);
@@ -75,7 +71,6 @@ contract SettlementControllerTest is Test {
 
     function test_constructor_setsCorrectValues() public view {
         assertEq(address(controller.creditLine()), address(creditLine));
-        assertEq(address(controller.burner()), address(burner));
         assertEq(address(controller.JANE()), address(jane));
         assertEq(controller.owner(), owner);
     }

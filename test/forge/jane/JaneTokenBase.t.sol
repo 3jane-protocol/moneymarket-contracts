@@ -7,8 +7,10 @@ import {Jane} from "../../../src/jane/Jane.sol";
 contract JaneTokenBaseTest is JaneSetup {
     function test_constructor_setsCorrectAddresses() public view {
         assertEq(token.owner(), owner);
-        assertEq(token.minter(), minter);
-        assertEq(token.burner(), burner);
+        assertTrue(token.isMinter(minter));
+        assertTrue(token.isBurner(burner));
+        assertEq(token.minters().length, 1);
+        assertEq(token.burners().length, 1);
         assertFalse(token.hasTransferRole(owner));
     }
 
