@@ -6,11 +6,13 @@ import {IERC20} from "../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {BitMaps} from "../../lib/openzeppelin/contracts/utils/structs/BitMaps.sol";
 import {MerkleProof} from "../../lib/openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {ReentrancyGuard} from "../../lib/openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Jane} from "./Jane.sol";
 
 /**
  * @title RewardsDistributor
  * @notice Distributes JANE token rewards using merkle proofs with per-campaign tracking
  * @dev Uses BitMaps for efficient storage of claimed status across unlimited campaigns
+ * @dev Supports two distribution modes: transfer (from contract balance) or mint (on-demand)
  */
 contract RewardsDistributor is Ownable, ReentrancyGuard {
     using BitMaps for BitMaps.BitMap;
@@ -34,7 +36,10 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
     event CampaignInvalidated(uint256 indexed campaignId);
 
     /// @notice The JANE token being distributed
-    IERC20 public immutable jane;
+    Jane public immutable jane;
+
+    /// @notice Whether to mint tokens on claim (true) or transfer from balance (false)
+    bool public useMint;
 
     /// @notice Array of merkle roots, one per campaign
     bytes32[] public merkleRoots;
@@ -46,9 +51,19 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
      * @notice Initializes the rewards distributor
      * @param _initialOwner Address that will own the contract
      * @param _jane Address of the JANE token contract
+     * @param _useMint True to mint tokens on claim, false to transfer from contract balance
      */
-    constructor(address _initialOwner, address _jane) Ownable(_initialOwner) {
-        jane = IERC20(_jane);
+    constructor(address _initialOwner, address _jane, bool _useMint) Ownable(_initialOwner) {
+        jane = Jane(_jane);
+        useMint = _useMint;
+    }
+
+    /**
+     * @notice Sets the distribution mode
+     * @param _useMint True to mint tokens on claim, false to transfer from contract balance
+     */
+    function setUseMint(bool _useMint) external onlyOwner {
+        useMint = _useMint;
     }
 
     /**
@@ -64,6 +79,7 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
 
     /**
      * @notice Claims rewards for a user from a specific campaign
+     * @dev Depending on useMint, either mints new tokens or transfers from contract balance
      * @param rootId The campaign ID to claim from
      * @param proof The merkle proof for the claim
      * @param addr The address to send rewards to
@@ -77,7 +93,12 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
 
         _verify(root, proof, addr, amount);
         _setClaimed(addr, rootId);
-        jane.transfer(addr, amount);
+
+        if (useMint) {
+            jane.mint(addr, amount);
+        } else {
+            jane.transfer(addr, amount);
+        }
 
         emit Claimed(addr, rootId, amount, msg.sender);
     }

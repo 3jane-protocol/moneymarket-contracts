@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import {RewardsDistributorSetup} from "./utils/RewardsDistributorSetup.sol";
 import {RewardsDistributor} from "../../../../src/jane/RewardsDistributor.sol";
 import {MerkleTreeHelper} from "./mocks/MerkleTreeHelper.sol";
+import {Jane} from "../../../../src/jane/Jane.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -424,5 +425,72 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         vm.prank(alice);
         distributor.claim(campaignId, proofs[0], alice, 100e18);
         assertEq(getJaneBalance(alice), 100e18);
+    }
+
+    /// @notice Test access control - only owner can call setUseMint
+    function test_accessControl_setUseMint() public {
+        // Non-owner cannot toggle
+        address[] memory nonOwners = new address[](3);
+        nonOwners[0] = alice;
+        nonOwners[1] = bob;
+        nonOwners[2] = charlie;
+
+        for (uint256 i = 0; i < nonOwners.length; i++) {
+            vm.prank(nonOwners[i]);
+            vm.expectRevert();
+            distributor.setUseMint(true);
+        }
+
+        // Owner can toggle
+        vm.prank(owner);
+        distributor.setUseMint(true);
+        assertTrue(distributor.useMint());
+    }
+
+    /// @notice Test mint mode requires minter role
+    function test_mintMode_requiresMinterRole() public {
+        // Enable mint mode but don't grant role
+        toggleMintMode(true);
+
+        (uint256 campaignId, bytes32[][] memory proofs) = createSimpleCampaign();
+
+        vm.prank(alice);
+        vm.expectRevert(Jane.NotMinter.selector);
+        distributor.claim(campaignId, proofs[0], alice, 100e18);
+    }
+
+    /// @notice Test mint mode respects mintFinalized
+    function test_mintMode_respectsMintFinalized() public {
+        addMinter(address(distributor));
+        toggleMintMode(true);
+
+        // Finalize minting
+        vm.prank(owner);
+        token.finalizeMinting();
+
+        (uint256 campaignId, bytes32[][] memory proofs) = createSimpleCampaign();
+
+        vm.prank(alice);
+        vm.expectRevert(Jane.MintFinalized.selector);
+        distributor.claim(campaignId, proofs[0], alice, 100e18);
+    }
+
+    /// @notice Test transfer mode requires sufficient balance
+    function test_transferMode_requiresSufficientBalance() public {
+        // Deploy new distributor without funding
+        RewardsDistributor emptyDistributor = new RewardsDistributor(owner, address(token), false);
+
+        // Create campaign
+        MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](1);
+        claims[0] = MerkleTreeHelper.Claim(alice, 100e18);
+        (bytes32 root, bytes32[][] memory proofs) = merkleHelper.generateMerkleTree(claims);
+
+        vm.prank(owner);
+        uint256 campaignId = emptyDistributor.newMerkleRoot(root);
+
+        // Claim should fail due to insufficient balance
+        vm.prank(alice);
+        vm.expectRevert();
+        emptyDistributor.claim(campaignId, proofs[0], alice, 100e18);
     }
 }

@@ -356,4 +356,111 @@ contract RewardsDistributorUnitTest is RewardsDistributorSetup {
         vm.expectRevert(abi.encodeWithSignature("ERC20InvalidReceiver(address)", address(0)));
         distributor.claim(campaignId, proofs[0], zeroUser, 100e18);
     }
+
+    /// @notice Test setUseMint success
+    function test_setUseMint_success() public {
+        assertFalse(distributor.useMint());
+
+        vm.prank(owner);
+        distributor.setUseMint(true);
+
+        assertTrue(distributor.useMint());
+    }
+
+    /// @notice Test only owner can call setUseMint
+    function test_setUseMint_onlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        distributor.setUseMint(true);
+    }
+
+    /// @notice Test setUseMint can toggle back and forth
+    function test_setUseMint_canToggleBackAndForth() public {
+        vm.startPrank(owner);
+
+        distributor.setUseMint(true);
+        assertTrue(distributor.useMint());
+
+        distributor.setUseMint(false);
+        assertFalse(distributor.useMint());
+
+        distributor.setUseMint(true);
+        assertTrue(distributor.useMint());
+
+        vm.stopPrank();
+    }
+
+    /// @notice Test mint mode mints new tokens
+    function test_mintMode_mints() public {
+        // Grant minter role
+        addMinter(address(distributor));
+
+        // Enable mint mode
+        toggleMintMode(true);
+
+        (uint256 campaignId, bytes32[][] memory proofs) = createSimpleCampaign();
+
+        uint256 supplyBefore = token.totalSupply();
+
+        vm.prank(alice);
+        distributor.claim(campaignId, proofs[0], alice, 100e18);
+
+        assertEq(token.totalSupply(), supplyBefore + 100e18);
+        assertEq(token.balanceOf(alice), 100e18);
+    }
+
+    /// @notice Test transfer mode transfers from balance
+    function test_transferMode_transfers() public {
+        // Default is transfer mode
+        assertFalse(distributor.useMint());
+
+        (uint256 campaignId, bytes32[][] memory proofs) = createSimpleCampaign();
+
+        uint256 supplyBefore = token.totalSupply();
+        uint256 distributorBalanceBefore = token.balanceOf(address(distributor));
+
+        vm.prank(alice);
+        distributor.claim(campaignId, proofs[0], alice, 100e18);
+
+        // Total supply unchanged (transfer not mint)
+        assertEq(token.totalSupply(), supplyBefore);
+        // Distributor balance decreased
+        assertEq(token.balanceOf(address(distributor)), distributorBalanceBefore - 100e18);
+        assertEq(token.balanceOf(alice), 100e18);
+    }
+
+    /// @notice Test can switch modes mid-campaign
+    function test_canSwitchModesMidCampaign() public {
+        // Grant minter role
+        addMinter(address(distributor));
+
+        (uint256 campaignId, bytes32[][] memory proofs) = createSimpleCampaign();
+
+        // Alice claims in transfer mode
+        vm.prank(alice);
+        distributor.claim(campaignId, proofs[0], alice, 100e18);
+        assertEq(token.balanceOf(alice), 100e18);
+
+        // Switch to mint mode
+        toggleMintMode(true);
+
+        // Bob claims in mint mode
+        uint256 supplyBefore = token.totalSupply();
+        vm.prank(bob);
+        distributor.claim(campaignId, proofs[1], bob, 200e18);
+
+        assertEq(token.totalSupply(), supplyBefore + 200e18);
+        assertEq(token.balanceOf(bob), 200e18);
+
+        // Switch back to transfer mode
+        toggleMintMode(false);
+
+        // Charlie claims in transfer mode
+        uint256 supplyBefore2 = token.totalSupply();
+        vm.prank(charlie);
+        distributor.claim(campaignId, proofs[2], charlie, 300e18);
+
+        assertEq(token.totalSupply(), supplyBefore2); // No increase
+        assertEq(token.balanceOf(charlie), 300e18);
+    }
 }

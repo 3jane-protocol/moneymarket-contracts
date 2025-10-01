@@ -432,4 +432,44 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         uint256 distributorBalance = getJaneBalance(address(distributor));
         assertTrue(distributorBalance >= unclaimedAmount);
     }
+
+    /// @notice Test mode switching full lifecycle
+    function test_modeSwitch_fullLifecycle() public {
+        // Grant minter role for later
+        addMinter(address(distributor));
+
+        // Campaign 1: Transfer mode
+        assertFalse(distributor.useMint());
+        MerkleTreeHelper.Claim[] memory claims1 = new MerkleTreeHelper.Claim[](2);
+        claims1[0] = MerkleTreeHelper.Claim(alice, 100e18);
+        claims1[1] = MerkleTreeHelper.Claim(bob, 200e18);
+        (uint256 campaign1,, bytes32[][] memory proofs1) = createCampaign(claims1);
+
+        uint256 distributorBalanceBefore = token.balanceOf(address(distributor));
+        vm.prank(alice);
+        distributor.claim(campaign1, proofs1[0], alice, 100e18);
+        assertEq(token.balanceOf(address(distributor)), distributorBalanceBefore - 100e18);
+
+        // Switch to mint mode
+        toggleMintMode(true);
+
+        // Campaign 2: Mint mode
+        MerkleTreeHelper.Claim[] memory claims2 = new MerkleTreeHelper.Claim[](2);
+        claims2[0] = MerkleTreeHelper.Claim(charlie, 300e18);
+        claims2[1] = MerkleTreeHelper.Claim(dave, 400e18);
+        (uint256 campaign2,, bytes32[][] memory proofs2) = createCampaign(claims2);
+
+        uint256 supplyBefore = token.totalSupply();
+        vm.prank(charlie);
+        distributor.claim(campaign2, proofs2[0], charlie, 300e18);
+        assertEq(token.totalSupply(), supplyBefore + 300e18);
+
+        // Switch back to transfer mode
+        toggleMintMode(false);
+
+        // Bob claims from campaign 1 (created in transfer mode)
+        vm.prank(bob);
+        distributor.claim(campaign1, proofs1[1], bob, 200e18);
+        assertEq(token.balanceOf(bob), 200e18);
+    }
 }

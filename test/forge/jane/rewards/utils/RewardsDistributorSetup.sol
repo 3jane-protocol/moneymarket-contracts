@@ -31,8 +31,8 @@ contract RewardsDistributorSetup is JaneSetup {
         // Deploy merkle helper
         merkleHelper = new MerkleTreeHelper();
 
-        // Deploy distributor
-        distributor = new RewardsDistributor(owner, address(token));
+        // Deploy distributor in transfer mode by default
+        distributor = new RewardsDistributor(owner, address(token), false);
 
         // Fund distributor with JANE tokens
         mintTokens(address(distributor), 1_000_000e18);
@@ -189,5 +189,14 @@ contract RewardsDistributorSetup is JaneSetup {
      */
     function warpTo(uint256 timestamp) internal {
         vm.warp(timestamp);
+    }
+
+    /**
+     * @notice Toggles the distributor's mint mode
+     * @param _useMint True to enable mint mode, false for transfer mode
+     */
+    function toggleMintMode(bool _useMint) internal {
+        vm.prank(owner);
+        distributor.setUseMint(_useMint);
     }
 }
