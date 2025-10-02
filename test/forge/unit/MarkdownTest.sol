@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarkdownManagerMock} from "../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
@@ -109,7 +110,8 @@ contract MarkdownTest is BaseTest {
 
         // Check markdown info
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultStartTime) =
+            MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 currentMarkdown = 0;
         if (status == RepaymentStatus.Default && defaultStartTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;

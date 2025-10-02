@@ -180,8 +180,8 @@ contract MarkdownPhantomLiquidityTest is BaseTest {
 
         // For the second borrower, we need to use the same cycle, so we'll add them to the existing cycle
         // Get the current cycle ID
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 cycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 cycleEnd) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
 
         // Add second borrower's obligation to the same cycle
         address[] memory borrowers = new address[](1);

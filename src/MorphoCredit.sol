@@ -84,7 +84,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /* CONSTANTS */
 
-    /// @notice Minimum premium amount to accrue (prevents precision loss)
     uint256 internal constant MIN_PREMIUM_THRESHOLD = 1;
 
     /// @notice Maximum elapsed time for premium accrual (365 days)
@@ -303,8 +302,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// 5. Update timestamp to prevent double accrual
     /// @dev MUST be called after _accrueInterest to ensure base rate is current
     function _accrueBorrowerPremium(Id id, address borrower) internal {
-        RepaymentObligation memory obligation = repaymentObligation[id][borrower];
-        (RepaymentStatus status,) = _getRepaymentStatus(id, borrower, obligation);
+        (RepaymentStatus status,) = getRepaymentStatus(id, borrower);
 
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
         if (premium.rate == 0 && status == RepaymentStatus.Current) return;
@@ -537,22 +535,15 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Get repayment status for a borrower
     /// @param id Market ID
     /// @param borrower Borrower address
-    /// @return status The borrower's current repayment status
-    /// @return statusStartTime The timestamp when the current status began
-    function getRepaymentStatus(Id id, address borrower) public view returns (RepaymentStatus, uint256) {
-        return _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
-    }
-
-    /// @notice Get repayment status for a borrower
-    /// @param id Market ID
-    /// @param obligation the borrower repaymentObligation struct
     /// @return _status The borrower's current repayment status
     /// @return _statusStartTime The timestamp when the current status began
-    function _getRepaymentStatus(Id id, address, RepaymentObligation memory obligation)
+    function getRepaymentStatus(Id id, address borrower)
         internal
         view
         returns (RepaymentStatus _status, uint256 _statusStartTime)
     {
+        RepaymentObligation memory obligation = repaymentObligation[id][borrower];
+
         if (obligation.amountDue == 0) return (RepaymentStatus.Current, 0);
 
         // Validate cycleId is within bounds
@@ -611,17 +602,17 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
         if (_isMarketFrozen(id)) revert ErrorsLib.MarketFrozen();
 
-        // Check debt cap
-        uint256 debtCap = IProtocolConfig(protocolConfig).config(ProtocolConfigLib.MORPHO_DEBT_CAP);
-        if (debtCap > 0 && market[id].totalBorrowAssets + assets > debtCap) {
-            revert ErrorsLib.DebtCapExceeded();
-        }
-
         // Check if borrower can borrow
         (RepaymentStatus status,) = getRepaymentStatus(id, onBehalf);
         if (status != RepaymentStatus.Current) revert ErrorsLib.OutstandingRepayment();
         _accrueBorrowerPremium(id, onBehalf);
         // No need to update markdown - borrower must be Current to borrow, so markdown is always 0
+
+        // Check debt cap
+        uint256 debtCap = IProtocolConfig(protocolConfig).config(ProtocolConfigLib.MORPHO_DEBT_CAP);
+        if (debtCap > 0 && market[id].totalBorrowAssets + assets > debtCap) {
+            revert ErrorsLib.DebtCapExceeded();
+        }
     }
 
     /// @inheritdoc Morpho
@@ -671,30 +662,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         repaymentObligation[id][borrower].amountDue = 0;
 
         emit EventsLib.RepaymentTracked(id, borrower, payment, 0);
-    }
-
-    /* EXTERNAL VIEW FUNCTIONS */
-
-    /// @notice Get the total number of payment cycles for a market
-    /// @param id Market ID
-    /// @return The number of payment cycles
-    function getPaymentCycleLength(Id id) external view returns (uint256) {
-        return paymentCycle[id].length;
-    }
-
-    /// @notice Get both start and end dates for a given cycle
-    /// @param id Market ID
-    /// @param cycleId Cycle ID
-    /// @return startDate The cycle start date
-    /// @return endDate The cycle end date
-    function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate) {
-        if (cycleId >= paymentCycle[id].length) revert ErrorsLib.InvalidCycleId();
-
-        endDate = paymentCycle[id][cycleId].endDate;
-
-        if (cycleId != 0) {
-            startDate = paymentCycle[id][cycleId - 1].endDate + 1 days;
-        }
     }
 
     /* INTERNAL FUNCTIONS - HEALTH CHECK OVERRIDES */
@@ -748,8 +715,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (manager == address(0)) return; // No markdown manager set
 
         uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
-        (RepaymentStatus status, uint256 statusStartTime) =
-            _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
+        (RepaymentStatus status, uint256 statusStartTime) = getRepaymentStatus(id, borrower);
 
         // Check if in default and emit status change events
         bool isInDefault = status == RepaymentStatus.Default && statusStartTime > 0;
