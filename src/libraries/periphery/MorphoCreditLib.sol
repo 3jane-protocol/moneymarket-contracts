@@ -11,7 +11,7 @@ import {
     RepaymentStatus,
     MarkdownState
 } from "../../interfaces/IMorpho.sol";
-import {IMarkdownManager} from "../../interfaces/IMarkdownManager.sol";
+import {IMarkdownController} from "../../interfaces/IMarkdownController.sol";
 import {IProtocolConfig, MarketConfig} from "../../interfaces/IProtocolConfig.sol";
 import {ErrorsLib} from "../ErrorsLib.sol";
 import {MorphoLib} from "./MorphoLib.sol";

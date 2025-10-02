@@ -230,7 +230,7 @@ contract MarkdownBoundaryTest is BaseTest {
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
 
         // At day 70, markdown should equal borrow amount
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
             uint256 markdown = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);

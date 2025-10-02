@@ -2,11 +2,12 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
-import {MarkdownManager} from "../../../../src/MarkdownManager.sol";
+import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLine} from "../../../../src/CreditLine.sol";
 import {AdaptiveCurveIrm} from "../../../../src/irm/adaptive-curve-irm/AdaptiveCurveIrm.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {SharesMathLib} from "../../../../src/libraries/SharesMathLib.sol";
 import {MathLib} from "../../../../src/libraries/MathLib.sol";
 import {Market, RepaymentStatus} from "../../../../src/interfaces/IMorpho.sol";
@@ -27,7 +28,7 @@ contract RealComponentsTest is BaseTest {
     using SharesMathLib for uint256;
     using MathLib for uint256;
 
-    MarkdownManager markdownManager;
+    MarkdownManagerMock markdownManager;
     CreditLine creditLine;
     AdaptiveCurveIrm realIrm;
     IMorphoCredit morphoCredit;
@@ -35,8 +36,8 @@ contract RealComponentsTest is BaseTest {
     function setUp() public override {
         super.setUp();
 
-        // Deploy real markdown manager
-        markdownManager = new MarkdownManager(address(protocolConfig), OWNER);
+        // Deploy markdown manager mock
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
 
         // Deploy real IRM
         realIrm = new AdaptiveCurveIrm(address(morpho));
@@ -119,7 +120,7 @@ contract RealComponentsTest is BaseTest {
 
         // Check markdown with actual interest accrual
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
 
         assertTrue(status == RepaymentStatus.Default, "Should be in default");
 
@@ -192,7 +193,8 @@ contract RealComponentsTest is BaseTest {
             morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
 
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
-            (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, borrowers[i]);
+            (RepaymentStatus status, uint256 defaultTime) =
+                MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
 
             if (status == RepaymentStatus.Default && defaultTime > 0) {
                 uint256 timeInDefault = block.timestamp - defaultTime;
@@ -227,7 +229,7 @@ contract RealComponentsTest is BaseTest {
 
         // Check markdown still works correctly
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
 
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp - defaultTime;
@@ -379,7 +381,7 @@ contract RealComponentsTest is BaseTest {
 
         // Calculate markdown before settlement
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 timeInDefault = block.timestamp - defaultTime;
         uint256 expectedMarkdown = markdownManager.calculateMarkdown(BORROWER, borrowAssets, timeInDefault);
 

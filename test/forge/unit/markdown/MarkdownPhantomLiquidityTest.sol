@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
-import {MarkdownManagerMock} from "../../mocks/MarkdownManagerMock.sol";
+import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";

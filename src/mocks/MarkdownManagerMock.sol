@@ -38,6 +38,9 @@ contract MarkdownManagerMock is IMarkdownController, Ownable {
         protocolConfig = _protocolConfig;
     }
 
+    /// @notice Mock does not check repayment status like production MarkdownController
+    /// @dev This is intentional to allow simpler test setup without full MorphoCredit integration
+
     /// @notice Enable or disable markdown for a borrower
     /// @param borrower The borrower address
     /// @param enabled Whether to enable markdown

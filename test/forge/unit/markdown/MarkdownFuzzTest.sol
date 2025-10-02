@@ -195,7 +195,7 @@ contract MarkdownFuzzTest is BaseTest {
 
         // Get markdown through actual system
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
 
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;

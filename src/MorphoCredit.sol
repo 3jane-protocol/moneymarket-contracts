@@ -111,20 +111,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @inheritdoc IMorphoCredit
     function setHelper(address newHelper) external onlyOwner {
-        if (newHelper == helper) revert ErrorsLib.AlreadySet();
-
         helper = newHelper;
-
-        emit EventsLib.SetHelper(newHelper);
     }
 
     /// @inheritdoc IMorphoCredit
     function setUsd3(address newUsd3) external onlyOwner {
-        if (newUsd3 == usd3) revert ErrorsLib.AlreadySet();
-
         usd3 = newUsd3;
-
-        emit EventsLib.SetUsd3(newUsd3);
     }
 
     /* EXTERNAL FUNCTIONS - PREMIUM MANAGEMENT */

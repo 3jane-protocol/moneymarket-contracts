@@ -145,7 +145,8 @@ contract MarkdownInvariantTest is BaseTest {
             morphoCredit.accrueBorrowerPremium(id, borrower);
 
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrower);
-            (RepaymentStatus status, uint256 recordedDefaultTime) = morphoCredit.getRepaymentStatus(id, borrower);
+            (RepaymentStatus status, uint256 recordedDefaultTime) =
+                MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrower);
 
             if (status == RepaymentStatus.Default && recordedDefaultTime > 0) {
                 uint256 timeInDefault =
