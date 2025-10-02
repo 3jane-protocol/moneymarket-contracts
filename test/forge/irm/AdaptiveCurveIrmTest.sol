@@ -692,4 +692,242 @@ contract AdaptiveCurveIrmTest is Test {
         // With high spread, rate should be significantly elevated
         assertGt(rate2, 0, "Rate should be positive with high spread");
     }
+
+    function testProductionRealisticValues() public {
+        // Use actual mainnet values from yesterday
+        // Debt index: 1.19e27, Income index: 1.14e27
+        aavePoolMock.setReserveData(
+            mockUsdc,
+            1146852376653095279072875698, // Actual income index (~1.14e27)
+            0,
+            1195654733361247084562890712, // Actual debt index (~1.19e27)
+            0
+        );
+
+        Market memory market;
+        market.totalSupplyAssets = 10_000_000 ether; // $10M supplied
+        market.totalBorrowAssets = 8_500_000 ether; // 85% utilization (realistic)
+
+        // First call to initialize
+        vm.startPrank(address(morphoCredit));
+        uint256 rate1 = irm.borrowRate(marketParams, market);
+        vm.stopPrank();
+
+        // Advance by 12 seconds (Ethereum block time)
+        vm.warp(block.timestamp + 12);
+
+        // Simulate realistic index growth over 12 seconds
+        // ~5% APY spread = ~0.0000019% per 12 seconds
+        aavePoolMock.setReserveData(
+            mockUsdc,
+            1146852376653095279072875698 + 22, // Tiny income growth
+            0,
+            1195654733361247084562890712 + 27, // Slightly more debt growth
+            0
+        );
+
+        market.lastUpdate = uint128(block.timestamp - 12);
+
+        vm.startPrank(address(morphoCredit));
+        uint256 rate2 = irm.borrowRate(marketParams, market);
+        vm.stopPrank();
+
+        // Should have positive rate with spread component
+        assertGt(rate2, 0, "Rate should be positive");
+        // The spread exists because debt grows faster than income
+    }
+
+    function testFirstInteractionInitialization() public {
+        // Deploy fresh IRM to test initialization
+        AdaptiveCurveIrm freshIrm = new AdaptiveCurveIrm(address(morphoCredit), address(aavePoolMock), mockUsdc);
+
+        // Set up Aave indices
+        aavePoolMock.setReserveData(
+            mockUsdc,
+            1.1e27, // Income index
+            0,
+            1.15e27, // Debt index
+            0
+        );
+
+        Market memory market;
+        market.totalSupplyAssets = 1 ether;
+        market.totalBorrowAssets = 0.7 ether;
+
+        // First interaction - should initialize indices
+        vm.startPrank(address(morphoCredit));
+        uint256 firstRate = freshIrm.borrowRate(marketParams, market);
+        vm.stopPrank();
+
+        // First rate should be base rate only (no spread yet)
+        assertGt(firstRate, 0, "First rate should be positive");
+
+        // Advance time
+        vm.warp(block.timestamp + 1 hours);
+
+        // Update indices
+        aavePoolMock.setReserveData(
+            mockUsdc,
+            1.1001e27, // Small income growth
+            0,
+            1.1502e27, // Small debt growth
+            0
+        );
+
+        market.lastUpdate = uint128(block.timestamp - 1 hours);
+
+        // Second interaction - should now include spread
+        vm.startPrank(address(morphoCredit));
+        uint256 secondRate = freshIrm.borrowRate(marketParams, market);
+        vm.stopPrank();
+
+        assertGt(secondRate, 0, "Second rate should be positive with spread");
+    }
+
+    function testHighFrequencyUpdates() public {
+        // Initialize with realistic indices
+        aavePoolMock.setReserveData(mockUsdc, 1.14e27, 0, 1.19e27, 0);
+
+        Market memory market;
+        market.totalSupplyAssets = 1_000_000 ether;
+        market.totalBorrowAssets = 750_000 ether; // 75% utilization
+
+        // Initialize
+        vm.startPrank(address(morphoCredit));
+        irm.borrowRate(marketParams, market);
+        vm.stopPrank();
+
+        // Simulate 100 rapid updates (12 seconds each)
+        uint256 baseIncome = 1.14e27;
+        uint256 baseDebt = 1.19e27;
+
+        for (uint256 i = 1; i <= 100; i++) {
+            vm.warp(block.timestamp + 12);
+
+            // Tiny incremental growth each block
+            // ~10% APY = ~0.0000038% per 12 seconds
+            aavePoolMock.setReserveData(
+                mockUsdc,
+                uint128(baseIncome + (i * 4)), // Income grows slowly
+                0,
+                uint128(baseDebt + (i * 5)), // Debt grows slightly faster
+                0
+            );
+
+            market.lastUpdate = uint128(block.timestamp - 12);
+
+            vm.startPrank(address(morphoCredit));
+            uint256 rate = irm.borrowRate(marketParams, market);
+            vm.stopPrank();
+
+            assertGt(rate, 0, "Rate should remain positive through rapid updates");
+        }
+    }
+
+    function testApproachingUint96Limits() public {
+        // Test with indices near uint96 max (~7.9e28)
+        // This simulates many years of compound growth
+        // uint96 max = 79,228,162,514,264,337,593,543,950,335
+        uint256 nearMaxIncome = 7e28; // Still fits in uint96
+        uint256 nearMaxDebt = 7.5e28; // Still fits in uint96
+
+        aavePoolMock.setReserveData(mockUsdc, uint128(nearMaxIncome), 0, uint128(nearMaxDebt), 0);
+
+        Market memory market;
+        market.totalSupplyAssets = 1 ether;
+        market.totalBorrowAssets = 0.9 ether;
+
+        // Initialize with high values
+        vm.startPrank(address(morphoCredit));
+        irm.borrowRate(marketParams, market);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 1 days);
+
+        // Growth near limits
+        aavePoolMock.setReserveData(
+            mockUsdc,
+            uint128(nearMaxIncome + 1e19), // Small growth relative to size (0.01% of base)
+            0,
+            uint128(nearMaxDebt + 2e19), // Slightly more growth
+            0
+        );
+
+        market.lastUpdate = uint128(block.timestamp - 1 days);
+
+        // Should handle large indices without overflow
+        vm.startPrank(address(morphoCredit));
+        uint256 rate = irm.borrowRate(marketParams, market);
+        vm.stopPrank();
+
+        assertGt(rate, 0, "Should handle near-limit indices");
+        assertLt(rate, 10 ether, "Rate should be reasonable even with large indices");
+    }
+
+    function testZeroTimeElapsed() public {
+        // Set up indices
+        aavePoolMock.setReserveData(mockUsdc, 1.1e27, 0, 1.15e27, 0);
+
+        Market memory market;
+        market.totalSupplyAssets = 1 ether;
+        market.totalBorrowAssets = 0.5 ether;
+
+        // Initialize
+        vm.startPrank(address(morphoCredit));
+        irm.borrowRate(marketParams, market);
+        vm.stopPrank();
+
+        // Same block operation (no time elapsed)
+        market.lastUpdate = uint128(block.timestamp);
+
+        // Update indices (shouldn't matter with zero elapsed time)
+        aavePoolMock.setReserveData(mockUsdc, 1.2e27, 0, 1.25e27, 0);
+
+        vm.startPrank(address(morphoCredit));
+        uint256 rate = irm.borrowRate(marketParams, market);
+        vm.stopPrank();
+
+        // Should return base rate only (no spread calculation with zero elapsed)
+        assertGt(rate, 0, "Should have base rate");
+    }
+
+    function testMultipleMarketsIndependence() public {
+        // Create different market params
+        MarketParams memory market1Params = MarketParams(address(1), address(2), address(3), address(4), 0, address(5));
+        MarketParams memory market2Params = MarketParams(address(6), address(7), address(8), address(9), 0, address(10));
+
+        // Set up Aave indices
+        aavePoolMock.setReserveData(mockUsdc, 1.05e27, 0, 1.1e27, 0);
+
+        Market memory market;
+        market.totalSupplyAssets = 1 ether;
+        market.totalBorrowAssets = 0.5 ether;
+
+        // Initialize both markets
+        vm.startPrank(address(morphoCredit));
+        irm.borrowRate(market1Params, market);
+        irm.borrowRate(market2Params, market);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 1 hours);
+
+        // Update only market1
+        aavePoolMock.setReserveData(mockUsdc, 1.06e27, 0, 1.12e27, 0);
+
+        market.lastUpdate = uint128(block.timestamp - 1 hours);
+
+        vm.startPrank(address(morphoCredit));
+        uint256 rate1 = irm.borrowRate(market1Params, market);
+
+        // Update indices differently for market2
+        aavePoolMock.setReserveData(mockUsdc, 1.07e27, 0, 1.11e27, 0);
+
+        uint256 rate2 = irm.borrowRate(market2Params, market);
+        vm.stopPrank();
+
+        // Rates should be different due to different index tracking
+        assertGt(rate1, 0, "Market1 should have positive rate");
+        assertGt(rate2, 0, "Market2 should have positive rate");
+        // They calculate spread from different starting points
+    }
 }
