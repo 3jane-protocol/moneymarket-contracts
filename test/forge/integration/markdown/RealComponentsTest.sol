@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import "../../BaseTest.sol";
 import {MarkdownManager} from "../../../../src/MarkdownManager.sol";
 import {CreditLine} from "../../../../src/CreditLine.sol";
-import {AdaptiveCurveIrm} from "../../../../src/irm/adaptive-curve-irm/AdaptiveCurveIrm.sol";
+import {IrmMock} from "../../../../src/mocks/IrmMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
 import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
@@ -31,7 +31,7 @@ contract RealComponentsTest is BaseTest {
 
     MarkdownManager markdownManager;
     CreditLine creditLine;
-    AdaptiveCurveIrm realIrm;
+    IrmMock mockIrm;
     IMorphoCredit morphoCredit;
 
     function setUp() public override {
@@ -40,8 +40,8 @@ contract RealComponentsTest is BaseTest {
         // Deploy real markdown manager
         markdownManager = new MarkdownManager(address(protocolConfig), OWNER);
 
-        // Deploy real IRM
-        realIrm = new AdaptiveCurveIrm(address(morpho));
+        // Deploy mock IRM (simpler than real IRM to avoid stack too deep)
+        mockIrm = new IrmMock();
 
         // Deploy simple insurance fund mock
         SimpleInsuranceFund insuranceFund = new SimpleInsuranceFund();
@@ -65,7 +65,7 @@ contract RealComponentsTest is BaseTest {
             address(loanToken),
             address(collateralToken),
             address(oracle),
-            address(realIrm),
+            address(mockIrm),
             DEFAULT_TEST_LLTV,
             address(creditLine)
         );
@@ -74,7 +74,7 @@ contract RealComponentsTest is BaseTest {
         vm.startPrank(OWNER);
 
         // Enable the IRM first
-        morpho.enableIrm(address(realIrm));
+        morpho.enableIrm(address(mockIrm));
 
         // Then create the market
         morpho.createMarket(marketParams);
@@ -107,7 +107,7 @@ contract RealComponentsTest is BaseTest {
 
         // Initial utilization and rate
         uint256 utilization = uint256(market.totalBorrowAssets).wDivDown(uint256(market.totalSupplyAssets));
-        uint256 borrowRate = realIrm.borrowRateView(mp, market);
+        uint256 borrowRate = mockIrm.borrowRateView(mp, market);
 
         emit log_named_uint("Initial Utilization", utilization);
         emit log_named_uint("Initial Borrow Rate (per second)", borrowRate);
@@ -281,7 +281,7 @@ contract RealComponentsTest is BaseTest {
 
         // Check initial market state with real IRM
         Market memory marketInitial = morpho.market(id);
-        uint256 borrowRateInitial = realIrm.borrowRateView(marketParams, marketInitial);
+        uint256 borrowRateInitial = mockIrm.borrowRateView(marketParams, marketInitial);
         emit log_named_uint("Initial Market Borrow Rate", borrowRateInitial);
 
         // Borrower 1 defaults
@@ -312,7 +312,7 @@ contract RealComponentsTest is BaseTest {
         );
 
         // Check final rates with real IRM
-        uint256 borrowRateFinal = realIrm.borrowRateView(marketParams, marketAfterRecovery);
+        uint256 borrowRateFinal = mockIrm.borrowRateView(marketParams, marketAfterRecovery);
         emit log_named_uint("Final Market Borrow Rate", borrowRateFinal);
 
         // Verify market health
@@ -333,7 +333,7 @@ contract RealComponentsTest is BaseTest {
 
         // Record initial IRM state
         Market memory market = morpho.market(id);
-        uint256 rate1 = realIrm.borrowRateView(marketParams, market);
+        uint256 rate1 = mockIrm.borrowRateView(marketParams, market);
 
         emit log_named_uint("Initial Rate", rate1);
 
@@ -343,7 +343,7 @@ contract RealComponentsTest is BaseTest {
 
         // Check rate after time
         market = morpho.market(id);
-        uint256 rate2 = realIrm.borrowRateView(marketParams, market);
+        uint256 rate2 = mockIrm.borrowRateView(marketParams, market);
 
         emit log_named_uint("Rate After 30 Days", rate2);
 
@@ -354,7 +354,7 @@ contract RealComponentsTest is BaseTest {
 
         // Check rate with markdown applied
         market = morpho.market(id);
-        uint256 rate3 = realIrm.borrowRateView(marketParams, market);
+        uint256 rate3 = mockIrm.borrowRateView(marketParams, market);
 
         emit log_named_uint("Rate With Markdown", rate3);
         emit log_named_uint("Total Markdown", market.totalMarkdownAmount);
