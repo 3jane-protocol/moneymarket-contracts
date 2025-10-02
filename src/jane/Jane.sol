@@ -5,6 +5,7 @@ import {Ownable} from "../../lib/openzeppelin/contracts/access/Ownable.sol";
 import {ERC20, ERC20Permit} from "../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import {ERC20Burnable} from "../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import {EnumerableSet} from "../../lib/openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {IMarkdownController} from "../interfaces/IMarkdownController.sol";
 
 /**
  * @title Jane
@@ -24,6 +25,7 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
     event TransferAuthorized(address indexed account, bool indexed authorized);
     event MinterAuthorized(address indexed account, bool indexed authorized);
     event BurnerAuthorized(address indexed account, bool indexed authorized);
+    event MarkdownControllerSet(address indexed controller);
 
     /// @notice Set of addresses authorized to mint new tokens
     EnumerableSet.AddressSet private _minters;
@@ -41,6 +43,9 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
     /// @notice Whether minting has been permanently disabled
     /// @dev Once set to true, no new tokens can ever be minted
     bool public mintFinalized;
+
+    /// @notice MarkdownController that manages transfer freezes for delinquent borrowers
+    address public markdownController;
 
     /**
      * @notice Initializes the JANE token with owner, minter, and burner
@@ -77,6 +82,15 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
     function finalizeMinting() external onlyOwner {
         mintFinalized = true;
         emit MintingFinalized();
+    }
+
+    /**
+     * @notice Sets the MarkdownController address
+     * @param _controller Address of the MarkdownController contract
+     */
+    function setMarkdownController(address _controller) external onlyOwner {
+        markdownController = _controller;
+        emit MarkdownControllerSet(_controller);
     }
 
     /**
@@ -190,6 +204,12 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
      * @return bool True if the transfer is allowed
      */
     function _canTransfer(address from, address to) internal view returns (bool) {
+        // Check if sender is frozen by MarkdownController
+        if (markdownController != address(0)) {
+            if (IMarkdownController(markdownController).isFrozen(from)) {
+                return false;
+            }
+        }
         return transferable || hasTransferRole(from) || hasTransferRole(to);
     }
 

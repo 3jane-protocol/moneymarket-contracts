@@ -11,7 +11,7 @@ import {
     RepaymentStatus,
     MarkdownState
 } from "../../interfaces/IMorpho.sol";
-import {IMarkdownManager} from "../../interfaces/IMarkdownManager.sol";
+import {IMarkdownController} from "../../interfaces/IMarkdownController.sol";
 import {MorphoLib} from "./MorphoLib.sol";
 import {MorphoCreditStorageLib} from "./MorphoCreditStorageLib.sol";
 import {MorphoBalancesLib} from "./MorphoBalancesLib.sol";
@@ -60,7 +60,7 @@ library MorphoCreditLib {
             address manager = getMarkdownManager(morpho, id);
             if (manager != address(0) && defaultStartTime > 0 && borrowAssets > 0) {
                 uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
-                currentMarkdown = IMarkdownManager(manager).calculateMarkdown(borrower, borrowAssets, timeInDefault);
+                currentMarkdown = IMarkdownController(manager).calculateMarkdown(borrower, borrowAssets, timeInDefault);
             }
         }
     }
