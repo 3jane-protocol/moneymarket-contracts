@@ -31,7 +31,7 @@ contract PhantomLiquidityTest is BaseTest {
 
         // Set up malicious actors
         maliciousOwner = makeAddr("MaliciousOwner");
-        maliciousMarkdownManager = new MarkdownManagerMock();
+        maliciousMarkdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
         maliciousCreditLine = new CreditLine(
             address(morpho),
             maliciousOwner,

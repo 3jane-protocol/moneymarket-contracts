@@ -4,6 +4,7 @@ pragma solidity ^0.8.18;
 import "forge-std/console2.sol";
 import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
 import {USD3} from "../../../src/usd3/USD3.sol";
+import {sUSD3} from "../../../src/usd3/sUSD3.sol";
 import {IMorpho} from "../../../src/interfaces/IMorpho.sol";
 import {MarketParams, Id} from "../../../src/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
@@ -12,12 +13,16 @@ import {IERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
+import {TransparentUpgradeableProxy} from
+    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 contract OperationTest is Setup {
     using MorphoBalancesLib for IMorpho;
     using MarketParamsLib for MarketParams;
 
     USD3 public usd3Strategy;
+    sUSD3 public susd3Strategy;
     IMorpho public morpho;
     ERC20 public aTokenVault;
     MarketParams public marketParams;
@@ -33,6 +38,19 @@ contract OperationTest is Setup {
         aTokenVault = ERC20(address(asset));
         marketParams = usd3Strategy.marketParams();
         creditLineAddress = marketParams.creditLine;
+
+        // Deploy and link sUSD3
+        sUSD3 susd3Implementation = new sUSD3();
+        ProxyAdmin susd3ProxyAdmin = new ProxyAdmin(management);
+        TransparentUpgradeableProxy susd3Proxy = new TransparentUpgradeableProxy(
+            address(susd3Implementation),
+            address(susd3ProxyAdmin),
+            abi.encodeCall(sUSD3.initialize, (address(usd3Strategy), management, keeper))
+        );
+        susd3Strategy = sUSD3(address(susd3Proxy));
+
+        vm.prank(management);
+        usd3Strategy.setSUSD3(address(susd3Strategy));
 
         // Give user some USDC for tests
         deal(address(underlyingAsset), user, 1000e6);
@@ -626,13 +644,13 @@ contract OperationTest is Setup {
         // Test fallback when ratio not set (0)
         config.setConfig(keccak256("TRANCHE_RATIO"), 0);
 
-        uint256 maxSubRatio = usd3Strategy.maxSubordinationRatio();
+        uint256 maxSubRatio = susd3Strategy.maxSubordinationRatio();
         assertEq(maxSubRatio, 1500, "Should fallback to 15% when not set");
 
         // Set custom ratio
         config.setConfig(keccak256("TRANCHE_RATIO"), 2000); // 20%
 
-        maxSubRatio = usd3Strategy.maxSubordinationRatio();
+        maxSubRatio = susd3Strategy.maxSubordinationRatio();
         assertEq(maxSubRatio, 2000, "Should use configured ratio");
     }
 
@@ -647,7 +665,7 @@ contract OperationTest is Setup {
 
         // Verify all changes take effect
         assertEq(usd3Strategy.maxOnCredit(), 7000, "maxOnCredit should update");
-        assertEq(usd3Strategy.maxSubordinationRatio(), 1000, "subordination ratio should update");
+        assertEq(susd3Strategy.maxSubordinationRatio(), 1000, "subordination ratio should update");
 
         // Sync tranche share
         vm.prank(keeper);

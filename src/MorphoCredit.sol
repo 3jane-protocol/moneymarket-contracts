@@ -17,6 +17,7 @@ import {IMarkdownManager} from "./interfaces/IMarkdownManager.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IMorphoRepayCallback} from "./interfaces/IMorphoCallbacks.sol";
 import {IProtocolConfig, MarketConfig} from "./interfaces/IProtocolConfig.sol";
+import {ProtocolConfigLib} from "./libraries/ProtocolConfigLib.sol";
 import {ICreditLine} from "./interfaces/ICreditLine.sol";
 import {Morpho} from "./Morpho.sol";
 
@@ -601,10 +602,20 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @inheritdoc Morpho
-    function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal virtual override {
+    function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256 assets, uint256)
+        internal
+        virtual
+        override
+    {
         if (msg.sender != helper) revert ErrorsLib.NotHelper();
         if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
         if (_isMarketFrozen(id)) revert ErrorsLib.MarketFrozen();
+
+        // Check debt cap
+        uint256 debtCap = IProtocolConfig(protocolConfig).config(ProtocolConfigLib.MORPHO_DEBT_CAP);
+        if (debtCap > 0 && market[id].totalBorrowAssets + assets > debtCap) {
+            revert ErrorsLib.DebtCapExceeded();
+        }
 
         // Check if borrower can borrow
         (RepaymentStatus status,) = getRepaymentStatus(id, onBehalf);

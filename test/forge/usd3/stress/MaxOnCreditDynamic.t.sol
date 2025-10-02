@@ -4,6 +4,7 @@ pragma solidity ^0.8.18;
 import "forge-std/Test.sol";
 import {Setup} from "../utils/Setup.sol";
 import {ERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
 import {IMorpho, MarketParams, Id} from "../../../../src/interfaces/IMorpho.sol";
@@ -359,10 +360,10 @@ contract MaxOnCreditDynamicTest is Setup {
 
         uint256 totalAssetsBefore = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
 
-        // Simulate loss by transferring some assets away
+        // Simulate loss by transferring some waUSDC away
         uint256 loss = (totalAssetsBefore * 10) / 100; // 10% loss
         vm.prank(address(usd3Strategy));
-        asset.transfer(address(0xdead), loss);
+        IERC20(address(waUSDC)).transfer(address(0xdead), loss);
 
         // Report loss
         vm.prank(keeper);

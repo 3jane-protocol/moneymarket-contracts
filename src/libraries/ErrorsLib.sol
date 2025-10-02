@@ -137,4 +137,7 @@ library ErrorsLib {
 
     /// @notice Thrown when attempting operations on a frozen market.
     error MarketFrozen();
+
+    /// @notice Thrown when a borrow would exceed the protocol debt cap.
+    error DebtCapExceeded();
 }

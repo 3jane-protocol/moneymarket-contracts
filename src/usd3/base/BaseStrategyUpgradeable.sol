@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity >=0.8.18;
 
-import {ERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Initializable} from "../../../lib/openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 // TokenizedStrategy interface used for internal view delegateCalls.
-import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
+import {ITokenizedStrategy, ERC20} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 
 /**
  * @title BaseStrategyUpgradeable

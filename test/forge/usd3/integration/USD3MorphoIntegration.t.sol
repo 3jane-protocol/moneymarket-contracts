@@ -188,11 +188,18 @@ contract USD3MorphoIntegrationTest is Setup {
 
         // First have borrower repay their loan to free up liquidity
         uint256 borrowerDebt = morpho.market(id).totalBorrowAssets;
-        vm.prank(BORROWER);
-        asset.approve(address(morpho), borrowerDebt);
-        deal(address(asset), BORROWER, borrowerDebt);
-        vm.prank(BORROWER);
+        // Borrower needs waUSDC to repay since the market uses waUSDC as loanToken
+        // Add some extra for interest accrued
+        uint256 repayAmount = borrowerDebt + borrowerDebt / 10; // Add 10% buffer for interest
+
+        // Give borrower USDC first, then wrap to waUSDC
+        deal(address(asset), BORROWER, repayAmount);
+        vm.startPrank(BORROWER);
+        asset.approve(address(waUSDC), repayAmount);
+        waUSDC.deposit(repayAmount, BORROWER);
+        IERC20(address(waUSDC)).approve(address(morpho), repayAmount);
         morpho.repay(marketParams, borrowerDebt, 0, BORROWER, "");
+        vm.stopPrank();
 
         // Now withdraw should include profit
         vm.prank(SUPPLIER);

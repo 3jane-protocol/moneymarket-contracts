@@ -25,7 +25,7 @@ contract PhantomLiquidityFuzzTest is BaseTest {
         super.setUp();
 
         // Deploy contracts
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
         creditLine = new CreditLineMock(morphoAddress);
         morphoCredit = IMorphoCredit(morphoAddress);
         helper = new HelperMock(morphoAddress);

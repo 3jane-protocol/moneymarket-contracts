@@ -309,6 +309,7 @@ contract MultiUserStressTest is Setup {
         // Test subordination with users depositing different amounts over time
 
         // Large USD3 deposits to establish base
+        uint256 totalUsd3Deposited = 0;
         for (uint256 i = 0; i < 3; i++) {
             address user = users[i];
 
@@ -316,7 +317,12 @@ contract MultiUserStressTest is Setup {
             asset.approve(address(usd3Strategy), LARGE_AMOUNT);
             usd3Strategy.deposit(LARGE_AMOUNT, user);
             vm.stopPrank();
+
+            totalUsd3Deposited += LARGE_AMOUNT;
         }
+
+        // Set debt cap based on actual USD3 deposits to test subordination properly
+        setMorphoDebtCap(totalUsd3Deposited);
 
         // Smaller sUSD3 deposits from remaining users
         for (uint256 i = 3; i < NUM_USERS; i++) {
@@ -326,8 +332,14 @@ contract MultiUserStressTest is Setup {
             vm.startPrank(user);
             asset.approve(address(usd3Strategy), amount);
             uint256 usd3Shares = usd3Strategy.deposit(amount, user);
+            totalUsd3Deposited += amount;
+            vm.stopPrank();
+
+            // Update debt cap to reflect new USD3 deposits
+            setMorphoDebtCap(totalUsd3Deposited);
 
             // Try to stake to sUSD3
+            vm.startPrank(user);
             ERC20(address(usd3Strategy)).approve(address(susd3Strategy), usd3Shares);
 
             try susd3Strategy.deposit(usd3Shares, user) {
