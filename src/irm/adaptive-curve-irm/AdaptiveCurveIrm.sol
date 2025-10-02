@@ -13,6 +13,7 @@ import {MarketParamsLib} from "../../libraries/MarketParamsLib.sol";
 import {Id, MarketParams, Market, IMorphoCredit} from "../../interfaces/IMorpho.sol";
 import {MathLib as MorphoMathLib} from "../../libraries/MathLib.sol";
 import {Initializable} from "../../../lib/openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {IAaveMarket, ReserveDataLegacy} from "./interfaces/IAaveMarket.sol";
 
 /// @title AdaptiveCurveIrm
 /// @author Morpho Labs
@@ -21,6 +22,7 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
     using MathLib for int256;
     using UtilsLib for int256;
     using MorphoMathLib for uint128;
+    using MorphoMathLib for uint256;
     using MarketParamsLib for MarketParams;
 
     /* EVENTS */
@@ -33,22 +35,45 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
     /// @inheritdoc IAdaptiveCurveIrm
     address public immutable MORPHO;
 
+    /// @notice The Aave V3 pool address for fetching reserve data
+    address public immutable AAVE_POOL;
+
+    /// @notice The underlying USDC asset address
+    address public immutable USDC;
+
     /* STORAGE */
 
     /// @inheritdoc IAdaptiveCurveIrm
     mapping(Id => int256) public rateAtTarget;
 
-    /// @dev Storage gap for future upgrades (10 slots).
-    uint256[10] private __gap;
+    /// @notice Tracks Aave normalized index data per market for spread calculation
+    /// @dev Packed into a single storage slot: 96 + 96 + 64 = 256 bits
+    struct AaveIndexData {
+        uint96 lastNormalizedDebt; // Last recorded Aave normalized variable debt (RAY)
+        uint96 lastNormalizedIncome; // Last recorded Aave normalized income (RAY)
+        uint64 lastUpdate; // Timestamp of last index update
+    }
+
+    /// @notice Aave index data per market ID
+    mapping(Id => AaveIndexData) public aaveIndexData;
+
+    /// @dev Storage gap for future upgrades (8 slots after adding 2 for mapping).
+    uint256[8] private __gap;
 
     /* CONSTRUCTOR */
 
     /// @notice Constructor.
     /// @param morpho The address of Morpho.
-    constructor(address morpho) {
+    /// @param aavePool The address of the Aave V3 pool.
+    /// @param usdc The address of the underlying USDC asset.
+    constructor(address morpho, address aavePool, address usdc) {
         require(morpho != address(0), ErrorsLib.ZERO_ADDRESS);
+        require(aavePool != address(0), ErrorsLib.ZERO_ADDRESS);
+        require(usdc != address(0), ErrorsLib.ZERO_ADDRESS);
 
         MORPHO = morpho;
+        AAVE_POOL = aavePool;
+        USDC = usdc;
         _disableInitializers();
     }
 
@@ -72,6 +97,9 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
 
         rateAtTarget[id] = endRateAtTarget;
 
+        // Update Aave indices for next calculation
+        _updateAaveIndices(id);
+
         // Safe "unchecked" cast because endRateAtTarget >= 0.
         emit BorrowRateUpdate(id, avgRate, uint256(endRateAtTarget));
 
@@ -81,6 +109,16 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
     /// @dev Returns avgRate and endRateAtTarget.
     /// @dev Assumes that the inputs `marketParams` and `id` match.
     function _borrowRate(Id id, Market memory market) internal view returns (uint256, int256) {
+        (uint256 adaptiveCurveRate, int256 endRateAtTarget) = _calculateAdaptiveCurve(id, market);
+
+        // Calculate and add the Aave spread
+        uint256 aaveSpread = _calculateAaveSpread(id);
+
+        return (adaptiveCurveRate + aaveSpread, endRateAtTarget);
+    }
+
+    /// @dev Calculates the adaptive curve rate portion.
+    function _calculateAdaptiveCurve(Id id, Market memory market) internal view returns (uint256, int256) {
         IRMConfigTyped memory terms = _unpackIRMConfig();
 
         // Safe "unchecked" cast because the utilization is smaller than 1 (scaled by WAD).
@@ -175,5 +213,56 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
             minRateAtTarget: int256(terms.minRateAtTarget),
             maxRateAtTarget: int256(terms.maxRateAtTarget)
         });
+    }
+
+    /// @dev Calculates the Aave borrow-supply spread to be added to the adaptive curve rate.
+    /// Uses time-weighted average rates from index growth to be manipulation-resistant.
+    /// @param id The market ID
+    /// @return The spread rate per second (scaled by WAD)
+    function _calculateAaveSpread(Id id) internal view returns (uint256) {
+        AaveIndexData memory lastData = aaveIndexData[id];
+
+        // If never initialized, return 0 (will be initialized on first write)
+        if (lastData.lastUpdate == 0) {
+            return 0;
+        }
+
+        uint256 elapsed = block.timestamp - lastData.lastUpdate;
+
+        // If no time has passed, no spread to calculate
+        if (elapsed == 0) {
+            return 0;
+        }
+
+        // Fetch current normalized indices (these are automatically up-to-date)
+        uint256 currentNormalizedDebt = IAaveMarket(AAVE_POOL).getReserveNormalizedVariableDebt(USDC);
+        uint256 currentNormalizedIncome = IAaveMarket(AAVE_POOL).getReserveNormalizedIncome(USDC);
+
+        // Calculate rates from normalized index growth
+        uint256 aaveBorrowRate =
+            currentNormalizedDebt.wDivUp(lastData.lastNormalizedDebt).wInverseTaylorCompounded(elapsed);
+        uint256 aaveSupplyRate =
+            currentNormalizedIncome.wDivUp(lastData.lastNormalizedIncome).wInverseTaylorCompounded(elapsed);
+
+        // The spread is the difference (can be 0 if rates are equal)
+        return aaveBorrowRate > aaveSupplyRate ? aaveBorrowRate - aaveSupplyRate : 0;
+    }
+
+    /// @dev Updates the stored Aave normalized indices for the next spread calculation.
+    /// @param id The market ID
+    function _updateAaveIndices(Id id) internal {
+        // Fetch current normalized indices (automatically includes all accrued interest)
+        uint256 currentNormalizedDebt = IAaveMarket(AAVE_POOL).getReserveNormalizedVariableDebt(USDC);
+        uint256 currentNormalizedIncome = IAaveMarket(AAVE_POOL).getReserveNormalizedIncome(USDC);
+
+        AaveIndexData memory data = aaveIndexData[id];
+
+        // Update normalized indices for next calculation
+        // Safe to cast as Aave indices start at 1e27 and would take decades to overflow uint96
+        data.lastNormalizedDebt = uint96(currentNormalizedDebt);
+        data.lastNormalizedIncome = uint96(currentNormalizedIncome);
+        data.lastUpdate = uint64(block.timestamp);
+
+        aaveIndexData[id] = data;
     }
 }
