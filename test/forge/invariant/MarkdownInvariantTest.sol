@@ -59,6 +59,10 @@ contract MarkdownInvariantTest is BaseTest {
             return;
         }
 
+        // Check available liquidity
+        uint256 availableLiquidity = loanToken.balanceOf(address(morpho));
+        if (borrowAmount > availableLiquidity) return;
+
         // Enable markdown for borrower
         vm.prank(OWNER);
         markdownManager.setEnableMarkdown(borrower, true);
@@ -342,8 +346,11 @@ contract MarkdownInvariantTest is BaseTest {
 
     /// @notice Invariant: Zero markdown for zero debt
     function invariant_ZeroDebtZeroMarkdown() public {
-        // Create a new borrower with no debt
-        address newBorrower = address(0xDEAD);
+        // Use a unique address that won't be used by fuzzer
+        address newBorrower = address(uint160(uint256(keccak256("UNIQUE_ZERO_DEBT_BORROWER"))));
+
+        // Skip if this address was already added as a borrower by the fuzzer
+        if (isBorrower[newBorrower]) return;
 
         // Enable markdown but don't borrow
         vm.prank(OWNER);
