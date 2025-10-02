@@ -2,382 +2,437 @@
 pragma solidity ^0.8.22;
 
 import {PYTLockerSetup} from "./utils/PYTLockerSetup.sol";
-import {PYTLocker, PYTLockerFactory} from "../../../../src/jane/PYTLocker.sol";
+import {PYTLocker} from "../../../../src/jane/PYTLocker.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockPYT} from "./mocks/MockPYT.sol";
 
 contract PYTLockerIntegrationTest is PYTLockerSetup {
-    /// @notice Test complete lifecycle: deploy, deposit, wait, withdraw
-    function test_completeLifecycle() public {
-        // Step 1: Deploy factory and create locker
-        MockPYT pyt = deployPYT("LIFECYCLE-PYT", "LPYT", 30 * DAY);
-        address lockerAddr = factory.newPYTLocker(address(pyt));
-        PYTLocker locker = PYTLocker(lockerAddr);
+    // ============================================
+    // Complete Lifecycle Tests
+    // ============================================
 
-        // Fund users
-        pyt.mint(alice, 1000e18);
-        pyt.mint(bob, 500e18);
+    /// @notice Test complete lifecycle: add token, deposit, wait, withdraw
+    function test_completeMultiTokenLifecycle() public {
+        // Step 1: Owner adds multiple tokens with different expiries
+        addMultipleTokens();
 
-        // Step 2: User A deposits 1000 PYT tokens
-        vm.startPrank(alice);
-        pyt.approve(address(locker), 1000e18);
-        locker.depositFor(alice, 1000e18);
-        vm.stopPrank();
+        // Step 2: Multiple users deposit different tokens
+        deposit(alice, address(pyt1), 1000e18);
+        deposit(alice, address(pyt2), 500e18);
+        deposit(bob, address(pyt2), 750e18);
+        deposit(bob, address(pyt3), 1000e18);
+        deposit(charlie, address(pyt1), 300e18);
+        deposit(charlie, address(pyt3), 600e18);
 
-        assertEq(locker.balanceOf(alice), 1000e18);
-        assertEq(pyt.balanceOf(alice), 0);
+        // Step 3: Verify deposits
+        assertEq(getLockedBalance(alice, address(pyt1)), 1000e18);
+        assertEq(getLockedBalance(alice, address(pyt2)), 500e18);
+        assertEq(getLockedBalance(bob, address(pyt2)), 750e18);
+        assertEq(getLockedBalance(bob, address(pyt3)), 1000e18);
+        assertEq(getLockedBalance(charlie, address(pyt1)), 300e18);
+        assertEq(getLockedBalance(charlie, address(pyt3)), 600e18);
 
-        // Step 3: User B deposits 500 PYT tokens
-        vm.startPrank(bob);
-        pyt.approve(address(locker), 500e18);
-        locker.depositFor(bob, 500e18);
-        vm.stopPrank();
+        // Verify total supplies
+        assertEq(locker.totalSupply(address(pyt1)), 1300e18);
+        assertEq(locker.totalSupply(address(pyt2)), 1250e18);
+        assertEq(locker.totalSupply(address(pyt3)), 1600e18);
 
-        assertEq(locker.balanceOf(bob), 500e18);
-        assertEq(pyt.balanceOf(bob), 0);
+        // Step 4: Advance to first expiry (pyt1 - 1 week)
+        advanceToExpiry(address(pyt1));
+        assertTrue(locker.isExpired(address(pyt1)));
+        assertFalse(locker.isExpired(address(pyt2)));
+        assertFalse(locker.isExpired(address(pyt3)));
 
-        // Step 4: Both users attempt withdrawal (should fail)
-        vm.prank(alice);
-        vm.expectRevert();
-        locker.withdrawTo(alice, 1000e18);
+        // Step 5: Withdraw pyt1 tokens
+        withdraw(alice, address(pyt1), 1000e18);
+        withdraw(charlie, address(pyt1), 300e18);
 
-        vm.prank(bob);
-        vm.expectRevert();
-        locker.withdrawTo(bob, 500e18);
+        // Verify pyt1 cleared
+        assertEq(locker.totalSupply(address(pyt1)), 0);
+        assertEq(getTokenBalance(alice, address(pyt1)), INITIAL_BALANCE);
+        assertEq(getTokenBalance(charlie, address(pyt1)), INITIAL_BALANCE);
 
-        // Step 5: Warp time to expiry + 1 second
-        advanceTime(30 * DAY + 1);
+        // Cannot withdraw pyt2 yet
+        vm.expectRevert(PYTLocker.TokenNotExpired.selector);
+        withdraw(alice, address(pyt2), 500e18);
 
-        // Step 6: User A withdraws 1000 PYT
-        vm.prank(alice);
-        locker.withdrawTo(alice, 1000e18);
+        // Step 6: Advance to second expiry (pyt2 - 1 month)
+        advanceToExpiry(address(pyt2));
 
-        assertEq(locker.balanceOf(alice), 0);
-        assertEq(pyt.balanceOf(alice), 1000e18);
+        // Withdraw pyt2 tokens
+        withdraw(alice, address(pyt2), 500e18);
+        withdraw(bob, address(pyt2), 750e18);
 
-        // Step 7: User B withdraws 500 PYT
-        vm.prank(bob);
-        locker.withdrawTo(bob, 500e18);
+        // Step 7: Advance to final expiry (pyt3 - 2 months)
+        advanceToExpiry(address(pyt3));
 
-        assertEq(locker.balanceOf(bob), 0);
-        assertEq(pyt.balanceOf(bob), 500e18);
+        // Withdraw pyt3 tokens
+        withdraw(bob, address(pyt3), 1000e18);
+        withdraw(charlie, address(pyt3), 600e18);
 
-        // Step 8: Verify all balances
-        assertEq(locker.totalSupply(), 0);
-        assertEq(pyt.balanceOf(address(locker)), 0);
+        // Step 8: Verify all balances cleared
+        assertEq(locker.totalSupply(address(pyt1)), 0);
+        assertEq(locker.totalSupply(address(pyt2)), 0);
+        assertEq(locker.totalSupply(address(pyt3)), 0);
     }
 
-    /// @notice Test multi-user deposits and withdrawals
-    function test_multiUserScenario() public {
-        PYTLocker locker = deployLocker(pyt1);
+    /// @notice Test dynamic token addition during operation
+    function test_dynamicTokenAddition() public {
+        // Start with one token
+        addSupportedToken(address(pyt1));
+        deposit(alice, address(pyt1), 500e18);
+
+        // Advance some time
+        advanceTime(ONE_DAY * 3);
+
+        // Add second token while first is still locked
+        addSupportedToken(address(pyt2));
+        deposit(bob, address(pyt2), 750e18);
+
+        // First token expires
+        advanceToExpiry(address(pyt1));
+
+        // Add third token after first expired
+        addSupportedToken(address(pyt3));
+        deposit(charlie, address(pyt3), 1000e18);
+
+        // Alice withdraws expired pyt1
+        withdraw(alice, address(pyt1), 500e18);
+
+        // Bob deposits more pyt2
+        deposit(bob, address(pyt2), 250e18);
+
+        // Verify state
+        assertEq(locker.totalSupply(address(pyt1)), 0);
+        assertEq(locker.totalSupply(address(pyt2)), 1000e18);
+        assertEq(locker.totalSupply(address(pyt3)), 1000e18);
+        assertEq(locker.supportedTokenCount(), 3);
+    }
+
+    // ============================================
+    // Multi-User Scenarios
+    // ============================================
+
+    /// @notice Test multiple users with overlapping token holdings
+    function test_multiUserOverlappingTokens() public {
+        addMultipleTokens();
 
         uint256[] memory amounts = new uint256[](4);
         amounts[0] = 1000e18; // alice
-        amounts[1] = 2500e18; // bob
-        amounts[2] = 750e18; // charlie
-        amounts[3] = 5000e18; // dave
+        amounts[1] = 750e18; // bob
+        amounts[2] = 500e18; // charlie
+        amounts[3] = 250e18; // dave (using charlie as substitute)
 
-        address[4] memory users = [alice, bob, charlie, dave];
+        // All users deposit in pyt1
+        deposit(alice, address(pyt1), amounts[0]);
+        deposit(bob, address(pyt1), amounts[1]);
+        deposit(charlie, address(pyt1), amounts[2]);
 
-        // All users deposit
-        for (uint256 i = 0; i < users.length; i++) {
-            depositFor(locker, users[i], amounts[i]);
-        }
+        // Some users also deposit in pyt2
+        deposit(alice, address(pyt2), amounts[3]);
+        deposit(bob, address(pyt2), amounts[2]);
 
-        // Verify total supply
-        uint256 totalDeposited = 1000e18 + 2500e18 + 750e18 + 5000e18;
-        assertEq(locker.totalSupply(), totalDeposited);
+        // Verify total supplies
+        assertEq(locker.totalSupply(address(pyt1)), amounts[0] + amounts[1] + amounts[2]);
+        assertEq(locker.totalSupply(address(pyt2)), amounts[3] + amounts[2]);
 
-        // Advance past expiry
-        advanceTime(31 * DAY);
+        // Advance past pyt1 expiry
+        advanceToExpiry(address(pyt1));
 
         // Users withdraw in different order
-        withdrawTo(locker, charlie, 750e18);
-        withdrawTo(locker, alice, 1000e18);
-        withdrawTo(locker, dave, 5000e18);
-        withdrawTo(locker, bob, 2500e18);
+        withdraw(charlie, address(pyt1), amounts[2]);
+        withdraw(alice, address(pyt1), amounts[0]);
+        withdraw(bob, address(pyt1), amounts[1]);
 
-        // Verify final state
-        assertEq(locker.totalSupply(), 0);
-        for (uint256 i = 0; i < users.length; i++) {
-            assertEq(locker.balanceOf(users[i]), 0);
-        }
+        // Verify pyt1 cleared but pyt2 still locked
+        assertEq(locker.totalSupply(address(pyt1)), 0);
+        assertEq(locker.totalSupply(address(pyt2)), amounts[3] + amounts[2]);
     }
 
-    /// @notice Test transfer of wrapped tokens between users
-    function test_wrappedTokenTransfer() public {
-        PYTLocker locker = deployLocker(pyt2);
+    /// @notice Test complex multi-user multi-token scenario
+    function test_complexMultiUserMultiToken() public {
+        addMultipleTokens();
 
-        // Alice deposits
-        depositFor(locker, alice, 1000e18);
+        // Setup complex deposits
+        // Alice: pyt1=100, pyt2=200
+        deposit(alice, address(pyt1), 100e18);
+        deposit(alice, address(pyt2), 200e18);
 
-        // Alice transfers wrapped tokens to Bob
-        vm.prank(alice);
-        locker.transfer(bob, 400e18);
+        // Bob: pyt2=150, pyt3=300
+        deposit(bob, address(pyt2), 150e18);
+        deposit(bob, address(pyt3), 300e18);
 
-        assertEq(locker.balanceOf(alice), 600e18);
-        assertEq(locker.balanceOf(bob), 400e18);
+        // Charlie: pyt1=250, pyt3=350
+        deposit(charlie, address(pyt1), 250e18);
+        deposit(charlie, address(pyt3), 350e18);
 
-        // Advance past expiry
-        advanceTime(91 * DAY);
+        // Verify isolated balances
+        assertEq(getLockedBalance(alice, address(pyt1)), 100e18);
+        assertEq(getLockedBalance(alice, address(pyt2)), 200e18);
+        assertEq(getLockedBalance(alice, address(pyt3)), 0);
 
-        // Bob withdraws tokens he received
-        vm.prank(bob);
-        locker.withdrawTo(bob, 400e18);
+        assertEq(getLockedBalance(bob, address(pyt1)), 0);
+        assertEq(getLockedBalance(bob, address(pyt2)), 150e18);
+        assertEq(getLockedBalance(bob, address(pyt3)), 300e18);
 
-        assertEq(pyt2.balanceOf(bob), INITIAL_BALANCE + 400e18);
-        assertEq(locker.balanceOf(bob), 0);
+        assertEq(getLockedBalance(charlie, address(pyt1)), 250e18);
+        assertEq(getLockedBalance(charlie, address(pyt2)), 0);
+        assertEq(getLockedBalance(charlie, address(pyt3)), 350e18);
 
-        // Alice withdraws remaining
-        vm.prank(alice);
-        locker.withdrawTo(alice, 600e18);
+        // Staggered withdrawals based on expiries
+        advanceToExpiry(address(pyt1));
+        withdraw(alice, address(pyt1), 100e18);
+        withdraw(charlie, address(pyt1), 250e18);
 
-        assertEq(pyt2.balanceOf(alice), INITIAL_BALANCE - 1000e18 + 600e18);
+        advanceToExpiry(address(pyt2));
+        withdraw(alice, address(pyt2), 200e18);
+        withdraw(bob, address(pyt2), 150e18);
+
+        advanceToExpiry(address(pyt3));
+        withdraw(bob, address(pyt3), 300e18);
+        withdraw(charlie, address(pyt3), 350e18);
+
+        // All should be cleared
+        assertEq(locker.totalSupply(address(pyt1)), 0);
+        assertEq(locker.totalSupply(address(pyt2)), 0);
+        assertEq(locker.totalSupply(address(pyt3)), 0);
     }
 
-    /// @notice Test multiple PYT tokens with different expiries
-    function test_multiplePYTsWithDifferentExpiries() public {
-        PYTLocker locker1 = deployLocker(pyt1); // 30 days
-        PYTLocker locker2 = deployLocker(pyt2); // 90 days
-        PYTLocker locker3 = deployLocker(pyt3); // 365 days
+    // ============================================
+    // Edge Cases and Boundary Conditions
+    // ============================================
 
-        // Deposit in all lockers
-        depositFor(locker1, alice, 100e18);
-        depositFor(locker2, alice, 200e18);
-        depositFor(locker3, alice, 300e18);
-
-        // After 30 days, only locker1 is withdrawable
-        advanceTime(30 * DAY + 1);
-
-        assertTrue(locker1.isExpired());
-        assertFalse(locker2.isExpired());
-        assertFalse(locker3.isExpired());
-
-        // Withdraw from locker1
-        vm.prank(alice);
-        locker1.withdrawTo(alice, 100e18);
-
-        // Cannot withdraw from locker2 and locker3
-        vm.prank(alice);
-        vm.expectRevert();
-        locker2.withdrawTo(alice, 200e18);
-
-        // After 90 days total, locker2 is also withdrawable
-        advanceTime(60 * DAY + 1);
-
-        assertTrue(locker2.isExpired());
-        assertFalse(locker3.isExpired());
-
-        vm.prank(alice);
-        locker2.withdrawTo(alice, 200e18);
-
-        // After 365 days total, all are withdrawable
-        advanceTime(275 * DAY);
-
-        assertTrue(locker3.isExpired());
-
-        vm.prank(alice);
-        locker3.withdrawTo(alice, 300e18);
-    }
-
-    /// @notice Test edge case: deposit and withdraw at expiry boundary
+    /// @notice Test deposit and withdrawal at expiry boundary
     function test_expiryBoundaryEdgeCase() public {
-        MockPYT boundaryPYT = deployPYT("BOUNDARY-PYT", "BPYT", 1 * DAY);
-        PYTLocker locker = PYTLocker(factory.newPYTLocker(address(boundaryPYT)));
+        // Create a token that expires in 1 day
+        MockPYT boundaryPYT = new MockPYT("BOUNDARY-PYT", "BPYT", block.timestamp + ONE_DAY);
         boundaryPYT.mint(alice, 1000e18);
 
+        // Add token to locker
+        vm.prank(owner);
+        locker.addSupportedToken(address(boundaryPYT));
+
         // Deposit just before expiry (1 second before)
-        advanceTime(1 * DAY - 1);
-        depositFor(locker, alice, 500e18);
+        advanceTime(ONE_DAY - 1);
+        deposit(alice, address(boundaryPYT), 500e18);
+        assertFalse(locker.isExpired(address(boundaryPYT)));
 
         // Try to deposit at exact expiry (should fail)
         advanceTime(1);
-        vm.startPrank(alice);
-        boundaryPYT.approve(address(locker), 500e18);
-        vm.expectRevert();
-        locker.depositFor(alice, 500e18);
-        vm.stopPrank();
+        assertTrue(locker.isExpired(address(boundaryPYT)));
+
+        approveToken(alice, address(boundaryPYT), 500e18);
+        vm.expectRevert(PYTLocker.TokenExpired.selector);
+        vm.prank(alice);
+        locker.deposit(address(boundaryPYT), 500e18);
 
         // But withdrawal should work
-        vm.prank(alice);
-        locker.withdrawTo(alice, 500e18);
-
+        withdraw(alice, address(boundaryPYT), 500e18);
         assertEq(boundaryPYT.balanceOf(alice), 1000e18);
     }
 
-    /// @notice Test partial withdrawals scenario
+    /// @notice Test partial withdrawals across multiple tokens
     function test_partialWithdrawals() public {
-        PYTLocker locker = deployLocker(pyt1);
+        addMultipleTokens();
 
-        // Alice deposits 1000
-        depositFor(locker, alice, 1000e18);
+        // Alice deposits in multiple tokens
+        deposit(alice, address(pyt1), 1000e18);
+        deposit(alice, address(pyt2), 800e18);
 
-        // Advance past expiry
-        advanceTime(31 * DAY);
+        // Advance past pyt1 expiry
+        advanceToExpiry(address(pyt1));
 
-        // Alice makes multiple partial withdrawals
-        uint256 aliceInitial = pyt1.balanceOf(alice);
+        // Alice makes multiple partial withdrawals from pyt1
+        uint256 aliceInitialPyt1 = getTokenBalance(alice, address(pyt1));
 
-        vm.startPrank(alice);
-        locker.withdrawTo(alice, 100e18);
-        assertEq(locker.balanceOf(alice), 900e18);
+        withdraw(alice, address(pyt1), 100e18);
+        assertEq(getLockedBalance(alice, address(pyt1)), 900e18);
 
-        locker.withdrawTo(alice, 200e18);
-        assertEq(locker.balanceOf(alice), 700e18);
+        withdraw(alice, address(pyt1), 200e18);
+        assertEq(getLockedBalance(alice, address(pyt1)), 700e18);
 
-        locker.withdrawTo(alice, 300e18);
-        assertEq(locker.balanceOf(alice), 400e18);
+        withdraw(alice, address(pyt1), 300e18);
+        assertEq(getLockedBalance(alice, address(pyt1)), 400e18);
 
-        locker.withdrawTo(alice, 400e18);
-        assertEq(locker.balanceOf(alice), 0);
-        vm.stopPrank();
+        withdraw(alice, address(pyt1), 400e18);
+        assertEq(getLockedBalance(alice, address(pyt1)), 0);
 
-        assertEq(pyt1.balanceOf(alice), aliceInitial + 1000e18);
+        assertEq(getTokenBalance(alice, address(pyt1)), aliceInitialPyt1 + 1000e18);
+
+        // pyt2 still locked
+        assertEq(getLockedBalance(alice, address(pyt2)), 800e18);
     }
 
-    /// @notice Test wrapped token recipient can withdraw
-    function test_wrappedTokenRecipientWithdrawal() public {
-        PYTLocker locker = deployLocker(pyt1);
-
-        // Alice deposits and transfers to Bob
-        depositFor(locker, alice, 1000e18);
-        vm.prank(alice);
-        locker.transfer(bob, 1000e18);
-
-        assertEq(locker.balanceOf(alice), 0);
-        assertEq(locker.balanceOf(bob), 1000e18);
-
-        // Bob transfers to Charlie
-        vm.prank(bob);
-        locker.transfer(charlie, 500e18);
-
-        // Advance past expiry
-        advanceTime(31 * DAY);
-
-        // Charlie can withdraw even though he never deposited
-        uint256 charlieInitial = pyt1.balanceOf(charlie);
-        vm.prank(charlie);
-        locker.withdrawTo(charlie, 500e18);
-
-        assertEq(pyt1.balanceOf(charlie), charlieInitial + 500e18);
-        assertEq(locker.balanceOf(charlie), 0);
-
-        // Bob withdraws his remaining
-        vm.prank(bob);
-        locker.withdrawTo(bob, 500e18);
-    }
+    // ============================================
+    // Gas Optimization Tests
+    // ============================================
 
     /// @notice Test gas costs for batch operations
     function test_batchOperationsGas() public {
-        PYTLocker locker = deployLocker(pyt1);
+        addSupportedToken(address(pyt1));
 
         uint256 gasUsed;
         uint256 gasBefore;
 
         // Measure deposit gas
+        approveToken(alice, address(pyt1), 1000e18);
         gasBefore = gasleft();
-        depositFor(locker, alice, 1000e18);
+        vm.prank(alice);
+        locker.deposit(address(pyt1), 1000e18);
         gasUsed = gasBefore - gasleft();
-        emit log_named_uint("Gas for single deposit", gasUsed);
-        assertLt(gasUsed, 120_000);
 
-        // Batch deposits
+        assertTrue(gasUsed < 100_000, "Single deposit gas too high");
+
+        // Batch deposits from different users
         gasBefore = gasleft();
-        for (uint256 i = 0; i < 10; i++) {
-            depositFor(locker, bob, 100e18);
+        for (uint256 i = 0; i < 5; i++) {
+            deposit(bob, address(pyt1), 100e18);
         }
-        gasUsed = gasBefore - gasleft();
-        emit log_named_uint("Gas for 10 deposits", gasUsed);
+        gasUsed = (gasBefore - gasleft()) / 5;
+
+        assertTrue(gasUsed < 100_000, "Average batch deposit gas too high");
 
         // Advance past expiry
-        advanceTime(31 * DAY);
+        advanceToExpiry(address(pyt1));
 
         // Measure withdrawal gas
         gasBefore = gasleft();
-        withdrawTo(locker, alice, 1000e18);
+        withdraw(alice, address(pyt1), 1000e18);
         gasUsed = gasBefore - gasleft();
-        emit log_named_uint("Gas for single withdrawal", gasUsed);
-        assertLt(gasUsed, 80_000);
+
+        assertTrue(gasUsed < 80_000, "Single withdrawal gas too high");
     }
+
+    /// @notice Test gas with many supported tokens
+    function test_gasWithManyTokens() public {
+        // Add 10 tokens
+        MockPYT[] memory tokens = new MockPYT[](10);
+        for (uint256 i = 0; i < 10; i++) {
+            tokens[i] = new MockPYT(
+                string.concat("PYT", vm.toString(i)),
+                string.concat("P", vm.toString(i)),
+                block.timestamp + ONE_WEEK * (i + 1)
+            );
+            tokens[i].mint(alice, 100e18);
+
+            vm.prank(owner);
+            locker.addSupportedToken(address(tokens[i]));
+        }
+
+        // Deposit in 5th token (middle of set)
+        uint256 gasBefore = gasleft();
+        deposit(alice, address(tokens[4]), 50e18);
+        uint256 gasUsed = gasBefore - gasleft();
+
+        assertTrue(gasUsed < 150_000, "Deposit with many tokens gas too high");
+
+        // Check enumeration gas
+        gasBefore = gasleft();
+        address[] memory supportedTokens = locker.getSupportedTokens();
+        gasUsed = gasBefore - gasleft();
+
+        assertEq(supportedTokens.length, 10);
+        assertTrue(gasUsed < 50_000, "Enumeration gas too high");
+    }
+
+    // ============================================
+    // Fuzz Tests
+    // ============================================
 
     /// @notice Fuzz test for random deposit/withdraw amounts
     function testFuzz_randomAmounts(uint256 depositAmount, uint256 withdrawAmount) public {
         depositAmount = bound(depositAmount, 1, INITIAL_BALANCE);
-        PYTLocker locker = deployLocker(pyt1);
+
+        addSupportedToken(address(pyt1));
 
         // Deposit
-        depositFor(locker, alice, depositAmount);
-        assertEq(locker.balanceOf(alice), depositAmount);
+        deposit(alice, address(pyt1), depositAmount);
+        assertEq(getLockedBalance(alice, address(pyt1)), depositAmount);
 
         // Advance past expiry
-        advanceTime(31 * DAY);
+        advanceToExpiry(address(pyt1));
 
         // Withdraw partial amount
-        withdrawAmount = bound(withdrawAmount, 0, depositAmount);
-        vm.prank(alice);
-        locker.withdrawTo(alice, withdrawAmount);
+        withdrawAmount = bound(withdrawAmount, 1, depositAmount);
+        withdraw(alice, address(pyt1), withdrawAmount);
 
-        assertEq(locker.balanceOf(alice), depositAmount - withdrawAmount);
+        assertEq(getLockedBalance(alice, address(pyt1)), depositAmount - withdrawAmount);
     }
+
+    /// @notice Fuzz test for multiple tokens with random expiries
+    function testFuzz_multipleTokensRandomExpiries(uint256 expiry1, uint256 expiry2, uint256 expiry3) public {
+        // Bound expiries to reasonable range
+        expiry1 = bound(expiry1, block.timestamp + 1 days, block.timestamp + 30 days);
+        expiry2 = bound(expiry2, block.timestamp + 31 days, block.timestamp + 60 days);
+        expiry3 = bound(expiry3, block.timestamp + 61 days, block.timestamp + 365 days);
+
+        // Create tokens with random expiries
+        MockPYT token1 = new MockPYT("T1", "T1", expiry1);
+        MockPYT token2 = new MockPYT("T2", "T2", expiry2);
+        MockPYT token3 = new MockPYT("T3", "T3", expiry3);
+
+        // Mint and add tokens
+        token1.mint(alice, 100e18);
+        token2.mint(alice, 100e18);
+        token3.mint(alice, 100e18);
+
+        vm.startPrank(owner);
+        locker.addSupportedToken(address(token1));
+        locker.addSupportedToken(address(token2));
+        locker.addSupportedToken(address(token3));
+        vm.stopPrank();
+
+        // Deposit all
+        approveToken(alice, address(token1), 100e18);
+        approveToken(alice, address(token2), 100e18);
+        approveToken(alice, address(token3), 100e18);
+
+        vm.startPrank(alice);
+        locker.deposit(address(token1), 100e18);
+        locker.deposit(address(token2), 100e18);
+        locker.deposit(address(token3), 100e18);
+        vm.stopPrank();
+
+        // Verify expiry ordering
+        vm.warp(expiry1 + 1);
+        assertTrue(locker.isExpired(address(token1)));
+        assertFalse(locker.isExpired(address(token2)));
+        assertFalse(locker.isExpired(address(token3)));
+
+        vm.warp(expiry2 + 1);
+        assertTrue(locker.isExpired(address(token2)));
+        assertFalse(locker.isExpired(address(token3)));
+
+        vm.warp(expiry3 + 1);
+        assertTrue(locker.isExpired(address(token3)));
+    }
+
+    // ============================================
+    // Maximum Values Tests
+    // ============================================
 
     /// @notice Test maximum amounts handling
     function test_maximumAmounts() public {
-        PYTLocker locker = deployLocker(pyt1);
+        addSupportedToken(address(pyt1));
 
-        // Mint max tokens to alice (she already has INITIAL_BALANCE)
+        // Mint max tokens to alice
         uint256 maxAmount = type(uint128).max;
         pyt1.mint(alice, maxAmount);
 
-        // Alice now has INITIAL_BALANCE + maxAmount
         uint256 aliceBalance = pyt1.balanceOf(alice);
 
         // Deposit max amount
-        vm.startPrank(alice);
-        pyt1.approve(address(locker), maxAmount);
-        locker.depositFor(alice, maxAmount);
-        vm.stopPrank();
+        approveToken(alice, address(pyt1), maxAmount);
+        vm.prank(alice);
+        locker.deposit(address(pyt1), maxAmount);
 
-        assertEq(locker.balanceOf(alice), maxAmount);
+        assertEq(getLockedBalance(alice, address(pyt1)), maxAmount);
 
         // Advance and withdraw
-        advanceTime(31 * DAY);
+        advanceToExpiry(address(pyt1));
+        withdraw(alice, address(pyt1), maxAmount);
 
-        vm.prank(alice);
-        locker.withdrawTo(alice, maxAmount);
-
-        // Alice should have her original balance back
+        // Alice should have her balance back
         assertEq(pyt1.balanceOf(alice), aliceBalance);
-    }
-
-    /// @notice Test zero amount operations
-    function test_zeroAmountOperations() public {
-        PYTLocker locker = deployLocker(pyt1);
-
-        // Zero deposit
-        depositFor(locker, alice, 0);
-        assertEq(locker.balanceOf(alice), 0);
-
-        // Deposit some amount
-        depositFor(locker, alice, 1000e18);
-
-        // Advance past expiry
-        advanceTime(31 * DAY);
-
-        // Zero withdrawal
-        withdrawTo(locker, alice, 0);
-        assertEq(locker.balanceOf(alice), 1000e18);
-    }
-
-    /// @notice Test multiple factories don't interfere
-    function test_multipleFactoriesIsolation() public {
-        PYTLockerFactory factory2 = new PYTLockerFactory();
-
-        // Same PYT can have lockers in different factories
-        address locker1 = factory.newPYTLocker(address(pyt1));
-        address locker2 = factory2.newPYTLocker(address(pyt1));
-
-        assertTrue(locker1 != locker2);
-        assertEq(factory.getLocker(address(pyt1)), locker1);
-        assertEq(factory2.getLocker(address(pyt1)), locker2);
     }
 }

@@ -4,117 +4,55 @@ pragma solidity ^0.8.22;
 import {RewardsDistributorSetup} from "./utils/RewardsDistributorSetup.sol";
 import {RewardsDistributor} from "../../../../src/jane/RewardsDistributor.sol";
 import {MerkleTreeHelper} from "./mocks/MerkleTreeHelper.sol";
-import {JaneToken} from "../../../../src/jane/JaneToken.sol";
+import {Jane} from "../../../../src/jane/Jane.sol";
 
 contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
     function setUp() public override {
         super.setUp();
     }
 
-    /// @notice Test complete lifecycle: deploy, add campaigns, claim, invalidate
-    function test_completeLifecycle() public {
-        // Step 1: Create first campaign
-        MerkleTreeHelper.Claim[] memory claims1 = new MerkleTreeHelper.Claim[](3);
-        claims1[0] = MerkleTreeHelper.Claim(alice, 100e18);
-        claims1[1] = MerkleTreeHelper.Claim(bob, 200e18);
-        claims1[2] = MerkleTreeHelper.Claim(charlie, 300e18);
+    /// @notice Test complete lifecycle: weekly reward updates
+    function test_weeklyRewardsLifecycle() public {
+        // Week 1: Initial allocations
+        MerkleTreeHelper.Claim[] memory week1 = new MerkleTreeHelper.Claim[](3);
+        week1[0] = MerkleTreeHelper.Claim(alice, 100e18);
+        week1[1] = MerkleTreeHelper.Claim(bob, 200e18);
+        week1[2] = MerkleTreeHelper.Claim(charlie, 300e18);
+        (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(week1);
 
-        (uint256 campaign1,, bytes32[][] memory proofs1) = createCampaign(claims1);
+        distributor.claim(alice, 100e18, proofs1[0]);
+        distributor.claim(bob, 200e18, proofs1[1]);
 
-        // Step 2: Create second campaign
-        MerkleTreeHelper.Claim[] memory claims2 = new MerkleTreeHelper.Claim[](3);
-        claims2[0] = MerkleTreeHelper.Claim(alice, 150e18);
-        claims2[1] = MerkleTreeHelper.Claim(dave, 250e18);
-        claims2[2] = MerkleTreeHelper.Claim(eve, 350e18);
+        assertEq(token.balanceOf(alice), 100e18);
+        assertEq(token.balanceOf(bob), 200e18);
 
-        (uint256 campaign2,, bytes32[][] memory proofs2) = createCampaign(claims2);
+        // Week 2: Increased allocations
+        MerkleTreeHelper.Claim[] memory week2 = new MerkleTreeHelper.Claim[](3);
+        week2[0] = MerkleTreeHelper.Claim(alice, 250e18);
+        week2[1] = MerkleTreeHelper.Claim(bob, 400e18);
+        week2[2] = MerkleTreeHelper.Claim(charlie, 600e18);
+        (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(week2);
 
-        // Step 3: Alice claims from both campaigns
-        vm.prank(alice);
-        distributor.claim(campaign1, proofs1[0], alice, 100e18);
+        distributor.claim(alice, 250e18, proofs2[0]);
+        distributor.claim(charlie, 600e18, proofs2[2]);
 
-        vm.prank(alice);
-        distributor.claim(campaign2, proofs2[0], alice, 150e18);
+        assertEq(token.balanceOf(alice), 250e18);
+        assertEq(token.balanceOf(charlie), 600e18);
 
-        assertEq(getJaneBalance(alice), 250e18);
+        // Week 3: More increases
+        MerkleTreeHelper.Claim[] memory week3 = new MerkleTreeHelper.Claim[](3);
+        week3[0] = MerkleTreeHelper.Claim(alice, 500e18);
+        week3[1] = MerkleTreeHelper.Claim(bob, 800e18);
+        week3[2] = MerkleTreeHelper.Claim(charlie, 1000e18);
+        (bytes32 root3, bytes32[][] memory proofs3) = updateRoot(week3);
 
-        // Step 4: Bob claims from first campaign
-        vm.prank(bob);
-        distributor.claim(campaign1, proofs1[1], bob, 200e18);
-        assertEq(getJaneBalance(bob), 200e18);
+        distributor.claim(bob, 800e18, proofs3[1]);
 
-        // Step 5: Invalidate second campaign
-        invalidateCampaign(campaign2);
-
-        // Step 6: Dave can't claim from invalidated campaign
-        vm.prank(dave);
-        vm.expectRevert(RewardsDistributor.InvalidCampaign.selector);
-        distributor.claim(campaign2, proofs2[1], dave, 250e18);
-
-        // Step 7: Charlie can still claim from first campaign
-        vm.prank(charlie);
-        distributor.claim(campaign1, proofs1[2], charlie, 300e18);
-        assertEq(getJaneBalance(charlie), 300e18);
+        assertEq(token.balanceOf(bob), 800e18);
     }
 
-    /// @notice Test claiming multiple rewards in one transaction
-    function test_claimMultiple() public {
-        // Create 3 campaigns
-        MerkleTreeHelper.Claim[][] memory allClaims = new MerkleTreeHelper.Claim[][](3);
-        uint256[] memory campaignIds = new uint256[](3);
-        bytes32[][][] memory allProofs = new bytes32[][][](3);
-
-        for (uint256 i = 0; i < 3; i++) {
-            allClaims[i] = new MerkleTreeHelper.Claim[](1);
-            allClaims[i][0] = MerkleTreeHelper.Claim(alice, (i + 1) * 100e18);
-
-            bytes32 root;
-            bytes32[][] memory proofs;
-            (campaignIds[i], root, proofs) = createCampaign(allClaims[i]);
-            allProofs[i] = proofs;
-        }
-
-        // Prepare arrays for claimMultiple
-        uint256[] memory rootIds = new uint256[](3);
-        uint256[] memory amounts = new uint256[](3);
-        address[] memory addrs = new address[](3);
-        bytes32[][] memory proofs = new bytes32[][](3);
-
-        for (uint256 i = 0; i < 3; i++) {
-            rootIds[i] = campaignIds[i];
-            amounts[i] = (i + 1) * 100e18;
-            addrs[i] = alice;
-            proofs[i] = allProofs[i][0];
-        }
-
-        // Claim all at once
-        uint256 aliceBalanceBefore = getJaneBalance(alice);
-
-        vm.prank(alice);
-        distributor.claimMultiple(rootIds, amounts, addrs, proofs);
-
-        assertEq(getJaneBalance(alice), aliceBalanceBefore + 600e18); // 100 + 200 + 300
-
-        // Verify all claimed
-        for (uint256 i = 0; i < 3; i++) {
-            assertTrue(distributor.claimed(alice, campaignIds[i]));
-        }
-    }
-
-    /// @notice Test claimMultiple with length mismatch
-    function test_claimMultiple_lengthMismatch() public {
-        uint256[] memory rootIds = new uint256[](2);
-        uint256[] memory amounts = new uint256[](3); // Different length
-        address[] memory addrs = new address[](2);
-        bytes32[][] memory proofs = new bytes32[][](2);
-
-        vm.expectRevert(RewardsDistributor.LengthMismatch.selector);
-        distributor.claimMultiple(rootIds, amounts, addrs, proofs);
-    }
-
-    /// @notice Test multi-user scenario
+    /// @notice Test multi-user scenario with various claim patterns
     function test_multiUserScenario() public {
-        // Create campaign with 6 users
         MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](6);
         claims[0] = MerkleTreeHelper.Claim(alice, 100e18);
         claims[1] = MerkleTreeHelper.Claim(bob, 200e18);
@@ -122,79 +60,64 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         claims[3] = MerkleTreeHelper.Claim(dave, 400e18);
         claims[4] = MerkleTreeHelper.Claim(eve, 500e18);
         claims[5] = MerkleTreeHelper.Claim(frank, 600e18);
-
-        (uint256 campaignId,, bytes32[][] memory proofs) = createCampaign(claims);
+        (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
         // Users claim in different order
-        vm.prank(charlie);
-        distributor.claim(campaignId, proofs[2], charlie, 300e18);
-
-        vm.prank(alice);
-        distributor.claim(campaignId, proofs[0], alice, 100e18);
-
-        vm.prank(frank);
-        distributor.claim(campaignId, proofs[5], frank, 600e18);
-
-        vm.prank(bob);
-        distributor.claim(campaignId, proofs[1], bob, 200e18);
-
-        vm.prank(eve);
-        distributor.claim(campaignId, proofs[4], eve, 500e18);
-
-        vm.prank(dave);
-        distributor.claim(campaignId, proofs[3], dave, 400e18);
+        distributor.claim(charlie, 300e18, proofs[2]);
+        distributor.claim(alice, 100e18, proofs[0]);
+        distributor.claim(frank, 600e18, proofs[5]);
+        distributor.claim(bob, 200e18, proofs[1]);
+        distributor.claim(eve, 500e18, proofs[4]);
+        distributor.claim(dave, 400e18, proofs[3]);
 
         // Verify all balances
-        assertEq(getJaneBalance(alice), 100e18);
-        assertEq(getJaneBalance(bob), 200e18);
-        assertEq(getJaneBalance(charlie), 300e18);
-        assertEq(getJaneBalance(dave), 400e18);
-        assertEq(getJaneBalance(eve), 500e18);
-        assertEq(getJaneBalance(frank), 600e18);
+        assertEq(token.balanceOf(alice), 100e18);
+        assertEq(token.balanceOf(bob), 200e18);
+        assertEq(token.balanceOf(charlie), 300e18);
+        assertEq(token.balanceOf(dave), 400e18);
+        assertEq(token.balanceOf(eve), 500e18);
+        assertEq(token.balanceOf(frank), 600e18);
     }
 
     /// @notice Test relayer pattern - claiming on behalf of others
     function test_relayerPattern() public {
-        // Create campaign
         MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](3);
         claims[0] = MerkleTreeHelper.Claim(alice, 100e18);
         claims[1] = MerkleTreeHelper.Claim(bob, 200e18);
         claims[2] = MerkleTreeHelper.Claim(charlie, 300e18);
-
-        (uint256 campaignId,, bytes32[][] memory proofs) = createCampaign(claims);
+        (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
         address relayer = makeAddr("relayer");
 
         // Relayer claims for all users
         vm.startPrank(relayer);
 
-        vm.expectEmit(true, true, false, true);
-        emit Claimed(alice, campaignId, 100e18, relayer);
-        distributor.claim(campaignId, proofs[0], alice, 100e18);
+        vm.expectEmit(true, false, false, true);
+        emit Claimed(alice, 100e18, 100e18);
+        distributor.claim(alice, 100e18, proofs[0]);
 
-        vm.expectEmit(true, true, false, true);
-        emit Claimed(bob, campaignId, 200e18, relayer);
-        distributor.claim(campaignId, proofs[1], bob, 200e18);
+        vm.expectEmit(true, false, false, true);
+        emit Claimed(bob, 200e18, 200e18);
+        distributor.claim(bob, 200e18, proofs[1]);
 
-        vm.expectEmit(true, true, false, true);
-        emit Claimed(charlie, campaignId, 300e18, relayer);
-        distributor.claim(campaignId, proofs[2], charlie, 300e18);
+        vm.expectEmit(true, false, false, true);
+        emit Claimed(charlie, 300e18, 300e18);
+        distributor.claim(charlie, 300e18, proofs[2]);
 
         vm.stopPrank();
 
         // Verify tokens went to correct recipients
-        assertEq(getJaneBalance(alice), 100e18);
-        assertEq(getJaneBalance(bob), 200e18);
-        assertEq(getJaneBalance(charlie), 300e18);
-        assertEq(getJaneBalance(relayer), 0);
+        assertEq(token.balanceOf(alice), 100e18);
+        assertEq(token.balanceOf(bob), 200e18);
+        assertEq(token.balanceOf(charlie), 300e18);
+        assertEq(token.balanceOf(relayer), 0);
     }
 
-    /// @notice Test large scale campaign with 100 users
+    /// @notice Test large scale with 100 users
     function test_largeCampaign_100Users() public {
         uint256 userCount = 100;
         MerkleTreeHelper.Claim[] memory claims = merkleHelper.generateLargeClaims(userCount, 100e18);
-
-        (uint256 campaignId, bytes32 root, bytes32[][] memory proofs) = createCampaign(claims);
+        (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
         // Claim for first 10 users and measure gas
         for (uint256 i = 0; i < 10; i++) {
@@ -202,28 +125,25 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
             uint256 amount = claims[i].amount;
 
             uint256 gasBefore = gasleft();
-            distributor.claim(campaignId, proofs[i], user, amount);
+            distributor.claim(user, amount, proofs[i]);
             uint256 gasUsed = gasBefore - gasleft();
 
             if (i == 0) {
                 emit log_named_uint("Gas for first claim (100 users)", gasUsed);
             }
 
-            assertEq(getJaneBalance(user), amount);
-            assertTrue(distributor.claimed(user, campaignId));
+            assertEq(token.balanceOf(user), amount);
+            assertEq(distributor.claimed(user), amount);
         }
     }
 
-    /// @notice Test large scale campaign (simplified due to gas limits)
-    function test_largeCampaign_gasMeasurement() public {
-        // Note: Large merkle tree generation (500+ users) exceeds gas limits
-        // This test demonstrates gas measurement with a smaller set
+    /// @notice Test gas measurement for different tree sizes
+    function test_gasMeasurement_variousTreeSizes() public {
         uint256 userCount = 50;
         MerkleTreeHelper.Claim[] memory claims = merkleHelper.generateLargeClaims(userCount, 100e18);
+        (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
-        (uint256 campaignId, bytes32 root, bytes32[][] memory proofs) = createCampaign(claims);
-
-        // Claim for users at different positions
+        // Test claims at different positions
         uint256[] memory testIndices = new uint256[](3);
         testIndices[0] = 0; // First user
         testIndices[1] = 24; // Middle
@@ -235,51 +155,19 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
             uint256 amount = claims[idx].amount;
 
             uint256 gasBefore = gasleft();
-            distributor.claim(campaignId, proofs[idx], user, amount);
+            distributor.claim(user, amount, proofs[idx]);
             uint256 gasUsed = gasBefore - gasleft();
 
             emit log_named_uint(string.concat("Gas for claim at index ", vm.toString(idx), " (50 users)"), gasUsed);
 
-            assertTrue(distributor.claimed(user, campaignId));
-        }
-    }
-
-    /// @notice Test BitMap efficiency across multiple campaigns
-    function test_bitmapEfficiency() public {
-        // Create 256 campaigns (to test multiple bitmap words)
-        uint256 numCampaigns = 256;
-        uint256[] memory campaignIds = new uint256[](numCampaigns);
-
-        for (uint256 i = 0; i < numCampaigns; i++) {
-            MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](1);
-            claims[0] = MerkleTreeHelper.Claim(alice, 1e18 * (i + 1));
-
-            bytes32 root;
-            bytes32[][] memory proofs;
-            (campaignIds[i], root, proofs) = createCampaign(claims);
-
-            // Claim every other campaign
-            if (i % 2 == 0) {
-                vm.prank(alice);
-                distributor.claim(campaignIds[i], proofs[0], alice, 1e18 * (i + 1));
-            }
-        }
-
-        // Verify bitmap status
-        for (uint256 i = 0; i < numCampaigns; i++) {
-            if (i % 2 == 0) {
-                assertTrue(distributor.claimed(alice, campaignIds[i]));
-            } else {
-                assertFalse(distributor.claimed(alice, campaignIds[i]));
-            }
+            assertEq(distributor.claimed(user), amount);
         }
     }
 
     /// @notice Test sweep functionality with multiple tokens
     function test_sweepMultipleTokens() public {
-        // Deploy additional tokens
-        JaneToken token2 = new JaneToken(owner, minter, burner);
-        JaneToken token3 = new JaneToken(owner, minter, burner);
+        Jane token2 = new Jane(owner, minter, burner);
+        Jane token3 = new Jane(owner, minter, burner);
 
         vm.startPrank(owner);
         token2.setTransferable();
@@ -296,140 +184,246 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         sweep(address(token2));
         sweep(address(token3));
 
-        // Verify owner received all tokens
         assertEq(token2.balanceOf(owner), 1000e18);
         assertEq(token3.balanceOf(owner), 2000e18);
         assertEq(token2.balanceOf(address(distributor)), 0);
         assertEq(token3.balanceOf(address(distributor)), 0);
     }
 
-    /// @notice Test campaign progression over time
-    function test_campaignProgression() public {
-        uint256 numCampaigns = 5;
-        uint256[] memory campaignIds = new uint256[](numCampaigns);
-        bytes32[][][] memory allProofs = new bytes32[][][](numCampaigns);
+    /// @notice Test progressive weekly updates over time
+    function test_progressiveWeeklyUpdates() public {
+        uint256 numWeeks = 5;
 
-        // Create campaigns over time
-        for (uint256 i = 0; i < numCampaigns; i++) {
-            // Advance time between campaigns
+        for (uint256 i = 0; i < numWeeks; i++) {
             if (i > 0) {
                 advanceTime(7 days);
             }
 
             MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](1);
             claims[0] = MerkleTreeHelper.Claim(alice, 100e18 * (i + 1));
+            (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
-            bytes32 root;
-            bytes32[][] memory proofs;
-            (campaignIds[i], root, proofs) = createCampaign(claims);
-            allProofs[i] = proofs;
+            distributor.claim(alice, 100e18 * (i + 1), proofs[0]);
 
-            emit log_named_uint(string.concat("Campaign ", vm.toString(i), " created at"), block.timestamp);
+            emit log_named_uint(string.concat("Week ", vm.toString(i + 1), " timestamp"), block.timestamp);
         }
 
-        // Claim from all campaigns
-        for (uint256 i = 0; i < numCampaigns; i++) {
-            vm.prank(alice);
-            distributor.claim(campaignIds[i], allProofs[i][0], alice, 100e18 * (i + 1));
-        }
-
-        // Verify total claimed
-        uint256 expectedTotal = 0;
-        for (uint256 i = 0; i < numCampaigns; i++) {
-            expectedTotal += 100e18 * (i + 1);
-        }
-        assertEq(getJaneBalance(alice), expectedTotal);
+        // Final balance should be last allocation amount
+        assertEq(token.balanceOf(alice), 500e18);
+        assertEq(distributor.claimed(alice), 500e18);
     }
 
-    /// @notice Test emergency withdrawal pattern
+    /// @notice Test emergency withdrawal scenario
     function test_emergencyWithdrawal() public {
-        // Create campaign
         MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](3);
         claims[0] = MerkleTreeHelper.Claim(alice, 100e18);
         claims[1] = MerkleTreeHelper.Claim(bob, 200e18);
         claims[2] = MerkleTreeHelper.Claim(charlie, 300e18);
+        (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
-        (uint256 campaignId,,) = createCampaign(claims);
+        // Alice claims before emergency
+        distributor.claim(alice, 100e18, proofs[0]);
 
-        // Simulate emergency: invalidate campaign and sweep tokens
-        invalidateCampaign(campaignId);
-
-        uint256 distributorBalance = getJaneBalance(address(distributor));
-        uint256 ownerBalanceBefore = getJaneBalance(owner);
+        // Simulate emergency: sweep remaining tokens
+        uint256 distributorBalance = token.balanceOf(address(distributor));
+        uint256 ownerBalanceBefore = token.balanceOf(owner);
 
         sweep(address(token));
 
-        assertEq(getJaneBalance(owner), ownerBalanceBefore + distributorBalance);
-        assertEq(getJaneBalance(address(distributor)), 0);
-    }
-
-    /// @notice Test gas optimization for batch claims
-    function test_gasOptimization_batchClaims() public {
-        // Create campaign with 10 users
-        MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](10);
-        for (uint256 i = 0; i < 10; i++) {
-            claims[i] = MerkleTreeHelper.Claim(address(uint160(0x1000 + i)), 100e18 * (i + 1));
-        }
-
-        (uint256 campaignId,, bytes32[][] memory proofs) = createCampaign(claims);
-
-        // Method 1: Individual claims
-        uint256 totalGasIndividual = 0;
-        for (uint256 i = 0; i < 5; i++) {
-            uint256 gasBefore = gasleft();
-            distributor.claim(campaignId, proofs[i], claims[i].user, claims[i].amount);
-            totalGasIndividual += gasBefore - gasleft();
-        }
-
-        // Method 2: Batch claim using claimMultiple
-        uint256[] memory rootIds = new uint256[](5);
-        uint256[] memory amounts = new uint256[](5);
-        address[] memory addrs = new address[](5);
-        bytes32[][] memory batchProofs = new bytes32[][](5);
-
-        for (uint256 i = 5; i < 10; i++) {
-            rootIds[i - 5] = campaignId;
-            amounts[i - 5] = claims[i].amount;
-            addrs[i - 5] = claims[i].user;
-            batchProofs[i - 5] = proofs[i];
-        }
-
-        uint256 gasBefore = gasleft();
-        distributor.claimMultiple(rootIds, amounts, addrs, batchProofs);
-        uint256 totalGasBatch = gasBefore - gasleft();
-
-        emit log_named_uint("Total gas for 5 individual claims", totalGasIndividual);
-        emit log_named_uint("Total gas for batch of 5 claims", totalGasBatch);
-        emit log_named_uint("Gas saved with batch", totalGasIndividual - totalGasBatch);
+        assertEq(token.balanceOf(owner), ownerBalanceBefore + distributorBalance);
+        assertEq(token.balanceOf(address(distributor)), 0);
     }
 
     /// @notice Test partial claims scenario
     function test_partialClaims() public {
-        // Create campaign
         MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](10);
         for (uint256 i = 0; i < 10; i++) {
             claims[i] = MerkleTreeHelper.Claim(address(uint160(0x2000 + i)), 100e18);
         }
-
-        (uint256 campaignId,, bytes32[][] memory proofs) = createCampaign(claims);
+        (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
         // Only half of users claim
         for (uint256 i = 0; i < 5; i++) {
-            distributor.claim(campaignId, proofs[i], claims[i].user, claims[i].amount);
+            distributor.claim(claims[i].user, claims[i].amount, proofs[i]);
         }
 
         // Check claimed status
         for (uint256 i = 0; i < 10; i++) {
             if (i < 5) {
-                assertTrue(distributor.claimed(claims[i].user, campaignId));
+                assertEq(distributor.claimed(claims[i].user), 100e18);
             } else {
-                assertFalse(distributor.claimed(claims[i].user, campaignId));
+                assertEq(distributor.claimed(claims[i].user), 0);
             }
         }
 
         // Calculate unclaimed amount
         uint256 unclaimedAmount = 500e18; // 5 users * 100e18
-        uint256 distributorBalance = getJaneBalance(address(distributor));
+        uint256 distributorBalance = token.balanceOf(address(distributor));
         assertTrue(distributorBalance >= unclaimedAmount);
+    }
+
+    /// @notice Test mode switching full lifecycle
+    function test_modeSwitch_fullLifecycle() public {
+        addMinter(address(distributor));
+
+        // Phase 1: Transfer mode
+        assertFalse(distributor.useMint());
+        MerkleTreeHelper.Claim[] memory claims1 = new MerkleTreeHelper.Claim[](2);
+        claims1[0] = MerkleTreeHelper.Claim(alice, 100e18);
+        claims1[1] = MerkleTreeHelper.Claim(bob, 200e18);
+        (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(claims1);
+
+        uint256 distributorBalanceBefore = token.balanceOf(address(distributor));
+        distributor.claim(alice, 100e18, proofs1[0]);
+        assertEq(token.balanceOf(address(distributor)), distributorBalanceBefore - 100e18);
+
+        // Switch to mint mode
+        toggleMintMode(true);
+
+        // Phase 2: Mint mode
+        MerkleTreeHelper.Claim[] memory claims2 = new MerkleTreeHelper.Claim[](2);
+        claims2[0] = MerkleTreeHelper.Claim(charlie, 300e18);
+        claims2[1] = MerkleTreeHelper.Claim(dave, 400e18);
+        (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(claims2);
+
+        uint256 supplyBefore = token.totalSupply();
+        distributor.claim(charlie, 300e18, proofs2[0]);
+        assertEq(token.totalSupply(), supplyBefore + 300e18);
+
+        // Switch back to transfer mode
+        toggleMintMode(false);
+
+        // Update root with new allocation for bob
+        MerkleTreeHelper.Claim[] memory claims3 = new MerkleTreeHelper.Claim[](1);
+        claims3[0] = MerkleTreeHelper.Claim(bob, 200e18);
+        (bytes32 root3, bytes32[][] memory proofs3) = updateRoot(claims3);
+
+        distributor.claim(bob, 200e18, proofs3[0]);
+        assertEq(token.balanceOf(bob), 200e18);
+    }
+
+    /// @notice Test incremental claiming over multiple updates
+    function test_incrementalClaiming() public {
+        // Update 1: alice = 100
+        MerkleTreeHelper.Claim[] memory claims1 = new MerkleTreeHelper.Claim[](1);
+        claims1[0] = MerkleTreeHelper.Claim(alice, 100e18);
+        (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(claims1);
+        distributor.claim(alice, 100e18, proofs1[0]);
+
+        assertEq(token.balanceOf(alice), 100e18);
+        assertEq(distributor.claimed(alice), 100e18);
+
+        // Update 2: alice = 250 (increase by 150)
+        MerkleTreeHelper.Claim[] memory claims2 = new MerkleTreeHelper.Claim[](1);
+        claims2[0] = MerkleTreeHelper.Claim(alice, 250e18);
+        (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(claims2);
+        distributor.claim(alice, 250e18, proofs2[0]);
+
+        assertEq(token.balanceOf(alice), 250e18);
+        assertEq(distributor.claimed(alice), 250e18);
+
+        // Update 3: alice = 500 (increase by 250)
+        MerkleTreeHelper.Claim[] memory claims3 = new MerkleTreeHelper.Claim[](1);
+        claims3[0] = MerkleTreeHelper.Claim(alice, 500e18);
+        (bytes32 root3, bytes32[][] memory proofs3) = updateRoot(claims3);
+        distributor.claim(alice, 500e18, proofs3[0]);
+
+        assertEq(token.balanceOf(alice), 500e18);
+        assertEq(distributor.claimed(alice), 500e18);
+    }
+
+    /// @notice Test staggered user onboarding
+    function test_staggeredUserOnboarding() public {
+        // Week 1: Just Alice
+        MerkleTreeHelper.Claim[] memory week1 = new MerkleTreeHelper.Claim[](1);
+        week1[0] = MerkleTreeHelper.Claim(alice, 100e18);
+        (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(week1);
+        distributor.claim(alice, 100e18, proofs1[0]);
+
+        // Week 2: Alice + Bob
+        MerkleTreeHelper.Claim[] memory week2 = new MerkleTreeHelper.Claim[](2);
+        week2[0] = MerkleTreeHelper.Claim(alice, 250e18);
+        week2[1] = MerkleTreeHelper.Claim(bob, 150e18);
+        (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(week2);
+        distributor.claim(alice, 250e18, proofs2[0]);
+        distributor.claim(bob, 150e18, proofs2[1]);
+
+        // Week 3: Alice + Bob + Charlie
+        MerkleTreeHelper.Claim[] memory week3 = new MerkleTreeHelper.Claim[](3);
+        week3[0] = MerkleTreeHelper.Claim(alice, 400e18);
+        week3[1] = MerkleTreeHelper.Claim(bob, 300e18);
+        week3[2] = MerkleTreeHelper.Claim(charlie, 200e18);
+        (bytes32 root3, bytes32[][] memory proofs3) = updateRoot(week3);
+        distributor.claim(alice, 400e18, proofs3[0]);
+        distributor.claim(bob, 300e18, proofs3[1]);
+        distributor.claim(charlie, 200e18, proofs3[2]);
+
+        assertEq(token.balanceOf(alice), 400e18);
+        assertEq(token.balanceOf(bob), 300e18);
+        assertEq(token.balanceOf(charlie), 200e18);
+    }
+
+    /// @notice Test catching up on missed claims
+    function test_catchUpMissedClaims() public {
+        // Week 1
+        MerkleTreeHelper.Claim[] memory week1 = new MerkleTreeHelper.Claim[](2);
+        week1[0] = MerkleTreeHelper.Claim(alice, 100e18);
+        week1[1] = MerkleTreeHelper.Claim(bob, 100e18);
+        updateRoot(week1);
+
+        // Week 2 (Alice doesn't claim)
+        MerkleTreeHelper.Claim[] memory week2 = new MerkleTreeHelper.Claim[](2);
+        week2[0] = MerkleTreeHelper.Claim(alice, 250e18);
+        week2[1] = MerkleTreeHelper.Claim(bob, 250e18);
+        updateRoot(week2);
+
+        // Week 3 (Alice doesn't claim)
+        MerkleTreeHelper.Claim[] memory week3 = new MerkleTreeHelper.Claim[](2);
+        week3[0] = MerkleTreeHelper.Claim(alice, 500e18);
+        week3[1] = MerkleTreeHelper.Claim(bob, 500e18);
+        (bytes32 root3, bytes32[][] memory proofs3) = updateRoot(week3);
+
+        // Alice finally claims in week 3 - gets full cumulative amount
+        distributor.claim(alice, 500e18, proofs3[0]);
+        assertEq(token.balanceOf(alice), 500e18);
+
+        // Bob has been claiming regularly
+        distributor.claim(bob, 500e18, proofs3[1]);
+        assertEq(token.balanceOf(bob), 500e18);
+    }
+
+    /// @notice Test complex multi-week scenario with varied allocations
+    function test_complexMultiWeek() public {
+        address[] memory users = new address[](4);
+        users[0] = alice;
+        users[1] = bob;
+        users[2] = charlie;
+        users[3] = dave;
+
+        // Week 1
+        MerkleTreeHelper.Claim[] memory week1 = new MerkleTreeHelper.Claim[](4);
+        for (uint256 i = 0; i < 4; i++) {
+            week1[i] = MerkleTreeHelper.Claim(users[i], 100e18 * (i + 1));
+        }
+        (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(week1);
+        for (uint256 i = 0; i < 4; i++) {
+            distributor.claim(users[i], 100e18 * (i + 1), proofs1[i]);
+        }
+
+        // Week 2: Double allocations
+        MerkleTreeHelper.Claim[] memory week2 = new MerkleTreeHelper.Claim[](4);
+        for (uint256 i = 0; i < 4; i++) {
+            week2[i] = MerkleTreeHelper.Claim(users[i], 200e18 * (i + 1));
+        }
+        (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(week2);
+        for (uint256 i = 0; i < 4; i++) {
+            distributor.claim(users[i], 200e18 * (i + 1), proofs2[i]);
+        }
+
+        // Verify final balances
+        assertEq(token.balanceOf(alice), 200e18);
+        assertEq(token.balanceOf(bob), 400e18);
+        assertEq(token.balanceOf(charlie), 600e18);
+        assertEq(token.balanceOf(dave), 800e18);
     }
 }

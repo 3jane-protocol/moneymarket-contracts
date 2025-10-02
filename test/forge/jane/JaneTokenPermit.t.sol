@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {JaneSetup} from "./utils/JaneSetup.sol";
-import {JaneToken} from "../../../src/jane/JaneToken.sol";
+import {Jane} from "../../../src/jane/Jane.sol";
 
 contract JaneTokenPermitTest is JaneSetup {
     uint256 internal alicePrivateKey = 0xA11CE;
@@ -123,7 +123,7 @@ contract JaneTokenPermitTest is JaneSetup {
         assertEq(token.allowance(aliceAddr, charlie), value);
 
         vm.prank(charlie);
-        vm.expectRevert(JaneToken.TransferNotAllowed.selector);
+        vm.expectRevert(Jane.TransferNotAllowed.selector);
         token.transferFrom(aliceAddr, bob, 100e18);
 
         grantTransferRole(bob);

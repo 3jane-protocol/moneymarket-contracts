@@ -2,10 +2,10 @@
 pragma solidity ^0.8.22;
 
 import {Test} from "forge-std/Test.sol";
-import {JaneToken} from "../../../../src/jane/JaneToken.sol";
+import {Jane} from "../../../../src/jane/Jane.sol";
 
 contract JaneSetup is Test {
-    JaneToken public token;
+    Jane public token;
 
     address public owner;
     address public minter;
@@ -19,7 +19,9 @@ contract JaneSetup is Test {
 
     event TransferEnabled();
     event MintingFinalized();
-    event TransferRoleUpdated(address indexed account, bool indexed hasRole);
+    event TransferAuthorized(address indexed account, bool indexed authorized);
+    event MinterAuthorized(address indexed account, bool indexed authorized);
+    event BurnerAuthorized(address indexed account, bool indexed authorized);
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
@@ -32,7 +34,7 @@ contract JaneSetup is Test {
         charlie = makeAddr("charlie");
         treasury = makeAddr("treasury");
 
-        token = new JaneToken(owner, minter, burner);
+        token = new Jane(owner, minter, burner);
 
         vm.label(address(token), "JaneToken");
         vm.label(owner, "Owner");
@@ -51,17 +53,37 @@ contract JaneSetup is Test {
 
     function grantTransferRole(address account) internal {
         vm.prank(owner);
-        token.setTransferRole(account, true);
+        token.addTransferRole(account);
     }
 
     function revokeTransferRole(address account) internal {
         vm.prank(owner);
-        token.setTransferRole(account, false);
+        token.removeTransferRole(account);
     }
 
     function setTransferable() internal {
         vm.prank(owner);
         token.setTransferable();
+    }
+
+    function addMinter(address account) internal {
+        vm.prank(owner);
+        token.addMinter(account);
+    }
+
+    function removeMinter(address account) internal {
+        vm.prank(owner);
+        token.removeMinter(account);
+    }
+
+    function addBurner(address account) internal {
+        vm.prank(owner);
+        token.addBurner(account);
+    }
+
+    function removeBurner(address account) internal {
+        vm.prank(owner);
+        token.removeBurner(account);
     }
 
     function createPermitSignature(uint256 privateKey, address spender, uint256 value, uint256 deadline)
