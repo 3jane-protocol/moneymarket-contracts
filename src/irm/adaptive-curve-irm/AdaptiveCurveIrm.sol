@@ -46,11 +46,12 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
     /// @inheritdoc IAdaptiveCurveIrm
     mapping(Id => int256) public rateAtTarget;
 
-    /// @notice Tracks Aave index data per market for spread calculation
+    /// @notice Tracks Aave normalized index data per market for spread calculation
+    /// @dev Packed into a single storage slot: 96 + 96 + 64 = 256 bits
     struct AaveIndexData {
-        uint128 lastBorrowIndex; // Last recorded Aave variable borrow index
-        uint128 lastLiquidityIndex; // Last recorded Aave liquidity index
-        uint128 lastUpdate; // Timestamp of last index update
+        uint96 lastNormalizedDebt; // Last recorded Aave normalized variable debt (RAY)
+        uint96 lastNormalizedIncome; // Last recorded Aave normalized income (RAY)
+        uint64 lastUpdate; // Timestamp of last index update
     }
 
     /// @notice Aave index data per market ID
@@ -233,30 +234,35 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
             return 0;
         }
 
-        // Fetch current Aave reserve data and calculate spread in one go
-        ReserveDataLegacy memory reserveData = IAaveMarket(AAVE_POOL).getReserveData(USDC);
+        // Fetch current normalized indices (these are automatically up-to-date)
+        uint256 currentNormalizedDebt = IAaveMarket(AAVE_POOL).getReserveNormalizedVariableDebt(USDC);
+        uint256 currentNormalizedIncome = IAaveMarket(AAVE_POOL).getReserveNormalizedIncome(USDC);
 
-        // Calculate and return spread directly to reduce stack usage
+        // Calculate rates from normalized index growth
         uint256 aaveBorrowRate =
-            reserveData.variableBorrowIndex.wDivUp(lastData.lastBorrowIndex).wInverseTaylorCompounded(elapsed);
+            currentNormalizedDebt.wDivUp(lastData.lastNormalizedDebt).wInverseTaylorCompounded(elapsed);
         uint256 aaveSupplyRate =
-            reserveData.liquidityIndex.wDivUp(lastData.lastLiquidityIndex).wInverseTaylorCompounded(elapsed);
+            currentNormalizedIncome.wDivUp(lastData.lastNormalizedIncome).wInverseTaylorCompounded(elapsed);
 
         // The spread is the difference (can be 0 if rates are equal)
         return aaveBorrowRate > aaveSupplyRate ? aaveBorrowRate - aaveSupplyRate : 0;
     }
 
-    /// @dev Updates the stored Aave indices for the next spread calculation.
+    /// @dev Updates the stored Aave normalized indices for the next spread calculation.
     /// @param id The market ID
     function _updateAaveIndices(Id id) internal {
-        // Fetch current Aave reserve data
-        ReserveDataLegacy memory reserveData = IAaveMarket(AAVE_POOL).getReserveData(USDC);
+        // Fetch current normalized indices (automatically includes all accrued interest)
+        uint256 currentNormalizedDebt = IAaveMarket(AAVE_POOL).getReserveNormalizedVariableDebt(USDC);
+        uint256 currentNormalizedIncome = IAaveMarket(AAVE_POOL).getReserveNormalizedIncome(USDC);
 
-        AaveIndexData storage data = aaveIndexData[id];
+        AaveIndexData memory data = aaveIndexData[id];
 
-        // Update indices for next calculation
-        data.lastBorrowIndex = reserveData.variableBorrowIndex;
-        data.lastLiquidityIndex = reserveData.liquidityIndex;
-        data.lastUpdate = uint128(block.timestamp);
+        // Update normalized indices for next calculation
+        // Safe to cast as Aave indices start at 1e27 and would take decades to overflow uint96
+        data.lastNormalizedDebt = uint96(currentNormalizedDebt);
+        data.lastNormalizedIncome = uint96(currentNormalizedIncome);
+        data.lastUpdate = uint64(block.timestamp);
+
+        aaveIndexData[id] = data;
     }
 }

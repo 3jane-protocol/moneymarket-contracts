@@ -24,6 +24,17 @@ script = "/dev/null"
 
 [profile.test]
 via-ir = false
+script = "/dev/null"
+# Run all tests but exclude IRM tests
+no_match_path = "**/irm/**"
+
+[profile.test-irm]
+# IRM tests need via-ir due to stack complexity
+via-ir = true
+script = "/dev/null"
+optimizer_details.optimizerSteps = "u"
+# Only run IRM tests
+match_path = "**/irm/**"
 
 
 # See more config options https://github.com/foundry-rs/foundry/tree/master/crates/config
