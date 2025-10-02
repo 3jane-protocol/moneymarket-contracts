@@ -13,7 +13,7 @@ import {
     MarkdownState,
     IMorphoCredit
 } from "./interfaces/IMorpho.sol";
-import {IMarkdownManager} from "./interfaces/IMarkdownManager.sol";
+import {IMarkdownController} from "./interfaces/IMarkdownController.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IMorphoRepayCallback} from "./interfaces/IMorphoCallbacks.sol";
 import {IProtocolConfig, MarketConfig} from "./interfaces/IProtocolConfig.sol";
@@ -111,20 +111,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @inheritdoc IMorphoCredit
     function setHelper(address newHelper) external onlyOwner {
-        if (newHelper == helper) revert ErrorsLib.AlreadySet();
-
         helper = newHelper;
-
-        emit EventsLib.SetHelper(newHelper);
     }
 
     /// @inheritdoc IMorphoCredit
     function setUsd3(address newUsd3) external onlyOwner {
-        if (newUsd3 == usd3) revert ErrorsLib.AlreadySet();
-
         usd3 = newUsd3;
-
-        emit EventsLib.SetUsd3(newUsd3);
     }
 
     /* EXTERNAL FUNCTIONS - PREMIUM MANAGEMENT */
@@ -755,7 +747,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             uint256 timeInDefault = block.timestamp > statusStartTime ? block.timestamp - statusStartTime : 0;
             uint256 borrowerAssets = _getBorrowerAssets(id, borrower);
 
-            newMarkdown = IMarkdownManager(manager).calculateMarkdown(borrower, borrowerAssets, timeInDefault);
+            newMarkdown = IMarkdownController(manager).calculateMarkdown(borrower, borrowerAssets, timeInDefault);
+
+            // Burn JANE proportionally to markdown
+            IMarkdownController(manager).burnJaneProportional(borrower, timeInDefault);
 
             // Cap markdown at the borrower's actual outstanding debt
             // since markdown represents the write-down of the loan value
@@ -871,6 +866,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Calculate written off assets
         writtenOffAssets = writtenOffShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+
+        // Burn all remaining JANE on settlement
+        address manager = ICreditLine(idToMarketParams[id].creditLine).mm();
+        if (manager != address(0)) {
+            IMarkdownController(manager).burnJaneFull(borrower);
+        }
 
         // Clear position and apply supply adjustment
         _applySettlement(id, borrower, writtenOffShares, writtenOffAssets);

@@ -7,7 +7,7 @@ import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
-import {IMarkdownManager} from "../../../../src/interfaces/IMarkdownManager.sol";
+import {IMarkdownController} from "../../../../src/interfaces/IMarkdownController.sol";
 import {IProtocolConfig} from "../../../../src/interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {Market} from "../../../../src/interfaces/IMorpho.sol";
@@ -474,7 +474,7 @@ contract MarkdownManagerTest is BaseTest {
 }
 
 /// @notice Mock markdown manager that returns zero markdown
-contract InvalidMarkdownManager is IMarkdownManager {
+contract InvalidMarkdownManager is IMarkdownController {
     function calculateMarkdown(address, uint256, uint256) external pure returns (uint256) {
         return 0;
     }
@@ -482,15 +482,39 @@ contract InvalidMarkdownManager is IMarkdownManager {
     function getMarkdownMultiplier(uint256) external pure returns (uint256) {
         return 1e18;
     }
+
+    function isFrozen(address) external pure returns (bool) {
+        return false;
+    }
+
+    function burnJaneProportional(address, uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function burnJaneFull(address) external pure returns (uint256) {
+        return 0;
+    }
 }
 
 /// @notice Mock markdown manager that always reverts
-contract RevertingMarkdownManager is IMarkdownManager {
+contract RevertingMarkdownManager is IMarkdownController {
     function calculateMarkdown(address, uint256, uint256) external pure returns (uint256) {
         revert("Markdown calculation failed");
     }
 
     function getMarkdownMultiplier(uint256) external pure returns (uint256) {
+        revert("Markdown calculation failed");
+    }
+
+    function isFrozen(address) external pure returns (bool) {
+        revert("Markdown calculation failed");
+    }
+
+    function burnJaneProportional(address, uint256) external pure returns (uint256) {
+        revert("Markdown calculation failed");
+    }
+
+    function burnJaneFull(address) external pure returns (uint256) {
         revert("Markdown calculation failed");
     }
 }

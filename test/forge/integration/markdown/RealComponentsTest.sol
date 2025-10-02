@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
-import {MarkdownManager} from "../../../../src/MarkdownManager.sol";
+import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLine} from "../../../../src/CreditLine.sol";
 import {IrmMock} from "../../../../src/mocks/IrmMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
@@ -29,7 +29,7 @@ contract RealComponentsTest is BaseTest {
     using SharesMathLib for uint256;
     using MathLib for uint256;
 
-    MarkdownManager markdownManager;
+    MarkdownManagerMock markdownManager;
     CreditLine creditLine;
     IrmMock mockIrm;
     IMorphoCredit morphoCredit;
@@ -37,8 +37,8 @@ contract RealComponentsTest is BaseTest {
     function setUp() public override {
         super.setUp();
 
-        // Deploy real markdown manager
-        markdownManager = new MarkdownManager(address(protocolConfig), OWNER);
+        // Deploy markdown manager mock
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
 
         // Deploy mock IRM (simpler than real IRM to avoid stack too deep)
         mockIrm = new IrmMock();

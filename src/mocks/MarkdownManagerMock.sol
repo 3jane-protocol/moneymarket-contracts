@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
-import {IMarkdownManager} from "../interfaces/IMarkdownManager.sol";
+import {IMarkdownController} from "../interfaces/IMarkdownController.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 import {Ownable} from "../../lib/openzeppelin/contracts/access/Ownable.sol";
 
 /// @title MarkdownManagerMock
-/// @notice Mock implementation of IMarkdownManager for testing
-/// @dev Extends the production MarkdownManager with additional testing capabilities
-contract MarkdownManagerMock is IMarkdownManager, Ownable {
+/// @notice Mock implementation of IMarkdownController for testing
+/// @dev Extends the production MarkdownController with additional testing capabilities
+contract MarkdownManagerMock is IMarkdownController, Ownable {
     /// @notice WAD constant for percentage calculations (1e18 = 100%)
     uint256 private constant WAD = 1e18;
 
@@ -37,6 +37,9 @@ contract MarkdownManagerMock is IMarkdownManager, Ownable {
         require(_protocolConfig != address(0), "Invalid protocol config");
         protocolConfig = _protocolConfig;
     }
+
+    /// @notice Mock does not check repayment status like production MarkdownController
+    /// @dev This is intentional to allow simpler test setup without full MorphoCredit integration
 
     /// @notice Enable or disable markdown for a borrower
     /// @param borrower The borrower address
@@ -75,7 +78,7 @@ contract MarkdownManagerMock is IMarkdownManager, Ownable {
         overrideDuration = duration;
     }
 
-    /// @inheritdoc IMarkdownManager
+    /// @inheritdoc IMarkdownController
     function calculateMarkdown(address borrower, uint256 borrowAmount, uint256 timeInDefault)
         external
         view
@@ -102,7 +105,7 @@ contract MarkdownManagerMock is IMarkdownManager, Ownable {
         markdownAmount = (borrowAmount * timeInDefault) / duration;
     }
 
-    /// @inheritdoc IMarkdownManager
+    /// @inheritdoc IMarkdownController
     function getMarkdownMultiplier(uint256 timeInDefault) external view returns (uint256 multiplier) {
         uint256 duration = fullMarkdownDuration();
 
@@ -116,6 +119,23 @@ contract MarkdownManagerMock is IMarkdownManager, Ownable {
 
         uint256 markdownPercentage = (WAD * timeInDefault) / duration;
         multiplier = WAD - markdownPercentage;
+    }
+
+    /// @inheritdoc IMarkdownController
+    function isFrozen(address borrower) external view returns (bool) {
+        return markdownEnabled[borrower];
+    }
+
+    /// @inheritdoc IMarkdownController
+    function burnJaneProportional(address, uint256) external pure returns (uint256) {
+        // Mock does not actually burn tokens
+        return 0;
+    }
+
+    /// @inheritdoc IMarkdownController
+    function burnJaneFull(address) external pure returns (uint256) {
+        // Mock does not actually burn tokens
+        return 0;
     }
 
     /// @notice Set the daily markdown rate (for backward compatibility with old tests)
