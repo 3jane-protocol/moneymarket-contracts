@@ -21,7 +21,7 @@
     "test:forge:coverage": "FOUNDRY_PROFILE=test forge coverage",
     "test:forge:snapshot": "FOUNDRY_PROFILE=test forge snapshot",
     "test:hardhat": "npx hardhat test",
-    "test:halmos": "FOUNDRY_PROFILE=test halmos --function check_",
+    "test:halmos": "FOUNDRY_PROFILE=halmos halmos --function check_",
     "lint": "yarn lint:forge && yarn lint:hardhat",
     "lint:forge": "forge fmt --check",
     "lint:hardhat": "prettier --check test/hardhat",
