@@ -13,6 +13,9 @@ import {MarketParams} from "./IMorpho.sol";
 /// @dev After USD3's reinitialize(), the flow is: USDC → USD3 (→ sUSD3 if hop=true)
 /// @dev MorphoCredit still uses waUSDC, so borrow/repay operations handle the USDC ↔ waUSDC conversion
 interface IHelper {
+    event DepositReferred(address indexed depositor, uint256 amount, bytes32 code);
+    event BorrowReferred(address indexed borrower, uint256 amount, bytes32 code);
+
     /// @notice The Morpho protocol contract address
     /// @return The address of the Morpho contract
     function MORPHO() external view returns (address);
@@ -42,6 +45,15 @@ interface IHelper {
     /// @return The amount of shares minted (USD3 or sUSD3 depending on hop)
     function deposit(uint256 assets, address receiver, bool hop) external returns (uint256);
 
+    /// @notice Deposits USDC into USD3 (and optionally sUSD3) with referral tracking
+    /// @dev Same as deposit() but emits DepositReferred event for referral tracking
+    /// @param assets The amount of USDC to deposit
+    /// @param receiver The address that will receive the USD3/sUSD3 shares
+    /// @param hop If true, deposits into sUSD3; if false, stops at USD3
+    /// @param referral Referral code for tracking purposes
+    /// @return The amount of shares minted (USD3 or sUSD3 depending on hop)
+    function deposit(uint256 assets, address receiver, bool hop, bytes32 referral) external returns (uint256);
+
     /// @notice Redeems USD3 shares back to USDC
     /// @dev After USD3's reinitialize(), USD3 returns USDC directly
     /// @dev Caller must have approved Helper for USD3 spending
@@ -57,6 +69,17 @@ interface IHelper {
     /// @return usdcAmount The amount of USDC received by the borrower
     /// @return shares The amount of borrow shares created
     function borrow(MarketParams memory marketParams, uint256 assets) external returns (uint256, uint256);
+
+    /// @notice Borrows assets from a Morpho market and unwraps to USDC with referral tracking
+    /// @dev Same as borrow() but emits BorrowReferred event for referral tracking
+    /// @param marketParams The market parameters defining which market to borrow from
+    /// @param assets The amount of assets to borrow (in waUSDC terms)
+    /// @param referral Referral code for tracking purposes
+    /// @return usdcAmount The amount of USDC received by the borrower
+    /// @return shares The amount of borrow shares created
+    function borrow(MarketParams memory marketParams, uint256 assets, bytes32 referral)
+        external
+        returns (uint256, uint256);
 
     /// @notice Repays a loan by wrapping USDC to waUSDC
     /// @dev Flow: USDC → waUSDC → Morpho repay. Caller must have approved Helper for USDC spending

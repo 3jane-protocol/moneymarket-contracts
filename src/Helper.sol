@@ -52,30 +52,41 @@ contract Helper is IHelper {
     }
 
     /// @inheritdoc IHelper
-    function deposit(uint256 assets, address receiver, bool hop) external returns (uint256) {
-        // USD3 now accepts USDC directly after reinitialize()
+    function deposit(uint256 assets, address receiver, bool hop, bytes32 referral) external returns (uint256 shares) {
+        (shares) = deposit(assets, receiver, hop);
+        emit DepositReferred(msg.sender, assets, referral);
+    }
+
+    /// @inheritdoc IHelper
+    function deposit(uint256 assets, address receiver, bool hop) public returns (uint256) {
         IERC20(USDC).safeTransferFrom(msg.sender, address(this), assets);
 
         if (hop) {
             require(IUSD3(USD3).whitelist(receiver), "!whitelist");
-            assets = IUSD3(USD3).deposit(assets, address(this));
-            assets = IERC4626(sUSD3).deposit(assets, receiver);
+            uint256 usd3Shares = IUSD3(USD3).deposit(assets, address(this));
+            return IERC4626(sUSD3).deposit(usd3Shares, receiver);
         } else {
-            assets = IUSD3(USD3).deposit(assets, receiver);
+            return IUSD3(USD3).deposit(assets, receiver);
         }
-
-        return assets;
     }
 
     /// @inheritdoc IHelper
     function redeem(uint256 shares, address receiver) external returns (uint256) {
-        // USD3 now returns USDC directly after reinitialize()
         uint256 usdcAssets = IUSD3(USD3).redeem(shares, receiver, msg.sender);
         return usdcAssets;
     }
 
     /// @inheritdoc IHelper
-    function borrow(MarketParams memory marketParams, uint256 assets) external returns (uint256, uint256) {
+    function borrow(MarketParams memory marketParams, uint256 assets, bytes32 referral)
+        external
+        returns (uint256 amount, uint256 shares)
+    {
+        (amount, shares) = borrow(marketParams, assets);
+        emit BorrowReferred(msg.sender, amount, referral);
+    }
+
+    /// @inheritdoc IHelper
+    function borrow(MarketParams memory marketParams, uint256 assets) public returns (uint256, uint256) {
         (uint256 waUSDCAmount, uint256 shares) =
             IMorpho(MORPHO).borrow(marketParams, assets, 0, msg.sender, address(this));
         uint256 usdcAmount = IERC4626(WAUSDC).redeem(waUSDCAmount, msg.sender, address(this));

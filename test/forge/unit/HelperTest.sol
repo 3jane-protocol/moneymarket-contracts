@@ -716,4 +716,118 @@ contract HelperTest is BaseTest {
         assertEq(usdc.balanceOf(user), initialBalance);
         assertEq(usd3.balanceOf(user), 0);
     }
+
+    function test_DepositWithReferral() public {
+        bytes32 referralCode = keccak256("PARTNER_123");
+        uint256 initialUSDCBalance = usdc.balanceOf(user);
+
+        // Expect the DepositReferred event to be emitted
+        vm.expectEmit(true, false, false, true);
+        emit IHelper.DepositReferred(user, DEPOSIT_AMOUNT, referralCode);
+
+        vm.startPrank(user);
+        uint256 shares = helper.deposit(DEPOSIT_AMOUNT, user, false, referralCode);
+        vm.stopPrank();
+
+        // Verify same behavior as non-referral deposit
+        assertEq(shares, DEPOSIT_AMOUNT);
+        assertEq(usd3.balanceOf(user), DEPOSIT_AMOUNT);
+        assertEq(usdc.balanceOf(user), initialUSDCBalance - DEPOSIT_AMOUNT);
+    }
+
+    function test_DepositWithReferralAndHop() public {
+        bytes32 referralCode = keccak256("PARTNER_456");
+
+        // Give sufficient balances for hop
+        usdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 10);
+        usd3.setBalance(address(sUsd3), DEPOSIT_AMOUNT * 10);
+
+        // Expect the DepositReferred event to be emitted
+        vm.expectEmit(true, false, false, true);
+        emit IHelper.DepositReferred(user, DEPOSIT_AMOUNT, referralCode);
+
+        vm.startPrank(user);
+        uint256 shares = helper.deposit(DEPOSIT_AMOUNT, user, true, referralCode);
+        vm.stopPrank();
+
+        // Verify deposit went through to sUSD3
+        assertEq(shares, DEPOSIT_AMOUNT);
+        assertEq(sUsd3.balanceOf(user), DEPOSIT_AMOUNT);
+        assertEq(usd3.balanceOf(user), 0);
+    }
+
+    function test_BorrowWithReferral() public {
+        bytes32 referralCode = keccak256("PARTNER_789");
+
+        MarketParams memory marketParams = MarketParams({
+            loanToken: address(waUsdc),
+            collateralToken: address(usdc),
+            oracle: address(0),
+            irm: address(0),
+            lltv: 0.8e18,
+            creditLine: address(1)
+        });
+
+        // Setup for borrow
+        usdc.setBalance(address(waUsdc), BORROW_AMOUNT * 10);
+        waUsdc.setBalance(address(morphoMock), BORROW_AMOUNT * 10);
+
+        vm.prank(address(waUsdc));
+        usdc.approve(address(waUsdc), type(uint256).max);
+
+        uint256 initialUSDCBalance = usdc.balanceOf(user);
+
+        // Expect the BorrowReferred event to be emitted
+        vm.expectEmit(true, false, false, true);
+        emit IHelper.BorrowReferred(user, BORROW_AMOUNT, referralCode);
+
+        vm.startPrank(user);
+        (uint256 borrowedAssets, uint256 borrowShares) = helper.borrow(marketParams, BORROW_AMOUNT, referralCode);
+        vm.stopPrank();
+
+        // Verify same behavior as non-referral borrow
+        assertEq(borrowedAssets, BORROW_AMOUNT);
+        assertEq(borrowShares, 0); // Mock returns 0
+        assertEq(usdc.balanceOf(user), initialUSDCBalance + BORROW_AMOUNT);
+    }
+
+    function test_ReferralFunctionsReturnSameValuesAsNonReferral() public {
+        bytes32 referralCode = keccak256("TEST_CODE");
+
+        // Test deposit with and without referral
+        usdc.setBalance(user, DEPOSIT_AMOUNT * 4);
+
+        vm.startPrank(user);
+        uint256 sharesWithoutReferral = helper.deposit(DEPOSIT_AMOUNT, receiver, false);
+        uint256 sharesWithReferral = helper.deposit(DEPOSIT_AMOUNT, receiver, false, referralCode);
+        vm.stopPrank();
+
+        assertEq(sharesWithReferral, sharesWithoutReferral);
+
+        // Test borrow with and without referral
+        MarketParams memory marketParams = MarketParams({
+            loanToken: address(waUsdc),
+            collateralToken: address(usdc),
+            oracle: address(0),
+            irm: address(0),
+            lltv: 0.8e18,
+            creditLine: address(1)
+        });
+
+        usdc.setBalance(address(waUsdc), BORROW_AMOUNT * 10);
+        waUsdc.setBalance(address(morphoMock), BORROW_AMOUNT * 10);
+
+        vm.prank(address(waUsdc));
+        usdc.approve(address(waUsdc), type(uint256).max);
+
+        vm.startPrank(user);
+        (uint256 borrowedWithoutReferral, uint256 sharesWithoutReferralBorrow) =
+            helper.borrow(marketParams, BORROW_AMOUNT);
+        (uint256 borrowedWithReferral, uint256 sharesWithReferralBorrow) =
+            helper.borrow(marketParams, BORROW_AMOUNT, referralCode);
+        vm.stopPrank();
+
+        assertEq(borrowedWithReferral, borrowedWithoutReferral);
+        assertEq(sharesWithReferralBorrow, sharesWithoutReferralBorrow);
+    }
 }
