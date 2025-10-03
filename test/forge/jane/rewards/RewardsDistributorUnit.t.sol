@@ -380,4 +380,187 @@ contract RewardsDistributorUnitTest is RewardsDistributorSetup {
         // Bob should not have received tokens
         assertEq(token.balanceOf(bob), 0);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                        EPOCH FUNCTIONALITY TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Test epoch calculation at START
+    function test_epoch_atStart() public {
+        warpTo(START);
+        assertEq(distributor.epoch(), 0);
+    }
+
+    /// @notice Test epoch calculation after 1 week
+    function test_epoch_afterOneWeek() public {
+        warpTo(START + 604800); // 7 days
+        assertEq(distributor.epoch(), 1);
+    }
+
+    /// @notice Test epoch calculation after multiple weeks
+    function test_epoch_afterMultipleWeeks() public {
+        warpTo(START + (604800 * 10)); // 10 weeks
+        assertEq(distributor.epoch(), 10);
+    }
+
+    /// @notice Test epoch calculation with arbitrary timestamp
+    function test_epoch_withTimestamp() public view {
+        uint256 timestamp = START + (604800 * 5) + 86400; // 5 weeks + 1 day
+        assertEq(distributor.epoch(timestamp), 5);
+    }
+
+    /// @notice Test setEpochEmissions for new epoch
+    function test_setEpochEmissions_newEpoch() public {
+        setEpochEmissions(0, 1000e18);
+
+        assertEq(distributor.epochEmissions(0), 1000e18);
+        assertEq(distributor.maxClaimable(), 1000e18);
+    }
+
+    /// @notice Test setEpochEmissions for multiple epochs
+    function test_setEpochEmissions_multipleEpochs() public {
+        setEpochEmissions(0, 1000e18);
+        setEpochEmissions(1, 2000e18);
+        setEpochEmissions(2, 3000e18);
+
+        assertEq(distributor.epochEmissions(0), 1000e18);
+        assertEq(distributor.epochEmissions(1), 2000e18);
+        assertEq(distributor.epochEmissions(2), 3000e18);
+        assertEq(distributor.maxClaimable(), 6000e18);
+    }
+
+    /// @notice Test setEpochEmissions increases existing epoch
+    function test_setEpochEmissions_increaseExisting() public {
+        setEpochEmissions(0, 1000e18);
+        assertEq(distributor.maxClaimable(), 1000e18);
+
+        setEpochEmissions(0, 1500e18);
+        assertEq(distributor.epochEmissions(0), 1500e18);
+        assertEq(distributor.maxClaimable(), 1500e18);
+    }
+
+    /// @notice Test setEpochEmissions decreases existing epoch
+    function test_setEpochEmissions_decreaseExisting() public {
+        setEpochEmissions(0, 1000e18);
+        assertEq(distributor.maxClaimable(), 1000e18);
+
+        setEpochEmissions(0, 600e18);
+        assertEq(distributor.epochEmissions(0), 600e18);
+        assertEq(distributor.maxClaimable(), 600e18);
+    }
+
+    /// @notice Test setEpochEmissions only callable by owner
+    function test_setEpochEmissions_onlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        distributor.setEpochEmissions(0, 1000e18);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                      MAX CLAIMABLE CAP TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Test claim respects maxClaimable cap
+    function test_maxClaimable_exceedsLimit() public {
+        // Set low cap
+        setEpochEmissions(0, 150e18);
+
+        // Setup claims that would exceed cap
+        bytes32[][] memory proofs = setupSimpleRoot(); // alice: 100e18, bob: 200e18, charlie: 300e18
+
+        // Alice can claim (total: 100e18)
+        claimAs(alice, alice, 100e18, proofs[0]);
+        assertEq(token.balanceOf(alice), 100e18);
+        assertEq(distributor.totalClaimed(), 100e18);
+
+        // Bob can only claim partial (50e18 to reach cap)
+        claimAs(bob, bob, 200e18, proofs[1]);
+        assertEq(token.balanceOf(bob), 50e18);
+        assertEq(distributor.totalClaimed(), 150e18);
+        assertEq(distributor.claimed(bob), 50e18); // Only 50e18 was claimed, not full 200e18
+
+        // Charlie cannot claim anything (cap reached)
+        vm.prank(charlie);
+        vm.expectRevert(RewardsDistributor.MaxClaimableExceeded.selector);
+        distributor.claim(charlie, 300e18, proofs[2]);
+    }
+
+    /// @notice Test totalClaimed tracks correctly
+    function test_totalClaimed_tracks() public {
+        setEpochEmissions(0, 1000e18);
+
+        bytes32[][] memory proofs = setupSimpleRoot();
+
+        assertEq(distributor.totalClaimed(), 0);
+
+        claimAs(alice, alice, 100e18, proofs[0]);
+        assertEq(distributor.totalClaimed(), 100e18);
+
+        claimAs(bob, bob, 200e18, proofs[1]);
+        assertEq(distributor.totalClaimed(), 300e18);
+
+        claimAs(charlie, charlie, 300e18, proofs[2]);
+        assertEq(distributor.totalClaimed(), 600e18);
+    }
+
+    /// @notice Test claim at exact limit works
+    function test_maxClaimable_exactLimit() public {
+        setEpochEmissions(0, 600e18);
+
+        bytes32[][] memory proofs = setupSimpleRoot();
+
+        claimAs(alice, alice, 100e18, proofs[0]);
+        claimAs(bob, bob, 200e18, proofs[1]);
+        claimAs(charlie, charlie, 300e18, proofs[2]);
+
+        assertEq(distributor.totalClaimed(), 600e18);
+    }
+
+    /// @notice Test partial claims respect cap
+    function test_maxClaimable_partialClaims() public {
+        // Deploy fresh distributor for clean testing
+        distributor = new RewardsDistributor(owner, address(token), false, START);
+        fundDistributor(1_000_000e18);
+
+        // Set specific cap
+        setEpochEmissions(0, 250e18);
+
+        // Update root with higher allocations over time
+        MerkleTreeHelper.Claim[] memory claims1 = new MerkleTreeHelper.Claim[](1);
+        claims1[0] = MerkleTreeHelper.Claim(alice, 100e18);
+        (, bytes32[][] memory proofs1) = updateRoot(claims1);
+
+        claimAs(alice, alice, 100e18, proofs1[0]);
+        assertEq(distributor.totalClaimed(), 100e18);
+
+        // Update alice's allocation
+        MerkleTreeHelper.Claim[] memory claims2 = new MerkleTreeHelper.Claim[](1);
+        claims2[0] = MerkleTreeHelper.Claim(alice, 200e18);
+        (, bytes32[][] memory proofs2) = updateRoot(claims2);
+
+        claimAs(alice, alice, 200e18, proofs2[0]);
+        assertEq(distributor.totalClaimed(), 200e18);
+
+        // Update alice's allocation again - can only claim 50e18 more
+        MerkleTreeHelper.Claim[] memory claims3 = new MerkleTreeHelper.Claim[](1);
+        claims3[0] = MerkleTreeHelper.Claim(alice, 400e18);
+        (, bytes32[][] memory proofs3) = updateRoot(claims3);
+
+        claimAs(alice, alice, 400e18, proofs3[0]);
+        assertEq(distributor.totalClaimed(), 250e18);
+        assertEq(token.balanceOf(alice), 250e18);
+    }
+
+    /// @notice Test maxClaimable with zero cap blocks all claims
+    function test_maxClaimable_zeroCap() public {
+        // Deploy fresh distributor without setting emissions (maxClaimable = 0)
+        distributor = new RewardsDistributor(owner, address(token), false, START);
+        fundDistributor(1_000_000e18);
+
+        bytes32[][] memory proofs = setupSimpleRoot();
+
+        vm.prank(alice);
+        vm.expectRevert(RewardsDistributor.MaxClaimableExceeded.selector);
+        distributor.claim(alice, 100e18, proofs[0]);
+    }
 }
