@@ -60,6 +60,11 @@ contract USD3Mock is IERC4626 {
         whitelistEnabled = enabled;
     }
 
+    // Add availableDepositLimit function for Helper contract
+    function availableDepositLimit(address) external pure returns (uint256) {
+        return type(uint256).max; // No limit for testing
+    }
+
     function deposit(uint256 assets, address receiver) external returns (uint256) {
         // Calculate shares based on price per share
         uint256 shares = (assets * 1e18) / pricePerShare;
@@ -586,6 +591,8 @@ contract HelperTest is BaseTest {
 
     uint256 public constant DEPOSIT_AMOUNT = 1000e6; // 1000 USDC
     uint256 public constant BORROW_AMOUNT = 500e6; // 500 USDC
+    uint256 public constant REAL_BORROW_AMOUNT = 2e21; // 2e21 wei (2x minimum) for real MorphoCredit tests to allow
+        // partial repayments
 
     function setUp() public override {
         super.setUp();
@@ -1053,32 +1060,32 @@ contract HelperTest is BaseTest {
             realId, block.timestamp, borrowers, repaymentBps, endingBalances
         );
 
-        // Supply liquidity
-        simpleWaUsdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 2);
+        // Supply liquidity (increase amount to support larger borrow)
+        simpleWaUsdc.setBalance(address(usd3), REAL_BORROW_AMOUNT * 2);
         vm.startPrank(address(usd3));
-        simpleWaUsdc.approve(address(morphoCreditReal), DEPOSIT_AMOUNT * 2);
-        morphoCreditReal.supply(realMarketParams, DEPOSIT_AMOUNT * 2, 0, address(usd3), hex"");
+        simpleWaUsdc.approve(address(morphoCreditReal), REAL_BORROW_AMOUNT * 2);
+        morphoCreditReal.supply(realMarketParams, REAL_BORROW_AMOUNT * 2, 0, address(usd3), hex"");
         vm.stopPrank();
 
         // Set up credit line for test borrower
         vm.prank(address(creditLineReal));
         MorphoCredit(address(morphoCreditReal)).setCreditLine(
-            realId, testBorrower, BORROW_AMOUNT * 2, uint128(PREMIUM_RATE_PER_SECOND)
+            realId, testBorrower, REAL_BORROW_AMOUNT * 2, uint128(PREMIUM_RATE_PER_SECOND)
         );
 
         // Borrower borrows through helper
-        simpleWaUsdc.setBalance(address(realHelper), BORROW_AMOUNT);
+        simpleWaUsdc.setBalance(address(realHelper), REAL_BORROW_AMOUNT);
         vm.prank(address(realHelper));
-        morphoCreditReal.borrow(realMarketParams, BORROW_AMOUNT, 0, testBorrower, address(realHelper));
+        morphoCreditReal.borrow(realMarketParams, REAL_BORROW_AMOUNT, 0, testBorrower, address(realHelper));
 
         // Setup USDC for repayments
-        newUsdc.setBalance(testBorrower, BORROW_AMOUNT * 3);
+        newUsdc.setBalance(testBorrower, REAL_BORROW_AMOUNT * 3);
         vm.prank(testBorrower);
         newUsdc.approve(address(realHelper), type(uint256).max);
 
         // Give waUsdc some USDC for unwrapping
-        newUsdc.setBalance(address(simpleWaUsdc), BORROW_AMOUNT * 3);
-        simpleWaUsdc.setBalance(address(realHelper), BORROW_AMOUNT * 3);
+        newUsdc.setBalance(address(simpleWaUsdc), REAL_BORROW_AMOUNT * 3);
+        simpleWaUsdc.setBalance(address(realHelper), REAL_BORROW_AMOUNT * 3);
 
         // Store helper reference for tests
         helper = realHelper;
@@ -1106,15 +1113,15 @@ contract HelperTest is BaseTest {
     function test_FullRepaymentWithPremiumAccrual() public {
         setupRealMorphoCredit();
 
-        // Simulate time passing to accrue premium
-        vm.warp(block.timestamp + 30 days);
+        // Simulate time passing to accrue premium (but not too long to avoid market freeze)
+        vm.warp(block.timestamp + 3 days);
 
         // Get position before repayment
         Position memory positionBefore = morphoCreditReal.position(id, testBorrower);
         assertGt(positionBefore.borrowShares, 0, "Should have outstanding debt");
 
         // Give borrower extra USDC to cover accrued interest
-        ERC20Mock(helper.USDC()).setBalance(testBorrower, BORROW_AMOUNT * 5);
+        ERC20Mock(helper.USDC()).setBalance(testBorrower, REAL_BORROW_AMOUNT * 5);
 
         // Repay with sentinel value
         vm.prank(testBorrower);
@@ -1122,7 +1129,7 @@ contract HelperTest is BaseTest {
             helper.repay(marketParams, type(uint256).max, testBorrower, hex"");
 
         // After time passing, debt should have increased due to interest
-        assertGt(repaidAssets, BORROW_AMOUNT, "Should have repaid more than initial borrow due to interest");
+        assertGt(repaidAssets, REAL_BORROW_AMOUNT, "Should have repaid more than initial borrow due to interest");
         assertGt(repaidShares, 0, "Should have repaid shares");
 
         // Verify no dust remains
@@ -1155,7 +1162,9 @@ contract HelperTest is BaseTest {
         setupRealMorphoCredit();
 
         // Test that normal partial repayment still works
-        uint256 partialAmount = BORROW_AMOUNT / 2;
+        // Start with 2x minimum and repay half to leave exactly minimum outstanding
+        // First increase the borrowed amount in setup
+        uint256 partialAmount = REAL_BORROW_AMOUNT / 2; // Repay 50% to leave 50% outstanding
 
         // Get initial position
         Position memory initialPos = morphoCreditReal.position(id, testBorrower);

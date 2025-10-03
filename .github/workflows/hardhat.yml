@@ -34,7 +34,7 @@ jobs:
       - name: Build Foundry contracts
         run: forge build --force
         env:
-          FOUNDRY_PROFILE: test
+          FOUNDRY_PROFILE: build
 
       - name: Save hardhat cache
         uses: actions/cache@v3

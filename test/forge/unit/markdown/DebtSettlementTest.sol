@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
@@ -32,7 +33,7 @@ contract DebtSettlementTest is BaseTest {
         super.setUp();
 
         // Deploy markdown manager
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
 
         // Deploy credit line
         creditLine = new CreditLineMock(morphoAddress);
@@ -52,6 +53,10 @@ contract DebtSettlementTest is BaseTest {
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
         creditLine.setMm(address(markdownManager));
+
+        // Enable markdown for test borrowers
+        markdownManager.setEnableMarkdown(BORROWER, true);
+
         vm.stopPrank();
 
         // Initialize first cycle to unfreeze the market
@@ -238,7 +243,7 @@ contract DebtSettlementTest is BaseTest {
 
         // Verify markdown exists
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdownBefore = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
@@ -262,7 +267,7 @@ contract DebtSettlementTest is BaseTest {
 
         // Verify markdown cleared
         borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (status,) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdownAfter = 0;
         // After settlement, borrower should have no debt, so no markdown
         assertEq(markdownAfter, 0, "Should have no markdown after settlement");
@@ -461,7 +466,7 @@ contract DebtSettlementTest is BaseTest {
         _setupBorrowerWithLoan(BORROWER, borrowAmount);
 
         // Verify borrower is Current
-        (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         assertEq(uint8(status), uint8(RepaymentStatus.Current), "Should be Current");
 
         // Get position before
@@ -492,6 +497,9 @@ contract DebtSettlementTest is BaseTest {
 
         // Setup grace period borrower
         address graceBorrower = makeAddr("GraceBorrower");
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(graceBorrower, true);
+        vm.stopPrank();
         _setupBorrowerWithLoan(graceBorrower, borrowAmount);
         _createPastObligation(graceBorrower, 500, borrowAmount);
 
@@ -501,7 +509,7 @@ contract DebtSettlementTest is BaseTest {
         vm.warp(cycleEnd + 1); // Just past cycle end, in grace period
 
         // Verify status
-        (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, graceBorrower);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, graceBorrower);
         assertEq(uint8(status), uint8(RepaymentStatus.GracePeriod), "Should be in GracePeriod");
 
         // Settle during grace period
@@ -524,6 +532,9 @@ contract DebtSettlementTest is BaseTest {
 
         // Setup delinquent borrower
         address delinquentBorrower = makeAddr("DelinquentBorrower");
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(delinquentBorrower, true);
+        vm.stopPrank();
         _setupBorrowerWithLoan(delinquentBorrower, borrowAmount);
         _createPastObligation(delinquentBorrower, 500, borrowAmount);
 
@@ -533,7 +544,7 @@ contract DebtSettlementTest is BaseTest {
         vm.warp(cycleEnd + GRACE_PERIOD_DURATION + 1); // Past grace, in delinquency
 
         // Verify status
-        (RepaymentStatus status,) = morphoCredit.getRepaymentStatus(id, delinquentBorrower);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, delinquentBorrower);
         assertEq(uint8(status), uint8(RepaymentStatus.Delinquent), "Should be Delinquent");
 
         // Settle during delinquency

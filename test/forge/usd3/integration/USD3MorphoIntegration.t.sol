@@ -61,9 +61,6 @@ contract USD3MorphoIntegrationTest is Setup {
         // Fund test contract for _triggerAccrual() calls
         deal(address(asset), address(this), 1000e6);
         asset.approve(address(morpho), type(uint256).max);
-
-        // Initialize market with payment cycle to prevent MarketFrozen errors
-        _initializeMarketWithCycle();
     }
 
     // Helper function to initialize market with a payment cycle
@@ -81,6 +78,16 @@ contract USD3MorphoIntegrationTest is Setup {
 
     // Custom helper to setup borrower with aToken loan
     function _setupBorrowerWithATokenLoan(address borrower, uint256 borrowAmount) internal {
+        // First close a payment cycle to unfreeze the market
+        vm.prank(marketParams.creditLine);
+        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            id,
+            block.timestamp, // End date is current time
+            new address[](0), // No borrowers yet
+            new uint256[](0), // No repayment bps
+            new uint256[](0) // No ending balances
+        );
+
         // Setup credit line directly on morpho - must call as creditLine
         vm.prank(marketParams.creditLine);
         MorphoCredit(address(morpho)).setCreditLine(id, borrower, borrowAmount * 2, 0);
@@ -187,7 +194,9 @@ contract USD3MorphoIntegrationTest is Setup {
         );
 
         // First have borrower repay their loan to free up liquidity
-        uint256 borrowerDebt = morpho.market(id).totalBorrowAssets;
+        uint256 borrowShares = morpho.position(id, BORROWER).borrowShares;
+        uint256 borrowerDebt = morpho.expectedBorrowAssets(marketParams, BORROWER);
+
         // Borrower needs waUSDC to repay since the market uses waUSDC as loanToken
         // Add some extra for interest accrued
         uint256 repayAmount = borrowerDebt + borrowerDebt / 10; // Add 10% buffer for interest
@@ -198,7 +207,8 @@ contract USD3MorphoIntegrationTest is Setup {
         asset.approve(address(waUSDC), repayAmount);
         waUSDC.deposit(repayAmount, BORROWER);
         IERC20(address(waUSDC)).approve(address(morpho), repayAmount);
-        morpho.repay(marketParams, borrowerDebt, 0, BORROWER, "");
+        // Repay using shares to clear all debt (0 for assets, borrowShares for shares)
+        morpho.repay(marketParams, 0, borrowShares, BORROWER, "");
         vm.stopPrank();
 
         // Now withdraw should include profit

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
-import {MarkdownManagerMock} from "../../mocks/MarkdownManagerMock.sol";
+import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
 import {Market, RepaymentStatus} from "../../../../src/interfaces/IMorpho.sol";
@@ -25,7 +25,7 @@ contract PhantomLiquidityFuzzTest is BaseTest {
         super.setUp();
 
         // Deploy contracts
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
         creditLine = new CreditLineMock(morphoAddress);
         morphoCredit = IMorphoCredit(morphoAddress);
         helper = new HelperMock(morphoAddress);
@@ -297,8 +297,8 @@ contract PhantomLiquidityFuzzTest is BaseTest {
 
         // Now we need to create another cycle with obligations
         // Get the last cycle end date and add CYCLE_DURATION
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 lastCycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 lastCycleEnd) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
         uint256 newCycleEnd = lastCycleEnd + CYCLE_DURATION;
 
         // Warp to new cycle end if needed

@@ -25,6 +25,7 @@ import {
 } from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
+import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockStrategyFactory} from "../mocks/MockStrategyFactory.sol";
 import {TokenizedStrategy} from "@tokenized-strategy/TokenizedStrategy.sol";
@@ -109,6 +110,10 @@ contract Setup is Test, IEvents {
     function setUpStrategy() public returns (address) {
         // Deploy MockProtocolConfig for testing
         testProtocolConfig = new MockProtocolConfig();
+
+        // Set a high default debt cap to allow sUSD3 deposits in tests
+        // Tests that need specific debt cap scenarios can override this
+        testProtocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, 100_000_000e6); // 100M USDC default
 
         // Deploy real MorphoCredit with proxy pattern
         MorphoCredit morphoImpl = new MorphoCredit(address(testProtocolConfig));
@@ -242,6 +247,52 @@ contract Setup is Test, IEvents {
         // Set maxOnCredit through ProtocolConfig
         bytes32 MAX_ON_CREDIT_KEY = keccak256("MAX_ON_CREDIT");
         testProtocolConfig.setConfig(MAX_ON_CREDIT_KEY, _maxOnCredit);
+    }
+
+    function setMorphoDebtCap(uint256 _debtCap) public {
+        // Set DEBT_CAP through ProtocolConfig
+        testProtocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, _debtCap);
+    }
+
+    /**
+     * @notice Create market debt by setting up a borrower with a credit line and borrowing
+     * @param borrower Address that will borrow
+     * @param borrowAmountUSDC Amount to borrow in USDC terms
+     */
+    function createMarketDebt(address borrower, uint256 borrowAmountUSDC) public {
+        // Get the market ID from USD3 strategy
+        Id marketId = USD3(address(strategy)).marketId();
+        MarketParams memory marketParams = USD3(address(strategy)).marketParams();
+        IMorpho morpho = USD3(address(strategy)).morphoCredit();
+
+        // First ensure USD3 has deployed funds to the market by calling report
+        // This moves idle USDC to the lending market
+        vm.prank(keeper);
+        strategy.report();
+
+        // Create a payment cycle to allow borrowing
+        // CreditLineMock can call closeCycleAndPostObligations
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+
+        // Set cycle end date to current timestamp (closing the cycle "now")
+        uint256 cycleEndDate = block.timestamp;
+        vm.prank(marketParams.creditLine);
+        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
+            marketId, cycleEndDate, borrowers, repaymentBps, endingBalances
+        );
+
+        // Use USDC amount directly as waUSDC amount (they're 1:1 initially)
+        uint256 borrowAmountWaUSDC = borrowAmountUSDC;
+
+        // Set credit line for borrower (double the borrow amount for safety)
+        vm.prank(marketParams.creditLine);
+        MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, borrowAmountWaUSDC * 2, 0);
+
+        // Execute borrow through helper - only helper is authorized to borrow
+        vm.prank(borrower);
+        helper.borrow(marketParams, borrowAmountWaUSDC, 0, borrower, borrower);
     }
 
     function _setTokenAddrs() internal {

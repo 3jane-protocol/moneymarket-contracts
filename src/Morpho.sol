@@ -82,8 +82,12 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
 
     /// @dev Reverts if the caller is not the owner.
     modifier onlyOwner() {
-        if (msg.sender != owner) revert ErrorsLib.NotOwner();
+        requireOwner();
         _;
+    }
+
+    function requireOwner() internal {
+        if (msg.sender != owner) revert ErrorsLib.NotOwner();
     }
 
     /* ONLY OWNER FUNCTIONS */

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
-import {MarkdownManagerMock} from "../mocks/MarkdownManagerMock.sol";
+import {MarkdownManagerMock} from "../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {HelperMock} from "../../../src/mocks/HelperMock.sol";
 import {Market, RepaymentStatus} from "../../../src/interfaces/IMorpho.sol";
@@ -31,7 +31,7 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         super.setUp();
 
         // Recreate exact POC setup
-        maliciousMarkdownManager = new MarkdownManagerMock();
+        maliciousMarkdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
         maliciousCreditLine = new CreditLineMock(morphoAddress);
         morphoCredit = IMorphoCredit(morphoAddress);
         helper = new HelperMock(morphoAddress);

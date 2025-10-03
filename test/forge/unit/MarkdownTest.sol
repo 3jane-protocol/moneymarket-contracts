@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarkdownManagerMock} from "../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
@@ -27,7 +28,7 @@ contract MarkdownTest is BaseTest {
         protocolConfig.setConfig(keccak256("CYCLE_DURATION"), TEST_CYCLE_DURATION);
 
         // Deploy markdown manager
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
 
         // Deploy credit line
         creditLine = new CreditLineMock(morphoAddress);
@@ -47,6 +48,9 @@ contract MarkdownTest is BaseTest {
         vm.startPrank(OWNER);
         morpho.createMarket(marketParams);
         creditLine.setMm(address(markdownManager));
+
+        // Enable markdown for test borrower
+        markdownManager.setEnableMarkdown(BORROWER, true);
         vm.stopPrank();
 
         // Initialize first cycle to unfreeze the market
@@ -70,11 +74,13 @@ contract MarkdownTest is BaseTest {
         // Fast forward 10 days
         vm.warp(block.timestamp + 10 days);
 
-        // Calculate markdown (10 days * 1% per day = 10%)
+        // Calculate markdown (10 days out of 70 days = ~14.3%)
         uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
         uint256 markdown = markdownManager.calculateMarkdown(BORROWER, borrowAmount, timeInDefault);
 
-        assertEq(markdown, 100e18); // 10% of 1000 = 100
+        // Expected: 10/70 * 1000 = ~142.857
+        uint256 expectedMarkdown = (borrowAmount * 10 days) / (70 days);
+        assertEq(markdown, expectedMarkdown);
     }
 
     function testBorrowerMarkdownUpdate() public {
@@ -104,7 +110,8 @@ contract MarkdownTest is BaseTest {
 
         // Check markdown info
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultStartTime) =
+            MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 currentMarkdown = 0;
         if (status == RepaymentStatus.Default && defaultStartTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;

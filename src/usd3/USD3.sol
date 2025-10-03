@@ -11,6 +11,7 @@ import {SharesMathLib} from "../libraries/SharesMathLib.sol";
 import {IStrategy} from "@tokenized-strategy/interfaces/IStrategy.sol";
 import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
+import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 
 /**
  * @title USD3
@@ -186,7 +187,7 @@ contract USD3 is BaseHooksUpgradeable {
      * @return waUSDCLiquidity Available liquidity in the market
      */
     function getMarketLiquidity()
-        internal
+        public
         view
         returns (uint256 totalSupplyAssets, uint256 totalShares, uint256 totalBorrowAssets, uint256 waUSDCLiquidity)
     {
@@ -366,7 +367,7 @@ contract USD3 is BaseHooksUpgradeable {
                     PUBLIC VIEW FUNCTIONS (OVERRIDES)
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Returns available withdraw limit, enforcing commitment time restrictions and subordination ratio
+    /// @dev Returns available withdraw limit, enforcing commitment time
     /// @param _owner Address to check limit for
     /// @return Maximum amount that can be withdrawn
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
@@ -382,30 +383,6 @@ contract USD3 is BaseHooksUpgradeable {
         // During shutdown, bypass all checks
         if (TokenizedStrategy.isShutdown()) {
             return availableLiquidity;
-        }
-
-        // Check subordination ratio constraint only if sUSD3 is set
-        // Prevent withdrawals that would leave USD3 below minimum ratio
-        if (sUSD3 != address(0)) {
-            uint256 usd3TotalSupply = TokenizedStrategy.totalSupply();
-
-            // sUSD3 holds USD3 tokens, so we check USD3 balance of sUSD3
-            uint256 susd3Holdings = TokenizedStrategy.balanceOf(sUSD3);
-
-            // Get max subordination ratio from ProtocolConfig
-            uint256 maxSubRatio = maxSubordinationRatio(); // e.g., 1500 (15%)
-
-            // Calculate the minimum total supply that maintains the ratio
-            // minTotalSupply = susd3Holdings / maxSubRatio
-            uint256 minTotalSupply = (susd3Holdings * MAX_BPS) / maxSubRatio;
-
-            if (usd3TotalSupply <= minTotalSupply) {
-                availableLiquidity = 0; // No withdrawals allowed
-            } else {
-                // Only allow withdrawal down to the minimum supply
-                uint256 maxWithdrawable = usd3TotalSupply - minTotalSupply;
-                availableLiquidity = Math.min(availableLiquidity, maxWithdrawable);
-            }
         }
 
         // Check commitment time
@@ -426,6 +403,11 @@ contract USD3 is BaseHooksUpgradeable {
     function availableDepositLimit(address _owner) public view override returns (uint256) {
         // Check whitelist if enabled
         if (whitelistEnabled && !whitelist[_owner]) {
+            return 0;
+        }
+
+        // Block deposits from borrowers
+        if (morphoCredit.borrowShares(marketId, _owner) > 0) {
             return 0;
         }
 
@@ -613,16 +595,6 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Get the maximum subordination ratio from ProtocolConfig
-     * @return Maximum subordination ratio in basis points
-     */
-    function maxSubordinationRatio() public view returns (uint256) {
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
-        uint256 ratio = config.getTrancheRatio();
-        return ratio > 0 ? ratio : 1500; // Default to 15% if not set
-    }
-
-    /**
      * @notice Get the minimum commitment time from ProtocolConfig
      * @return Minimum commitment time in seconds
      */
@@ -637,8 +609,7 @@ contract USD3 is BaseHooksUpgradeable {
      */
     function supplyCap() public view returns (uint256) {
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
-        bytes32 supplyCapKey = 0x4bba860c0c28b1a4ae0214c01f08e53b00bfe2e087690d7a04d73a15360ec6a7; // keccak256("USD3_SUPPLY_CAP");
-        return config.config(supplyCapKey);
+        return config.config(ProtocolConfigLib.USD3_SUPPLY_CAP);
     }
 
     /*//////////////////////////////////////////////////////////////

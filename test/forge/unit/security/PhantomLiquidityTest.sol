@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
-import {MarkdownManagerMock} from "../../mocks/MarkdownManagerMock.sol";
+import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLine} from "../../../../src/CreditLine.sol";
 import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
@@ -31,7 +31,7 @@ contract PhantomLiquidityTest is BaseTest {
 
         // Set up malicious actors
         maliciousOwner = makeAddr("MaliciousOwner");
-        maliciousMarkdownManager = new MarkdownManagerMock();
+        maliciousMarkdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
         maliciousCreditLine = new CreditLine(
             address(morpho),
             maliciousOwner,

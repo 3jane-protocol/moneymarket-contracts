@@ -49,10 +49,10 @@ contract Helper is IHelper {
         WAUSDC = wausdc;
 
         // Set max approvals
-        IERC20(USDC).approve(WAUSDC, type(uint256).max); // For borrow/repay operations
-        IERC20(USDC).approve(USD3, type(uint256).max); // USD3 uses USDC after reinitialize()
-        IERC20(WAUSDC).approve(MORPHO, type(uint256).max); // MorphoCredit still uses waUSDC
-        IERC20(USD3).approve(sUSD3, type(uint256).max); // For hop from USD3 -> sUSD3
+        IERC20(USDC).approve(WAUSDC, type(uint256).max);
+        IERC20(USDC).approve(USD3, type(uint256).max);
+        IERC20(WAUSDC).approve(MORPHO, type(uint256).max);
+        IERC20(USD3).approve(sUSD3, type(uint256).max);
     }
 
     /// @inheritdoc IHelper
@@ -66,7 +66,7 @@ contract Helper is IHelper {
         IERC20(USDC).safeTransferFrom(msg.sender, address(this), assets);
 
         if (hop) {
-            require(IUSD3(USD3).whitelist(receiver), "!whitelist");
+            require(IUSD3(USD3).availableDepositLimit(receiver) >= assets, "Deposit exceeds limit");
             uint256 usd3Shares = IUSD3(USD3).deposit(assets, address(this));
             return IERC4626(sUSD3).deposit(usd3Shares, receiver);
         } else {
@@ -91,8 +91,9 @@ contract Helper is IHelper {
 
     /// @inheritdoc IHelper
     function borrow(MarketParams memory marketParams, uint256 assets) public returns (uint256, uint256) {
+        uint256 waUsdcShares = IERC4626(WAUSDC).convertToShares(assets);
         (uint256 waUSDCAmount, uint256 shares) =
-            IMorpho(MORPHO).borrow(marketParams, assets, 0, msg.sender, address(this));
+            IMorpho(MORPHO).borrow(marketParams, waUsdcShares, 0, msg.sender, address(this));
         uint256 usdcAmount = IERC4626(WAUSDC).redeem(waUSDCAmount, msg.sender, address(this));
         return (usdcAmount, shares);
     }
