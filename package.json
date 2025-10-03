@@ -20,7 +20,7 @@
     "test:forge:integration": "FOUNDRY_MATCH_CONTRACT=IntegrationTest yarn test:forge",
     "test:forge:fork": "FOUNDRY_PROFILE=fork forge test --match-path 'test/forge/usd3/fork/**/*.t.sol' -vvv",
     "test:forge:fork:upgrade": "FOUNDRY_PROFILE=fork forge test --match-contract USD3UpgradeForkTest -vvv",
-    "test:forge:coverage": "FOUNDRY_PROFILE=test forge coverage",
+    "test:forge:coverage": "FOUNDRY_PROFILE=test forge coverage --ir-minimum",
     "test:forge:snapshot": "FOUNDRY_PROFILE=test forge snapshot",
     "test:hardhat": "npx hardhat test",
     "test:halmos": "FOUNDRY_PROFILE=halmos halmos --function check_",
