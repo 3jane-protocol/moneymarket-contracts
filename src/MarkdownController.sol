@@ -148,16 +148,16 @@ contract MarkdownController is IMarkdownController, Ownable {
         onlyMorphoCredit
         returns (uint256 burned)
     {
-        if (!markdownEnabled[borrower]) return 0;
-
-        // Initialize tracking on first burn
-        if (initialJaneBalance[borrower] == 0 && timeInDefault > 0) {
-            initialJaneBalance[borrower] = jane.balanceOf(borrower);
-            if (initialJaneBalance[borrower] == 0) return 0;
-        }
+        if (!markdownEnabled[borrower] || timeInDefault == 0) return 0;
 
         uint256 initialBalance = initialJaneBalance[borrower];
-        if (initialBalance == 0) return 0;
+
+        // Initialize tracking on first burn
+        if (initialBalance == 0) {
+            initialBalance = jane.balanceOf(borrower);
+            if (initialBalance == 0) return 0;
+            initialJaneBalance[borrower] = initialBalance;
+        }
 
         // Calculate target burn based on initial balance
         uint256 multiplier = getMarkdownMultiplier(timeInDefault);
@@ -165,17 +165,19 @@ contract MarkdownController is IMarkdownController, Ownable {
 
         // Burn delta since last touch
         uint256 alreadyBurned = janeBurned[borrower];
-        if (targetBurned > alreadyBurned) {
-            burned = targetBurned - alreadyBurned;
+        if (targetBurned <= alreadyBurned) {
+            return 0;
+        }
 
-            // Cap at current balance
-            uint256 currentBalance = jane.balanceOf(borrower);
-            if (burned > currentBalance) burned = currentBalance;
+        burned = targetBurned - alreadyBurned;
 
-            if (burned > 0) {
-                janeBurned[borrower] += burned;
-                jane.burn(borrower, burned);
-            }
+        // Cap at current balance
+        uint256 currentBalance = jane.balanceOf(borrower);
+        if (burned > currentBalance) burned = currentBalance;
+
+        if (burned > 0) {
+            janeBurned[borrower] += burned;
+            jane.burn(borrower, burned);
         }
     }
 

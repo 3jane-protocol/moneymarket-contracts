@@ -204,12 +204,18 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
      * @return bool True if the transfer is allowed
      */
     function _canTransfer(address from, address to) internal view returns (bool) {
-        // Check if sender is frozen by MarkdownController
-        address _markdownController = markdownController;
-        if (_markdownController != address(0) && IMarkdownController(_markdownController).isFrozen(from)) {
+        // First check if transfers are even allowed (cheap checks)
+        if (!transferable && !hasTransferRole(from) && !hasTransferRole(to)) {
             return false;
         }
-        return transferable || hasTransferRole(from) || hasTransferRole(to);
+
+        // Only if transfers would be allowed, check the expensive freeze status
+        address _markdownController = markdownController;
+        if (_markdownController != address(0)) {
+            return !IMarkdownController(_markdownController).isFrozen(from);
+        }
+
+        return true;
     }
 
     /**
