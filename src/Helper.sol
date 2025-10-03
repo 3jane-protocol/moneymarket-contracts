@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0;
 
-import {IMorpho} from "./interfaces/IMorpho.sol";
+import {IMorpho, IMorphoCredit, Id, Market, Position} from "./interfaces/IMorpho.sol";
 import {MarketParams} from "./interfaces/IMorpho.sol";
 import {IHelper} from "./interfaces/IHelper.sol";
 import {IUSD3} from "./interfaces/IUSD3.sol";
@@ -9,6 +9,8 @@ import {IERC20} from "./interfaces/IERC20.sol";
 
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
+import {SharesMathLib} from "./libraries/SharesMathLib.sol";
+import {MarketParamsLib} from "./libraries/MarketParamsLib.sol";
 
 import {IERC4626} from "../lib/forge-std/src/interfaces/IERC4626.sol";
 
@@ -17,6 +19,8 @@ import {IERC4626} from "../lib/forge-std/src/interfaces/IERC4626.sol";
 /// @custom:contact support@3jane.xyz
 contract Helper is IHelper {
     using SafeTransferLib for IERC20;
+    using SharesMathLib for uint256;
+    using MarketParamsLib for MarketParams;
 
     /// @inheritdoc IHelper
     address public immutable MORPHO;
@@ -98,9 +102,51 @@ contract Helper is IHelper {
         external
         returns (uint256, uint256)
     {
-        uint256 waUSDCAmount = _wrap(msg.sender, assets);
-        (, uint256 shares) = IMorpho(MORPHO).repay(marketParams, waUSDCAmount, 0, onBehalf, data);
-        return (assets, shares);
+        // Check if this is a full repayment request
+        if (assets == type(uint256).max) {
+            return _repayFull(marketParams, onBehalf, data);
+        } else {
+            // Normal partial repayment flow
+            uint256 waUSDCAmount = _wrap(msg.sender, assets);
+            (, uint256 shares) = IMorpho(MORPHO).repay(marketParams, waUSDCAmount, 0, onBehalf, data);
+            return (assets, shares);
+        }
+    }
+
+    function _repayFull(MarketParams memory marketParams, address onBehalf, bytes calldata data)
+        internal
+        returns (uint256, uint256)
+    {
+        Id id = marketParams.id();
+
+        // Accrue premium first to get accurate borrow shares
+        IMorphoCredit(MORPHO).accrueBorrowerPremium(id, onBehalf);
+
+        // Get current borrow shares after premium accrual
+        Position memory pos = IMorpho(MORPHO).position(id, onBehalf);
+
+        // If no debt, return early
+        if (pos.borrowShares == 0) {
+            return (0, 0);
+        }
+
+        // Get market state to calculate assets needed
+        Market memory market = IMorpho(MORPHO).market(id);
+
+        // Calculate waUSDC assets needed (rounds up like Morpho does)
+        uint256 waUsdcNeeded = uint256(pos.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
+
+        // Convert to USDC amount needed (preview how much USDC needed to mint waUsdcNeeded)
+        uint256 usdcNeeded = IERC4626(WAUSDC).previewMint(waUsdcNeeded);
+
+        // Pull USDC from user and wrap to waUSDC
+        IERC20(USDC).safeTransferFrom(msg.sender, address(this), usdcNeeded);
+        IERC4626(WAUSDC).deposit(usdcNeeded, address(this));
+
+        // Repay with shares to ensure complete repayment
+        (, uint256 sharesRepaid) = IMorpho(MORPHO).repay(marketParams, 0, pos.borrowShares, onBehalf, data);
+
+        return (usdcNeeded, sharesRepaid);
     }
 
     function _wrap(address from, uint256 assets) internal returns (uint256) {

@@ -7,12 +7,21 @@ import "../../../lib/forge-std/src/console.sol";
 import {Helper} from "../../../src/Helper.sol";
 import {IHelper} from "../../../src/interfaces/IHelper.sol";
 import {IERC4626} from "../../../lib/forge-std/src/interfaces/IERC4626.sol";
-import {IMorpho} from "../../../src/interfaces/IMorpho.sol";
+import {IMorpho, IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 import {MarketParams} from "../../../src/interfaces/IMorpho.sol";
 import {IERC20} from "../../../src/interfaces/IERC20.sol";
 
 import {BaseTest} from "../BaseTest.sol";
 import {ERC20Mock} from "../../../src/mocks/ERC20Mock.sol";
+import {MorphoCredit} from "../../../src/MorphoCredit.sol";
+import {SharesMathLib} from "../../../src/libraries/SharesMathLib.sol";
+import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
+import {MorphoLib} from "../../../src/libraries/periphery/MorphoLib.sol";
+import {Position, Id, Market} from "../../../src/interfaces/IMorpho.sol";
+import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
+import {TransparentUpgradeableProxy} from
+    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 // Mock contracts for dependencies with price per share functionality
 contract USD3Mock is IERC4626 {
@@ -413,7 +422,157 @@ contract MorphoMock {
     }
 }
 
+// Simple ERC4626 wrapper for testing with real MorphoCredit
+contract SimpleERC4626 is IERC4626 {
+    ERC20Mock public immutable underlying;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+    uint256 public totalSupply;
+
+    constructor(address _underlying) {
+        underlying = ERC20Mock(_underlying);
+    }
+
+    // ERC20 functions
+    function name() external pure returns (string memory) {
+        return "waUSDC";
+    }
+
+    function symbol() external pure returns (string memory) {
+        return "waUSDC";
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 6;
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        emit Transfer(msg.sender, to, amount);
+        return true;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        if (msg.sender != from) {
+            allowance[from][msg.sender] -= amount;
+        }
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        emit Transfer(from, to, amount);
+        return true;
+    }
+
+    // ERC4626 functions
+    function asset() external view returns (address) {
+        return address(underlying);
+    }
+
+    function totalAssets() external view returns (uint256) {
+        return underlying.balanceOf(address(this));
+    }
+
+    function convertToShares(uint256 assets) external pure returns (uint256) {
+        return assets;
+    }
+
+    function convertToAssets(uint256 shares) external pure returns (uint256) {
+        return shares;
+    }
+
+    function maxDeposit(address) external pure returns (uint256) {
+        return type(uint256).max;
+    }
+
+    function previewDeposit(uint256 assets) external pure returns (uint256) {
+        return assets;
+    }
+
+    function deposit(uint256 assets, address receiver) external returns (uint256) {
+        underlying.transferFrom(msg.sender, address(this), assets);
+        totalSupply += assets;
+        balanceOf[receiver] += assets;
+        emit Transfer(address(0), receiver, assets);
+        return assets;
+    }
+
+    function maxMint(address) external pure returns (uint256) {
+        return type(uint256).max;
+    }
+
+    function previewMint(uint256 shares) external pure returns (uint256) {
+        return shares;
+    }
+
+    function mint(uint256 shares, address receiver) external returns (uint256) {
+        underlying.transferFrom(msg.sender, address(this), shares);
+        totalSupply += shares;
+        balanceOf[receiver] += shares;
+        emit Transfer(address(0), receiver, shares);
+        return shares;
+    }
+
+    function maxWithdraw(address owner) external view returns (uint256) {
+        return balanceOf[owner];
+    }
+
+    function previewWithdraw(uint256 assets) external pure returns (uint256) {
+        return assets;
+    }
+
+    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256) {
+        if (msg.sender != owner) {
+            allowance[owner][msg.sender] -= assets;
+        }
+        totalSupply -= assets;
+        balanceOf[owner] -= assets;
+        emit Transfer(owner, address(0), assets);
+        underlying.transfer(receiver, assets);
+        return assets;
+    }
+
+    function maxRedeem(address owner) external view returns (uint256) {
+        return balanceOf[owner];
+    }
+
+    function previewRedeem(uint256 shares) external pure returns (uint256) {
+        return shares;
+    }
+
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256) {
+        if (msg.sender != owner) {
+            allowance[owner][msg.sender] -= shares;
+        }
+        totalSupply -= shares;
+        balanceOf[owner] -= shares;
+        emit Transfer(owner, address(0), shares);
+        underlying.transfer(receiver, shares);
+        return shares;
+    }
+
+    // Helper function for testing
+    function setBalance(address account, uint256 amount) external {
+        uint256 current = balanceOf[account];
+        if (amount > current) {
+            totalSupply += amount - current;
+        } else {
+            totalSupply -= current - amount;
+        }
+        balanceOf[account] = amount;
+    }
+}
+
 contract HelperTest is BaseTest {
+    using SharesMathLib for uint256;
+    using MarketParamsLib for MarketParams;
+    using MorphoLib for IMorpho;
+
     Helper public helper;
     USD3Mock public usd3;
     USD3Mock public sUsd3;
@@ -829,5 +988,186 @@ contract HelperTest is BaseTest {
 
         assertEq(borrowedWithReferral, borrowedWithoutReferral);
         assertEq(sharesWithReferralBorrow, sharesWithoutReferralBorrow);
+    }
+
+    // ============ Full Repayment Tests with Real MorphoCredit ============
+    // These tests validate the Helper's full repayment functionality using
+    // real MorphoCredit instead of mocks to ensure proper premium accrual handling
+
+    // State variables for real MorphoCredit tests
+    IMorpho morphoCreditReal;
+    SimpleERC4626 simpleWaUsdc;
+    CreditLineMock creditLineReal;
+    address testBorrower = makeAddr("TestBorrower");
+
+    function setupRealMorphoCredit() internal {
+        // Deploy real MorphoCredit for full repayment tests
+        MorphoCredit morphoCreditImpl = new MorphoCredit(address(protocolConfig));
+        ProxyAdmin proxyAdminNew = new ProxyAdmin(PROXY_ADMIN_OWNER);
+        TransparentUpgradeableProxy morphoCreditProxy = new TransparentUpgradeableProxy(
+            address(morphoCreditImpl),
+            address(proxyAdminNew),
+            abi.encodeWithSelector(MorphoCredit.initialize.selector, OWNER)
+        );
+        morphoCreditReal = IMorpho(address(morphoCreditProxy));
+
+        // Deploy SimpleERC4626 for waUsdc
+        ERC20Mock newUsdc = new ERC20Mock();
+        simpleWaUsdc = new SimpleERC4626(address(newUsdc));
+
+        // Deploy credit line mock
+        creditLineReal = new CreditLineMock(address(morphoCreditReal));
+
+        // Deploy new helper with real MorphoCredit
+        Helper realHelper = new Helper(
+            address(morphoCreditReal), address(usd3), address(sUsd3), address(newUsdc), address(simpleWaUsdc)
+        );
+
+        // Setup market params with SimpleERC4626 as loan token
+        MarketParams memory realMarketParams = MarketParams({
+            loanToken: address(simpleWaUsdc),
+            collateralToken: address(0),
+            oracle: address(0),
+            irm: address(irm),
+            lltv: 0,
+            creditLine: address(creditLineReal)
+        });
+        Id realId = realMarketParams.id();
+
+        // Enable IRM, LLTV and create market
+        vm.startPrank(OWNER);
+        morphoCreditReal.enableIrm(address(irm));
+        morphoCreditReal.enableLltv(0);
+        morphoCreditReal.createMarket(realMarketParams);
+        MorphoCredit(address(morphoCreditReal)).setHelper(address(realHelper));
+        MorphoCredit(address(morphoCreditReal)).setUsd3(address(usd3));
+        vm.stopPrank();
+
+        // Initialize first cycle to unfreeze the market
+        vm.warp(block.timestamp + CYCLE_DURATION);
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(address(creditLineReal));
+        MorphoCredit(address(morphoCreditReal)).closeCycleAndPostObligations(
+            realId, block.timestamp, borrowers, repaymentBps, endingBalances
+        );
+
+        // Supply liquidity
+        simpleWaUsdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 2);
+        vm.startPrank(address(usd3));
+        simpleWaUsdc.approve(address(morphoCreditReal), DEPOSIT_AMOUNT * 2);
+        morphoCreditReal.supply(realMarketParams, DEPOSIT_AMOUNT * 2, 0, address(usd3), hex"");
+        vm.stopPrank();
+
+        // Set up credit line for test borrower
+        vm.prank(address(creditLineReal));
+        MorphoCredit(address(morphoCreditReal)).setCreditLine(
+            realId, testBorrower, BORROW_AMOUNT * 2, uint128(PREMIUM_RATE_PER_SECOND)
+        );
+
+        // Borrower borrows through helper
+        simpleWaUsdc.setBalance(address(realHelper), BORROW_AMOUNT);
+        vm.prank(address(realHelper));
+        morphoCreditReal.borrow(realMarketParams, BORROW_AMOUNT, 0, testBorrower, address(realHelper));
+
+        // Setup USDC for repayments
+        newUsdc.setBalance(testBorrower, BORROW_AMOUNT * 3);
+        vm.prank(testBorrower);
+        newUsdc.approve(address(realHelper), type(uint256).max);
+
+        // Give waUsdc some USDC for unwrapping
+        newUsdc.setBalance(address(simpleWaUsdc), BORROW_AMOUNT * 3);
+        simpleWaUsdc.setBalance(address(realHelper), BORROW_AMOUNT * 3);
+
+        // Store helper reference for tests
+        helper = realHelper;
+        marketParams = realMarketParams;
+        id = realId;
+    }
+
+    function test_FullRepaymentWithSentinel() public {
+        setupRealMorphoCredit();
+
+        // Test repaying with type(uint256).max sentinel value
+        vm.prank(testBorrower);
+        (uint256 repaidAssets, uint256 repaidShares) =
+            helper.repay(marketParams, type(uint256).max, testBorrower, hex"");
+
+        // Check that some amount was repaid
+        assertGt(repaidAssets, 0, "Should have repaid some assets");
+        assertGt(repaidShares, 0, "Should have repaid some shares");
+
+        // Verify position is cleared
+        Position memory finalPos = morphoCreditReal.position(id, testBorrower);
+        assertEq(finalPos.borrowShares, 0, "Borrow shares should be zero after full repayment");
+    }
+
+    function test_FullRepaymentWithPremiumAccrual() public {
+        setupRealMorphoCredit();
+
+        // Simulate time passing to accrue premium
+        vm.warp(block.timestamp + 30 days);
+
+        // Get position before repayment
+        Position memory positionBefore = morphoCreditReal.position(id, testBorrower);
+        assertGt(positionBefore.borrowShares, 0, "Should have outstanding debt");
+
+        // Give borrower extra USDC to cover accrued interest
+        ERC20Mock(helper.USDC()).setBalance(testBorrower, BORROW_AMOUNT * 5);
+
+        // Repay with sentinel value
+        vm.prank(testBorrower);
+        (uint256 repaidAssets, uint256 repaidShares) =
+            helper.repay(marketParams, type(uint256).max, testBorrower, hex"");
+
+        // After time passing, debt should have increased due to interest
+        assertGt(repaidAssets, BORROW_AMOUNT, "Should have repaid more than initial borrow due to interest");
+        assertGt(repaidShares, 0, "Should have repaid shares");
+
+        // Verify no dust remains
+        Position memory finalPos = morphoCreditReal.position(id, testBorrower);
+        assertEq(finalPos.borrowShares, 0, "No dust should remain after full repayment");
+    }
+
+    function test_FullRepaymentWhenNoDebt() public {
+        setupRealMorphoCredit();
+
+        // First fully repay the debt
+        vm.prank(testBorrower);
+        helper.repay(marketParams, type(uint256).max, testBorrower, hex"");
+
+        // Verify debt is cleared
+        Position memory clearedPos = morphoCreditReal.position(id, testBorrower);
+        assertEq(clearedPos.borrowShares, 0, "Debt should be cleared");
+
+        // Try to repay again with sentinel value when no debt
+        vm.prank(testBorrower);
+        (uint256 repaidAssets, uint256 repaidShares) =
+            helper.repay(marketParams, type(uint256).max, testBorrower, hex"");
+
+        // Should return zero for both
+        assertEq(repaidAssets, 0, "Should repay zero assets when no debt");
+        assertEq(repaidShares, 0, "Should repay zero shares when no debt");
+    }
+
+    function test_PartialRepaymentNotAffectedWithRealMorpho() public {
+        setupRealMorphoCredit();
+
+        // Test that normal partial repayment still works
+        uint256 partialAmount = BORROW_AMOUNT / 2;
+
+        // Get initial position
+        Position memory initialPos = morphoCreditReal.position(id, testBorrower);
+
+        vm.prank(testBorrower);
+        (uint256 repaidAssets, uint256 repaidShares) = helper.repay(marketParams, partialAmount, testBorrower, hex"");
+
+        assertEq(repaidAssets, partialAmount, "Should repay exact partial amount");
+
+        // Check that debt is reduced but not zero
+        Position memory pos = morphoCreditReal.position(id, testBorrower);
+        assertGt(pos.borrowShares, 0, "Should still have some debt");
+        assertLt(pos.borrowShares, initialPos.borrowShares, "Debt should be reduced");
     }
 }
