@@ -17,6 +17,7 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
     error InvalidProof();
     error NothingToClaim();
     error LengthMismatch();
+    error MaxClaimableExceeded();
 
     /// @notice Emitted when the merkle root is updated
     event RootUpdated(bytes32 indexed oldRoot, bytes32 indexed newRoot);
@@ -26,6 +27,12 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
     /// @param amount The amount of JANE tokens claimed
     /// @param totalClaimed The total amount the user has claimed after this claim
     event Claimed(address indexed user, uint256 amount, uint256 totalClaimed);
+
+    /// @notice Start timestamp of epoch 0
+    uint256 internal immutable START;
+
+    /// @notice 7 day epoch length
+    uint256 internal constant EPOCH = 604800;
 
     /// @notice The JANE token being distributed
     Jane public immutable jane;
@@ -39,15 +46,43 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
     /// @notice Tracks cumulative amount claimed by each user
     mapping(address => uint256) public claimed;
 
+    /// @notice Tracks total emissions allocated per epoch
+    mapping(uint256 => uint256) public epochEmissions;
+
+    /// @notice Tracks total amount claimed across all users
+    uint256 public totalClaimed;
+
+    /// @notice Maximum total amount that can be claimed (sum of all epoch emissions)
+    uint256 public maxClaimable;
+
     /**
      * @notice Initializes the rewards distributor
      * @param _initialOwner Address that will own the contract
      * @param _jane Address of the JANE token contract
      * @param _useMint True to mint tokens on claim, false to transfer from contract balance
+     * @param _start The start timestamp of epoch 0
      */
-    constructor(address _initialOwner, address _jane, bool _useMint) Ownable(_initialOwner) {
+    constructor(address _initialOwner, address _jane, bool _useMint, uint256 _start) Ownable(_initialOwner) {
         jane = Jane(_jane);
         useMint = _useMint;
+        START = _start;
+    }
+
+    /**
+     * @notice Returns the current epoch number
+     * @return The current epoch based on block.timestamp
+     */
+    function epoch() external view returns (uint256) {
+        return epoch(block.timestamp);
+    }
+
+    /**
+     * @notice Calculates the epoch number for a given timestamp
+     * @param timestamp The timestamp to calculate the epoch for
+     * @return The epoch number
+     */
+    function epoch(uint256 timestamp) public view returns (uint256) {
+        return (timestamp - START) / EPOCH;
     }
 
     /**
@@ -58,6 +93,25 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
         bytes32 oldRoot = merkleRoot;
         merkleRoot = _root;
         emit RootUpdated(oldRoot, _root);
+    }
+
+    /**
+     * @notice Sets the emissions for a specific epoch and updates the max claimable amount
+     * @param _epoch The epoch number
+     * @param emissions The total emissions allocated for this epoch
+     */
+    function setEpochEmissions(uint256 _epoch, uint256 emissions) external onlyOwner {
+        uint256 _prevEmissions = epochEmissions[_epoch];
+
+        if (_prevEmissions == 0) {
+            maxClaimable += emissions;
+        } else if (emissions > _prevEmissions) {
+            maxClaimable += emissions - _prevEmissions;
+        } else {
+            maxClaimable -= _prevEmissions - emissions;
+        }
+
+        epochEmissions[_epoch] = emissions;
     }
 
     /**
@@ -112,8 +166,18 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
         if (totalAllocation <= alreadyClaimed) revert NothingToClaim();
         uint256 claimable = totalAllocation - alreadyClaimed;
 
+        // Cap claimable amount if it would exceed maxClaimable
+        if (maxClaimable == 0 || totalClaimed >= maxClaimable) {
+            revert MaxClaimableExceeded();
+        }
+        uint256 remaining = maxClaimable - totalClaimed;
+        if (claimable > remaining) {
+            claimable = remaining;
+        }
+
         // Update claimed amount
-        claimed[user] = totalAllocation;
+        claimed[user] = alreadyClaimed + claimable;
+        totalClaimed += claimable;
 
         // Distribute tokens
         if (useMint) {

@@ -426,4 +426,189 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         assertEq(token.balanceOf(charlie), 600e18);
         assertEq(token.balanceOf(dave), 800e18);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                    EPOCH EMISSIONS LIFECYCLE TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Test weekly lifecycle with epoch emissions
+    function test_epochEmissions_weeklyLifecycle() public {
+        // Deploy fresh distributor for clean testing
+        distributor = new RewardsDistributor(owner, address(token), false, START);
+        fundDistributor(1_000_000e18);
+
+        // Set emissions for weeks 0-4
+        setEpochEmissions(0, 1000e18);
+        setEpochEmissions(1, 1500e18);
+        setEpochEmissions(2, 2000e18);
+        setEpochEmissions(3, 2500e18);
+        setEpochEmissions(4, 3000e18);
+
+        assertEq(distributor.maxClaimable(), 10000e18);
+
+        // Week 0: Distribute 800e18
+        warpTo(START);
+        MerkleTreeHelper.Claim[] memory week0 = new MerkleTreeHelper.Claim[](4);
+        week0[0] = MerkleTreeHelper.Claim(alice, 100e18);
+        week0[1] = MerkleTreeHelper.Claim(bob, 200e18);
+        week0[2] = MerkleTreeHelper.Claim(charlie, 300e18);
+        week0[3] = MerkleTreeHelper.Claim(dave, 200e18);
+        (bytes32 root0, bytes32[][] memory proofs0) = updateRoot(week0);
+
+        for (uint256 i = 0; i < 4; i++) {
+            address user = i == 0 ? alice : i == 1 ? bob : i == 2 ? charlie : dave;
+            distributor.claim(user, week0[i].amount, proofs0[i]);
+        }
+        assertEq(distributor.totalClaimed(), 800e18);
+
+        // Week 2: Distribute additional 1200e18 (total: 2000e18)
+        warpTo(START + 604800 * 2);
+        MerkleTreeHelper.Claim[] memory week2 = new MerkleTreeHelper.Claim[](4);
+        week2[0] = MerkleTreeHelper.Claim(alice, 400e18);
+        week2[1] = MerkleTreeHelper.Claim(bob, 600e18);
+        week2[2] = MerkleTreeHelper.Claim(charlie, 800e18);
+        week2[3] = MerkleTreeHelper.Claim(dave, 400e18); // Increased from 200e18
+        (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(week2);
+
+        for (uint256 i = 0; i < 4; i++) {
+            address user = i == 0 ? alice : i == 1 ? bob : i == 2 ? charlie : dave;
+            distributor.claim(user, week2[i].amount, proofs2[i]);
+        }
+        assertEq(distributor.totalClaimed(), 2200e18); // alice: 400, bob: 600, charlie: 800, dave: 400
+
+        // Week 4: Try to claim beyond cap
+        warpTo(START + 604800 * 4);
+        MerkleTreeHelper.Claim[] memory week4 = new MerkleTreeHelper.Claim[](1);
+        week4[0] = MerkleTreeHelper.Claim(eve, 9000e18);
+        (bytes32 root4, bytes32[][] memory proofs4) = updateRoot(week4);
+
+        // Can only claim 7800e18 more (maxClaimable - totalClaimed = 10000 - 2200)
+        distributor.claim(eve, 9000e18, proofs4[0]);
+        assertEq(distributor.totalClaimed(), 10000e18);
+        assertEq(token.balanceOf(eve), 7800e18);
+    }
+
+    /// @notice Test insufficient cap scenario
+    function test_epochEmissions_insufficientCap() public {
+        // Deploy fresh distributor for clean testing
+        distributor = new RewardsDistributor(owner, address(token), false, START);
+        fundDistributor(1_000_000e18);
+
+        // Set low cap
+        setEpochEmissions(0, 500e18);
+
+        // Create allocations exceeding cap
+        MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](4);
+        claims[0] = MerkleTreeHelper.Claim(alice, 200e18);
+        claims[1] = MerkleTreeHelper.Claim(bob, 200e18);
+        claims[2] = MerkleTreeHelper.Claim(charlie, 200e18);
+        claims[3] = MerkleTreeHelper.Claim(dave, 200e18);
+        (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
+
+        // First two can claim
+        distributor.claim(alice, 200e18, proofs[0]);
+        distributor.claim(bob, 200e18, proofs[1]);
+        assertEq(distributor.totalClaimed(), 400e18);
+
+        // Third can claim partial
+        distributor.claim(charlie, 200e18, proofs[2]);
+        assertEq(distributor.totalClaimed(), 500e18);
+        assertEq(token.balanceOf(charlie), 100e18);
+
+        // Fourth cannot claim at all
+        vm.expectRevert(RewardsDistributor.MaxClaimableExceeded.selector);
+        distributor.claim(dave, 200e18, proofs[3]);
+    }
+
+    /// @notice Test dynamic emissions adjustment mid-cycle
+    function test_epochEmissions_dynamicAdjustment() public {
+        // Deploy fresh distributor for clean testing
+        distributor = new RewardsDistributor(owner, address(token), false, START);
+        fundDistributor(1_000_000e18);
+
+        // Set initial low cap
+        setEpochEmissions(0, 300e18);
+
+        MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](3);
+        claims[0] = MerkleTreeHelper.Claim(alice, 200e18);
+        claims[1] = MerkleTreeHelper.Claim(bob, 200e18);
+        claims[2] = MerkleTreeHelper.Claim(charlie, 200e18);
+        (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
+
+        // Alice claims
+        distributor.claim(alice, 200e18, proofs[0]);
+        assertEq(distributor.totalClaimed(), 200e18);
+
+        // Bob can only partially claim
+        distributor.claim(bob, 200e18, proofs[1]);
+        assertEq(distributor.totalClaimed(), 300e18);
+        assertEq(token.balanceOf(bob), 100e18);
+
+        // Owner increases epoch 0 emissions
+        setEpochEmissions(0, 600e18);
+        assertEq(distributor.maxClaimable(), 600e18);
+
+        // Bob can now claim remaining
+        distributor.claim(bob, 200e18, proofs[1]);
+        assertEq(distributor.totalClaimed(), 400e18);
+        assertEq(token.balanceOf(bob), 200e18);
+
+        // Charlie can claim
+        distributor.claim(charlie, 200e18, proofs[2]);
+        assertEq(distributor.totalClaimed(), 600e18);
+        assertEq(token.balanceOf(charlie), 200e18);
+    }
+
+    /// @notice Test multiple epoch emissions with progressive claiming
+    function test_epochEmissions_progressiveClaiming() public {
+        // Set emissions for epochs 0-2
+        setEpochEmissions(0, 1000e18);
+        setEpochEmissions(1, 1500e18);
+        setEpochEmissions(2, 2000e18);
+
+        // Warp to epoch 0
+        warpTo(START);
+        assertEq(distributor.epoch(), 0);
+
+        // Create progressive claims
+        MerkleTreeHelper.Claim[] memory claims1 = new MerkleTreeHelper.Claim[](2);
+        claims1[0] = MerkleTreeHelper.Claim(alice, 500e18);
+        claims1[1] = MerkleTreeHelper.Claim(bob, 500e18);
+        (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(claims1);
+
+        distributor.claim(alice, 500e18, proofs1[0]);
+        distributor.claim(bob, 500e18, proofs1[1]);
+        assertEq(distributor.totalClaimed(), 1000e18);
+
+        // Warp to epoch 1
+        warpTo(START + 604800);
+        assertEq(distributor.epoch(), 1);
+
+        // Update allocations
+        MerkleTreeHelper.Claim[] memory claims2 = new MerkleTreeHelper.Claim[](2);
+        claims2[0] = MerkleTreeHelper.Claim(alice, 1250e18);
+        claims2[1] = MerkleTreeHelper.Claim(bob, 1250e18);
+        (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(claims2);
+
+        distributor.claim(alice, 1250e18, proofs2[0]);
+        distributor.claim(bob, 1250e18, proofs2[1]);
+        assertEq(distributor.totalClaimed(), 2500e18);
+
+        // Warp to epoch 2
+        warpTo(START + 604800 * 2);
+        assertEq(distributor.epoch(), 2);
+
+        // Final claims
+        MerkleTreeHelper.Claim[] memory claims3 = new MerkleTreeHelper.Claim[](2);
+        claims3[0] = MerkleTreeHelper.Claim(alice, 2250e18);
+        claims3[1] = MerkleTreeHelper.Claim(bob, 2250e18);
+        (bytes32 root3, bytes32[][] memory proofs3) = updateRoot(claims3);
+
+        distributor.claim(alice, 2250e18, proofs3[0]);
+        distributor.claim(bob, 2250e18, proofs3[1]);
+        assertEq(distributor.totalClaimed(), 4500e18);
+
+        assertEq(token.balanceOf(alice), 2250e18);
+        assertEq(token.balanceOf(bob), 2250e18);
+    }
 }

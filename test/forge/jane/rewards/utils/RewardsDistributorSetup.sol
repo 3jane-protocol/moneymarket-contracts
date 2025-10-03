@@ -15,6 +15,9 @@ contract RewardsDistributorSetup is JaneSetup {
     address public eve;
     address public frank;
 
+    // Epoch start time (January 1, 2024 00:00:00 UTC)
+    uint256 public constant START = 1704067200;
+
     // Events
     event RootUpdated(bytes32 indexed oldRoot, bytes32 indexed newRoot);
     event Claimed(address indexed user, uint256 amount, uint256 totalClaimed);
@@ -31,13 +34,18 @@ contract RewardsDistributorSetup is JaneSetup {
         merkleHelper = new MerkleTreeHelper();
 
         // Deploy distributor in transfer mode by default
-        distributor = new RewardsDistributor(owner, address(token), false);
+        distributor = new RewardsDistributor(owner, address(token), false, START);
 
         // Fund distributor with JANE tokens
         mintTokens(address(distributor), 1_000_000e18);
 
         // Enable transfers for testing
         setTransferable();
+
+        // Set default epoch emissions to allow testing without explicit setup
+        // This provides a generous cap for existing tests
+        vm.prank(owner);
+        distributor.setEpochEmissions(0, 10_000_000e18);
 
         vm.label(address(distributor), "RewardsDistributor");
         vm.label(address(merkleHelper), "MerkleTreeHelper");
@@ -146,5 +154,15 @@ contract RewardsDistributorSetup is JaneSetup {
     function toggleMintMode(bool _useMint) internal {
         vm.prank(owner);
         distributor.setUseMint(_useMint);
+    }
+
+    /**
+     * @notice Sets epoch emissions as owner
+     * @param epoch The epoch number
+     * @param emissions The emissions amount
+     */
+    function setEpochEmissions(uint256 epoch, uint256 emissions) internal {
+        vm.prank(owner);
+        distributor.setEpochEmissions(epoch, emissions);
     }
 }
