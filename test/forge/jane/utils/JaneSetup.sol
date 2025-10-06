@@ -17,11 +17,14 @@ contract JaneSetup is Test {
 
     uint256 public constant INITIAL_MINT = 1_000_000e18;
 
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
+    bytes32 public constant TRANSFER_ROLE = keccak256("TRANSFER_ROLE");
+
     event TransferEnabled();
     event MintingFinalized();
-    event TransferAuthorized(address indexed account, bool indexed authorized);
-    event MinterAuthorized(address indexed account, bool indexed authorized);
-    event BurnerAuthorized(address indexed account, bool indexed authorized);
+    event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
@@ -53,12 +56,12 @@ contract JaneSetup is Test {
 
     function grantTransferRole(address account) internal {
         vm.prank(owner);
-        token.addTransferRole(account);
+        token.grantRole(TRANSFER_ROLE, account);
     }
 
     function revokeTransferRole(address account) internal {
         vm.prank(owner);
-        token.removeTransferRole(account);
+        token.revokeRole(TRANSFER_ROLE, account);
     }
 
     function setTransferable() internal {
@@ -68,22 +71,22 @@ contract JaneSetup is Test {
 
     function addMinter(address account) internal {
         vm.prank(owner);
-        token.addMinter(account);
+        token.grantRole(MINTER_ROLE, account);
     }
 
     function removeMinter(address account) internal {
         vm.prank(owner);
-        token.removeMinter(account);
+        token.revokeRole(MINTER_ROLE, account);
     }
 
     function addBurner(address account) internal {
         vm.prank(owner);
-        token.addBurner(account);
+        token.grantRole(BURNER_ROLE, account);
     }
 
     function removeBurner(address account) internal {
         vm.prank(owner);
-        token.removeBurner(account);
+        token.revokeRole(BURNER_ROLE, account);
     }
 
     function createPermitSignature(uint256 privateKey, address spender, uint256 value, uint256 deadline)

@@ -85,7 +85,7 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Authorize MarkdownController to burn JANE
         vm.prank(janeOwner);
-        jane.addBurner(address(markdownController));
+        jane.grantRole(jane.BURNER_ROLE(), address(markdownController));
 
         // Initialize market cycles
         _continueMarketCyclesJane(id, block.timestamp + CYCLE_DURATION + 7 days);

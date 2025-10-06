@@ -5,126 +5,114 @@ import {JaneSetup} from "./utils/JaneSetup.sol";
 import {Jane} from "../../../src/jane/Jane.sol";
 
 contract JaneTokenOwnershipTest is JaneSetup {
-    function test_owner_canGrantTransferRole() public {
-        assertFalse(token.hasTransferRole(alice));
+    function test_admin_canGrantTransferRole() public {
+        assertFalse(token.hasRole(TRANSFER_ROLE, alice));
 
         vm.prank(owner);
-        vm.expectEmit(true, true, false, false);
-        emit TransferAuthorized(alice, true);
-        token.addTransferRole(alice);
+        token.grantRole(TRANSFER_ROLE, alice);
 
-        assertTrue(token.hasTransferRole(alice));
+        assertTrue(token.hasRole(TRANSFER_ROLE, alice));
     }
 
-    function test_owner_canRevokeTransferRole() public {
+    function test_admin_canRevokeTransferRole() public {
         vm.prank(owner);
-        token.addTransferRole(alice);
-        assertTrue(token.hasTransferRole(alice));
+        token.grantRole(TRANSFER_ROLE, alice);
+        assertTrue(token.hasRole(TRANSFER_ROLE, alice));
 
         vm.prank(owner);
-        vm.expectEmit(true, true, false, false);
-        emit TransferAuthorized(alice, false);
-        token.removeTransferRole(alice);
+        token.revokeRole(TRANSFER_ROLE, alice);
 
-        assertFalse(token.hasTransferRole(alice));
+        assertFalse(token.hasRole(TRANSFER_ROLE, alice));
     }
 
     function test_addMinter_success() public {
         address newMinter = makeAddr("newMinter");
 
-        assertFalse(token.isMinter(newMinter));
+        assertFalse(token.hasRole(MINTER_ROLE, newMinter));
 
         vm.prank(owner);
-        vm.expectEmit(true, true, false, false);
-        emit MinterAuthorized(newMinter, true);
-        token.addMinter(newMinter);
+        token.grantRole(MINTER_ROLE, newMinter);
 
-        assertTrue(token.isMinter(newMinter));
-        assertEq(token.minters().length, 2); // minter + newMinter
+        assertTrue(token.hasRole(MINTER_ROLE, newMinter));
+        assertEq(token.getRoleMemberCount(MINTER_ROLE), 2); // minter + newMinter
     }
 
-    function test_addMinter_revertsNonOwner() public {
+    function test_addMinter_revertsNonAdmin() public {
         address newMinter = makeAddr("newMinter");
 
         vm.prank(alice);
         vm.expectRevert();
-        token.addMinter(newMinter);
+        token.grantRole(MINTER_ROLE, newMinter);
     }
 
     function test_removeMinter_success() public {
-        assertTrue(token.isMinter(minter));
+        assertTrue(token.hasRole(MINTER_ROLE, minter));
 
         vm.prank(owner);
-        vm.expectEmit(true, true, false, false);
-        emit MinterAuthorized(minter, false);
-        token.removeMinter(minter);
+        token.revokeRole(MINTER_ROLE, minter);
 
-        assertFalse(token.isMinter(minter));
-        assertEq(token.minters().length, 0);
+        assertFalse(token.hasRole(MINTER_ROLE, minter));
+        assertEq(token.getRoleMemberCount(MINTER_ROLE), 0);
     }
 
-    function test_removeMinter_revertsNonOwner() public {
+    function test_removeMinter_revertsNonAdmin() public {
         vm.prank(alice);
         vm.expectRevert();
-        token.removeMinter(minter);
+        token.revokeRole(MINTER_ROLE, minter);
     }
 
     function test_minter_functionalityWorks() public {
         address newMinter = makeAddr("newMinter");
 
         vm.prank(owner);
-        token.addMinter(newMinter);
+        token.grantRole(MINTER_ROLE, newMinter);
 
         vm.prank(newMinter);
         token.mint(alice, 100e18);
         assertEq(token.balanceOf(alice), 100e18);
 
         vm.prank(owner);
-        token.removeMinter(minter);
+        token.revokeRole(MINTER_ROLE, minter);
 
         vm.prank(minter);
-        vm.expectRevert(Jane.NotMinter.selector);
+        vm.expectRevert();
         token.mint(bob, 100e18);
     }
 
     function test_addBurner_success() public {
         address newBurner = makeAddr("newBurner");
 
-        assertFalse(token.isBurner(newBurner));
+        assertFalse(token.hasRole(BURNER_ROLE, newBurner));
 
         vm.prank(owner);
-        vm.expectEmit(true, true, false, false);
-        emit BurnerAuthorized(newBurner, true);
-        token.addBurner(newBurner);
+        token.grantRole(BURNER_ROLE, newBurner);
 
-        assertTrue(token.isBurner(newBurner));
-        assertEq(token.burners().length, 2); // burner + newBurner
+        assertTrue(token.hasRole(BURNER_ROLE, newBurner));
+        assertEq(token.getRoleMemberCount(BURNER_ROLE), 2); // burner + newBurner
     }
 
-    function test_addBurner_revertsNonOwner() public {
+    function test_addBurner_revertsNonAdmin() public {
         address newBurner = makeAddr("newBurner");
 
         vm.prank(alice);
         vm.expectRevert();
-        token.addBurner(newBurner);
+        token.grantRole(BURNER_ROLE, newBurner);
     }
 
     function test_removeBurner_success() public {
-        assertTrue(token.isBurner(burner));
+        assertTrue(token.hasRole(BURNER_ROLE, burner));
 
         vm.prank(owner);
-        vm.expectEmit(true, true, false, false);
-        emit BurnerAuthorized(burner, false);
-        token.removeBurner(burner);
+        token.revokeRole(BURNER_ROLE, burner);
 
-        assertFalse(token.isBurner(burner));
-        assertEq(token.burners().length, 0);
+        assertFalse(token.hasRole(BURNER_ROLE, burner));
+        assertEq(token.getRoleMemberCount(BURNER_ROLE), 0);
     }
 
-    function test_removeBurner_revertsNonOwner() public {
+    function test_removeBurner_revertsNonAdmin() public {
         vm.prank(alice);
         vm.expectRevert();
-        token.removeBurner(burner);
+        token.revokeRole(BURNER_ROLE, burner);
     }
 
     function test_burner_functionalityWorks() public {
@@ -132,42 +120,66 @@ contract JaneTokenOwnershipTest is JaneSetup {
         mintTokens(alice, 1000e18);
 
         vm.prank(owner);
-        token.addBurner(newBurner);
+        token.grantRole(BURNER_ROLE, newBurner);
 
         vm.prank(newBurner);
         token.burn(alice, 100e18);
         assertEq(token.balanceOf(alice), 900e18);
 
         vm.prank(owner);
-        token.removeBurner(burner);
+        token.revokeRole(BURNER_ROLE, burner);
 
         vm.prank(burner);
-        vm.expectRevert(Jane.NotBurner.selector);
+        vm.expectRevert();
         token.burn(alice, 100e18);
     }
 
-    function test_ownership_canBeTransferred() public {
-        address newOwner = makeAddr("newOwner");
+    function test_admin_canBeTransferred() public {
+        address newAdmin = makeAddr("newAdmin");
+
+        assertEq(token.admin(), owner);
 
         vm.prank(owner);
-        token.transferOwnership(newOwner);
+        vm.expectEmit(true, true, false, false);
+        emit AdminTransferred(owner, newAdmin);
+        token.transferAdmin(newAdmin);
 
-        assertEq(token.owner(), newOwner);
+        assertEq(token.admin(), newAdmin);
+        assertFalse(token.hasRole(ADMIN_ROLE, owner));
+        assertTrue(token.hasRole(ADMIN_ROLE, newAdmin));
     }
 
-    function test_nonOwner_cannotGrantTransferRole() public {
+    function test_transferAdmin_revertsZeroAddress() public {
+        vm.prank(owner);
+        vm.expectRevert(Jane.InvalidAddress.selector);
+        token.transferAdmin(address(0));
+    }
+
+    function test_transferAdmin_revertsNonAdmin() public {
+        address newAdmin = makeAddr("newAdmin");
+
         vm.prank(alice);
         vm.expectRevert();
-        token.addTransferRole(bob);
+        token.transferAdmin(newAdmin);
     }
 
-    function test_nonOwner_cannotSetTransferable() public {
+    function test_admin_accessor() public view {
+        assertEq(token.admin(), owner);
+    }
+
+    function test_nonAdmin_cannotGrantTransferRole() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        token.grantRole(TRANSFER_ROLE, bob);
+    }
+
+    function test_nonAdmin_cannotSetTransferable() public {
         vm.prank(alice);
         vm.expectRevert();
         token.setTransferable();
     }
 
-    function test_nonOwner_cannotFinalizeMinting() public {
+    function test_nonAdmin_cannotFinalizeMinting() public {
         vm.prank(alice);
         vm.expectRevert();
         token.finalizeMinting();
@@ -175,41 +187,41 @@ contract JaneTokenOwnershipTest is JaneSetup {
 
     function test_multipleTransferRoles() public {
         vm.prank(owner);
-        token.addTransferRole(alice);
+        token.grantRole(TRANSFER_ROLE, alice);
 
         vm.prank(owner);
-        token.addTransferRole(bob);
+        token.grantRole(TRANSFER_ROLE, bob);
 
         vm.prank(owner);
-        token.addTransferRole(charlie);
+        token.grantRole(TRANSFER_ROLE, charlie);
 
-        assertTrue(token.hasTransferRole(alice));
-        assertTrue(token.hasTransferRole(bob));
-        assertTrue(token.hasTransferRole(charlie));
-        assertEq(token.transferAuthorized().length, 3);
+        assertTrue(token.hasRole(TRANSFER_ROLE, alice));
+        assertTrue(token.hasRole(TRANSFER_ROLE, bob));
+        assertTrue(token.hasRole(TRANSFER_ROLE, charlie));
+        assertEq(token.getRoleMemberCount(TRANSFER_ROLE), 3);
 
         // Revoke bob's role
         vm.prank(owner);
-        token.removeTransferRole(bob);
+        token.revokeRole(TRANSFER_ROLE, bob);
 
-        assertTrue(token.hasTransferRole(alice));
-        assertFalse(token.hasTransferRole(bob));
-        assertTrue(token.hasTransferRole(charlie));
-        assertEq(token.transferAuthorized().length, 2);
+        assertTrue(token.hasRole(TRANSFER_ROLE, alice));
+        assertFalse(token.hasRole(TRANSFER_ROLE, bob));
+        assertTrue(token.hasRole(TRANSFER_ROLE, charlie));
+        assertEq(token.getRoleMemberCount(TRANSFER_ROLE), 2);
     }
 
     function testFuzz_transferRoleManagement(address user) public {
         vm.assume(user != address(0));
         vm.assume(user != owner);
 
-        assertFalse(token.hasTransferRole(user));
+        assertFalse(token.hasRole(TRANSFER_ROLE, user));
 
         vm.prank(owner);
-        token.addTransferRole(user);
-        assertTrue(token.hasTransferRole(user));
+        token.grantRole(TRANSFER_ROLE, user);
+        assertTrue(token.hasRole(TRANSFER_ROLE, user));
 
         vm.prank(owner);
-        token.removeTransferRole(user);
-        assertFalse(token.hasTransferRole(user));
+        token.revokeRole(TRANSFER_ROLE, user);
+        assertFalse(token.hasRole(TRANSFER_ROLE, user));
     }
 }

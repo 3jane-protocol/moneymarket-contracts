@@ -6,16 +6,16 @@ import {Jane} from "../../../src/jane/Jane.sol";
 
 contract JaneTokenBaseTest is JaneSetup {
     function test_constructor_setsCorrectAddresses() public view {
-        assertEq(token.owner(), owner);
-        assertTrue(token.isMinter(minter));
-        assertTrue(token.isBurner(burner));
-        assertEq(token.minters().length, 1);
-        assertEq(token.burners().length, 1);
-        assertFalse(token.hasTransferRole(owner));
+        assertEq(token.admin(), owner);
+        assertTrue(token.hasRole(MINTER_ROLE, minter));
+        assertTrue(token.hasRole(BURNER_ROLE, burner));
+        assertEq(token.getRoleMemberCount(MINTER_ROLE), 1);
+        assertEq(token.getRoleMemberCount(BURNER_ROLE), 1);
+        assertFalse(token.hasRole(TRANSFER_ROLE, owner));
     }
 
     function test_constructor_revertsWithZeroOwner() public {
-        vm.expectRevert();
+        vm.expectRevert(Jane.InvalidAddress.selector);
         new Jane(address(0), minter, burner);
     }
 
@@ -37,7 +37,7 @@ contract JaneTokenBaseTest is JaneSetup {
 
     function test_mint_revertsUnauthorized() public {
         vm.prank(alice);
-        vm.expectRevert(Jane.NotMinter.selector);
+        vm.expectRevert();
         token.mint(bob, 1000e18);
     }
 

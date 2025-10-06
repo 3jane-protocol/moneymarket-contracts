@@ -1,40 +1,29 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import {Ownable} from "../../lib/openzeppelin/contracts/access/Ownable.sol";
 import {ERC20, ERC20Permit} from "../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import {ERC20Burnable} from "../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
-import {EnumerableSet} from "../../lib/openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {AccessControlEnumerable} from "../../lib/openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
 import {IMarkdownController} from "../interfaces/IMarkdownController.sol";
 
 /**
  * @title Jane
  * @notice 3Jane protocol governance and rewards token with controlled transfer capabilities
  */
-contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
-    using EnumerableSet for EnumerableSet.AddressSet;
-
+contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
     error TransferNotAllowed();
     error MintFinalized();
-    error NotMinter();
-    error NotBurner();
     error InvalidAddress();
 
     event TransferEnabled();
     event MintingFinalized();
-    event TransferAuthorized(address indexed account, bool indexed authorized);
-    event MinterAuthorized(address indexed account, bool indexed authorized);
-    event BurnerAuthorized(address indexed account, bool indexed authorized);
     event MarkdownControllerSet(address indexed controller);
+    event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
 
-    /// @notice Set of addresses authorized to mint new tokens
-    EnumerableSet.AddressSet private _minters;
-
-    /// @notice Set of addresses authorized to burn tokens from any account
-    EnumerableSet.AddressSet private _burners;
-
-    /// @notice Set of addresses authorized to transfer when transfers are restricted
-    EnumerableSet.AddressSet private _transferAuthorized;
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
+    bytes32 public constant TRANSFER_ROLE = keccak256("TRANSFER_ROLE");
 
     /// @notice Whether transfers are globally enabled for all users
     /// @dev When true, anyone can transfer. When false, only addresses with transfer role can participate in transfers
@@ -49,20 +38,21 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
 
     /**
      * @notice Initializes the JANE token with owner, minter, and burner
-     * @param _initialOwner Address that will be the contract owner
+     * @param _initialAdmin Address that will be the contract admin
      * @param _minter Address that will have minting privileges
      * @param _burner Address that will have burning privileges
      */
-    constructor(address _initialOwner, address _minter, address _burner)
-        ERC20("JANE", "JANE")
-        ERC20Permit("JANE")
-        Ownable(_initialOwner)
-    {
+    constructor(address _initialAdmin, address _minter, address _burner) ERC20("JANE", "JANE") ERC20Permit("JANE") {
+        if (_initialAdmin == address(0)) revert InvalidAddress();
+        _grantRole(ADMIN_ROLE, _initialAdmin);
+        _setRoleAdmin(MINTER_ROLE, ADMIN_ROLE);
+        _setRoleAdmin(BURNER_ROLE, ADMIN_ROLE);
+        _setRoleAdmin(TRANSFER_ROLE, ADMIN_ROLE);
         if (_minter != address(0)) {
-            _minters.add(_minter);
+            _grantRole(MINTER_ROLE, _minter);
         }
         if (_burner != address(0)) {
-            _burners.add(_burner);
+            _grantRole(BURNER_ROLE, _burner);
         }
     }
 
@@ -70,7 +60,7 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
      * @notice Enables transfers globally (one-way switch)
      * @dev Once enabled, transfers cannot be disabled again
      */
-    function setTransferable() external onlyOwner {
+    function setTransferable() external onlyRole(ADMIN_ROLE) {
         transferable = true;
         emit TransferEnabled();
     }
@@ -79,7 +69,7 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
      * @notice Permanently disables minting (one-way switch)
      * @dev Once finalized, no new tokens can ever be minted
      */
-    function finalizeMinting() external onlyOwner {
+    function finalizeMinting() external onlyRole(ADMIN_ROLE) {
         mintFinalized = true;
         emit MintingFinalized();
     }
@@ -88,69 +78,22 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
      * @notice Sets the MarkdownController address
      * @param _controller Address of the MarkdownController contract
      */
-    function setMarkdownController(address _controller) external onlyOwner {
+    function setMarkdownController(address _controller) external onlyRole(ADMIN_ROLE) {
         markdownController = _controller;
         emit MarkdownControllerSet(_controller);
     }
 
     /**
-     * @notice Grants transfer role to an account
-     * @param account Address to grant transfer role
+     * @notice Transfers admin role to a new address atomically
+     * @dev Only callable by current admin. Ensures exactly one admin at all times.
+     * @param newAdmin Address that will become the new admin
      */
-    function addTransferRole(address account) external onlyOwner {
-        if (_transferAuthorized.add(account)) {
-            emit TransferAuthorized(account, true);
-        }
-    }
-
-    /**
-     * @notice Revokes transfer role from an account
-     * @param account Address to revoke transfer role
-     */
-    function removeTransferRole(address account) external onlyOwner {
-        if (_transferAuthorized.remove(account)) {
-            emit TransferAuthorized(account, false);
-        }
-    }
-
-    /**
-     * @notice Grants minter role to an account
-     * @param account Address to grant minter role
-     */
-    function addMinter(address account) external onlyOwner {
-        if (_minters.add(account)) {
-            emit MinterAuthorized(account, true);
-        }
-    }
-
-    /**
-     * @notice Revokes minter role from an account
-     * @param account Address to revoke minter role
-     */
-    function removeMinter(address account) external onlyOwner {
-        if (_minters.remove(account)) {
-            emit MinterAuthorized(account, false);
-        }
-    }
-
-    /**
-     * @notice Grants burner role to an account
-     * @param account Address to grant burner role
-     */
-    function addBurner(address account) external onlyOwner {
-        if (_burners.add(account)) {
-            emit BurnerAuthorized(account, true);
-        }
-    }
-
-    /**
-     * @notice Revokes burner role from an account
-     * @param account Address to revoke burner role
-     */
-    function removeBurner(address account) external onlyOwner {
-        if (_burners.remove(account)) {
-            emit BurnerAuthorized(account, false);
-        }
+    function transferAdmin(address newAdmin) external onlyRole(ADMIN_ROLE) {
+        if (newAdmin == address(0)) revert InvalidAddress();
+        address previousAdmin = _msgSender();
+        _revokeRole(ADMIN_ROLE, previousAdmin);
+        _grantRole(ADMIN_ROLE, newAdmin);
+        emit AdminTransferred(previousAdmin, newAdmin);
     }
 
     /**
@@ -177,8 +120,7 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
      * @param account Address to receive the minted tokens
      * @param value Amount of tokens to mint
      */
-    function mint(address account, uint256 value) external {
-        if (!isMinter(_msgSender())) revert NotMinter();
+    function mint(address account, uint256 value) external onlyRole(MINTER_ROLE) {
         if (mintFinalized) revert MintFinalized();
         if (account == address(0)) revert InvalidAddress();
         _mint(account, value);
@@ -190,8 +132,7 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
      * @param account Address from which to burn tokens
      * @param value Amount of tokens to burn
      */
-    function burn(address account, uint256 value) external {
-        if (!isBurner(_msgSender())) revert NotBurner();
+    function burn(address account, uint256 value) external onlyRole(BURNER_ROLE) {
         if (account == address(0)) revert InvalidAddress();
         _burn(account, value);
     }
@@ -205,7 +146,7 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
      */
     function _canTransfer(address from, address to) internal view returns (bool) {
         // First check if transfers are even allowed (cheap checks)
-        if (!transferable && !hasTransferRole(from) && !hasTransferRole(to)) {
+        if (!transferable && !hasRole(TRANSFER_ROLE, from) && !hasRole(TRANSFER_ROLE, to)) {
             return false;
         }
 
@@ -219,53 +160,11 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, Ownable {
     }
 
     /**
-     * @notice Checks if an account has transfer role
-     * @param account Address to check
-     * @return True if account has transfer role
+     * @notice Returns the current admin address
+     * @return The admin address, or address(0) if no admin exists
      */
-    function hasTransferRole(address account) public view returns (bool) {
-        return _transferAuthorized.contains(account);
-    }
-
-    /**
-     * @notice Returns all accounts with transfer role
-     * @return Array of addresses with transfer role
-     */
-    function transferAuthorized() public view returns (address[] memory) {
-        return _transferAuthorized.values();
-    }
-
-    /**
-     * @notice Checks if an account has minter role
-     * @param account Address to check
-     * @return True if account has minter role
-     */
-    function isMinter(address account) public view returns (bool) {
-        return _minters.contains(account);
-    }
-
-    /**
-     * @notice Returns all accounts with minter role
-     * @return Array of minter addresses
-     */
-    function minters() public view returns (address[] memory) {
-        return _minters.values();
-    }
-
-    /**
-     * @notice Checks if an account has burner role
-     * @param account Address to check
-     * @return True if account has burner role
-     */
-    function isBurner(address account) public view returns (bool) {
-        return _burners.contains(account);
-    }
-
-    /**
-     * @notice Returns all accounts with burner role
-     * @return Array of burner addresses
-     */
-    function burners() public view returns (address[] memory) {
-        return _burners.values();
+    function admin() public view returns (address) {
+        uint256 count = getRoleMemberCount(ADMIN_ROLE);
+        return count > 0 ? getRoleMember(ADMIN_ROLE, 0) : address(0);
     }
 }
