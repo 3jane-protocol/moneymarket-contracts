@@ -2,7 +2,6 @@
 pragma solidity ^0.8.22;
 
 import {ERC20, ERC20Permit} from "../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-import {ERC20Burnable} from "../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import {AccessControlEnumerable} from "../../lib/openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
 import {IMarkdownController} from "../interfaces/IMarkdownController.sol";
 
@@ -10,7 +9,7 @@ import {IMarkdownController} from "../interfaces/IMarkdownController.sol";
  * @title Jane
  * @notice 3Jane protocol governance and rewards token with controlled transfer capabilities
  */
-contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
+contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
     error TransferNotAllowed();
     error MintFinalized();
     error InvalidAddress();
@@ -26,9 +25,6 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
     /// @notice Role identifier for minters (can mint new tokens before minting is finalized)
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
-    /// @notice Role identifier for burners (can burn tokens from any account)
-    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
-
     /// @notice Role identifier for transfer-enabled accounts (can transfer when transfers are disabled)
     bytes32 public constant TRANSFER_ROLE = keccak256("TRANSFER_ROLE");
 
@@ -36,31 +32,26 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
     /// @dev When true, anyone can transfer. When false, only addresses with transfer role can participate in transfers
     bool public transferable;
 
-    /// @notice Whether minting has been permanently disabled
-    /// @dev Once set to true, no new tokens can ever be minted
-    bool public mintFinalized;
-
     /// @notice MarkdownController that manages transfer freezes for delinquent borrowers
     address public markdownController;
+
+    /// @notice Address that will receive redistributed tokens
+    address public distributor;
 
     /**
      * @notice Initializes the JANE token with owner, minter, and burner
      * @param _initialOwner Address that will be the contract owner
-     * @param _minter Address that will have minting privileges
-     * @param _burner Address that will have burning privileges
+     * @param _distributor Address that will have minting privileges
      */
-    constructor(address _initialOwner, address _minter, address _burner) ERC20("JANE", "JANE") ERC20Permit("JANE") {
+    constructor(address _initialOwner, address _distributor) ERC20("JANE", "JANE") ERC20Permit("JANE") {
         if (_initialOwner == address(0)) revert InvalidAddress();
         _grantRole(OWNER_ROLE, _initialOwner);
         _setRoleAdmin(MINTER_ROLE, OWNER_ROLE);
-        _setRoleAdmin(BURNER_ROLE, OWNER_ROLE);
         _setRoleAdmin(TRANSFER_ROLE, OWNER_ROLE);
-        if (_minter != address(0)) {
-            _grantRole(MINTER_ROLE, _minter);
+        if (_distributor != address(0)) {
+            _grantRole(MINTER_ROLE, _distributor);
         }
-        if (_burner != address(0)) {
-            _grantRole(BURNER_ROLE, _burner);
-        }
+        distributor = _distributor;
     }
 
     /**
@@ -70,15 +61,6 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
     function setTransferable() external onlyRole(OWNER_ROLE) {
         transferable = true;
         emit TransferEnabled();
-    }
-
-    /**
-     * @notice Permanently disables minting (one-way switch)
-     * @dev Once finalized, no new tokens can ever be minted
-     */
-    function finalizeMinting() external onlyRole(OWNER_ROLE) {
-        mintFinalized = true;
-        emit MintingFinalized();
     }
 
     /**
@@ -128,20 +110,14 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
      * @param value Amount of tokens to mint
      */
     function mint(address account, uint256 value) external onlyRole(MINTER_ROLE) {
-        if (mintFinalized) revert MintFinalized();
         if (account == address(0)) revert InvalidAddress();
         _mint(account, value);
     }
 
-    /**
-     * @notice Burns tokens from the specified account
-     * @dev Only callable by accounts with burner role
-     * @param account Address from which to burn tokens
-     * @param value Amount of tokens to burn
-     */
-    function burn(address account, uint256 value) external onlyRole(BURNER_ROLE) {
-        if (account == address(0)) revert InvalidAddress();
+    function redistribute(address account, uint256 value) external {
+        if (account != markdownController) revert InvalidAddress();
         _burn(account, value);
+        _mint(distributor, value);
     }
 
     /**
