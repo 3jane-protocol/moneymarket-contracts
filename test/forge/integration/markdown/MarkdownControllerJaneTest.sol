@@ -29,6 +29,8 @@ contract MarkdownControllerJaneTest is BaseTest {
     address public janeBurner;
     address public janeOwner;
 
+    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
+
     uint256 constant INITIAL_JANE_SUPPLY = 1_000_000e18;
     uint256 constant BORROWER_JANE_BALANCE = 10_000e18;
 
@@ -85,7 +87,7 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Authorize MarkdownController to burn JANE
         vm.prank(janeOwner);
-        jane.grantRole(jane.BURNER_ROLE(), address(markdownController));
+        jane.grantRole(BURNER_ROLE, address(markdownController));
 
         // Initialize market cycles
         _continueMarketCyclesJane(id, block.timestamp + CYCLE_DURATION + 7 days);

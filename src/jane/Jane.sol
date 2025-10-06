@@ -20,9 +20,16 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
     event MarkdownControllerSet(address indexed controller);
     event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
 
+    /// @notice Role identifier for the admin (can manage all roles and contract parameters)
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+
+    /// @notice Role identifier for minters (can mint new tokens before minting is finalized)
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+
+    /// @notice Role identifier for burners (can burn tokens from any account)
     bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
+
+    /// @notice Role identifier for transfer-enabled accounts (can transfer when transfers are disabled)
     bytes32 public constant TRANSFER_ROLE = keccak256("TRANSFER_ROLE");
 
     /// @notice Whether transfers are globally enabled for all users
