@@ -18,10 +18,10 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
     event TransferEnabled();
     event MintingFinalized();
     event MarkdownControllerSet(address indexed controller);
-    event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
-    /// @notice Role identifier for the admin (can manage all roles and contract parameters)
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    /// @notice Role identifier for the owner (can manage all roles and contract parameters)
+    bytes32 public constant OWNER_ROLE = keccak256("OWNER_ROLE");
 
     /// @notice Role identifier for minters (can mint new tokens before minting is finalized)
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
@@ -45,16 +45,16 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
 
     /**
      * @notice Initializes the JANE token with owner, minter, and burner
-     * @param _initialAdmin Address that will be the contract admin
+     * @param _initialOwner Address that will be the contract owner
      * @param _minter Address that will have minting privileges
      * @param _burner Address that will have burning privileges
      */
-    constructor(address _initialAdmin, address _minter, address _burner) ERC20("JANE", "JANE") ERC20Permit("JANE") {
-        if (_initialAdmin == address(0)) revert InvalidAddress();
-        _grantRole(ADMIN_ROLE, _initialAdmin);
-        _setRoleAdmin(MINTER_ROLE, ADMIN_ROLE);
-        _setRoleAdmin(BURNER_ROLE, ADMIN_ROLE);
-        _setRoleAdmin(TRANSFER_ROLE, ADMIN_ROLE);
+    constructor(address _initialOwner, address _minter, address _burner) ERC20("JANE", "JANE") ERC20Permit("JANE") {
+        if (_initialOwner == address(0)) revert InvalidAddress();
+        _grantRole(OWNER_ROLE, _initialOwner);
+        _setRoleAdmin(MINTER_ROLE, OWNER_ROLE);
+        _setRoleAdmin(BURNER_ROLE, OWNER_ROLE);
+        _setRoleAdmin(TRANSFER_ROLE, OWNER_ROLE);
         if (_minter != address(0)) {
             _grantRole(MINTER_ROLE, _minter);
         }
@@ -67,7 +67,7 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
      * @notice Enables transfers globally (one-way switch)
      * @dev Once enabled, transfers cannot be disabled again
      */
-    function setTransferable() external onlyRole(ADMIN_ROLE) {
+    function setTransferable() external onlyRole(OWNER_ROLE) {
         transferable = true;
         emit TransferEnabled();
     }
@@ -76,7 +76,7 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
      * @notice Permanently disables minting (one-way switch)
      * @dev Once finalized, no new tokens can ever be minted
      */
-    function finalizeMinting() external onlyRole(ADMIN_ROLE) {
+    function finalizeMinting() external onlyRole(OWNER_ROLE) {
         mintFinalized = true;
         emit MintingFinalized();
     }
@@ -85,22 +85,22 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
      * @notice Sets the MarkdownController address
      * @param _controller Address of the MarkdownController contract
      */
-    function setMarkdownController(address _controller) external onlyRole(ADMIN_ROLE) {
+    function setMarkdownController(address _controller) external onlyRole(OWNER_ROLE) {
         markdownController = _controller;
         emit MarkdownControllerSet(_controller);
     }
 
     /**
-     * @notice Transfers admin role to a new address atomically
-     * @dev Only callable by current admin. Ensures exactly one admin at all times.
-     * @param newAdmin Address that will become the new admin
+     * @notice Transfers ownership to a new address atomically
+     * @dev Only callable by current owner. Ensures exactly one owner at all times.
+     * @param newOwner Address that will become the new owner
      */
-    function transferAdmin(address newAdmin) external onlyRole(ADMIN_ROLE) {
-        if (newAdmin == address(0)) revert InvalidAddress();
-        address previousAdmin = _msgSender();
-        _revokeRole(ADMIN_ROLE, previousAdmin);
-        _grantRole(ADMIN_ROLE, newAdmin);
-        emit AdminTransferred(previousAdmin, newAdmin);
+    function transferOwnership(address newOwner) external onlyRole(OWNER_ROLE) {
+        if (newOwner == address(0)) revert InvalidAddress();
+        address previousOwner = _msgSender();
+        _revokeRole(OWNER_ROLE, previousOwner);
+        _grantRole(OWNER_ROLE, newOwner);
+        emit OwnershipTransferred(previousOwner, newOwner);
     }
 
     /**
@@ -167,11 +167,11 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
     }
 
     /**
-     * @notice Returns the current admin address
-     * @return The admin address, or address(0) if no admin exists
+     * @notice Returns the current owner address
+     * @return The owner address, or address(0) if no owner exists
      */
-    function admin() public view returns (address) {
-        uint256 count = getRoleMemberCount(ADMIN_ROLE);
-        return count > 0 ? getRoleMember(ADMIN_ROLE, 0) : address(0);
+    function owner() public view returns (address) {
+        uint256 count = getRoleMemberCount(OWNER_ROLE);
+        return count > 0 ? getRoleMember(OWNER_ROLE, 0) : address(0);
     }
 }

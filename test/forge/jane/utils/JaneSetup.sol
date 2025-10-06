@@ -17,14 +17,14 @@ contract JaneSetup is Test {
 
     uint256 public constant INITIAL_MINT = 1_000_000e18;
 
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant OWNER_ROLE = keccak256("OWNER_ROLE");
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
     bytes32 public constant TRANSFER_ROLE = keccak256("TRANSFER_ROLE");
 
     event TransferEnabled();
     event MintingFinalized();
-    event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
 

@@ -6,7 +6,7 @@ import {Jane} from "../../../src/jane/Jane.sol";
 
 contract JaneTokenBaseTest is JaneSetup {
     function test_constructor_setsCorrectAddresses() public view {
-        assertEq(token.admin(), owner);
+        assertEq(token.owner(), owner);
         assertTrue(token.hasRole(MINTER_ROLE, minter));
         assertTrue(token.hasRole(BURNER_ROLE, burner));
         assertEq(token.getRoleMemberCount(MINTER_ROLE), 1);
@@ -112,5 +112,27 @@ contract JaneTokenBaseTest is JaneSetup {
         token.mint(recipient, amount);
 
         assertEq(token.balanceOf(recipient), amount);
+    }
+
+    function test_constructor_allowsZeroMinter() public {
+        Jane newToken = new Jane(owner, address(0), burner);
+        assertEq(newToken.getRoleMemberCount(MINTER_ROLE), 0);
+        assertEq(newToken.owner(), owner);
+        assertTrue(newToken.hasRole(BURNER_ROLE, burner));
+    }
+
+    function test_constructor_allowsZeroBurner() public {
+        Jane newToken = new Jane(owner, minter, address(0));
+        assertEq(newToken.getRoleMemberCount(BURNER_ROLE), 0);
+        assertEq(newToken.owner(), owner);
+        assertTrue(newToken.hasRole(MINTER_ROLE, minter));
+    }
+
+    function test_constructor_bothMinterAndBurnerZero() public {
+        Jane newToken = new Jane(owner, address(0), address(0));
+        assertEq(newToken.getRoleMemberCount(MINTER_ROLE), 0);
+        assertEq(newToken.getRoleMemberCount(BURNER_ROLE), 0);
+        assertEq(newToken.owner(), owner);
+        assertTrue(newToken.hasRole(OWNER_ROLE, owner));
     }
 }
