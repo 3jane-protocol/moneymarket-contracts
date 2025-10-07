@@ -28,11 +28,11 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
     /// @param totalClaimed The total amount the user has claimed after this claim
     event Claimed(address indexed user, uint256 amount, uint256 totalClaimed);
 
+    /// @notice Start timestamp of epoch 0
+    uint256 internal immutable START;
+
     /// @notice 7 day epoch length
     uint256 internal constant EPOCH = 604800;
-
-    /// @notice Start timestamp of epoch 0
-    uint256 public immutable START;
 
     /// @notice The JANE token being distributed
     Jane public immutable jane;
