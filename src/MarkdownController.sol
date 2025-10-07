@@ -13,7 +13,7 @@ import {Id, RepaymentStatus} from "./interfaces/IMorpho.sol";
 /// @title MarkdownController
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
-/// @notice Controls markdown calculations and JANE token penalties for borrowers in default
+/// @notice Controls markdown calculations and JANE token redistribution for borrowers in default
 /// @dev Markdowns are applied linearly based on time in default and a configurable duration
 contract MarkdownController is IMarkdownController, Ownable {
     /// @notice WAD constant for percentage calculations (1e18 = 100%)
@@ -34,8 +34,8 @@ contract MarkdownController is IMarkdownController, Ownable {
     /// @notice Mapping of borrowers with markdown enabled
     mapping(address => bool) public markdownEnabled;
 
-    /// @notice Tracks cumulative JANE burned per borrower
-    mapping(address => uint256) public janeBurned;
+    /// @notice Tracks cumulative JANE slashed per borrower
+    mapping(address => uint256) public janeSlashed;
 
     /// @notice Tracks initial JANE balance when markdown started
     mapping(address => uint256) public initialJaneBalance;
@@ -63,7 +63,7 @@ contract MarkdownController is IMarkdownController, Ownable {
         marketId = _marketId;
     }
 
-    /// @notice Only MorphoCredit can call burn functions
+    /// @notice Only MorphoCredit can call slash functions
     modifier onlyMorphoCredit() {
         require(msg.sender == morphoCredit, "Only MorphoCredit");
         _;
@@ -139,61 +139,61 @@ contract MarkdownController is IMarkdownController, Ownable {
         return status == RepaymentStatus.Delinquent || status == RepaymentStatus.Default;
     }
 
-    /// @notice Burns JANE proportionally to markdown progression
+    /// @notice Redistributes JANE proportionally to markdown progression
     /// @param borrower The borrower address
     /// @param timeInDefault Time the borrower has been in default
-    /// @return burned Amount of JANE burned
-    function burnJaneProportional(address borrower, uint256 timeInDefault)
+    /// @return slashed Amount of JANE redistributed
+    function slashJaneProportional(address borrower, uint256 timeInDefault)
         external
         onlyMorphoCredit
-        returns (uint256 burned)
+        returns (uint256 slashed)
     {
         if (!markdownEnabled[borrower] || timeInDefault == 0) return 0;
 
         uint256 initialBalance = initialJaneBalance[borrower];
 
-        // Initialize tracking on first burn
+        // Initialize tracking on first slash
         if (initialBalance == 0) {
             initialBalance = jane.balanceOf(borrower);
             if (initialBalance == 0) return 0;
             initialJaneBalance[borrower] = initialBalance;
         }
 
-        // Calculate target burn based on initial balance
+        // Calculate target slash based on initial balance
         uint256 multiplier = getMarkdownMultiplier(timeInDefault);
-        uint256 targetBurned = initialBalance * (WAD - multiplier) / WAD;
+        uint256 targetSlashed = initialBalance * (WAD - multiplier) / WAD;
 
-        // Burn delta since last touch
-        uint256 alreadyBurned = janeBurned[borrower];
-        if (targetBurned <= alreadyBurned) {
+        // Slash delta since last touch
+        uint256 alreadySlashed = janeSlashed[borrower];
+        if (targetSlashed <= alreadySlashed) {
             return 0;
         }
 
-        burned = targetBurned - alreadyBurned;
+        slashed = targetSlashed - alreadySlashed;
 
         // Cap at current balance
         uint256 currentBalance = jane.balanceOf(borrower);
-        if (burned > currentBalance) burned = currentBalance;
+        if (slashed > currentBalance) slashed = currentBalance;
 
-        if (burned > 0) {
-            janeBurned[borrower] += burned;
-            jane.burn(borrower, burned);
+        if (slashed > 0) {
+            janeSlashed[borrower] += slashed;
+            jane.redistributeFromBorrower(borrower, slashed);
         }
     }
 
-    /// @notice Burns all remaining JANE on settlement
+    /// @notice Redistributes all remaining JANE on settlement
     /// @param borrower The borrower address
-    /// @return burned Amount of JANE burned
-    function burnJaneFull(address borrower) external onlyMorphoCredit returns (uint256 burned) {
+    /// @return slashed Amount of JANE redistributed
+    function slashJaneFull(address borrower) external onlyMorphoCredit returns (uint256 slashed) {
         if (!markdownEnabled[borrower]) return 0;
 
-        burned = jane.balanceOf(borrower);
-        if (burned > 0) {
-            jane.burn(borrower, burned);
+        slashed = jane.balanceOf(borrower);
+        if (slashed > 0) {
+            jane.redistributeFromBorrower(borrower, slashed);
         }
 
         // Reset tracking on settlement
-        janeBurned[borrower] = 0;
+        janeSlashed[borrower] = 0;
         initialJaneBalance[borrower] = 0;
     }
 }

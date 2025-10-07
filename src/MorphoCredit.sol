@@ -749,8 +749,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
             newMarkdown = IMarkdownController(manager).calculateMarkdown(borrower, borrowerAssets, timeInDefault);
 
-            // Burn JANE proportionally to markdown
-            IMarkdownController(manager).burnJaneProportional(borrower, timeInDefault);
+            // Slash JANE proportionally to markdown
+            IMarkdownController(manager).slashJaneProportional(borrower, timeInDefault);
 
             // Cap markdown at the borrower's actual outstanding debt
             // since markdown represents the write-down of the loan value
@@ -867,10 +867,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // Calculate written off assets
         writtenOffAssets = writtenOffShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
 
-        // Burn all remaining JANE on settlement
+        // Slash all remaining JANE on settlement
         address manager = ICreditLine(idToMarketParams[id].creditLine).mm();
         if (manager != address(0)) {
-            IMarkdownController(manager).burnJaneFull(borrower);
+            IMarkdownController(manager).slashJaneFull(borrower);
         }
 
         // Clear position and apply supply adjustment

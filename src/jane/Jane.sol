@@ -11,11 +11,10 @@ import {IMarkdownController} from "../interfaces/IMarkdownController.sol";
  */
 contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
     error TransferNotAllowed();
-    error MintFinalized();
     error InvalidAddress();
+    error Unauthorized();
 
     event TransferEnabled();
-    event MintingFinalized();
     event MarkdownControllerSet(address indexed controller);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
@@ -39,18 +38,15 @@ contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
     address public distributor;
 
     /**
-     * @notice Initializes the JANE token with owner, minter, and burner
+     * @notice Initializes the JANE token with owner and distributor
      * @param _initialOwner Address that will be the contract owner
-     * @param _distributor Address that will have minting privileges
+     * @param _distributor Address that will receive redistributed tokens from defaulted borrowers
      */
     constructor(address _initialOwner, address _distributor) ERC20("JANE", "JANE") ERC20Permit("JANE") {
         if (_initialOwner == address(0)) revert InvalidAddress();
         _grantRole(OWNER_ROLE, _initialOwner);
         _setRoleAdmin(MINTER_ROLE, OWNER_ROLE);
         _setRoleAdmin(TRANSFER_ROLE, OWNER_ROLE);
-        if (_distributor != address(0)) {
-            _grantRole(MINTER_ROLE, _distributor);
-        }
         distributor = _distributor;
     }
 
@@ -70,6 +66,16 @@ contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
     function setMarkdownController(address _controller) external onlyRole(OWNER_ROLE) {
         markdownController = _controller;
         emit MarkdownControllerSet(_controller);
+    }
+
+    /**
+     * @notice Renounces the ability to grant MINTER_ROLE (one-way operation)
+     * @dev Sets MINTER_ROLE admin to 0 (which no one has)
+     * Existing minters can still mint until they individually renounce
+     * After this, no new minters can ever be granted
+     */
+    function renounceMintAdmin() external onlyRole(OWNER_ROLE) {
+        _setRoleAdmin(MINTER_ROLE, bytes32(0));
     }
 
     /**
@@ -114,10 +120,16 @@ contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
         _mint(account, value);
     }
 
-    function redistribute(address account, uint256 value) external {
-        if (account != markdownController) revert InvalidAddress();
-        _burn(account, value);
-        _mint(distributor, value);
+    /**
+     * @notice Redistributes JANE from defaulted borrower to distributor
+     * @dev Only callable by MarkdownController during default/settlement
+     * @param borrower Address of the defaulted borrower
+     * @param amount Amount of tokens to redistribute
+     */
+    function redistributeFromBorrower(address borrower, uint256 amount) external {
+        if (msg.sender != markdownController) revert Unauthorized();
+        if (borrower == address(0) || distributor == address(0)) revert InvalidAddress();
+        _transfer(borrower, distributor, amount);
     }
 
     /**

@@ -4,7 +4,7 @@ pragma solidity >=0.5.0;
 import {Id} from "./IMorpho.sol";
 
 /// @title IMarkdownController
-/// @notice Interface for controlling debt markdowns and JANE token penalties for borrowers in default
+/// @notice Interface for controlling debt markdowns and JANE token redistribution for borrowers in default
 interface IMarkdownController {
     /// @notice Calculate the markdown amount for a borrower's position
     /// @param borrower The address of the borrower
@@ -26,14 +26,14 @@ interface IMarkdownController {
     /// @return True if the borrower is frozen
     function isFrozen(address borrower) external view returns (bool);
 
-    /// @notice Burns JANE proportionally to markdown progression
+    /// @notice Redistributes JANE proportionally to markdown progression
     /// @param borrower The borrower address
     /// @param timeInDefault Time the borrower has been in default
-    /// @return burned Amount of JANE burned
-    function burnJaneProportional(address borrower, uint256 timeInDefault) external returns (uint256 burned);
+    /// @return slashed Amount of JANE redistributed
+    function slashJaneProportional(address borrower, uint256 timeInDefault) external returns (uint256 slashed);
 
-    /// @notice Burns all remaining JANE on settlement
+    /// @notice Redistributes all remaining JANE on settlement
     /// @param borrower The borrower address
-    /// @return burned Amount of JANE burned
-    function burnJaneFull(address borrower) external returns (uint256 burned);
+    /// @return slashed Amount of JANE redistributed
+    function slashJaneFull(address borrower) external returns (uint256 slashed);
 }

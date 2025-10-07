@@ -127,14 +127,14 @@ contract MarkdownManagerMock is IMarkdownController, Ownable {
     }
 
     /// @inheritdoc IMarkdownController
-    function burnJaneProportional(address, uint256) external pure returns (uint256) {
-        // Mock does not actually burn tokens
+    function slashJaneProportional(address, uint256) external pure returns (uint256) {
+        // Mock does not actually slash tokens
         return 0;
     }
 
     /// @inheritdoc IMarkdownController
-    function burnJaneFull(address) external pure returns (uint256) {
-        // Mock does not actually burn tokens
+    function slashJaneFull(address) external pure returns (uint256) {
+        // Mock does not actually slash tokens
         return 0;
     }
 

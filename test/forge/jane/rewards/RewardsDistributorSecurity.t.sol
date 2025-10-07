@@ -19,15 +19,15 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
         vm.prank(alice);
-        distributor.claim(alice, 100e18, proofs[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs[0]);
 
-        assertEq(distributor.claimed(alice), 100e18);
+        assertEq(rewardsDistributor.claimed(alice), 100e18);
         assertEq(getJaneBalance(alice), 100e18);
 
         // Try to claim again (should revert with NothingToClaim)
         vm.prank(alice);
         vm.expectRevert(RewardsDistributor.NothingToClaim.selector);
-        distributor.claim(alice, 100e18, proofs[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs[0]);
     }
 
     /// @notice Test claiming with modified proof components
@@ -45,7 +45,7 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
 
         vm.prank(alice);
         vm.expectRevert(RewardsDistributor.InvalidProof.selector);
-        distributor.claim(alice, 100e18, modifiedProof);
+        rewardsDistributor.claim(alice, 100e18, modifiedProof);
     }
 
     /// @notice Test claiming more than allocated amount
@@ -57,7 +57,7 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         // Try to claim double the allocated amount
         vm.prank(alice);
         vm.expectRevert(RewardsDistributor.InvalidProof.selector);
-        distributor.claim(alice, 200e18, proofs[0]);
+        rewardsDistributor.claim(alice, 200e18, proofs[0]);
     }
 
     /// @notice Test double claiming prevention
@@ -68,17 +68,17 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
 
         // First claim succeeds
         vm.prank(alice);
-        distributor.claim(alice, 100e18, proofs[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs[0]);
 
         // Second claim fails
         vm.prank(alice);
         vm.expectRevert(RewardsDistributor.NothingToClaim.selector);
-        distributor.claim(alice, 100e18, proofs[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs[0]);
 
         // Third claim with different sender also fails
         vm.prank(bob);
         vm.expectRevert(RewardsDistributor.NothingToClaim.selector);
-        distributor.claim(alice, 100e18, proofs[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs[0]);
     }
 
     /// @notice Test access control - only owner can update root
@@ -93,13 +93,13 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         for (uint256 i = 0; i < attackers.length; i++) {
             vm.prank(attackers[i]);
             vm.expectRevert();
-            distributor.updateRoot(root);
+            rewardsDistributor.updateRoot(root);
         }
 
         // Owner can update
         vm.prank(owner);
-        distributor.updateRoot(root);
-        assertEq(distributor.merkleRoot(), root);
+        rewardsDistributor.updateRoot(root);
+        assertEq(rewardsDistributor.merkleRoot(), root);
     }
 
     /// @notice Test access control - only owner can sweep
@@ -112,12 +112,12 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         for (uint256 i = 0; i < attackers.length; i++) {
             vm.prank(attackers[i]);
             vm.expectRevert();
-            distributor.sweep(IERC20(address(token)));
+            rewardsDistributor.sweep(IERC20(address(token)));
         }
 
         // Owner can sweep
         vm.prank(owner);
-        distributor.sweep(IERC20(address(token)));
+        rewardsDistributor.sweep(IERC20(address(token)));
     }
 
     /// @notice Test privilege escalation attempt
@@ -125,12 +125,12 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         // Try to transfer ownership as non-owner
         vm.prank(alice);
         vm.expectRevert();
-        distributor.transferOwnership(alice);
+        rewardsDistributor.transferOwnership(alice);
 
         // Owner can transfer
         vm.prank(owner);
-        distributor.transferOwnership(alice);
-        assertEq(distributor.owner(), alice);
+        rewardsDistributor.transferOwnership(alice);
+        assertEq(rewardsDistributor.owner(), alice);
     }
 
     /// @notice Test claiming with wrong user address
@@ -142,7 +142,7 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         // Bob tries to claim using Alice's proof but for himself
         vm.prank(bob);
         vm.expectRevert(RewardsDistributor.InvalidProof.selector);
-        distributor.claim(bob, 100e18, proofs[0]);
+        rewardsDistributor.claim(bob, 100e18, proofs[0]);
     }
 
     /// @notice Test second preimage attack prevention
@@ -160,7 +160,7 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         // Even with same proof, different user should fail
         vm.prank(bob);
         vm.expectRevert(RewardsDistributor.InvalidProof.selector);
-        distributor.claim(bob, 100e18, attackProof);
+        rewardsDistributor.claim(bob, 100e18, attackProof);
     }
 
     /// @notice Test front-running protection through merkle proof
@@ -173,15 +173,15 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         // Bob sees Alice's transaction and tries to front-run with Alice's proof
         vm.prank(bob);
         vm.expectRevert(RewardsDistributor.InvalidProof.selector);
-        distributor.claim(bob, 100e18, proofs[0]);
+        rewardsDistributor.claim(bob, 100e18, proofs[0]);
 
         // Alice's original transaction succeeds
         vm.prank(alice);
-        distributor.claim(alice, 100e18, proofs[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs[0]);
 
         // Bob can still claim his own allocation
         vm.prank(bob);
-        distributor.claim(bob, 200e18, proofs[1]);
+        rewardsDistributor.claim(bob, 200e18, proofs[1]);
     }
 
     /// @notice Test overflow in claim amounts
@@ -193,19 +193,19 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         // Will revert due to insufficient balance in distributor
         vm.prank(alice);
         vm.expectRevert();
-        distributor.claim(alice, type(uint256).max, proofs[0]);
+        rewardsDistributor.claim(alice, type(uint256).max, proofs[0]);
     }
 
     /// @notice Test malformed proof - empty array
     function test_malformedProof_emptyArray() public {
         vm.prank(owner);
-        distributor.updateRoot(keccak256("test"));
+        rewardsDistributor.updateRoot(keccak256("test"));
 
         bytes32[] memory emptyProof = new bytes32[](0);
 
         vm.prank(alice);
         vm.expectRevert(RewardsDistributor.InvalidProof.selector);
-        distributor.claim(alice, 100e18, emptyProof);
+        rewardsDistributor.claim(alice, 100e18, emptyProof);
     }
 
     /// @notice Test malformed proof - too many elements
@@ -225,7 +225,7 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
 
         vm.prank(alice);
         vm.expectRevert(RewardsDistributor.InvalidProof.selector);
-        distributor.claim(alice, 100e18, bloatedProof);
+        rewardsDistributor.claim(alice, 100e18, bloatedProof);
     }
 
     /// @notice Test gas griefing resistance with large proof
@@ -236,12 +236,12 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         }
 
         vm.prank(owner);
-        distributor.updateRoot(keccak256("test"));
+        rewardsDistributor.updateRoot(keccak256("test"));
 
         // Should fail verification, not run out of gas
         vm.prank(alice);
         vm.expectRevert(RewardsDistributor.InvalidProof.selector);
-        distributor.claim(alice, 100e18, largeProof);
+        rewardsDistributor.claim(alice, 100e18, largeProof);
     }
 
     /// @notice Test claim with minimal valid proof (single user)
@@ -255,7 +255,7 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
 
         // Should still work
         vm.prank(alice);
-        distributor.claim(alice, 100e18, proofs[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs[0]);
         assertEq(getJaneBalance(alice), 100e18);
     }
 
@@ -269,13 +269,13 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         for (uint256 i = 0; i < nonOwners.length; i++) {
             vm.prank(nonOwners[i]);
             vm.expectRevert();
-            distributor.setUseMint(true);
+            rewardsDistributor.setUseMint(true);
         }
 
         // Owner can toggle
         vm.prank(owner);
-        distributor.setUseMint(true);
-        assertTrue(distributor.useMint());
+        rewardsDistributor.setUseMint(true);
+        assertTrue(rewardsDistributor.useMint());
     }
 
     /// @notice Test mint mode requires minter role
@@ -286,29 +286,13 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
 
         vm.prank(alice);
         vm.expectRevert();
-        distributor.claim(alice, 100e18, proofs[0]);
-    }
-
-    /// @notice Test mint mode respects mintFinalized
-    function test_mintMode_respectsMintFinalized() public {
-        addMinter(address(distributor));
-        toggleMintMode(true);
-
-        // Finalize minting
-        vm.prank(owner);
-        token.finalizeMinting();
-
-        bytes32[][] memory proofs = setupSimpleRoot();
-
-        vm.prank(alice);
-        vm.expectRevert(Jane.MintFinalized.selector);
-        distributor.claim(alice, 100e18, proofs[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs[0]);
     }
 
     /// @notice Test transfer mode requires sufficient balance
     function test_transferMode_requiresSufficientBalance() public {
         // Deploy new distributor without funding
-        RewardsDistributor emptyDistributor = new RewardsDistributor(owner, address(token), false, START);
+        RewardsDistributor emptyDistributor = new RewardsDistributor(owner, address(token), false, START, 0);
 
         // Create root
         MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](1);
@@ -331,8 +315,8 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         claims1[0] = MerkleTreeHelper.Claim(alice, 500e18);
         (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(claims1);
 
-        distributor.claim(alice, 500e18, proofs1[0]);
-        assertEq(distributor.claimed(alice), 500e18);
+        rewardsDistributor.claim(alice, 500e18, proofs1[0]);
+        assertEq(rewardsDistributor.claimed(alice), 500e18);
 
         // Root updated: Alice reduced to 200
         MerkleTreeHelper.Claim[] memory claims2 = new MerkleTreeHelper.Claim[](1);
@@ -341,7 +325,7 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
 
         // Cannot claim (200 <= 500)
         vm.expectRevert(RewardsDistributor.NothingToClaim.selector);
-        distributor.claim(alice, 200e18, proofs2[0]);
+        rewardsDistributor.claim(alice, 200e18, proofs2[0]);
 
         // Alice keeps what she claimed
         assertEq(token.balanceOf(alice), 500e18);
@@ -354,7 +338,7 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         claims1[0] = MerkleTreeHelper.Claim(alice, 100e18);
         (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(claims1);
 
-        distributor.claim(alice, 100e18, proofs1[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs1[0]);
 
         // Week 2 - new root
         MerkleTreeHelper.Claim[] memory claims2 = new MerkleTreeHelper.Claim[](1);
@@ -363,10 +347,10 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
 
         // Try to reuse old proof (should fail)
         vm.expectRevert(RewardsDistributor.InvalidProof.selector);
-        distributor.claim(alice, 100e18, proofs1[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs1[0]);
 
         // Correct proof works
-        distributor.claim(alice, 250e18, proofs2[0]);
+        rewardsDistributor.claim(alice, 250e18, proofs2[0]);
         assertEq(token.balanceOf(alice), 250e18);
     }
 
@@ -377,18 +361,18 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         claims1[0] = MerkleTreeHelper.Claim(alice, 100e18);
         (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(claims1);
 
-        distributor.claim(alice, 100e18, proofs1[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs1[0]);
 
         // Week 2: alice = 150
         MerkleTreeHelper.Claim[] memory claims2 = new MerkleTreeHelper.Claim[](1);
         claims2[0] = MerkleTreeHelper.Claim(alice, 150e18);
         (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(claims2);
 
-        distributor.claim(alice, 150e18, proofs2[0]);
+        rewardsDistributor.claim(alice, 150e18, proofs2[0]);
 
         // Alice should have exactly 150, not 250
         assertEq(token.balanceOf(alice), 150e18);
-        assertEq(distributor.claimed(alice), 150e18);
+        assertEq(rewardsDistributor.claimed(alice), 150e18);
     }
 
     /// @notice Test claiming with zero allocation
@@ -398,7 +382,7 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
         vm.expectRevert(RewardsDistributor.NothingToClaim.selector);
-        distributor.claim(alice, 0, proofs[0]);
+        rewardsDistributor.claim(alice, 0, proofs[0]);
     }
 
     /// @notice Test root update event emissions
@@ -409,11 +393,11 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         vm.prank(owner);
         vm.expectEmit(true, true, false, false);
         emit RootUpdated(bytes32(0), root1);
-        distributor.updateRoot(root1);
+        rewardsDistributor.updateRoot(root1);
 
         vm.prank(owner);
         vm.expectEmit(true, true, false, false);
         emit RootUpdated(root1, root2);
-        distributor.updateRoot(root2);
+        rewardsDistributor.updateRoot(root2);
     }
 }
