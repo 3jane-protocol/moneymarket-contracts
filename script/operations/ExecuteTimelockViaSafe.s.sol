@@ -2,6 +2,7 @@
 pragma solidity 0.8.22;
 
 import {Script, console2} from "forge-std/Script.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {SafeHelper} from "../utils/SafeHelper.sol";
 import {TimelockHelper} from "../utils/TimelockHelper.sol";
 import {ITimelockController} from "../../src/interfaces/ITimelockController.sol";
@@ -13,10 +14,12 @@ contract ExecuteTimelockViaSafe is Script, SafeHelper, TimelockHelper {
     /// @notice TimelockController address (mainnet)
     address private constant TIMELOCK = 0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2;
 
-    /// @notice Storage for operation data (would typically be stored off-chain)
-    mapping(bytes32 => TimelockOperation) private operations;
+    /// @notice Event signatures for parsing
+    bytes32 private constant CALL_SCHEDULED_TOPIC =
+        keccak256("CallScheduled(bytes32,uint256,address,uint256,bytes,bytes32,uint256)");
+    bytes32 private constant CALL_SALT_TOPIC = keccak256("CallSalt(bytes32,bytes32)");
 
-    /// @notice Execute a scheduled operation
+    /// @notice Execute a scheduled operation by fetching data from events
     /// @param operationId The ID of the operation to execute
     /// @param send Whether to send transaction to Safe API (true) or just simulate (false)
     function run(bytes32 operationId, bool send)
@@ -38,18 +41,47 @@ contract ExecuteTimelockViaSafe is Script, SafeHelper, TimelockHelper {
         // Ensure operation is ready
         requireOperationReady(TIMELOCK, operationId);
 
-        // For this example, we need to reconstruct the operation data
-        // In practice, this would be stored off-chain or passed as parameters
-        console2.log("[INFO] Operation is ready for execution");
-        console2.log("[INFO] You need to provide the original operation data");
+        console2.log("Fetching operation data from events...");
         console2.log("");
 
-        // Note: In a real scenario, you would either:
-        // 1. Store operation data in a mapping when scheduling
-        // 2. Pass all operation data as parameters
-        // 3. Retrieve from an off-chain storage system
+        // Fetch operation data from events
+        (address[] memory targets, uint256[] memory values, bytes[] memory datas, bytes32 predecessor, bytes32 salt) =
+            _fetchOperationData(operationId);
 
-        revert("Please use runWithData() and provide the operation data");
+        // Log the fetched data
+        console2.log("Operation data fetched successfully:");
+        console2.log("  Targets:", targets.length);
+        for (uint256 i = 0; i < targets.length; i++) {
+            console2.log("    Target", i, ":", targets[i]);
+            console2.log("    Value", i, ":", values[i]);
+        }
+        console2.log("  Predecessor:", vm.toString(predecessor));
+        console2.log("  Salt:", vm.toString(salt));
+        console2.log("");
+
+        // Verify the operation ID matches
+        bytes32 calculatedId = calculateBatchOperationId(targets, values, datas, predecessor, salt);
+        require(calculatedId == operationId, "Operation ID mismatch after fetching data");
+
+        // Encode the executeBatch call
+        bytes memory executeCalldata = encodeExecuteBatch(targets, values, datas, predecessor, salt);
+
+        // Add to Safe batch
+        console2.log("Adding executeBatch call to Safe transaction...");
+        addToBatch(TIMELOCK, executeCalldata);
+
+        // Execute via Safe
+        if (send) {
+            console2.log("Sending transaction to Safe API...");
+            executeBatch(true);
+            console2.log("Transaction sent successfully!");
+            console2.log("");
+            console2.log("Once executed, the operation will be marked as Done");
+        } else {
+            console2.log("Simulation mode - not sending to Safe");
+            executeBatch(false);
+            console2.log("Simulation completed successfully");
+        }
     }
 
     /// @notice Execute operation with provided data
@@ -181,5 +213,88 @@ contract ExecuteTimelockViaSafe is Script, SafeHelper, TimelockHelper {
             console2.log("  Hours:", remaining / 3600);
             console2.log("  Minutes:", (remaining % 3600) / 60);
         }
+    }
+
+    /// @notice Fetch operation data from CallScheduled and CallSalt events
+    /// @param operationId The operation ID to search for
+    /// @return targets Array of target addresses
+    /// @return values Array of ETH values
+    /// @return datas Array of calldata
+    /// @return predecessor Predecessor dependency
+    /// @return salt Salt value
+    function _fetchOperationData(bytes32 operationId)
+        private
+        returns (
+            address[] memory targets,
+            uint256[] memory values,
+            bytes[] memory datas,
+            bytes32 predecessor,
+            bytes32 salt
+        )
+    {
+        // Search for CallScheduled events with this operation ID
+        // The operation ID is the first indexed topic
+        bytes32[] memory topics = new bytes32[](2);
+        topics[0] = CALL_SCHEDULED_TOPIC;
+        topics[1] = operationId;
+
+        // Get logs from the last 30 days (approximately)
+        uint256 fromBlock = block.number > 216000 ? block.number - 216000 : 0;
+        Vm.EthGetLogs[] memory scheduledLogs = vm.eth_getLogs(fromBlock, block.number, TIMELOCK, topics);
+
+        require(scheduledLogs.length > 0, "No CallScheduled events found for this operation ID");
+
+        // Count unique indices to determine array sizes
+        uint256 maxIndex = 0;
+        for (uint256 i = 0; i < scheduledLogs.length; i++) {
+            // Index is the second indexed topic
+            uint256 index = uint256(scheduledLogs[i].topics[2]);
+            if (index > maxIndex) {
+                maxIndex = index;
+            }
+        }
+
+        // Initialize arrays with the correct size
+        uint256 arraySize = maxIndex + 1;
+        targets = new address[](arraySize);
+        values = new uint256[](arraySize);
+        datas = new bytes[](arraySize);
+
+        // Parse CallScheduled events
+        for (uint256 i = 0; i < scheduledLogs.length; i++) {
+            uint256 index = uint256(scheduledLogs[i].topics[2]);
+
+            // Decode the non-indexed parameters from data
+            (address target, uint256 value, bytes memory data, bytes32 pred, uint256 delay) =
+                abi.decode(scheduledLogs[i].data, (address, uint256, bytes, bytes32, uint256));
+
+            targets[index] = target;
+            values[index] = value;
+            datas[index] = data;
+
+            // Predecessor should be the same for all events in the batch
+            if (i == 0) {
+                predecessor = pred;
+            } else {
+                require(predecessor == pred, "Inconsistent predecessor in batch");
+            }
+        }
+
+        // Search for CallSalt event
+        bytes32[] memory saltTopics = new bytes32[](2);
+        saltTopics[0] = CALL_SALT_TOPIC;
+        saltTopics[1] = operationId;
+
+        Vm.EthGetLogs[] memory saltLogs = vm.eth_getLogs(fromBlock, block.number, TIMELOCK, saltTopics);
+
+        if (saltLogs.length > 0) {
+            // Decode salt from the event data
+            salt = abi.decode(saltLogs[0].data, (bytes32));
+        } else {
+            // If no CallSalt event, salt is likely bytes32(0)
+            salt = bytes32(0);
+        }
+
+        return (targets, values, datas, predecessor, salt);
     }
 }

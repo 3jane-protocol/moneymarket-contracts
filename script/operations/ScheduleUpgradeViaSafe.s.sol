@@ -9,6 +9,7 @@ import {
     ITransparentUpgradeableProxy,
     ProxyAdmin
 } from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {StorageSlot} from "../../lib/openzeppelin/contracts/utils/StorageSlot.sol";
 
 /// @title ScheduleUpgradeViaSafe Script
 /// @notice Schedule a contract upgrade through TimelockController via Safe multisig
@@ -17,25 +18,29 @@ contract ScheduleUpgradeViaSafe is Script, SafeHelper, TimelockHelper {
     /// @notice TimelockController address (mainnet)
     address private constant TIMELOCK = 0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2;
 
-    /// @notice Example addresses - replace with actual values
-    address private constant PROXY_ADMIN = address(0); // Set actual ProxyAdmin address
-    address private constant PROXY_CONTRACT = address(0); // Set actual proxy to upgrade
+    /// @notice EIP-1967 admin slot - stores the ProxyAdmin address
+    bytes32 private constant ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
 
     /// @notice Main execution function
+    /// @param proxyContract Address of the proxy contract to upgrade
     /// @param newImplementation Address of the new implementation contract
     /// @param description Description of the upgrade (used for salt generation)
     /// @param delay Delay in seconds before the operation can be executed
     /// @param send Whether to send transaction to Safe API (true) or just simulate (false)
-    function run(address newImplementation, string memory description, uint256 delay, bool send)
+    function run(address proxyContract, address newImplementation, string memory description, uint256 delay, bool send)
         external
         isBatch(vm.envOr("SAFE_ADDRESS", 0x33333333Bd7045F1A601A1E289D7AB21036fB5EF))
         isTimelock(TIMELOCK)
     {
+        // Dynamically retrieve the ProxyAdmin address from the proxy's admin slot
+        address proxyAdmin = getProxyAdmin(proxyContract);
+        require(proxyAdmin != address(0), "ProxyAdmin not found");
+
         console2.log("=== Scheduling Contract Upgrade via Safe + Timelock ===");
         console2.log("Safe address:", vm.envOr("SAFE_ADDRESS", 0x33333333Bd7045F1A601A1E289D7AB21036fB5EF));
         console2.log("Timelock address:", TIMELOCK);
-        console2.log("ProxyAdmin address:", PROXY_ADMIN);
-        console2.log("Proxy to upgrade:", PROXY_CONTRACT);
+        console2.log("Proxy to upgrade:", proxyContract);
+        console2.log("ProxyAdmin address (retrieved):", proxyAdmin);
         console2.log("New implementation:", newImplementation);
         console2.log("Description:", description);
         console2.log("Delay (seconds):", delay);
@@ -44,8 +49,6 @@ contract ScheduleUpgradeViaSafe is Script, SafeHelper, TimelockHelper {
         console2.log("");
 
         // Validate inputs
-        require(PROXY_ADMIN != address(0), "ProxyAdmin address not set");
-        require(PROXY_CONTRACT != address(0), "Proxy contract address not set");
         require(newImplementation != address(0), "New implementation cannot be zero address");
         require(delay >= getMinDelay(TIMELOCK), "Delay less than minimum");
 
@@ -55,10 +58,10 @@ contract ScheduleUpgradeViaSafe is Script, SafeHelper, TimelockHelper {
         bytes[] memory datas = new bytes[](1);
 
         // The actual upgrade call that will be executed after timelock
-        targets[0] = PROXY_ADMIN;
+        targets[0] = proxyAdmin;
         values[0] = 0;
         datas[0] = abi.encodeCall(
-            ProxyAdmin.upgradeAndCall, (ITransparentUpgradeableProxy(PROXY_CONTRACT), newImplementation, "")
+            ProxyAdmin.upgradeAndCall, (ITransparentUpgradeableProxy(proxyContract), newImplementation, "")
         );
 
         // Generate salt from description
@@ -112,13 +115,33 @@ contract ScheduleUpgradeViaSafe is Script, SafeHelper, TimelockHelper {
         console2.log("  Operation ID:", vm.toString(operationId));
     }
 
+    /// @notice Retrieve the ProxyAdmin address from a proxy contract
+    /// @param proxyContract The proxy contract address
+    /// @return The ProxyAdmin address stored in the proxy's admin slot
+    function getProxyAdmin(address proxyContract) public view returns (address) {
+        // Read directly from the EIP-1967 admin slot
+        bytes32 adminSlot = vm.load(proxyContract, ADMIN_SLOT);
+        return address(uint160(uint256(adminSlot)));
+    }
+
     /// @notice Alternative entry point with example values
     function runExample() external {
         // Example values - replace with actual
+        address proxy = 0x056B269Eb1f75477a8666ae8C7fE01b64dD55eCc; // USD3 proxy
         address newImpl = address(0x1234567890123456789012345678901234567890);
         string memory desc = "Upgrade to v2.0.0";
         uint256 delayTime = 2 days;
 
-        this.run(newImpl, desc, delayTime, false);
+        this.run(proxy, newImpl, desc, delayTime, false);
+    }
+
+    /// @notice Convenience function for USD3 upgrade
+    /// @param newImplementation Address of the new USD3 implementation
+    /// @param description Description of the upgrade
+    /// @param delay Delay in seconds before execution
+    /// @param send Whether to send to Safe API
+    function runUSD3Upgrade(address newImplementation, string memory description, uint256 delay, bool send) external {
+        address usd3Proxy = 0x056B269Eb1f75477a8666ae8C7fE01b64dD55eCc;
+        this.run(usd3Proxy, newImplementation, description, delay, send);
     }
 }

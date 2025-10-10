@@ -128,7 +128,7 @@ abstract contract SafeHelper is Script, Test {
     modifier isBatch(address safe_) {
         // Set the Safe API base URL and multisend address based on chain
         chainId = block.chainid;
-        SAFE_API_BASE_URL = string.concat("https://safe-client.safe.global/v1/chains/", vm.toString(chainId), "/");
+        SAFE_API_BASE_URL = "https://safe-transaction-mainnet.safe.global/api/v1/";
         SAFE_MULTISEND_ADDRESS = 0x40A2aCCbd92BCA938b02010E17A5b8929b49130D;
         safe = safe_;
 
@@ -320,8 +320,23 @@ abstract contract SafeHelper is Script, Test {
 
         if (status == 200 || status == 201) {
             console2.log("Batch sent successfully");
+
+            // Construct Safe UI URL
+            string memory safeUrl = string.concat(
+                "https://app.safe.global/transactions/tx?safe=eth:",
+                vm.toString(safe_),
+                "&id=multisig_",
+                vm.toString(safe_),
+                "_",
+                txnHash
+            );
+
+            console2.log("");
+            console2.log("View transaction in Safe:");
+            console2.log(safeUrl);
         } else {
-            // console2.log(string(data));
+            console2.log("Send batch failed with status:", status);
+            console2.log("Response:", string(data));
             revert("Send batch failed!");
         }
     }
@@ -464,18 +479,18 @@ abstract contract SafeHelper is Script, Test {
         (uint256 status, bytes memory data) = endpoint.get();
         if (status == 200) {
             string memory resp = string(data);
-            return resp.readUint(".recommendedNonce");
+            return resp.readUint(".nonce");
         } else {
             revert(string(abi.encodePacked("Error fetching nonce: ", vm.toString(status), ", ", string(data))));
         }
     }
 
     function _getSafeTransactionAPIEndpoint(address safe_) private view returns (string memory) {
-        return string.concat(SAFE_API_BASE_URL, "transactions/", vm.toString(safe_), "/propose");
+        return string.concat(SAFE_API_BASE_URL, "safes/", vm.toString(safe_), "/multisig-transactions/");
     }
 
     function _getSafeNonceAPIEndpoint(address safe_) private view returns (string memory) {
-        return string.concat(SAFE_API_BASE_URL, "safes/", vm.toString(safe_), "/nonces");
+        return string.concat(SAFE_API_BASE_URL, "safes/", vm.toString(safe_), "/");
     }
 
     function _getHeaders() private pure returns (string[] memory) {
