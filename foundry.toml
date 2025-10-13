@@ -41,4 +41,17 @@ extra_output = ["storageLayout"]
 via-ir = false
 
 
+[profile.production-test]
+# Optimized profile for production testing with minimal compilation
+src = "test/forge/production"
+test = "test/forge/production"
+script = "/dev/null"
+via_ir = false
+optimizer = true
+optimizer_runs = 200
+ffi = true
+# Skip unnecessary compilation
+match_path = "test/forge/production/*"
+
+
 # See more config options https://github.com/foundry-rs/foundry/tree/master/crates/config
