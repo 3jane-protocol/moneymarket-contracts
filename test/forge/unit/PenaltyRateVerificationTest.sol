@@ -8,6 +8,7 @@ import {Id, MarketParams, RepaymentStatus, IMorphoCredit} from "../../../src/int
 import {EventsLib} from "../../../src/libraries/EventsLib.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 import {MathLib} from "../../../src/libraries/MathLib.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 
 /// @title Penalty Rate Verification Test
 /// @notice Precise tests to verify penalty interest accrues at exactly the expected rates
@@ -108,12 +109,12 @@ contract PenaltyRateVerificationTest is BaseTest {
         _createPastObligation(ALICE, OBLIGATION_BPS, ENDING_BALANCE);
 
         // Warp to be exactly at the end of grace period
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 cycleEndDate) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 cycleEndDate) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
         vm.warp(cycleEndDate + GRACE_PERIOD_DURATION);
 
         // Verify we're still in grace period
-        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod), "Should be in grace period");
 
         // Step 3: Record state before crossing into delinquency
@@ -123,7 +124,7 @@ contract PenaltyRateVerificationTest is BaseTest {
         vm.warp(block.timestamp + 1);
 
         // Now we should be delinquent
-        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "Should be delinquent");
 
         // Step 5: Trigger full market accrual first, then borrower premium
@@ -134,8 +135,9 @@ contract PenaltyRateVerificationTest is BaseTest {
 
         // Step 6: Calculate expected penalty
         // Get the actual cycle end date from the obligation
-        cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 actualCycleEndDate) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 actualCycleEndDate) =
+            MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
         // Penalty duration is from cycle end date to now
         uint256 penaltyDuration = block.timestamp - actualCycleEndDate;
         uint256 expectedPenaltyGrowth = PENALTY_RATE_PER_SECOND.wTaylorCompounded(penaltyDuration);
@@ -212,12 +214,12 @@ contract PenaltyRateVerificationTest is BaseTest {
         _createPastObligation(ALICE, OBLIGATION_BPS, ENDING_BALANCE);
 
         // Warp to be 3 days past grace period (well into delinquency)
-        uint256 cycleLen = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 cycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLen - 1);
+        uint256 cycleLen = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 cycleEnd) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLen - 1);
         vm.warp(cycleEnd + GRACE_PERIOD_DURATION + 3 days);
 
         // Verify we're delinquent
-        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "Should be delinquent");
 
         // Step 2: First accrual to capture initial penalty

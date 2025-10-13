@@ -1,4 +1,5 @@
 forge-std/=lib/forge-std/src/
 halmos-cheatcodes/=lib/halmos-cheatcodes/src/
-@openzeppelin/contracts/=lib/openzeppelin/contracts/
+@tokenized-strategy/=lib/tokenized-strategy/src/
+@periphery/=lib/tokenized-strategy-periphery/src/
 openzeppelin-foundry-upgrades/=lib/openzeppelin-foundry-upgrades/src/

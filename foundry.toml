@@ -39,7 +39,30 @@ extra_output = ["storageLayout"]
 
 [profile.test]
 via-ir = false
+script = "/dev/null"
+# Run all tests but exclude IRM tests
+no_match_path = "**/{irm,production}/**"
 
+[profile.test-irm]
+# IRM tests need via-ir due to stack complexity
+via-ir = true
+script = "/dev/null"
+optimizer_details.optimizerSteps = "u"
+# Only run IRM tests
+match_path = "**/irm/**"
+
+[profile.halmos]
+# IRM tests need via-ir due to stack complexity
+via-ir = false
+script = "/dev/null"
+test = "test/halmos"
+
+
+[profile.fork]
+# Fork tests configuration
+test = "test/forge/usd3/fork"
+via_ir = false
+fork_block_number = 23400200  # Fixed block for reproducibility
 
 [profile.production-test]
 # Optimized profile for production testing with minimal compilation

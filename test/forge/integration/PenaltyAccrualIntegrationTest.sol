@@ -299,7 +299,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
             // days
 
         // Bob is in default
-        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, BOB);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, BOB);
         assertEq(uint256(status), uint256(RepaymentStatus.Default));
 
         uint256 assetsBefore = morpho.expectedBorrowAssets(marketParams, BOB);
@@ -443,7 +443,8 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
 
         // Verify all have delinquent status
         for (uint256 i = 0; i < 10; i++) {
-            (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, allBorrowers[i]);
+            (RepaymentStatus status,) =
+                MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, allBorrowers[i]);
             assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
         }
     }
@@ -472,11 +473,11 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
             // days = delinquent
 
         // Record the timestamp when this cycle was created
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 cycle1EndDate) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 cycle1EndDate) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
 
         // Verify Alice is delinquent
-        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "Should be delinquent from Cycle 1");
 
         // Record the cycle ID and ending balance that were set
@@ -529,8 +530,9 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
 
         // Verify that the penalty is NOT based on Cycle 2's parameters
         // Get the actual cycle 2 end date
-        uint256 newCycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 cycle2EndDate) = IMorphoCredit(address(morpho)).getCycleDates(id, newCycleLength - 1);
+        uint256 newCycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 cycle2EndDate) =
+            MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, newCycleLength - 1);
         uint256 timeSinceCycle2 = block.timestamp - cycle2EndDate;
         uint256 wrongPenalty = uint256(25000e18).wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(timeSinceCycle2)); // Using
             // Cycle 2's balance

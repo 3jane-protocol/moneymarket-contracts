@@ -50,7 +50,7 @@ library MorphoCreditStorageLib {
     function paymentCycleElementSlot(Id id, uint256 index) internal pure returns (bytes32) {
         // Array storage: keccak256(baseSlot) + index
         bytes32 baseSlot = keccak256(abi.encode(id, PAYMENT_CYCLE_SLOT));
-        return bytes32(uint256(baseSlot) + index);
+        return bytes32(uint256(keccak256(abi.encode(baseSlot))) + index);
     }
 
     function repaymentObligationSlot(Id id, address borrower) internal pure returns (bytes32) {

@@ -69,4 +69,14 @@ struct ReserveDataLegacy {
 interface IAaveMarket {
     /// @notice Aave market reserve data
     function getReserveData(address reserve) external view returns (ReserveDataLegacy memory);
+
+    /// @notice Returns the normalized income of the reserve
+    /// @param asset The address of the underlying asset of the reserve
+    /// @return The reserve's normalized income
+    function getReserveNormalizedIncome(address asset) external view returns (uint256);
+
+    /// @notice Returns the normalized variable debt per unit of asset
+    /// @param asset The address of the underlying asset of the reserve
+    /// @return The reserve normalized variable debt
+    function getReserveNormalizedVariableDebt(address asset) external view returns (uint256);
 }

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
 import {Id, MarketParams, RepaymentStatus, IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
@@ -526,7 +527,7 @@ contract PenaltyInterestTest is BaseTest {
         _triggerBorrowerAccrual(ALICE);
 
         // Status should now be Delinquent (8 days past - 7 grace = 1 day delinquent)
-        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
 
         // Forward time to reach default threshold (need 30 days total past due)
@@ -539,7 +540,7 @@ contract PenaltyInterestTest is BaseTest {
         _triggerBorrowerAccrual(ALICE);
 
         // Status should now be Default (30 days past due)
-        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Default));
 
         // Penalty should still accrue in default status
