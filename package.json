@@ -24,6 +24,7 @@
     "test:forge:snapshot": "FOUNDRY_PROFILE=test forge snapshot",
     "test:hardhat": "npx hardhat test",
     "test:halmos": "FOUNDRY_PROFILE=halmos halmos --function check_",
+    "script:forge": "FOUNDRY_PROFILE=script forge script",
     "lint": "yarn lint:forge && yarn lint:hardhat",
     "lint:forge": "forge fmt --check",
     "lint:hardhat": "prettier --check test/hardhat",
