@@ -63,6 +63,7 @@ contract Helper is IHelper {
 
     /// @inheritdoc IHelper
     function deposit(uint256 assets, address receiver, bool hop) public returns (uint256) {
+        if (msg.sender != receiver) revert ErrorsLib.Unauthorized();
         IERC20(USDC).safeTransferFrom(msg.sender, address(this), assets);
 
         if (hop) {
