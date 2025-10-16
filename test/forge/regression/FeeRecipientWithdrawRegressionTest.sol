@@ -5,8 +5,9 @@ import "../BaseTest.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 /// @title FeeRecipientWithdrawRegressionTest
 /// @notice Regression test for Sherlock issue #23 - Fee recipient withdrawal capability
@@ -83,9 +84,8 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(address(creditLine));
-        IMorphoCredit(realMorphoAddress).closeCycleAndPostObligations(
-            testMarketId, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(realMorphoAddress)
+            .closeCycleAndPostObligations(testMarketId, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         // Now warp to a time well within the next cycle period
         // The next cycle would end at 10 days + 30 days = 40 days
@@ -129,9 +129,8 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(address(creditLine));
-        IMorphoCredit(realMorphoAddress).closeCycleAndPostObligations(
-            testMarketId, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(realMorphoAddress)
+            .closeCycleAndPostObligations(testMarketId, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         // Repay partial amount to trigger fee accrual
         vm.startPrank(BORROWER);
@@ -206,9 +205,10 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
                 uint256[] memory _endingBalances = new uint256[](0);
                 vm.stopPrank(); // Stop the BORROWER prank before starting creditLine prank
                 vm.prank(address(creditLine));
-                IMorphoCredit(realMorphoAddress).closeCycleAndPostObligations(
-                    testMarketId, block.timestamp, _borrowers, _repaymentBps, _endingBalances
-                );
+                IMorphoCredit(realMorphoAddress)
+                    .closeCycleAndPostObligations(
+                        testMarketId, block.timestamp, _borrowers, _repaymentBps, _endingBalances
+                    );
                 vm.startPrank(BORROWER); // Resume BORROWER prank
             }
 
@@ -261,9 +261,10 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
         uint256[] memory emptyRepaymentBps = new uint256[](0);
         uint256[] memory emptyBalances = new uint256[](0);
         vm.prank(address(creditLine));
-        IMorphoCredit(realMorphoAddress).closeCycleAndPostObligations(
-            testMarketId, block.timestamp, emptyBorrowers, emptyRepaymentBps, emptyBalances
-        );
+        IMorphoCredit(realMorphoAddress)
+            .closeCycleAndPostObligations(
+                testMarketId, block.timestamp, emptyBorrowers, emptyRepaymentBps, emptyBalances
+            );
 
         vm.startPrank(BORROWER);
         loanToken.approve(realMorphoAddress, type(uint256).max);
@@ -298,9 +299,8 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
         uint256[] memory _repaymentBps = new uint256[](0);
         uint256[] memory _endingBalances = new uint256[](0);
         vm.prank(address(creditLine));
-        IMorphoCredit(realMorphoAddress).closeCycleAndPostObligations(
-            testMarketId, block.timestamp, _borrowers, _repaymentBps, _endingBalances
-        );
+        IMorphoCredit(realMorphoAddress)
+            .closeCycleAndPostObligations(testMarketId, block.timestamp, _borrowers, _repaymentBps, _endingBalances);
 
         vm.prank(BORROWER);
         // Second repayment - keep remaining debt above minBorrow (1000e18)

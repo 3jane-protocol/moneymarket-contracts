@@ -8,8 +8,9 @@ import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {Math} from "../../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 
@@ -231,7 +232,8 @@ contract TransferRestrictionComplexScenarios is Setup {
         assertEq(IERC20(address(usd3Strategy)).balanceOf(alice), 0);
 
         // Total should be preserved (within rounding)
-        uint256 total = IERC20(address(usd3Strategy)).balanceOf(bob) + IERC20(address(usd3Strategy)).balanceOf(charlie)
+        uint256 total =
+            IERC20(address(usd3Strategy)).balanceOf(bob) + IERC20(address(usd3Strategy)).balanceOf(charlie)
             + IERC20(address(usd3Strategy)).balanceOf(dave);
         assertApproxEqAbs(total, balance, 3); // Allow 3 wei rounding
     }

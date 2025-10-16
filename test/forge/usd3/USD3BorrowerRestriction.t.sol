@@ -61,13 +61,14 @@ contract USD3BorrowerRestrictionTest is Setup {
         );
 
         // Deploy Helper contract with correct addresses
-        helperContract = new Helper(
-            address(morpho),
-            address(usd3Strategy),
-            sUSD3,
-            address(underlyingAsset), // USDC
-            address(waUSDC)
-        );
+        helperContract =
+            new Helper(
+                address(morpho),
+                address(usd3Strategy),
+                sUSD3,
+                address(underlyingAsset), // USDC
+                address(waUSDC)
+            );
 
         // Fund test users
         _fundUsers();
@@ -123,13 +124,14 @@ contract USD3BorrowerRestrictionTest is Setup {
         console2.log("_setupBorrowerWithLoan creditLine:", marketParams.creditLine);
 
         vm.prank(marketParams.creditLine);
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            marketId,
-            block.timestamp, // End date is current time
-            new address[](0), // No borrowers yet
-            new uint256[](0), // No repayment bps
-            new uint256[](0) // No ending balances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(
+                marketId,
+                block.timestamp, // End date is current time
+                new address[](0), // No borrowers yet
+                new uint256[](0), // No repayment bps
+                new uint256[](0) // No ending balances
+            );
 
         // First wrap the waUSDC amount needed for the credit line
         uint256 waUSDCAmount = waUSDC.previewDeposit(_borrowAmount);

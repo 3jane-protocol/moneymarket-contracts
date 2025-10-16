@@ -121,12 +121,13 @@ contract SettlementWithFullCoverageTest is BaseTest {
         // The bug: When cover == debt, repay clears all borrowShares,
         // then settleAccount reverts with NoAccountToSettle
         vm.prank(OWNER);
-        (uint256 writtenOffAssets, uint256 writtenOffShares) = creditLine.settle(
-            marketParams,
-            ALICE,
-            debtAmount, // assets to settle
-            debtAmount // insurance covers 100%
-        );
+        (uint256 writtenOffAssets, uint256 writtenOffShares) =
+            creditLine.settle(
+                marketParams,
+                ALICE,
+                debtAmount, // assets to settle
+                debtAmount // insurance covers 100%
+            );
 
         // Verify settlement succeeded
         assertEq(writtenOffAssets, 0, "No assets should be written off (insurance covered all)");

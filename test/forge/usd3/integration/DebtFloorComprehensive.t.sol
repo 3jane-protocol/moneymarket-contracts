@@ -11,8 +11,9 @@ import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {ErrorsLib} from "../../../../src/libraries/ErrorsLib.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 /**

@@ -6,8 +6,9 @@ import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
 import {sUSD3} from "../../../src/usd3/sUSD3.sol";
 import {USD3} from "../../../src/usd3/USD3.sol";
 // import {ISUSD3} from "../interfaces/ISUSD3.sol"; // Interface not found, not used in test
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";

@@ -8,8 +8,9 @@ import {UtilsLib} from "../../../src/libraries/UtilsLib.sol";
 import {MorphoCreditMock} from "../../../src/mocks/MorphoCreditMock.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {ProtocolConfig} from "../../../src/ProtocolConfig.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {ERC20Mock} from "../../../src/mocks/ERC20Mock.sol";
 import {OracleMock} from "../../../src/mocks/OracleMock.sol";

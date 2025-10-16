@@ -20,11 +20,7 @@ contract MorphoCreditMock is MorphoCredit {
     }
 
     /// @dev Override _beforeWithdraw to do nothing (remove usd3 restriction)
-    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256)
-        internal
-        virtual
-        override
-    {
+    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal virtual override {
         // Do nothing - remove usd3 restriction for testing
     }
 

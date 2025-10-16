@@ -88,9 +88,8 @@ contract MorphoCreditRepaymentTest is BaseTest {
         emit EventsLib.PaymentCycleCreated(id, 0, 0, endDate);
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, endDate, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, endDate, borrowers, repaymentBps, endingBalances);
 
         // Verify cycle was created
         uint256 paymentCycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
@@ -116,9 +115,8 @@ contract MorphoCreditRepaymentTest is BaseTest {
 
         vm.expectRevert(ErrorsLib.NotCreditLine.selector);
         vm.prank(ALICE); // Not the credit line
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, endDate, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, endDate, borrowers, repaymentBps, endingBalances);
     }
 
     function testCloseCycleAndPostObligations_FutureCycle() public {
@@ -133,9 +131,8 @@ contract MorphoCreditRepaymentTest is BaseTest {
 
         vm.expectRevert(ErrorsLib.CannotCloseFutureCycle.selector);
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, endDate, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, endDate, borrowers, repaymentBps, endingBalances);
     }
 
     function testCloseCycleAndPostObligations_InvalidDuration() public {
@@ -146,18 +143,16 @@ contract MorphoCreditRepaymentTest is BaseTest {
         uint256[] memory endingBalances = new uint256[](0);
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, firstEndDate, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, firstEndDate, borrowers, repaymentBps, endingBalances);
 
         // Try to create second cycle that overlaps
         uint256 secondEndDate = firstEndDate + 12 hours; // Less than 1 day after first
 
         vm.expectRevert(ErrorsLib.InvalidCycleDuration.selector);
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, secondEndDate, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, secondEndDate, borrowers, repaymentBps, endingBalances);
     }
 
     function testCloseCycleAndPostObligations_LengthMismatch() public {
@@ -174,9 +169,8 @@ contract MorphoCreditRepaymentTest is BaseTest {
 
         vm.expectRevert(ErrorsLib.InconsistentInput.selector);
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, endDate, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, endDate, borrowers, repaymentBps, endingBalances);
     }
 
     // ============ Add to Latest Cycle Tests ============
@@ -193,9 +187,8 @@ contract MorphoCreditRepaymentTest is BaseTest {
         initialBalances[0] = 10000e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, endDate, initialBorrowers, initialRepaymentBps, initialBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, endDate, initialBorrowers, initialRepaymentBps, initialBalances);
 
         // Now add more obligations to the same cycle
         address[] memory newBorrowers = new address[](2);
@@ -255,9 +248,8 @@ contract MorphoCreditRepaymentTest is BaseTest {
         balances[0] = 9500e18;
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, secondEndDate, borrowers, repaymentBps, balances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, secondEndDate, borrowers, repaymentBps, balances);
 
         // Verify amount was overwritten (not accumulated)
         (, uint128 amountDue,) = IMorphoCredit(address(morpho)).repaymentObligation(id, ALICE);
@@ -301,9 +293,8 @@ contract MorphoCreditRepaymentTest is BaseTest {
         vm.warp(block.timestamp + 31 days); // Move time forward
         uint256 secondEndDate = block.timestamp - 1 days;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, secondEndDate, borrowers, repaymentBps, balances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, secondEndDate, borrowers, repaymentBps, balances);
 
         paymentCycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
         assertEq(paymentCycleLength, 2); // Second cycle created
@@ -345,9 +336,8 @@ contract MorphoCreditRepaymentTest is BaseTest {
         // Create second cycle
         uint256 secondEndDate = block.timestamp - 1 days;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, secondEndDate, borrowers, repaymentBps, balances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, secondEndDate, borrowers, repaymentBps, balances);
 
         (uint256 startDate, uint256 returnedEndDate) =
             MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, 1);

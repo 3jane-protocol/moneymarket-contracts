@@ -2,8 +2,9 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
-import {ITransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    ITransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {Ownable} from "../../../lib/openzeppelin/contracts/access/Ownable.sol";
 
 contract ProxyOwnershipTest is BaseTest {

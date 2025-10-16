@@ -8,8 +8,9 @@ import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
 import {USD3} from "../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../src/usd3/sUSD3.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {InvariantHandler} from "./handlers/InvariantHandler.sol";
 
@@ -264,7 +265,8 @@ contract InvariantsTest is Setup {
         // For testing, we verify share price calculation is consistent
 
         if (ERC20(address(usd3Strategy)).totalSupply() > 0) {
-            uint256 sharePrice = (ITokenizedStrategy(address(usd3Strategy)).totalAssets() * 1e18)
+            uint256 sharePrice =
+                (ITokenizedStrategy(address(usd3Strategy)).totalAssets() * 1e18)
                 / ERC20(address(usd3Strategy)).totalSupply();
             assertGe(sharePrice, 0.99e18, "USD3 share price dropped significantly");
         }
@@ -337,9 +339,8 @@ contract InvariantsTest is Setup {
         if (susd3Supply > 0 && usd3Supply > 0) {
             // Get debt-based cap from sUSD3
             uint256 debtCap = susd3Strategy.getSubordinatedDebtCapInUSDC();
-            uint256 susd3HoldingsInAssets = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(
-                ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy))
-            );
+            uint256 susd3HoldingsInAssets = ITokenizedStrategy(address(usd3Strategy))
+                .convertToAssets(ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)));
             uint256 availableRoom = debtCap > susd3HoldingsInAssets ? debtCap - susd3HoldingsInAssets : 0;
 
             assertLe(
@@ -406,8 +407,9 @@ contract InvariantsTest is Setup {
         if (shares > 0) {
             vm.prank(actor);
             try usd3Strategy.redeem(shares, actor, actor) returns (uint256) {
-                // Success
-            } catch {}
+            // Success
+            }
+                catch {}
         }
     }
 
@@ -439,8 +441,9 @@ contract InvariantsTest is Setup {
         if (amount > 0) {
             vm.prank(from);
             try usd3Strategy.transfer(to, amount) returns (bool) {
-                // Success
-            } catch {}
+            // Success
+            }
+                catch {}
         }
     }
 }

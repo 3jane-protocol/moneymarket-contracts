@@ -130,8 +130,9 @@ contract DebtFloorHandler is Test {
         if (amount > 0) {
             // Use try-catch to handle any reverts gracefully
             try susd3Strategy.startCooldown(amount) {
-                // Success
-            } catch {
+            // Success
+            }
+                catch {
                 // Failed, likely due to lock period or other constraints
             }
         }

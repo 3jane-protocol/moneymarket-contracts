@@ -19,8 +19,9 @@ import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
 import {MorphoLib} from "../../../src/libraries/periphery/MorphoLib.sol";
 import {Position, Id, Market} from "../../../src/interfaces/IMorpho.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 // Mock contracts for dependencies with price per share functionality
@@ -1056,9 +1057,8 @@ contract HelperTest is BaseTest {
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(address(creditLineReal));
-        MorphoCredit(address(morphoCreditReal)).closeCycleAndPostObligations(
-            realId, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        MorphoCredit(address(morphoCreditReal))
+            .closeCycleAndPostObligations(realId, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         // Supply liquidity (increase amount to support larger borrow)
         simpleWaUsdc.setBalance(address(usd3), REAL_BORROW_AMOUNT * 2);
@@ -1069,9 +1069,8 @@ contract HelperTest is BaseTest {
 
         // Set up credit line for test borrower
         vm.prank(address(creditLineReal));
-        MorphoCredit(address(morphoCreditReal)).setCreditLine(
-            realId, testBorrower, REAL_BORROW_AMOUNT * 2, uint128(PREMIUM_RATE_PER_SECOND)
-        );
+        MorphoCredit(address(morphoCreditReal))
+            .setCreditLine(realId, testBorrower, REAL_BORROW_AMOUNT * 2, uint128(PREMIUM_RATE_PER_SECOND));
 
         // Borrower borrows through helper
         simpleWaUsdc.setBalance(address(realHelper), REAL_BORROW_AMOUNT);

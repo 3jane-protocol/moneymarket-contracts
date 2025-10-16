@@ -51,7 +51,7 @@ contract USD3 is BaseHooksUpgradeable {
     using Math for uint256;
 
     /*//////////////////////////////////////////////////////////////
-                        CONSTANTS 
+                        CONSTANTS
     //////////////////////////////////////////////////////////////*/
     IStrategy public constant WAUSDC = IStrategy(0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E);
 

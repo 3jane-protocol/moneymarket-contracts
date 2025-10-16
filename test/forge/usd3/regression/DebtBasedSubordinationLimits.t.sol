@@ -9,8 +9,9 @@ import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrat
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
 import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {console2} from "forge-std/console2.sol";
 import {Math} from "../../../../lib/openzeppelin/contracts/utils/math/Math.sol";

@@ -112,9 +112,8 @@ contract HelperBorrowTest is BaseTest {
         uint256[] memory endingBalances = new uint256[](0);
 
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
     }
 
     function test_BorrowConversion_BasicFlow() public {

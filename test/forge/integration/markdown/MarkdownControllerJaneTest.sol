@@ -344,9 +344,8 @@ contract MarkdownControllerJaneTest is BaseTest {
         // Warp to the new cycle end
         vm.warp(newCycleEnd);
         vm.prank(marketParams.creditLine);
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, newCycleEnd, obligationBorrowers, repaymentBps, endingBalances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, newCycleEnd, obligationBorrowers, repaymentBps, endingBalances);
 
         // Move to default
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 10 days);
@@ -590,9 +589,8 @@ contract MarkdownControllerJaneTest is BaseTest {
         // Warp to the new cycle end
         vm.warp(newCycleEnd);
         vm.prank(marketParams.creditLine);
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, newCycleEnd, borrowers, repaymentBpsList, endingBalances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, newCycleEnd, borrowers, repaymentBpsList, endingBalances);
 
         // Move forward a bit after creating the cycle
         vm.warp(block.timestamp + 1);
@@ -622,9 +620,8 @@ contract MarkdownControllerJaneTest is BaseTest {
             uint256[] memory endingBalances = new uint256[](0);
 
             vm.prank(marketParams.creditLine);
-            MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-                marketId, block.timestamp, borrowers, repaymentBps, endingBalances
-            );
+            MorphoCredit(address(morpho))
+                .closeCycleAndPostObligations(marketId, block.timestamp, borrowers, repaymentBps, endingBalances);
 
             vm.warp(nextCycleEnd + 1);
         }

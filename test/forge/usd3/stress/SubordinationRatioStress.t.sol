@@ -8,8 +8,9 @@ import {ERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/ERC20.so
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {IMorpho, MarketParams} from "../../../../src/interfaces/IMorpho.sol";

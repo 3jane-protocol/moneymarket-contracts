@@ -338,9 +338,8 @@ contract USD3UpgradeFuzzTest is Setup {
 
         // Withdraw after upgrade
         vm.startPrank(user);
-        uint256 withdrawn = ITokenizedStrategy(address(usd3Proxy)).redeem(
-            ITokenizedStrategy(address(usd3Proxy)).balanceOf(user), user, user
-        );
+        uint256 withdrawn = ITokenizedStrategy(address(usd3Proxy))
+            .redeem(ITokenizedStrategy(address(usd3Proxy)).balanceOf(user), user, user);
         vm.stopPrank();
 
         // Verify withdrawal returned USDC (not waUSDC)
@@ -476,9 +475,11 @@ contract USD3UpgradeFuzzTest is Setup {
     /**
      * @notice Fuzz test new USDC deposits after upgrade
      */
-    function testFuzz_newDepositsAfterUpgrade(uint256 preUpgradeDeposit, uint256 postUpgradeDeposit, uint256 sharePrice)
-        public
-    {
+    function testFuzz_newDepositsAfterUpgrade(
+        uint256 preUpgradeDeposit,
+        uint256 postUpgradeDeposit,
+        uint256 sharePrice
+    ) public {
         // Skip edge case where unbounded value is max uint256 (causes mock issues)
         vm.assume(postUpgradeDeposit < type(uint256).max / 2);
 

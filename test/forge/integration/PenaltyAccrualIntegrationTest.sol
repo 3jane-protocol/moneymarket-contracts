@@ -340,9 +340,8 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         uint256[] memory repaymentBps2 = new uint256[](0);
         uint256[] memory endingBalances2 = new uint256[](0);
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            market2Id, block.timestamp, borrowers2, repaymentBps2, endingBalances2
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(market2Id, block.timestamp, borrowers2, repaymentBps2, endingBalances2);
 
         // Continue cycles for the original market too
         _continueMarketCycles(id, block.timestamp);
