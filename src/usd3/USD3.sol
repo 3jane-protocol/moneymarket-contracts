@@ -710,7 +710,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Clear the performanceFee bits (32-47) and set new value
         uint256 mask = ~(uint256(0xFFFF) << 32);
-        uint256 newSlotValue = (currentSlotValue & mask) | (uint256(trancheShare) << 32);
+        uint256 newSlotValue = (currentSlotValue & mask) | (trancheShare << 32);
 
         // Write back to storage
         assembly {

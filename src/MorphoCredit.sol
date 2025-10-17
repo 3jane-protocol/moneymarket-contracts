@@ -15,7 +15,6 @@ import {
 } from "./interfaces/IMorpho.sol";
 import {IMarkdownController} from "./interfaces/IMarkdownController.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
-import {IMorphoRepayCallback} from "./interfaces/IMorphoCallbacks.sol";
 import {IProtocolConfig, MarketConfig} from "./interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "./libraries/ProtocolConfigLib.sol";
 import {ICreditLine} from "./interfaces/ICreditLine.sol";
@@ -24,7 +23,7 @@ import {Morpho} from "./Morpho.sol";
 import {UtilsLib} from "./libraries/UtilsLib.sol";
 import {EventsLib} from "./libraries/EventsLib.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
-import {MathLib, WAD} from "./libraries/MathLib.sol";
+import {MathLib} from "./libraries/MathLib.sol";
 import {MarketParamsLib} from "./libraries/MarketParamsLib.sol";
 import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";

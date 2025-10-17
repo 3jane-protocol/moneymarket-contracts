@@ -1,16 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {
-    BaseHooksUpgradeable,
-    IERC20,
-    IMorphoCredit,
-    IProtocolConfig,
-    IStrategy,
-    Math,
-    SafeERC20,
-    USD3
-} from "./USD3.sol";
+import {BaseHooksUpgradeable, IERC20, IMorphoCredit, IProtocolConfig, IStrategy, Math, USD3} from "./USD3.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 
 /**
@@ -251,7 +242,7 @@ contract sUSD3 is BaseHooksUpgradeable {
                         VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Enforces maximum 15% subordination ratio (sUSD3's USD3 holdings relative to USD3 total supply)
+    /// @dev Enforces maximum subordination ratio based on market debt (actual or potential)
     /// @param _owner Address to check limit for
     /// @return Maximum deposit amount allowed
     function availableDepositLimit(address _owner) public view override returns (uint256) {
