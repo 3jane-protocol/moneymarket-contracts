@@ -493,6 +493,8 @@ contract InvalidMarkdownManager is IMarkdownController {
     function burnJaneFull(address) external pure returns (uint256) {
         return 0;
     }
+
+    function resetBorrowerState(address) external pure {}
 }
 
 /// @notice Mock markdown manager that always reverts
@@ -514,6 +516,10 @@ contract RevertingMarkdownManager is IMarkdownController {
     }
 
     function burnJaneFull(address) external pure returns (uint256) {
+        revert("Markdown calculation failed");
+    }
+
+    function resetBorrowerState(address) external pure {
         revert("Markdown calculation failed");
     }
 }
