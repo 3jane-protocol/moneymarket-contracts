@@ -735,8 +735,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         bool wasInDefault = lastMarkdown > 0;
 
         if (isInDefault && !wasInDefault) {
+            IMarkdownController(manager).resetBorrowerState(borrower);
             emit EventsLib.DefaultStarted(id, borrower, statusStartTime);
         } else if (!isInDefault && wasInDefault) {
+            IMarkdownController(manager).resetBorrowerState(borrower);
             emit EventsLib.DefaultCleared(id, borrower);
         }
 

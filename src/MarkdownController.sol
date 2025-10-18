@@ -196,4 +196,11 @@ contract MarkdownController is IMarkdownController, Ownable {
         janeBurned[borrower] = 0;
         initialJaneBalance[borrower] = 0;
     }
+
+    /// @notice Reset burn tracking state for a borrower
+    /// @param borrower The borrower address
+    function resetBorrowerState(address borrower) external onlyMorphoCredit {
+        janeBurned[borrower] = 0;
+        initialJaneBalance[borrower] = 0;
+    }
 }
