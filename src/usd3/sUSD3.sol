@@ -433,8 +433,7 @@ contract sUSD3 is BaseHooksUpgradeable {
 
         // Get actual borrowed amount
         (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
-        uint256 actualDebtUSDC =
-            IStrategy(address(asset)).convertToAssets(usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC));
+        uint256 actualDebtUSDC = usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
 
         // Get potential debt based on debt ceiling
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
@@ -442,7 +441,7 @@ contract sUSD3 is BaseHooksUpgradeable {
 
         uint256 potentialDebtUSDC;
         if (debtCap > 0) {
-            potentialDebtUSDC = IStrategy(address(asset)).convertToAssets(usd3.WAUSDC().convertToAssets(debtCap));
+            potentialDebtUSDC = usd3.WAUSDC().convertToAssets(debtCap);
         }
         uint256 maxDebtUSDC = Math.max(actualDebtUSDC, potentialDebtUSDC);
 
@@ -472,8 +471,7 @@ contract sUSD3 is BaseHooksUpgradeable {
 
         // Get actual borrowed amount
         (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
-        uint256 debtUSDC =
-            IStrategy(address(asset)).convertToAssets(usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC));
+        uint256 debtUSDC = usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
 
         // Calculate minimum required backing
         return (debtUSDC * backingRatio) / MAX_BPS;
