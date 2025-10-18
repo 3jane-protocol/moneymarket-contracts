@@ -122,23 +122,28 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /* EXTERNAL FUNCTIONS - PREMIUM MANAGEMENT */
 
     /// @inheritdoc IMorphoCredit
-    function accrueBorrowerPremium(Id id, address borrower) external {
-        MarketParams memory marketParams = idToMarketParams[id];
-        _accrueInterest(marketParams, id);
-        _accrueBorrowerPremium(id, borrower);
-        _updateBorrowerMarkdown(id, borrower);
-        _snapshotBorrowerPosition(id, borrower);
-    }
-
-    /// @inheritdoc IMorphoCredit
-    function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) external {
+    function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) public {
+        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
         MarketParams memory marketParams = idToMarketParams[id];
         _accrueInterest(marketParams, id);
         for (uint256 i = 0; i < borrowers.length; i++) {
-            _accrueBorrowerPremium(id, borrowers[i]);
-            _updateBorrowerMarkdown(id, borrowers[i]);
-            _snapshotBorrowerPosition(id, borrowers[i]);
+            _accrueBorrowerPremiumAndUpdate(id, borrowers[i]);
         }
+    }
+
+    /// @inheritdoc IMorphoCredit
+    function accrueBorrowerPremium(Id id, address borrower) external {
+        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
+        MarketParams memory marketParams = idToMarketParams[id];
+        _accrueInterest(marketParams, id);
+        _accrueBorrowerPremiumAndUpdate(id, borrower);
+    }
+
+    /// @dev Internal helper to accrue premium and update borrower state
+    function _accrueBorrowerPremiumAndUpdate(Id id, address borrower) internal {
+        _accrueBorrowerPremium(id, borrower);
+        _updateBorrowerMarkdown(id, borrower);
+        _snapshotBorrowerPosition(id, borrower);
     }
 
     /* INTERNAL FUNCTIONS - PREMIUM CALCULATIONS */
