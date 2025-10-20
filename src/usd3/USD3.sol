@@ -139,13 +139,15 @@ contract USD3 is BaseHooksUpgradeable {
      *      The upgrade process MUST follow this sequence to prevent user losses:
      *      1. Set performance fee to 0 (via setPerformanceFee)
      *      2. Set profit unlock time to 0 (via setProfitMaxUnlockTime)
-     *      3. Call report() to update totalAssets from stale waUSDC values
-     *      4. Call reinitialize() to switch the underlying asset
-     *      5. Call syncTrancheShare() to restore performance fees
-     *      6. Restore profit unlock time to previous value
+     *      3. Call report() on OLD implementation to finalize state before upgrade
+     *      4. Upgrade proxy to new implementation
+     *      5. Call reinitialize() to switch the underlying asset
+     *      6. Call report() on NEW implementation to update totalAssets with new asset
+     *      7. Call syncTrancheShare() to restore performance fees
+     *      8. Restore profit unlock time to previous value
      *      This ensures totalAssets reflects the true USDC value before users can withdraw.
-     *      Without report() before reinitialize(), users would lose value as totalAssets
-     *      would not account for waUSDC pps versus usdc.
+     *      Without both report() calls, users would lose value as totalAssets would not
+     *      account for waUSDC appreciation or the asset switch.
      */
     function reinitialize() external reinitializer(2) {
         address usdc = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
