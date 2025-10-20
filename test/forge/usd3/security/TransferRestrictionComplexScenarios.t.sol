@@ -232,8 +232,7 @@ contract TransferRestrictionComplexScenarios is Setup {
         assertEq(IERC20(address(usd3Strategy)).balanceOf(alice), 0);
 
         // Total should be preserved (within rounding)
-        uint256 total =
-            IERC20(address(usd3Strategy)).balanceOf(bob) + IERC20(address(usd3Strategy)).balanceOf(charlie)
+        uint256 total = IERC20(address(usd3Strategy)).balanceOf(bob) + IERC20(address(usd3Strategy)).balanceOf(charlie)
             + IERC20(address(usd3Strategy)).balanceOf(dave);
         assertApproxEqAbs(total, balance, 3); // Allow 3 wei rounding
     }
