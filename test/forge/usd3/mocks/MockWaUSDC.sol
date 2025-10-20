@@ -19,8 +19,33 @@ contract MockWaUSDC is ERC20 {
     // Share price in 6 decimals (1e6 = 1:1 ratio, 1.1e6 = 1.1:1 ratio)
     uint256 public sharePrice = 1e6;
 
+    // Pause state for testing EIP-4626 compliance
+    bool private _paused;
+
     constructor(address _usdc) ERC20("Wrapped Aave USDC", "waUSDC") {
         _asset = _usdc;
+    }
+
+    /**
+     * @dev Modifier to check if contract is not paused
+     */
+    modifier whenNotPaused() {
+        require(!_paused, "EnforcedPause");
+        _;
+    }
+
+    /**
+     * @dev Returns whether the contract is paused
+     */
+    function paused() public view returns (bool) {
+        return _paused;
+    }
+
+    /**
+     * @dev Set the pause state (for testing)
+     */
+    function setPaused(bool paused_) external {
+        _paused = paused_;
     }
 
     /**
@@ -40,7 +65,7 @@ contract MockWaUSDC is ERC20 {
     /**
      * @dev Deposit USDC to receive waUSDC shares
      */
-    function deposit(uint256 assets, address receiver) public returns (uint256 shares) {
+    function deposit(uint256 assets, address receiver) public whenNotPaused returns (uint256 shares) {
         shares = previewDeposit(assets);
         IERC20(_asset).transferFrom(msg.sender, address(this), assets);
         _mint(receiver, shares);
@@ -50,7 +75,7 @@ contract MockWaUSDC is ERC20 {
     /**
      * @dev Withdraw USDC by burning waUSDC shares
      */
-    function withdraw(uint256 assets, address receiver, address owner) public returns (uint256 shares) {
+    function withdraw(uint256 assets, address receiver, address owner) public whenNotPaused returns (uint256 shares) {
         shares = previewWithdraw(assets);
         if (msg.sender != owner) {
             uint256 allowed = allowance(owner, msg.sender);
@@ -66,7 +91,7 @@ contract MockWaUSDC is ERC20 {
     /**
      * @dev Redeem waUSDC shares for USDC
      */
-    function redeem(uint256 shares, address receiver, address owner) public returns (uint256 assets) {
+    function redeem(uint256 shares, address receiver, address owner) public whenNotPaused returns (uint256 assets) {
         assets = previewRedeem(shares);
         if (msg.sender != owner) {
             uint256 allowed = allowance(owner, msg.sender);
@@ -120,26 +145,30 @@ contract MockWaUSDC is ERC20 {
     /**
      * @dev Max deposit/mint/withdraw/redeem functions
      */
-    function maxDeposit(address) public pure returns (uint256) {
+    function maxDeposit(address) public view returns (uint256) {
+        if (_paused) return 0;
         return type(uint256).max;
     }
 
-    function maxMint(address) public pure returns (uint256) {
+    function maxMint(address) public view returns (uint256) {
+        if (_paused) return 0;
         return type(uint256).max;
     }
 
     function maxWithdraw(address owner) public view returns (uint256) {
+        if (_paused) return 0;
         return convertToAssets(balanceOf(owner));
     }
 
     function maxRedeem(address owner) public view returns (uint256) {
+        if (_paused) return 0;
         return balanceOf(owner);
     }
 
     /**
      * @dev Mint function for ERC4626 compatibility
      */
-    function mint(uint256 shares, address receiver) public returns (uint256 assets) {
+    function mint(uint256 shares, address receiver) public whenNotPaused returns (uint256 assets) {
         assets = previewMint(shares);
         IERC20(_asset).transferFrom(msg.sender, address(this), assets);
         _mint(receiver, shares);
