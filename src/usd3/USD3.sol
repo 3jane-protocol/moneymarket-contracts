@@ -194,7 +194,7 @@ contract USD3 is BaseHooksUpgradeable {
         returns (uint256 totalSupplyAssets, uint256 totalShares, uint256 totalBorrowAssets, uint256 waUSDCLiquidity)
     {
         (totalSupplyAssets, totalShares, totalBorrowAssets,) = morphoCredit.expectedMarketBalances(_marketParams);
-        waUSDCLiquidity = totalSupplyAssets - totalBorrowAssets;
+        waUSDCLiquidity = totalSupplyAssets > totalBorrowAssets ? totalSupplyAssets - totalBorrowAssets : 0;
     }
 
     /**
