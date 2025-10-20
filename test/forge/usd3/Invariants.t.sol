@@ -265,8 +265,7 @@ contract InvariantsTest is Setup {
         // For testing, we verify share price calculation is consistent
 
         if (ERC20(address(usd3Strategy)).totalSupply() > 0) {
-            uint256 sharePrice =
-                (ITokenizedStrategy(address(usd3Strategy)).totalAssets() * 1e18)
+            uint256 sharePrice = (ITokenizedStrategy(address(usd3Strategy)).totalAssets() * 1e18)
                 / ERC20(address(usd3Strategy)).totalSupply();
             assertGe(sharePrice, 0.99e18, "USD3 share price dropped significantly");
         }
@@ -406,7 +405,9 @@ contract InvariantsTest is Setup {
 
         if (shares > 0) {
             vm.prank(actor);
-            try usd3Strategy.redeem(shares, actor, actor) returns (uint256) {
+            try usd3Strategy.redeem(shares, actor, actor) returns (
+                uint256
+            ) {
             // Success
             }
                 catch {}
@@ -440,7 +441,9 @@ contract InvariantsTest is Setup {
 
         if (amount > 0) {
             vm.prank(from);
-            try usd3Strategy.transfer(to, amount) returns (bool) {
+            try usd3Strategy.transfer(to, amount) returns (
+                bool
+            ) {
             // Success
             }
                 catch {}

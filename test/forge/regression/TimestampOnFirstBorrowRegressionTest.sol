@@ -274,11 +274,9 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
         // Each should have only 1 day of their respective premium rates
         uint256 expected1 =
             BORROW_AMOUNT + BORROW_AMOUNT.wMulDown((premiumRatePerSecond + baseRatePerSecond) * ACCRUAL_PERIOD);
-        uint256 expected2 =
-            BORROW_AMOUNT * 2
+        uint256 expected2 = BORROW_AMOUNT * 2
             + (BORROW_AMOUNT * 2).wMulDown((premiumRatePerSecond * 2 + baseRatePerSecond) * ACCRUAL_PERIOD);
-        uint256 expected3 =
-            BORROW_AMOUNT / 2
+        uint256 expected3 = BORROW_AMOUNT / 2
             + (BORROW_AMOUNT / 2).wMulDown((premiumRatePerSecond / 2 + baseRatePerSecond) * ACCRUAL_PERIOD);
 
         assertApproxEqRel(assets1, expected1, 0.01e18, "Borrower1 premium correct");
