@@ -80,9 +80,8 @@ contract PremiumIntegrationTest is BaseTest {
         // Record position before second borrow
         Position memory positionBefore = morpho.position(id, BORROWER);
         Market memory marketBefore = morpho.market(id);
-        uint256 borrowAssetsBefore = uint256(positionBefore.borrowShares).toAssetsUp(
-            marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares
-        );
+        uint256 borrowAssetsBefore = uint256(positionBefore.borrowShares)
+            .toAssetsUp(marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares);
 
         // Calculate expected premium
         uint256 elapsed = 1 hours;
@@ -101,8 +100,8 @@ contract PremiumIntegrationTest is BaseTest {
         // Check that premium was accrued
         Position memory positionAfter = morpho.position(id, BORROWER);
         Market memory marketAfter = morpho.market(id);
-        uint256 borrowAssetsAfter =
-            uint256(positionAfter.borrowShares).toAssetsUp(marketAfter.totalBorrowAssets, marketAfter.totalBorrowShares);
+        uint256 borrowAssetsAfter = uint256(positionAfter.borrowShares)
+            .toAssetsUp(marketAfter.totalBorrowAssets, marketAfter.totalBorrowShares);
 
         // Borrow assets should increase by more than just the additional borrow
         assertGt(borrowAssetsAfter, borrowAssetsBefore + additionalBorrow);
@@ -315,9 +314,8 @@ contract PremiumIntegrationTest is BaseTest {
         // Now get the updated position with premium included
         Position memory positionAfterAccrual = morpho.position(id, BORROWER);
         Market memory marketAfterAccrual = morpho.market(id);
-        uint256 totalDebt = uint256(positionAfterAccrual.borrowShares).toAssetsUp(
-            marketAfterAccrual.totalBorrowAssets, marketAfterAccrual.totalBorrowShares
-        );
+        uint256 totalDebt = uint256(positionAfterAccrual.borrowShares)
+            .toAssetsUp(marketAfterAccrual.totalBorrowAssets, marketAfterAccrual.totalBorrowShares);
 
         // Give borrower enough tokens to repay full debt
         loanToken.setBalance(BORROWER, totalDebt + 1000e18); // Extra buffer
@@ -354,9 +352,8 @@ contract PremiumIntegrationTest is BaseTest {
         // Calculate current debt
         Position memory positionBefore = morpho.position(id, BORROWER);
         Market memory marketBefore = morpho.market(id);
-        uint256 debtBefore = uint256(positionBefore.borrowShares).toAssetsUp(
-            marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares
-        );
+        uint256 debtBefore = uint256(positionBefore.borrowShares)
+            .toAssetsUp(marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares);
 
         // Repay 50% of original borrow
         uint256 repayAmount = borrowAmount / 2;
@@ -368,8 +365,8 @@ contract PremiumIntegrationTest is BaseTest {
         // Calculate remaining debt
         Position memory positionAfter = morpho.position(id, BORROWER);
         Market memory marketAfter = morpho.market(id);
-        uint256 debtAfter =
-            uint256(positionAfter.borrowShares).toAssetsUp(marketAfter.totalBorrowAssets, marketAfter.totalBorrowShares);
+        uint256 debtAfter = uint256(positionAfter.borrowShares)
+            .toAssetsUp(marketAfter.totalBorrowAssets, marketAfter.totalBorrowShares);
 
         // Debt should decrease but still be higher than half of original
         assertLt(debtAfter, debtBefore);
@@ -435,9 +432,8 @@ contract PremiumIntegrationTest is BaseTest {
         // Calculate actual debt
         Position memory positionBeforeRepay = morpho.position(id, BORROWER);
         Market memory marketBeforeRepay = morpho.market(id);
-        uint256 actualDebt = uint256(positionBeforeRepay.borrowShares).toAssetsUp(
-            marketBeforeRepay.totalBorrowAssets, marketBeforeRepay.totalBorrowShares
-        );
+        uint256 actualDebt = uint256(positionBeforeRepay.borrowShares)
+            .toAssetsUp(marketBeforeRepay.totalBorrowAssets, marketBeforeRepay.totalBorrowShares);
 
         // Give borrower way more than needed
         uint256 excessAmount = actualDebt + 5_000e18;
@@ -576,9 +572,8 @@ contract PremiumIntegrationTest is BaseTest {
         // Get remaining value
         Position memory supplierPosAfter = morpho.position(id, SUPPLIER);
         Market memory marketAfter = morpho.market(id);
-        uint256 supplierValueAfter = uint256(supplierPosAfter.supplyShares).toAssetsDown(
-            marketAfter.totalSupplyAssets, marketAfter.totalSupplyShares
-        );
+        uint256 supplierValueAfter = uint256(supplierPosAfter.supplyShares)
+            .toAssetsDown(marketAfter.totalSupplyAssets, marketAfter.totalSupplyShares);
 
         // Total value (withdrawn + remaining) should be more than original supply
         uint256 totalValue = (supplyAmount / 2) + supplierValueAfter;
@@ -853,9 +848,8 @@ contract PremiumIntegrationTest is BaseTest {
         // Record supplier position
         Position memory supplierPosBefore = morpho.position(id, SUPPLIER);
         Market memory marketBefore = morpho.market(id);
-        uint256 supplyValueBefore = uint256(supplierPosBefore.supplyShares).toAssetsDown(
-            marketBefore.totalSupplyAssets, marketBefore.totalSupplyShares
-        );
+        uint256 supplyValueBefore = uint256(supplierPosBefore.supplyShares)
+            .toAssetsDown(marketBefore.totalSupplyAssets, marketBefore.totalSupplyShares);
 
         // Advance time
         _continueMarketCycles(id, block.timestamp + 180 days);
@@ -873,9 +867,8 @@ contract PremiumIntegrationTest is BaseTest {
         // Check supplier value increased
         Position memory supplierPosAfter = morpho.position(id, SUPPLIER);
         Market memory marketAfter = morpho.market(id);
-        uint256 supplyValueAfter = uint256(supplierPosAfter.supplyShares).toAssetsDown(
-            marketAfter.totalSupplyAssets, marketAfter.totalSupplyShares
-        );
+        uint256 supplyValueAfter = uint256(supplierPosAfter.supplyShares)
+            .toAssetsDown(marketAfter.totalSupplyAssets, marketAfter.totalSupplyShares);
 
         // Supplier should benefit from all premiums
         assertGt(supplyValueAfter, supplyValueBefore);
@@ -1242,9 +1235,8 @@ contract PremiumIntegrationTest is BaseTest {
 
         // Calculate fee value
         Market memory market = morpho.market(id);
-        uint256 feeValue = uint256(feePosAfter.supplyShares - feePosBefore.supplyShares).toAssetsDown(
-            market.totalSupplyAssets, market.totalSupplyShares
-        );
+        uint256 feeValue = uint256(feePosAfter.supplyShares - feePosBefore.supplyShares)
+            .toAssetsDown(market.totalSupplyAssets, market.totalSupplyShares);
 
         // Fee should be roughly 10% of premium
         // Note: Premium is compounded, not simple interest, so it will be higher than borrowAmount * rate
@@ -1357,8 +1349,8 @@ contract PremiumIntegrationTest is BaseTest {
 
         // Verify supplier gets full benefit (with small rounding tolerance)
         Position memory supplierPos = morpho.position(id, SUPPLIER);
-        uint256 supplierValue =
-            uint256(supplierPos.supplyShares).toAssetsDown(marketAfter.totalSupplyAssets, marketAfter.totalSupplyShares);
+        uint256 supplierValue = uint256(supplierPos.supplyShares)
+            .toAssetsDown(marketAfter.totalSupplyAssets, marketAfter.totalSupplyShares);
         // Allow for 1 wei rounding error
         assertApproxEqAbs(supplierValue, supplyAmount + premiumAmount, 1);
     }

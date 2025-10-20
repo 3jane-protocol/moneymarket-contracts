@@ -2,7 +2,10 @@
 pragma solidity ^0.8.18;
 
 import {
-    IProtocolConfig, MarketConfig, CreditLineConfig, IRMConfig
+    IProtocolConfig,
+    MarketConfig,
+    CreditLineConfig,
+    IRMConfig
 } from "../../../../src/interfaces/IProtocolConfig.sol";
 
 /**

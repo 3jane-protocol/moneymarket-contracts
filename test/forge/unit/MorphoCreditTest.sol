@@ -15,8 +15,9 @@ import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {ProtocolConfig} from "../../../src/ProtocolConfig.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 contract MorphoCreditTest is Test {
     using MathLib for uint256;
@@ -112,9 +113,8 @@ contract MorphoCreditTest is Test {
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            marketId, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(marketId, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         // Set fee recipient
         vm.prank(owner);
@@ -323,9 +323,8 @@ contract MorphoCreditTest is Test {
         endingBalances[0] = 100e18; // Current balance
 
         vm.prank(address(creditLine));
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            marketId, cycleEndTime, borrowers, repaymentBps, endingBalances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(marketId, cycleEndTime, borrowers, repaymentBps, endingBalances);
 
         vm.expectRevert(ErrorsLib.OutstandingRepayment.selector);
         vm.prank(helper);
@@ -540,12 +539,10 @@ contract MorphoCreditTest is Test {
 
         // Check both borrowers had premiums accrued
         Market memory marketData = morpho.market(marketId);
-        uint256 borrowAssets1 = uint256(morpho.position(marketId, borrower).borrowShares).toAssetsUp(
-            marketData.totalBorrowAssets, marketData.totalBorrowShares
-        );
-        uint256 borrowAssets2 = uint256(morpho.position(marketId, borrower2).borrowShares).toAssetsUp(
-            marketData.totalBorrowAssets, marketData.totalBorrowShares
-        );
+        uint256 borrowAssets1 = uint256(morpho.position(marketId, borrower).borrowShares)
+            .toAssetsUp(marketData.totalBorrowAssets, marketData.totalBorrowShares);
+        uint256 borrowAssets2 = uint256(morpho.position(marketId, borrower2).borrowShares)
+            .toAssetsUp(marketData.totalBorrowAssets, marketData.totalBorrowShares);
 
         // After 1 hour, both borrowers should have accrued premium
         assertGt(borrowAssets1, 1000e18);
@@ -861,9 +858,8 @@ contract MorphoCreditTest is Test {
         // Record debt after repay
         Position memory posAfterRepay = morpho.position(marketId, borrower);
         Market memory mktAfterRepay = morpho.market(marketId);
-        uint256 debtAfterRepay = uint256(posAfterRepay.borrowShares).toAssetsUp(
-            mktAfterRepay.totalBorrowAssets, mktAfterRepay.totalBorrowShares
-        );
+        uint256 debtAfterRepay = uint256(posAfterRepay.borrowShares)
+            .toAssetsUp(mktAfterRepay.totalBorrowAssets, mktAfterRepay.totalBorrowShares);
 
         // Advance time again but stay within the active cycle
         // We're currently at 55 days, cycle ends at 60 days

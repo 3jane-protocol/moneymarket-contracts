@@ -6,8 +6,9 @@ import {Setup} from "./utils/Setup.sol";
 import {sUSD3} from "../../../src/usd3/sUSD3.sol";
 import {USD3} from "../../../src/usd3/USD3.sol";
 import {IERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 contract PackedStructTest is Setup {

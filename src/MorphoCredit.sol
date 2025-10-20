@@ -304,9 +304,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Calculate current borrow assets
         Market memory targetMarket = market[id];
-        uint256 borrowAssetsCurrent = uint256(position[id][borrower].borrowShares).toAssetsUp(
-            targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
-        );
+        uint256 borrowAssetsCurrent = uint256(position[id][borrower].borrowShares)
+            .toAssetsUp(targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares);
 
         // Calculate premium and penalty accruals
         uint256 premiumAmount = _calculateOngoingPremiumAndPenalty(id, borrower, premium, status, borrowAssetsCurrent);
@@ -342,9 +341,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         Market memory targetMarket = market[id];
 
-        uint256 currentBorrowAssets = uint256(position[id][borrower].borrowShares).toAssetsUp(
-            targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
-        );
+        uint256 currentBorrowAssets = uint256(position[id][borrower].borrowShares)
+            .toAssetsUp(targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares);
 
         // Update timestamp if:
         // - Not initialized (safety check), OR
@@ -570,11 +568,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @inheritdoc Morpho
-    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256)
-        internal
-        virtual
-        override
-    {
+    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal virtual override {
         // Allow USD3 to withdraw on behalf of anyone
         if (msg.sender == usd3) return;
 

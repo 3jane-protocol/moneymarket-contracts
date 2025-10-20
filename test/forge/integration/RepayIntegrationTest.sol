@@ -41,9 +41,8 @@ contract RepayIntegrationTest is BaseTest {
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
     }
 
     function testRepayMarketNotCreated(MarketParams memory marketParamsFuzz) public {

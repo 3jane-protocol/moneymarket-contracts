@@ -132,11 +132,7 @@ abstract contract TimelockHelper is Script {
     }
 
     /// @notice Get the state of an operation
-    function getOperationState(address _timelock, bytes32 id)
-        public
-        view
-        returns (ITimelockController.OperationState)
-    {
+    function getOperationState(address _timelock, bytes32 id) public view returns (ITimelockController.OperationState) {
         return ITimelockController(_timelock).getOperationState(id);
     }
 

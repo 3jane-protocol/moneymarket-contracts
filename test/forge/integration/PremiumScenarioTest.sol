@@ -75,18 +75,16 @@ contract PremiumScenarioTest is BaseTest {
         uint256[] memory repaymentBps2 = new uint256[](0);
         uint256[] memory endingBalances2 = new uint256[](0);
         vm.prank(marketParams2.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id2, block.timestamp, borrowers2, repaymentBps2, endingBalances2
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id2, block.timestamp, borrowers2, repaymentBps2, endingBalances2);
 
         // Also need to post a new cycle for the first market since we warped time
         address[] memory borrowers1 = new address[](0);
         uint256[] memory repaymentBps1 = new uint256[](0);
         uint256[] memory endingBalances1 = new uint256[](0);
         vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, block.timestamp, borrowers1, repaymentBps1, endingBalances1
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, block.timestamp, borrowers1, repaymentBps1, endingBalances1);
 
         // Set up initial balances
         loanToken.setBalance(SUPPLIER, HIGH_COLLATERAL_AMOUNT);
@@ -397,8 +395,8 @@ contract PremiumScenarioTest is BaseTest {
 
         // Calculate remaining debt in assets
         Market memory finalMarket = morpho.market(id);
-        uint256 remainingDebt =
-            uint256(finalPosition.borrowShares).toAssetsUp(finalMarket.totalBorrowAssets, finalMarket.totalBorrowShares);
+        uint256 remainingDebt = uint256(finalPosition.borrowShares)
+            .toAssetsUp(finalMarket.totalBorrowAssets, finalMarket.totalBorrowShares);
 
         // Verify that total paid + remaining debt > borrowed amount (shows premium accumulation)
         assertGt(totalPaid + remainingDebt, borrowAmount);
@@ -458,9 +456,8 @@ contract PremiumScenarioTest is BaseTest {
             Position memory finalSupplierPos = morpho.position(id, SUPPLIER);
             Market memory finalMarket = morpho.market(id);
 
-            uint256 supplierValue = uint256(finalSupplierPos.supplyShares).toAssetsDown(
-                finalMarket.totalSupplyAssets, finalMarket.totalSupplyShares
-            );
+            uint256 supplierValue = uint256(finalSupplierPos.supplyShares)
+                .toAssetsDown(finalMarket.totalSupplyAssets, finalMarket.totalSupplyShares);
 
             uint256 supplierYield = supplierValue - supplyAmount;
             yieldRate = supplierYield.wDivDown(supplyAmount);
@@ -732,9 +729,8 @@ contract PremiumScenarioTest is BaseTest {
 
         for (uint256 i = 0; i < borrowers.length; i++) {
             Position memory borrowerPos = morpho.position(id, borrowers[i]);
-            uint256 debt = uint256(borrowerPos.borrowShares).toAssetsUp(
-                finalMarket.totalBorrowAssets, finalMarket.totalBorrowShares
-            );
+            uint256 debt = uint256(borrowerPos.borrowShares)
+                .toAssetsUp(finalMarket.totalBorrowAssets, finalMarket.totalBorrowShares);
 
             // Calculate expected debt with combined rates
             uint256 baseRatePerSecond = baseRate / 365 days;

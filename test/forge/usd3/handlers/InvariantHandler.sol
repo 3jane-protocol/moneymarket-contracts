@@ -37,8 +37,9 @@ contract InvariantHandler is Test {
         // Simulate actor depositing
         vm.prank(actor);
         try usd3Strategy.deposit(amount, actor) {
-            // Success
-        } catch {
+        // Success
+        }
+            catch {
             // Ignore failures (may hit limits)
         }
     }
@@ -54,8 +55,9 @@ contract InvariantHandler is Test {
 
         vm.prank(actor);
         try usd3Strategy.redeem(shares, actor, actor) {
-            // Success
-        } catch {
+        // Success
+        }
+            catch {
             // Ignore failures
         }
     }
@@ -74,8 +76,9 @@ contract InvariantHandler is Test {
 
         vm.prank(actor);
         try susd3Strategy.deposit(amount, actor) {
-            // Success
-        } catch {
+        // Success
+        }
+            catch {
             // Ignore failures
         }
     }

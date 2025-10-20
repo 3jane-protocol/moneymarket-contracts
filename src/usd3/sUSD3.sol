@@ -2,7 +2,14 @@
 pragma solidity ^0.8.18;
 
 import {
-    BaseHooksUpgradeable, IERC20, IMorphoCredit, IProtocolConfig, IStrategy, Math, SafeERC20, USD3
+    BaseHooksUpgradeable,
+    IERC20,
+    IMorphoCredit,
+    IProtocolConfig,
+    IStrategy,
+    Math,
+    SafeERC20,
+    USD3
 } from "./USD3.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 

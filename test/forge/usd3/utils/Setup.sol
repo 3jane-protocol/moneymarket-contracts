@@ -211,9 +211,7 @@ contract Setup is Test, IEvents {
     }
 
     // For checking the amounts in the strategy
-    function checkStrategyTotals(IUSD3 _strategy, uint256 _totalAssets, uint256 _totalDebt, uint256 _totalIdle)
-        public
-    {
+    function checkStrategyTotals(IUSD3 _strategy, uint256 _totalAssets, uint256 _totalDebt, uint256 _totalIdle) public {
         uint256 _assets = _strategy.totalAssets();
         uint256 _balance = ERC20(_strategy.asset()).balanceOf(address(_strategy));
         uint256 _idle = _balance > _assets ? _assets : _balance;
@@ -279,9 +277,8 @@ contract Setup is Test, IEvents {
         // Set cycle end date to current timestamp (closing the cycle "now")
         uint256 cycleEndDate = block.timestamp;
         vm.prank(marketParams.creditLine);
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            marketId, cycleEndDate, borrowers, repaymentBps, endingBalances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(marketId, cycleEndDate, borrowers, repaymentBps, endingBalances);
 
         // Use USDC amount directly as waUSDC amount (they're 1:1 initially)
         uint256 borrowAmountWaUSDC = borrowAmountUSDC;
