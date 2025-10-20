@@ -965,8 +965,8 @@ contract HelperTest is BaseTest {
         usdc.setBalance(user, DEPOSIT_AMOUNT * 4);
 
         vm.startPrank(user);
-        uint256 sharesWithoutReferral = helper.deposit(DEPOSIT_AMOUNT, receiver, false);
-        uint256 sharesWithReferral = helper.deposit(DEPOSIT_AMOUNT, receiver, false, referralCode);
+        uint256 sharesWithoutReferral = helper.deposit(DEPOSIT_AMOUNT, user, false);
+        uint256 sharesWithReferral = helper.deposit(DEPOSIT_AMOUNT, user, false, referralCode);
         vm.stopPrank();
 
         assertEq(sharesWithReferral, sharesWithoutReferral);

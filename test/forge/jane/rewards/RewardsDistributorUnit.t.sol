@@ -563,4 +563,86 @@ contract RewardsDistributorUnitTest is RewardsDistributorSetup {
         vm.expectRevert(RewardsDistributor.MaxClaimableExceeded.selector);
         distributor.claim(alice, 100e18, proofs[0]);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                        ELECTISEC FIX TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Test Claimed event emits correct cumulative claimed amount (Electisec #3)
+    function test_fix_claimedEventEmitsCorrectTotal() public {
+        setEpochEmissions(0, 1000e18);
+
+        MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](1);
+        claims[0] = MerkleTreeHelper.Claim(alice, 100e18);
+        (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
+
+        // First claim: should emit 100e18 as total claimed
+        vm.expectEmit(true, false, false, true);
+        emit Claimed(alice, 100e18, 100e18);
+        distributor.claim(alice, 100e18, proofs[0]);
+
+        // Update allocation and claim again
+        MerkleTreeHelper.Claim[] memory claims2 = new MerkleTreeHelper.Claim[](1);
+        claims2[0] = MerkleTreeHelper.Claim(alice, 300e18);
+        (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(claims2);
+
+        // Second claim: should emit 300e18 as total claimed (not 300e18 allocation)
+        vm.expectEmit(true, false, false, true);
+        emit Claimed(alice, 200e18, 300e18);
+        distributor.claim(alice, 300e18, proofs2[0]);
+
+        assertEq(distributor.claimed(alice), 300e18);
+    }
+
+    /// @notice Test getClaimable returns 0 when global cap exhausted (Electisec #4)
+    function test_fix_getClaimableRespectsGlobalCap() public {
+        setEpochEmissions(0, 150e18);
+
+        bytes32[][] memory proofs = setupSimpleRoot();
+
+        // Alice claims 100e18
+        claimAs(alice, alice, 100e18, proofs[0]);
+
+        // Bob claims 50e18 (reaching cap)
+        claimAs(bob, bob, 200e18, proofs[1]);
+
+        // getClaimable should return 0 for charlie (cap exhausted)
+        assertEq(distributor.getClaimable(charlie, 300e18), 0);
+
+        // Bob also can't claim more even though allocation is 200e18
+        assertEq(distributor.getClaimable(bob, 200e18), 0);
+    }
+
+    /// @notice Test getClaimable returns partial remaining when unclaimed > remaining (Electisec #4)
+    function test_fix_getClaimablePartialRemaining() public {
+        setEpochEmissions(0, 150e18);
+
+        bytes32[][] memory proofs = setupSimpleRoot();
+
+        // Alice claims 100e18 (remaining: 50e18)
+        claimAs(alice, alice, 100e18, proofs[0]);
+        assertEq(distributor.totalClaimed(), 100e18);
+
+        // Bob has 200e18 allocation but only 50e18 remaining in cap
+        uint256 bobClaimable = distributor.getClaimable(bob, 200e18);
+        assertEq(bobClaimable, 50e18);
+
+        // Charlie has 300e18 allocation but only 50e18 remaining
+        uint256 charlieClaimable = distributor.getClaimable(charlie, 300e18);
+        assertEq(charlieClaimable, 50e18);
+    }
+
+    /// @notice Test getClaimable returns 0 when maxClaimable is 0 (Electisec #4)
+    function test_fix_getClaimableZeroCap() public {
+        // Deploy fresh distributor without setting emissions (maxClaimable = 0)
+        distributor = new RewardsDistributor(owner, address(token), false, START);
+        fundDistributor(1_000_000e18);
+
+        setupSimpleRoot();
+
+        // getClaimable should return 0 for all users
+        assertEq(distributor.getClaimable(alice, 100e18), 0);
+        assertEq(distributor.getClaimable(bob, 200e18), 0);
+        assertEq(distributor.getClaimable(charlie, 300e18), 0);
+    }
 }

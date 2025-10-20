@@ -103,7 +103,7 @@ contract PhantomLiquidityTest is BaseTest {
         assertEq(morphoBalance, 10 ** 10 * 10 ** 18, "All funds should remain safe");
         maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 0);
         vm.warp(block.timestamp + 1 days);
-        mc.accrueBorrowerPremium(id, BORROWER);
+        mc.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         m = morpho.market(id);
 
@@ -170,7 +170,7 @@ contract PhantomLiquidityTest is BaseTest {
 
         // Set markdown way above borrower's debt
         maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 1000 ether);
-        mc.accrueBorrowerPremium(id, BORROWER);
+        mc.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory m = morpho.market(id);
 

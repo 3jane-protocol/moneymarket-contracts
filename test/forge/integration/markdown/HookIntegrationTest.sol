@@ -93,7 +93,7 @@ contract HookIntegrationTest is BaseTest {
         assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default");
 
         // Trigger markdown update
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
         (, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdownBefore = 0;
@@ -142,7 +142,7 @@ contract HookIntegrationTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + 10 days);
 
         // Trigger markdown update to set default time
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Get markdown state and default time
         uint128 lastCalcMarkdown = morphoCredit.markdownState(id, BORROWER);
@@ -303,7 +303,7 @@ contract HookIntegrationTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + 20 days);
 
         // Update markdown
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
         (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdownInDefault = 0;
@@ -366,7 +366,7 @@ contract HookIntegrationTest is BaseTest {
         _continueMarketCycles(id, defaultTime + 10 days);
 
         // Trigger markdown accrual for borrower1
-        morphoCredit.accrueBorrowerPremium(id, borrower1);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower1));
         {
             uint256 borrowAssets1 = morpho.expectedBorrowAssets(marketParams, borrower1);
             (RepaymentStatus status1, uint256 defaultTime1) =

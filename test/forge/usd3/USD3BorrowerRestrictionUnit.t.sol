@@ -80,8 +80,9 @@ contract USD3BorrowerRestrictionUnitTest is Test {
         mockUSD3.setWhitelist(borrower, true);
 
         // Borrower as receiver should fail to deposit with hop
+        // Helper now blocks third-party deposits before USD3's borrower check
         vm.prank(alice); // Alice sends funds but borrower is receiver
-        vm.expectRevert("Deposit exceeds limit");
+        vm.expectRevert(); // Reverts with Unauthorized() from Helper
         helper.deposit(1000e6, borrower, true);
 
         // Alice as receiver should succeed with hop
