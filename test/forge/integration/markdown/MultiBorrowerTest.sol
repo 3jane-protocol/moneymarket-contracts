@@ -112,7 +112,7 @@ contract MultiBorrowerTest is BaseTest {
         // Update markdowns for defaulted borrowers and track total reduction
         uint256 totalMarkdowns = 0;
         for (uint256 i = 0; i < numDefaulting; i++) {
-            morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrowers[i]));
 
             // Verify status
             (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
@@ -185,7 +185,7 @@ contract MultiBorrowerTest is BaseTest {
         uint256[] memory initialMarkdowns = new uint256[](halfBorrowers);
 
         for (uint256 i = 0; i < halfBorrowers; i++) {
-            morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrowers[i]));
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
             (RepaymentStatus status, uint256 defaultTime) =
                 MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
@@ -204,7 +204,7 @@ contract MultiBorrowerTest is BaseTest {
         // Update the same borrowers and verify markdown increased
         uint256 totalIncrease = 0;
         for (uint256 i = 0; i < halfBorrowers; i++) {
-            morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrowers[i]));
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
             (RepaymentStatus status, uint256 defaultTime) =
                 MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
@@ -295,7 +295,7 @@ contract MultiBorrowerTest is BaseTest {
             (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             assertEq(uint8(status), uint8(RepaymentStatus.GracePeriod), "Should be in grace");
 
-            morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrowers[i]));
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
             (status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             uint256 markdown = 0;
@@ -311,7 +311,7 @@ contract MultiBorrowerTest is BaseTest {
             (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             assertEq(uint8(status), uint8(RepaymentStatus.Delinquent), "Should be delinquent");
 
-            morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrowers[i]));
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
             (status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             uint256 markdown = 0;
@@ -331,7 +331,7 @@ contract MultiBorrowerTest is BaseTest {
         // Update and verify defaulted borrowers
         uint256 totalMarkdown = 0;
         for (uint256 i = 7; i <= 9; i++) {
-            morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrowers[i]));
 
             (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, borrowers[i]);
             assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default");
@@ -421,7 +421,7 @@ contract MultiBorrowerTest is BaseTest {
         for (uint256 j = 0; j < 3; j++) {
             uint256 i = indices[j];
             vm.warp(baseTime + additionalDays[i] * 1 days);
-            morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrowers[i]));
         }
 
         // Verify each borrower has markdown and they are different
@@ -533,7 +533,7 @@ contract MultiBorrowerTest is BaseTest {
             // Measure gas for updating all defaulted borrowers
             uint256 gasBefore = gasleft();
             for (uint256 i = 0; i < counts[test]; i++) {
-                morphoCredit.accrueBorrowerPremium(newId, borrowers[i]);
+                morphoCredit.accruePremiumsForBorrowers(newId, _toArray(borrowers[i]));
             }
             gasCosts[test] = gasBefore - gasleft();
 

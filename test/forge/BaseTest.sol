@@ -616,9 +616,13 @@ contract BaseTest is Test {
     }
 
     function _triggerBorrowerAccrual(address borrower) internal {
-        // Trigger borrower-specific accrual using the public accrueBorrowerPremium function
-        // This works even for borrowers with outstanding repayments
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, borrower);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(borrower));
+    }
+
+    function _toArray(address value) internal pure virtual returns (address[] memory) {
+        address[] memory array = new address[](1);
+        array[0] = value;
+        return array;
     }
 
     function _getRepaymentDetails(Id _id, address borrower)

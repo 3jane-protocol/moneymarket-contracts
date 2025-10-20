@@ -206,7 +206,7 @@ contract MarketCreationDOSTest is Test {
         // Attacker tries to DOS but now it reverts
         vm.prank(attacker);
         vm.expectRevert(ErrorsLib.MarketNotCreated.selector);
-        morpho.accrueBorrowerPremium(marketId, fakeBorrower);
+        morpho.accruePremiumsForBorrowers(marketId, _toArray(fakeBorrower));
 
         // Admin can now successfully create the market
         vm.prank(owner);
@@ -244,8 +244,8 @@ contract MarketCreationDOSTest is Test {
         borrowers[0] = borrower;
         morpho.accruePremiumsForBorrowers(marketId, borrowers);
 
-        // Legitimate call to accrueBorrowerPremium should work
-        morpho.accrueBorrowerPremium(marketId, borrower);
+        // Legitimate call to batch method should work
+        morpho.accruePremiumsForBorrowers(marketId, _toArray(borrower));
     }
 
     /**
@@ -318,5 +318,11 @@ contract MarketCreationDOSTest is Test {
         // This makes it economically viable for persistent DOS
         emit log_named_uint("Gas used for DOS attempt", gasUsed);
         assertLt(gasUsed, 100000, "DOS attack should be cheap");
+    }
+
+    function _toArray(address value) internal pure returns (address[] memory) {
+        address[] memory array = new address[](1);
+        array[0] = value;
+        return array;
     }
 }

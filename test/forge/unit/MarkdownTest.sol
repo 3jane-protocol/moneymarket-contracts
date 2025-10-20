@@ -106,7 +106,7 @@ contract MarkdownTest is BaseTest {
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
 
         // Trigger markdown update by accruing premium
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Check markdown info
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -191,7 +191,7 @@ contract MarkdownTest is BaseTest {
 
         // Fast forward to default and trigger markdown
         vm.warp(block.timestamp + 31 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Get market markdown info
         uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;

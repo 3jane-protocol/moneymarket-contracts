@@ -122,7 +122,7 @@ contract Helper is IHelper {
         Id id = marketParams.id();
 
         // Accrue premium first to get accurate borrow shares
-        IMorphoCredit(MORPHO).accrueBorrowerPremium(id, onBehalf);
+        _accruePremiumsForBorrower(id, onBehalf);
 
         // Get current borrow shares after premium accrual
         Position memory pos = IMorpho(MORPHO).position(id, onBehalf);
@@ -153,5 +153,11 @@ contract Helper is IHelper {
     function _wrap(address from, uint256 assets) internal returns (uint256) {
         IERC20(USDC).safeTransferFrom(from, address(this), assets);
         return IERC4626(WAUSDC).deposit(assets, address(this));
+    }
+
+    function _accruePremiumsForBorrower(Id id, address borrower) internal {
+        address[] memory borrowers = new address[](1);
+        borrowers[0] = borrower;
+        IMorphoCredit(MORPHO).accruePremiumsForBorrowers(id, borrowers);
     }
 }
