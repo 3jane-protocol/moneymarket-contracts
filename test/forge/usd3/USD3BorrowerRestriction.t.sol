@@ -61,14 +61,13 @@ contract USD3BorrowerRestrictionTest is Setup {
         );
 
         // Deploy Helper contract with correct addresses
-        helperContract =
-            new Helper(
-                address(morpho),
-                address(usd3Strategy),
-                sUSD3,
-                address(underlyingAsset), // USDC
-                address(waUSDC)
-            );
+        helperContract = new Helper(
+            address(morpho),
+            address(usd3Strategy),
+            sUSD3,
+            address(underlyingAsset), // USDC
+            address(waUSDC)
+        );
 
         // Fund test users
         _fundUsers();

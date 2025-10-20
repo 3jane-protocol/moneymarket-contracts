@@ -1,16 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {
-    BaseHooksUpgradeable,
-    IERC20,
-    IMorphoCredit,
-    IProtocolConfig,
-    IStrategy,
-    Math,
-    SafeERC20,
-    USD3
-} from "./USD3.sol";
+import {BaseHooksUpgradeable, IERC20, IMorphoCredit, IProtocolConfig, Math, SafeERC20, USD3} from "./USD3.sol";
+import {IStrategy} from "@tokenized-strategy/interfaces/IStrategy.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 
 /**

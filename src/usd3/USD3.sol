@@ -8,7 +8,8 @@ import {IMorpho, IMorphoCredit, MarketParams, Id} from "../interfaces/IMorpho.so
 import {MorphoLib} from "../libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "../libraries/periphery/MorphoBalancesLib.sol";
 import {SharesMathLib} from "../libraries/SharesMathLib.sol";
-import {IStrategy} from "@tokenized-strategy/interfaces/IStrategy.sol";
+import {IERC4626} from "../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
+import {Pausable} from "../../lib/openzeppelin/contracts/utils/Pausable.sol";
 import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
@@ -53,7 +54,7 @@ contract USD3 is BaseHooksUpgradeable {
     /*//////////////////////////////////////////////////////////////
                         CONSTANTS
     //////////////////////////////////////////////////////////////*/
-    IStrategy public constant WAUSDC = IStrategy(0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E);
+    IERC4626 public constant WAUSDC = IERC4626(0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E);
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE - MORPHO PARAMETERS
@@ -376,7 +377,16 @@ contract USD3 is BaseHooksUpgradeable {
 
         (, uint256 waUSDCMax, uint256 waUSDCLiquidity) = getPosition();
 
-        uint256 availableWaUSDC = balanceOfWaUSDC() + Math.min(waUSDCMax, waUSDCLiquidity);
+        uint256 availableWaUSDC;
+
+        if (Pausable(address(WAUSDC)).paused()) {
+            availableWaUSDC = 0;
+        } else {
+            uint256 localWaUSDC = Math.min(balanceOfWaUSDC(), WAUSDC.maxRedeem(address(this)));
+            uint256 morphoWaUSDC = Math.min(waUSDCMax, waUSDCLiquidity);
+            morphoWaUSDC = Math.min(morphoWaUSDC, WAUSDC.maxRedeem(address(morphoCredit)));
+            availableWaUSDC = localWaUSDC + morphoWaUSDC;
+        }
 
         uint256 availableLiquidity = idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
 
@@ -406,6 +416,12 @@ contract USD3 is BaseHooksUpgradeable {
             return 0;
         }
 
+        uint256 maxDeposit = WAUSDC.maxDeposit(address(this));
+
+        if (Pausable(address(WAUSDC)).paused() || maxDeposit == 0) {
+            return 0;
+        }
+
         // Block deposits from borrowers
         if (morphoCredit.borrowShares(marketId, _owner) > 0) {
             return 0;
@@ -420,7 +436,7 @@ contract USD3 is BaseHooksUpgradeable {
         if (cap <= currentTotalAssets) {
             return 0;
         }
-        return cap - currentTotalAssets;
+        return Math.min(cap - currentTotalAssets, maxDeposit);
     }
 
     /*//////////////////////////////////////////////////////////////
