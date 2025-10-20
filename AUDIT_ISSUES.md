@@ -28,7 +28,7 @@ Total Issues: 19 (2 closed)
 **Impact**: Critical - Attacker can permanently prevent creation of any market by frontrunning with ~20k gas
 
 **Description**:
-`accruePremiumsForBorrowers()` and `accrueBorrowerPremium()` are external functions with no authorization checks. They call `_accrueInterest()` which sets `market[id].lastUpdate = block.timestamp` even for non-existent markets. Since `createMarket()` checks if `market[id].lastUpdate != 0` and reverts with `MarketAlreadyCreated` if true, an attacker can permanently block any market creation by calling these functions with a calculated market ID before the admin creates the market.
+`accruePremiumsForBorrowers()` is an external function with no authorization checks. It calls `_accrueInterest()` which sets `market[id].lastUpdate = block.timestamp` even for non-existent markets. Since `createMarket()` checks if `market[id].lastUpdate != 0` and reverts with `MarketAlreadyCreated` if true, an attacker can permanently block any market creation by calling this function with a calculated market ID before the admin creates the market.
 
 **Attack Vector**:
 1. Admin announces new market with specific parameters
@@ -40,19 +40,16 @@ Total Issues: 19 (2 closed)
 7. Market can never be created with those parameters
 
 **Fix Implemented**:
-Added market existence validation to both functions:
+Added market existence validation:
 
 ```solidity
-function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) public {
-    if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
-    // ... rest of function
-}
-
-function accrueBorrowerPremium(Id id, address borrower) external {
+function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) external {
     if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
     // ... rest of function
 }
 ```
+
+Note: The single-borrower `accrueBorrowerPremium()` method was subsequently removed to save bytecode size, leaving only the batch method.
 
 **Files Modified**:
 - src/MorphoCredit.sol:125-147
@@ -62,7 +59,6 @@ function accrueBorrowerPremium(Id id, address borrower) external {
 
 **Test Coverage**:
 - ✅ `test_fix_prevents_dos_accruePremiumsForBorrowers()` - Verifies attacker cannot DOS via batch function
-- ✅ `test_fix_prevents_dos_accrueBorrowerPremium()` - Verifies attacker cannot DOS via single borrower function
 - ✅ `test_legitimate_usage_after_fix()` - Verifies functions work correctly for existing markets
 - ✅ `test_multiple_frontrun_attempts_blocked()` - Verifies repeated attacks are blocked
 - ✅ `test_empty_array_reverts_for_non_existent_market()` - Verifies edge case handling

@@ -92,7 +92,7 @@ contract MarkdownStateTest is BaseTest {
         emit DefaultStarted(id, BORROWER, expectedDefaultTime);
 
         // Trigger update - should set default timestamp
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify default timestamp was set correctly
         (, uint256 defaultStartTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
@@ -113,7 +113,7 @@ contract MarkdownStateTest is BaseTest {
 
         // Fast forward to default
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify in default with timestamp set
         uint128 lastCalculatedMarkdown = morphoCredit.markdownState(id, BORROWER);
@@ -141,7 +141,7 @@ contract MarkdownStateTest is BaseTest {
         assertEq(uint8(status), uint8(RepaymentStatus.Current), "Should be current after repayment");
 
         // Trigger update to ensure markdown state is fully cleared
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify default timestamp and markdown cleared
         lastCalculatedMarkdown = morphoCredit.markdownState(id, BORROWER);
@@ -163,7 +163,7 @@ contract MarkdownStateTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
 
         // Touch only BORROWER
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Check BORROWER has markdown
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -190,7 +190,7 @@ contract MarkdownStateTest is BaseTest {
         // Touch BORROWER again - should update
         uint256 oldMarkdown = borrowerMarkdown;
 
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify markdown increased
         borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -232,7 +232,7 @@ contract MarkdownStateTest is BaseTest {
         // Touch each borrower and verify running total
         uint256 expectedTotal = 0;
         for (uint256 i = 0; i < borrowers.length; i++) {
-            morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrowers[i]));
 
             // Get individual markdown
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
@@ -257,7 +257,7 @@ contract MarkdownStateTest is BaseTest {
         uint128 storedMarkdown = morphoCredit.markdownState(id, borrowers[0]);
 
         // Update first borrower
-        morphoCredit.accrueBorrowerPremium(id, borrowers[0]);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrowers[0]));
 
         // Get new markdown after update
         uint256 borrower0Assets = morpho.expectedBorrowAssets(marketParams, borrowers[0]);
@@ -286,7 +286,7 @@ contract MarkdownStateTest is BaseTest {
 
         // Go to default
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         uint128 markdown1 = morphoCredit.markdownState(id, BORROWER);
         (RepaymentStatus status1, uint256 defaultTime1) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
@@ -300,7 +300,7 @@ contract MarkdownStateTest is BaseTest {
         vm.prank(BORROWER);
         morpho.repay(marketParams, amountDue, 0, BORROWER, hex"");
 
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
         uint128 markdown2 = morphoCredit.markdownState(id, BORROWER);
         (RepaymentStatus status2, uint256 statusStartTime2) =
             MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
@@ -314,7 +314,7 @@ contract MarkdownStateTest is BaseTest {
 
         // Go to default again
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         uint128 markdown3 = morphoCredit.markdownState(id, BORROWER);
         (RepaymentStatus status3, uint256 defaultTime3) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
@@ -340,13 +340,13 @@ contract MarkdownStateTest is BaseTest {
         (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         assertEq(uint8(status), uint8(RepaymentStatus.GracePeriod), "Should be in grace period");
 
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
         uint128 markdown = morphoCredit.markdownState(id, BORROWER);
         assertEq(markdown, 0, "Grace period borrower should have no markdown");
 
         // Test Delinquent
         _continueMarketCycles(id, cycleEndDate + GRACE_PERIOD_DURATION + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
         markdown = morphoCredit.markdownState(id, BORROWER);
         assertEq(markdown, 0, "Delinquent borrower should have no markdown");
     }

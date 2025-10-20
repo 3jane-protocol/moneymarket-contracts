@@ -240,7 +240,7 @@ contract MarkdownControllerJaneTest is BaseTest {
         uint256 initialBalance = jane.balanceOf(BORROWER);
 
         // Trigger markdown update which should burn JANE proportionally
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Expected burn: 10% of balance
         uint256 expectedBurn = initialBalance * 10 / 100;
@@ -249,7 +249,7 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Move to 25 days total in default (25% total markdown)
         vm.warp(defaultStart + 25 days);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Should burn additional 15% (25% total - 10% already burned)
         uint256 expectedTotalBurn = initialBalance * 25 / 100;
@@ -273,7 +273,7 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Move to 50% markdown
         vm.warp(defaultStart + 50 days);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         uint256 balanceAfter50Percent = jane.balanceOf(BORROWER);
         assertEq(balanceAfter50Percent, BORROWER_JANE_BALANCE / 2, "Should have 50% remaining");
@@ -293,7 +293,7 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Move to 100% markdown
         vm.warp(defaultStart + 100 days);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Should burn only remaining balance
         assertEq(jane.balanceOf(BORROWER), 0, "Should burn all remaining");
@@ -351,7 +351,7 @@ contract MarkdownControllerJaneTest is BaseTest {
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 10 days);
 
         // Trigger markdown - should not revert despite zero balance
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, borrower2);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(borrower2));
 
         assertEq(jane.balanceOf(borrower2), 0, "Should still be zero");
         assertEq(markdownController.janeBurned(borrower2), 0, "No burn tracked");
@@ -375,7 +375,7 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Move to default with some markdown
         vm.warp(defaultStart + 20 days);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         uint256 balanceBeforeSettlement = jane.balanceOf(BORROWER);
         assertTrue(balanceBeforeSettlement > 0, "Should have JANE balance before settlement");
@@ -489,12 +489,12 @@ contract MarkdownControllerJaneTest is BaseTest {
         vm.warp(defaultStart + 10 days);
 
         uint256 initialBalance = jane.balanceOf(BORROWER);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
         assertTrue(jane.balanceOf(BORROWER) < initialBalance, "JANE should be burned");
 
         // 5. Continue default - more burning
         vm.warp(defaultStart + 30 days);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
         assertTrue(jane.balanceOf(BORROWER) <= initialBalance * 70 / 100, "More JANE burned");
 
         // 6. Settlement - full burn
@@ -523,7 +523,7 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Accrue premium to trigger markdown
         uint256 balanceBefore = jane.balanceOf(BORROWER);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
         assertTrue(jane.balanceOf(BORROWER) < balanceBefore, "JANE should be burned during accrual");
 
         // Close another cycle to unfreeze the market for new operations

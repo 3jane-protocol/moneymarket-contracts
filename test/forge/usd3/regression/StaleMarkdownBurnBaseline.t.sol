@@ -210,7 +210,7 @@ contract StaleMarkdownBurnBaselineTest is Test {
 
         // Step 4: Trigger markdown (initializes baseline at 1000 JANE)
         vm.warp(block.timestamp + 10 days);
-        morpho.accrueBorrowerPremium(marketId, borrower);
+        morpho.accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         // Verify some JANE was burned from first default episode
         uint256 janeAfterFirstDefault = janeToken.balanceOf(borrower);
@@ -245,11 +245,7 @@ contract StaleMarkdownBurnBaselineTest is Test {
         (status,) = MorphoCreditLib.getRepaymentStatus(morpho, marketId, borrower);
         assertEq(uint256(status), uint256(RepaymentStatus.Current), "Should return to Current");
 
-        // Step 7: After fix, baseline should be reset
-        assertEq(markdownController.initialJaneBalance(borrower), 0, "Baseline should be reset on exit");
-        assertEq(markdownController.janeBurned(borrower), 0, "Burned tracker should be reset on exit");
-
-        // Step 8: Borrower reduces JANE holdings (transfers out half)
+        // Step 7: Borrower reduces JANE holdings (transfers out half)
         uint256 janeToTransfer = janeAfterFirstDefault / 2;
         vm.prank(borrower);
         janeToken.transfer(address(1), janeToTransfer);
@@ -257,20 +253,16 @@ contract StaleMarkdownBurnBaselineTest is Test {
         uint256 janeBeforeSecondDefault = janeToken.balanceOf(borrower);
         emit log_named_uint("JANE balance before second default", janeBeforeSecondDefault);
 
-        // Step 9: Create new cycle and default again (must wait at least CYCLE_DURATION from previous cycle end)
+        // Step 8: Create new cycle and default again (must wait at least CYCLE_DURATION from previous cycle end)
         vm.warp(block.timestamp + CYCLE_DURATION + 1 days);
         _postObligationOnly(borrower, BORROW_AMOUNT);
 
         // Advance into Default again
         vm.warp(block.timestamp + GRACE_PERIOD + DELINQUENCY_PERIOD + 1);
 
-        // Step 10: After fix, baseline should be reset on default entry too
-        assertEq(markdownController.initialJaneBalance(borrower), 0, "Baseline should be reset on entry");
-        assertEq(markdownController.janeBurned(borrower), 0, "Burned tracker should be reset on entry");
-
-        // Step 11: Trigger markdown again (should snapshot current JANE balance)
+        // Step 9: Trigger markdown (will reset and snapshot current JANE balance)
         vm.warp(block.timestamp + 10 days);
-        morpho.accrueBorrowerPremium(marketId, borrower);
+        morpho.accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         // Verify burns are proportional to NEW baseline (reduced JANE holdings)
         uint256 janeAfterSecondDefault = janeToken.balanceOf(borrower);
@@ -304,7 +296,7 @@ contract StaleMarkdownBurnBaselineTest is Test {
 
         // Trigger markdown to initialize baseline
         vm.warp(block.timestamp + 10 days);
-        morpho.accrueBorrowerPremium(marketId, borrower);
+        morpho.accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         uint256 baselineAfterFirstDefault = markdownController.initialJaneBalance(borrower);
         assertGt(baselineAfterFirstDefault, 0, "Baseline should be set after first default");
@@ -312,43 +304,26 @@ contract StaleMarkdownBurnBaselineTest is Test {
         // Repay and exit default
         _repayAndExitDefault(borrower, BORROW_AMOUNT);
 
-        // Verify reset on exit
-        assertEq(markdownController.initialJaneBalance(borrower), 0, "Baseline reset on exit");
+        // Verify baseline is NOT reset on exit (stale value remains)
+        assertEq(
+            markdownController.initialJaneBalance(borrower), baselineAfterFirstDefault, "Baseline not reset on exit"
+        );
 
         // Enter default again (wait for next cycle)
         vm.warp(block.timestamp + CYCLE_DURATION + 1 days);
         _postObligationAndEnterDefault(borrower, BORROW_AMOUNT);
 
-        // Baseline should still be 0 before first burn of new episode
-        assertEq(markdownController.initialJaneBalance(borrower), 0, "Baseline reset on entry");
-    }
+        // Trigger first burn in new episode - this will reset and establish new baseline
+        vm.warp(block.timestamp + 5 days);
+        morpho.accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
-    /**
-     * @notice Test that baseline resets on default exit
-     */
-    function test_baseline_resets_on_default_exit() public {
-        _createPaymentCycle();
-        _borrowFunds(borrower, BORROW_AMOUNT);
-
-        vm.warp(block.timestamp + CYCLE_DURATION + 1 days);
-        _postObligationAndEnterDefault(borrower, BORROW_AMOUNT);
-
-        // Trigger markdown
-        vm.warp(block.timestamp + 10 days);
-        morpho.accrueBorrowerPremium(marketId, borrower);
-
-        // Verify baseline is set
-        uint256 baselineBeforeExit = markdownController.initialJaneBalance(borrower);
-        uint256 burnedBeforeExit = markdownController.janeBurned(borrower);
-        assertGt(baselineBeforeExit, 0, "Baseline should be set");
-        assertGt(burnedBeforeExit, 0, "Some burns should have occurred");
-
-        // Repay and exit default
-        _repayAndExitDefault(borrower, BORROW_AMOUNT);
-
-        // Verify reset occurred
-        assertEq(markdownController.initialJaneBalance(borrower), 0, "Baseline should be reset");
-        assertEq(markdownController.janeBurned(borrower), 0, "Burn tracker should be reset");
+        // After first burn in new episode, baseline should be set to current JANE balance (not stale value)
+        uint256 newBaseline = markdownController.initialJaneBalance(borrower);
+        uint256 currentJane = janeToken.balanceOf(borrower);
+        // Baseline should be less than old baseline (since JANE was burned and no new JANE added)
+        assertLt(newBaseline, baselineAfterFirstDefault, "New baseline should be less than old baseline");
+        // Baseline should be close to current JANE (within burn amount from this accrual)
+        assertApproxEqAbs(newBaseline, currentJane, 100e18, "Baseline should match current JANE after burn");
     }
 
     /**
@@ -363,7 +338,7 @@ contract StaleMarkdownBurnBaselineTest is Test {
         vm.warp(block.timestamp + CYCLE_DURATION + 1 days);
         _postObligationAndEnterDefault(borrower, BORROW_AMOUNT);
         vm.warp(block.timestamp + 20 days);
-        morpho.accrueBorrowerPremium(marketId, borrower);
+        morpho.accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         uint256 janeAfterEpisode1 = janeToken.balanceOf(borrower);
         uint256 burnedEpisode1 = INITIAL_JANE - janeAfterEpisode1;
@@ -371,13 +346,14 @@ contract StaleMarkdownBurnBaselineTest is Test {
         assertGt(burnedEpisode1, 0, "Should have burned some JANE in episode 1");
 
         // Verify baseline is set
-        assertGt(markdownController.initialJaneBalance(borrower), 0, "Baseline should be set");
+        uint256 baseline1 = markdownController.initialJaneBalance(borrower);
+        assertGt(baseline1, 0, "Baseline should be set");
 
         // Exit default
         _repayAndExitDefault(borrower, BORROW_AMOUNT);
 
-        // Verify baseline is reset on exit
-        assertEq(markdownController.initialJaneBalance(borrower), 0, "Baseline should be reset after exit");
+        // Verify baseline is NOT reset on exit (stale value remains)
+        assertEq(markdownController.initialJaneBalance(borrower), baseline1, "Baseline not reset on exit");
 
         // Reduce holdings to 75%
         vm.prank(borrower);
@@ -388,11 +364,9 @@ contract StaleMarkdownBurnBaselineTest is Test {
         vm.warp(block.timestamp + CYCLE_DURATION + 1 days);
         _postObligationAndEnterDefault(borrower, BORROW_AMOUNT);
 
-        // Baseline should still be 0 before first burn
-        assertEq(markdownController.initialJaneBalance(borrower), 0, "Baseline should be 0 on entry");
-
+        // Trigger first burn in episode 2 (will reset and establish new baseline)
         vm.warp(block.timestamp + 20 days);
-        morpho.accrueBorrowerPremium(marketId, borrower);
+        morpho.accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         uint256 janeAfterEpisode2 = janeToken.balanceOf(borrower);
         uint256 burnedEpisode2 = janeBeforeEpisode2 - janeAfterEpisode2;
@@ -406,8 +380,8 @@ contract StaleMarkdownBurnBaselineTest is Test {
         // Exit default
         _repayAndExitDefault(borrower, BORROW_AMOUNT);
 
-        // Verify baseline is reset on exit
-        assertEq(markdownController.initialJaneBalance(borrower), 0, "Baseline should be reset after episode 2");
+        // Verify baseline is NOT reset on exit (stale value remains)
+        assertEq(markdownController.initialJaneBalance(borrower), baseline2, "Baseline not reset on exit");
 
         // Reduce holdings to 50%
         vm.prank(borrower);
@@ -418,11 +392,9 @@ contract StaleMarkdownBurnBaselineTest is Test {
         vm.warp(block.timestamp + CYCLE_DURATION + 1 days);
         _postObligationAndEnterDefault(borrower, BORROW_AMOUNT);
 
-        // Baseline should still be 0 before first burn
-        assertEq(markdownController.initialJaneBalance(borrower), 0, "Baseline should be 0 on entry");
-
+        // Trigger first burn in episode 3 (will reset and establish new baseline)
         vm.warp(block.timestamp + 20 days);
-        morpho.accrueBorrowerPremium(marketId, borrower);
+        morpho.accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         uint256 janeAfterEpisode3 = janeToken.balanceOf(borrower);
         uint256 burnedEpisode3 = janeBeforeEpisode3 - janeAfterEpisode3;
@@ -453,7 +425,7 @@ contract StaleMarkdownBurnBaselineTest is Test {
 
         // Trigger markdown (should handle zero balance gracefully)
         vm.warp(block.timestamp + 10 days);
-        morpho.accrueBorrowerPremium(marketId, borrower);
+        morpho.accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         // Verify no burns occurred and baseline is 0
         assertEq(janeToken.balanceOf(borrower), 0, "Still zero JANE");
@@ -536,5 +508,11 @@ contract StaleMarkdownBurnBaselineTest is Test {
         // Verify returned to Current
         (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(morpho, marketId, _borrower);
         assertEq(uint256(status), uint256(RepaymentStatus.Current), "Should return to Current");
+    }
+
+    function _toArray(address value) internal pure returns (address[] memory) {
+        address[] memory array = new address[](1);
+        array[0] = value;
+        return array;
     }
 }

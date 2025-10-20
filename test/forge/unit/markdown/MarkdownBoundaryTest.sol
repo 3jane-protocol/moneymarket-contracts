@@ -225,7 +225,7 @@ contract MarkdownBoundaryTest is BaseTest {
         // Move to exactly day 70 in default
         uint256 defaultStartTime = block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1;
         _continueMarketCycles(id, defaultStartTime + 70 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Get market state
         Market memory market = morpho.market(id);

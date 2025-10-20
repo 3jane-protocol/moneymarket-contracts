@@ -117,7 +117,7 @@ contract RealComponentsTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 10 days);
 
         // Accrue premium with real IRM rates
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Check markdown with actual interest accrual
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -191,7 +191,7 @@ contract RealComponentsTest is BaseTest {
         // Check individual markdowns
         uint256 totalMarkdown = 0;
         for (uint256 i = 0; i < borrowers.length; i++) {
-            morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrowers[i]));
 
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrowers[i]);
             (RepaymentStatus status, uint256 defaultTime) =
@@ -226,7 +226,7 @@ contract RealComponentsTest is BaseTest {
         // Create obligation and default
         _createPastObligation(BORROWER, 500, borrowAmount);
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 15 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Check markdown still works correctly
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -287,7 +287,7 @@ contract RealComponentsTest is BaseTest {
         // Borrower 1 defaults
         _createPastObligation(borrowers[0], 500, amounts[0] / 2);
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 20 days);
-        morphoCredit.accrueBorrowerPremium(id, borrowers[0]);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrowers[0]));
 
         // Check markdown impact
         Market memory marketDuringDefault = morpho.market(id);
@@ -301,7 +301,7 @@ contract RealComponentsTest is BaseTest {
         morpho.repay(marketParams, amountDue, 0, borrowers[0], hex"");
         vm.stopPrank();
 
-        morphoCredit.accrueBorrowerPremium(id, borrowers[0]);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrowers[0]));
 
         // Verify markdown cleared
         Market memory marketAfterRecovery = morpho.market(id);
@@ -350,7 +350,7 @@ contract RealComponentsTest is BaseTest {
         // Trigger default with markdown
         _createPastObligation(BORROWER, 500, borrowAmount);
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 10 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Check rate with markdown applied
         market = morpho.market(id);
@@ -378,7 +378,7 @@ contract RealComponentsTest is BaseTest {
         // Default for extended period
         _createPastObligation(BORROWER, 500, borrowAmount);
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 60 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Calculate markdown before settlement
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -406,7 +406,7 @@ contract RealComponentsTest is BaseTest {
     }
 
     // Helper functions
-    function _toArray(address value) private pure returns (address[] memory) {
+    function _toArray(address value) internal pure override returns (address[] memory) {
         address[] memory array = new address[](1);
         array[0] = value;
         return array;

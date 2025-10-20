@@ -107,7 +107,7 @@ contract MarkdownInvariantTest is BaseTest {
         defaultStartTime[borrower] = block.timestamp;
 
         // Accrue premium
-        morphoCredit.accrueBorrowerPremium(id, borrower);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower));
     }
 
     /// @notice Advance time to increase markdown
@@ -143,7 +143,7 @@ contract MarkdownInvariantTest is BaseTest {
         borrowerMarkdown[borrower] = 0;
 
         // Update markdown
-        morphoCredit.accrueBorrowerPremium(id, borrower);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower));
     }
 
     /// @notice Update all markdown calculations
@@ -153,7 +153,7 @@ contract MarkdownInvariantTest is BaseTest {
         for (uint256 i = 0; i < borrowers.length; i++) {
             address borrower = borrowers[i];
 
-            morphoCredit.accrueBorrowerPremium(id, borrower);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower));
 
             uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, borrower);
             (RepaymentStatus status, uint256 recordedDefaultTime) =

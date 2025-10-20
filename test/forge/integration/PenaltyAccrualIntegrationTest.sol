@@ -460,7 +460,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         morpho.borrow(marketParams, 20000e18, 0, ALICE, ALICE);
 
         // Trigger initial accrual to sync timestamps
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Step 2: Create Cycle 1 obligation that will make Alice delinquent using helper
         // This ensures proper cycle spacing and management
@@ -512,7 +512,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
 
         // Step 5: Trigger penalty accrual
         _continueMarketCycles(id, block.timestamp + 5 days);
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         uint256 debtAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
         uint256 totalAccrued = debtAfter - debtBefore;

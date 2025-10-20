@@ -121,21 +121,13 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /* EXTERNAL FUNCTIONS - PREMIUM MANAGEMENT */
 
     /// @inheritdoc IMorphoCredit
-    function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) public {
+    function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) external {
         if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
         MarketParams memory marketParams = idToMarketParams[id];
         _accrueInterest(marketParams, id);
         for (uint256 i = 0; i < borrowers.length; i++) {
             _accrueBorrowerPremiumAndUpdate(id, borrowers[i]);
         }
-    }
-
-    /// @inheritdoc IMorphoCredit
-    function accrueBorrowerPremium(Id id, address borrower) external {
-        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
-        MarketParams memory marketParams = idToMarketParams[id];
-        _accrueInterest(marketParams, id);
-        _accrueBorrowerPremiumAndUpdate(id, borrower);
     }
 
     /// @dev Internal helper to accrue premium and update borrower state
@@ -737,7 +729,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             IMarkdownController(manager).resetBorrowerState(borrower);
             emit EventsLib.DefaultStarted(id, borrower, statusStartTime);
         } else if (!isInDefault && wasInDefault) {
-            IMarkdownController(manager).resetBorrowerState(borrower);
             emit EventsLib.DefaultCleared(id, borrower);
         }
 

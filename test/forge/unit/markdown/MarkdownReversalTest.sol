@@ -79,7 +79,7 @@ contract MarkdownReversalTest is BaseTest {
 
         // Fast forward to default
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify markdown applied
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -104,7 +104,7 @@ contract MarkdownReversalTest is BaseTest {
         morpho.repay(marketParams, amountDue, 0, BORROWER, hex"");
 
         // Update markdown state
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify markdown reversed
         borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -137,7 +137,7 @@ contract MarkdownReversalTest is BaseTest {
 
         // Fast forward to default
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Record initial markdown
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -151,7 +151,7 @@ contract MarkdownReversalTest is BaseTest {
 
         // Fast forward more time
         _continueMarketCycles(id, block.timestamp + 10 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify markdown increased
         borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -165,7 +165,7 @@ contract MarkdownReversalTest is BaseTest {
 
         // Fast forward even more
         _continueMarketCycles(id, block.timestamp + 30 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify markdown continues to increase
         borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -192,7 +192,7 @@ contract MarkdownReversalTest is BaseTest {
         // Cycle 1: Default and recover
         _createPastObligation(BORROWER, 500, borrowAmount);
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 5 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify markdown applied
         uint256 supplyDuringDefault1 = morpho.market(id).totalSupplyAssets;
@@ -203,7 +203,7 @@ contract MarkdownReversalTest is BaseTest {
         loanToken.setBalance(BORROWER, amountDue);
         vm.prank(BORROWER);
         morpho.repay(marketParams, amountDue, 0, BORROWER, hex"");
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify recovery (supply will be higher due to interest)
         uint256 supplyAfterRecovery1 = morpho.market(id).totalSupplyAssets;
@@ -215,7 +215,7 @@ contract MarkdownReversalTest is BaseTest {
         uint256 currentBorrowAmount = _getBorrowerAssets(id, BORROWER);
         _createPastObligation(BORROWER, 500, currentBorrowAmount);
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 10 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify markdown applied again
         uint256 markdownDuringDefault2 = morpho.market(id).totalMarkdownAmount;
@@ -226,7 +226,7 @@ contract MarkdownReversalTest is BaseTest {
         loanToken.setBalance(BORROWER, amountDue);
         vm.prank(BORROWER);
         morpho.repay(marketParams, amountDue, 0, BORROWER, hex"");
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify final recovery
         assertEq(morpho.market(id).totalMarkdownAmount, 0, "Markdown should be cleared again");
@@ -257,9 +257,9 @@ contract MarkdownReversalTest is BaseTest {
         _createPastObligation(borrower3, 500, borrowAmount);
 
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 7 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-        morphoCredit.accrueBorrowerPremium(id, borrower2);
-        morphoCredit.accrueBorrowerPremium(id, borrower3);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower2));
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower3));
 
         // Verify total markdown
         uint256 totalMarkdownDuringDefault = morpho.market(id).totalMarkdownAmount;
@@ -274,7 +274,7 @@ contract MarkdownReversalTest is BaseTest {
         loanToken.setBalance(BORROWER, amountDue1);
         vm.prank(BORROWER);
         morpho.repay(marketParams, amountDue1, 0, BORROWER, hex"");
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         uint256 supplyAfter1Recovery = morpho.market(id).totalSupplyAssets;
         assertTrue(supplyAfter1Recovery > supplyDuringDefault, "Supply should increase after 1 recovery");
@@ -287,7 +287,7 @@ contract MarkdownReversalTest is BaseTest {
         loanToken.approve(address(morpho), amountDue2);
         morpho.repay(marketParams, amountDue2, 0, borrower2, hex"");
         vm.stopPrank();
-        morphoCredit.accrueBorrowerPremium(id, borrower2);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower2));
 
         uint256 supplyAfter2Recovery = morpho.market(id).totalSupplyAssets;
         assertTrue(supplyAfter2Recovery > supplyAfter1Recovery, "Supply should increase more");
@@ -299,7 +299,7 @@ contract MarkdownReversalTest is BaseTest {
         loanToken.approve(address(morpho), amountDue3);
         morpho.repay(marketParams, amountDue3, 0, borrower3, hex"");
         vm.stopPrank();
-        morphoCredit.accrueBorrowerPremium(id, borrower3);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower3));
 
         // Verify full recovery (supply will be higher due to interest)
         uint256 finalSupply = morpho.market(id).totalSupplyAssets;
@@ -319,7 +319,7 @@ contract MarkdownReversalTest is BaseTest {
 
         // Fast forward to default with significant markdown
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 15 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // New supplier deposits
         address newSupplier = address(0x9999);
