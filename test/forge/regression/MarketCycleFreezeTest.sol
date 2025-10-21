@@ -102,9 +102,8 @@ contract MarketCycleFreezeTest is BaseTest {
 
         uint256 firstCycleEnd = block.timestamp; // Use current time since cycle has ended
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Now borrowing should work
         loanToken.setBalance(BORROWER, BORROW_AMOUNT);
@@ -124,9 +123,8 @@ contract MarketCycleFreezeTest is BaseTest {
 
         uint256 firstCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Set up borrower with credit line
         vm.prank(address(creditLine));
@@ -165,9 +163,8 @@ contract MarketCycleFreezeTest is BaseTest {
 
         uint256 firstCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Set up and execute borrow
         vm.prank(address(creditLine));
@@ -192,9 +189,8 @@ contract MarketCycleFreezeTest is BaseTest {
 
         uint256 secondCycleEnd = block.timestamp; // Current time since we're past the cycle
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, secondCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, secondCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Market should be unfrozen now - borrow should work
         vm.prank(mockHelper);
@@ -217,9 +213,8 @@ contract MarketCycleFreezeTest is BaseTest {
 
         uint256 firstCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Set up borrower
         vm.prank(address(creditLine));
@@ -251,9 +246,8 @@ contract MarketCycleFreezeTest is BaseTest {
 
         uint256 firstCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Try to close second cycle before minimum duration (e.g., 20 days instead of 30)
         vm.warp(firstCycleEnd + 20 days);
@@ -261,9 +255,8 @@ contract MarketCycleFreezeTest is BaseTest {
         uint256 tooEarlyEndDate = block.timestamp;
         vm.prank(address(creditLine));
         vm.expectRevert(ErrorsLib.InvalidCycleDuration.selector);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, tooEarlyEndDate, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, tooEarlyEndDate, borrowers, repaymentBps, endingBalances);
     }
 
     /// @notice Test that cycles can be closed exactly at the expected duration
@@ -277,9 +270,8 @@ contract MarketCycleFreezeTest is BaseTest {
 
         uint256 firstCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Close second cycle exactly at expected duration
         vm.warp(firstCycleEnd + TEST_CYCLE_DURATION);
@@ -287,9 +279,8 @@ contract MarketCycleFreezeTest is BaseTest {
         uint256 secondCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
         // Should not revert
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, secondCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, secondCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Verify cycle was created successfully
         assertEq(
@@ -308,9 +299,8 @@ contract MarketCycleFreezeTest is BaseTest {
 
         uint256 firstCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Close second cycle late (e.g., 40 days instead of 30)
         vm.warp(firstCycleEnd + 40 days);
@@ -318,9 +308,8 @@ contract MarketCycleFreezeTest is BaseTest {
         uint256 lateCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
         // Should not revert - late closing is allowed
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, lateCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, lateCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Verify cycle was created successfully
         assertGt(lateCycleEnd, firstCycleEnd + TEST_CYCLE_DURATION, "Second cycle should end after expected duration");
@@ -337,9 +326,8 @@ contract MarketCycleFreezeTest is BaseTest {
         uint256 earlyFirstCycle = block.timestamp;
         vm.prank(address(creditLine));
         // Should not revert even though it's less than TEST_CYCLE_DURATION
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, earlyFirstCycle, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, earlyFirstCycle, borrowers, repaymentBps, endingBalances);
 
         // Create another market to test different first cycle duration
         MarketParams memory newMarketParams = MarketParams({
@@ -363,9 +351,8 @@ contract MarketCycleFreezeTest is BaseTest {
         uint256 lateFirstCycle = block.timestamp;
         vm.prank(address(creditLine));
         // Should not revert even though it's more than TEST_CYCLE_DURATION
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            newMarketId, lateFirstCycle, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(newMarketId, lateFirstCycle, borrowers, repaymentBps, endingBalances);
     }
 
     /// @notice Test that when cycleDuration is 0, no minimum duration is enforced
@@ -379,9 +366,8 @@ contract MarketCycleFreezeTest is BaseTest {
 
         uint256 firstCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Set cycle duration to 0
         vm.prank(OWNER);
@@ -392,18 +378,16 @@ contract MarketCycleFreezeTest is BaseTest {
         uint256 immediateSecondCycle = block.timestamp;
         vm.prank(address(creditLine));
         // Should not revert
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, immediateSecondCycle, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, immediateSecondCycle, borrowers, repaymentBps, endingBalances);
 
         // Should also be able to close cycle after a long time
         vm.warp(immediateSecondCycle + 100 days);
         uint256 lateThirdCycle = block.timestamp;
         vm.prank(address(creditLine));
         // Should not revert
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, lateThirdCycle, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, lateThirdCycle, borrowers, repaymentBps, endingBalances);
     }
 
     /// @notice Test multiple cycles in sequence respect duration requirements
@@ -416,17 +400,15 @@ contract MarketCycleFreezeTest is BaseTest {
         vm.warp(block.timestamp + 15 days);
         uint256 firstCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Second cycle - must respect minimum duration
         vm.warp(firstCycleEnd + TEST_CYCLE_DURATION);
         uint256 secondCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, secondCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, secondCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Third cycle - test that it also respects minimum from second cycle
         // Try to close too early
@@ -434,17 +416,15 @@ contract MarketCycleFreezeTest is BaseTest {
         uint256 tooEarlyThirdCycle = block.timestamp;
         vm.prank(address(creditLine));
         vm.expectRevert(ErrorsLib.InvalidCycleDuration.selector);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, tooEarlyThirdCycle, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, tooEarlyThirdCycle, borrowers, repaymentBps, endingBalances);
 
         // Now close at correct duration
         vm.warp(secondCycleEnd + TEST_CYCLE_DURATION);
         uint256 thirdCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, thirdCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, thirdCycleEnd, borrowers, repaymentBps, endingBalances);
     }
 
     /// @notice Test changing cycle duration between cycles
@@ -457,9 +437,8 @@ contract MarketCycleFreezeTest is BaseTest {
         vm.warp(block.timestamp + TEST_CYCLE_DURATION);
         uint256 firstCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Change cycle duration to 15 days
         uint256 newDuration = 15 days;
@@ -471,17 +450,15 @@ contract MarketCycleFreezeTest is BaseTest {
         vm.warp(firstCycleEnd + 10 days);
         vm.prank(address(creditLine));
         vm.expectRevert(ErrorsLib.InvalidCycleDuration.selector);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         // Close at 15 days - should work
         vm.warp(firstCycleEnd + newDuration);
         uint256 secondCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, secondCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, secondCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Change duration to 60 days
         uint256 longDuration = 60 days;
@@ -493,17 +470,15 @@ contract MarketCycleFreezeTest is BaseTest {
         vm.warp(secondCycleEnd + 45 days);
         vm.prank(address(creditLine));
         vm.expectRevert(ErrorsLib.InvalidCycleDuration.selector);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         // Close at 60 days - should work
         vm.warp(secondCycleEnd + longDuration);
         uint256 thirdCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, thirdCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, thirdCycleEnd, borrowers, repaymentBps, endingBalances);
     }
 
     /// @notice Test edge case where endDate equals startDate + cycleDuration (boundary condition)
@@ -518,9 +493,8 @@ contract MarketCycleFreezeTest is BaseTest {
 
         uint256 firstCycleEnd = block.timestamp;
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, firstCycleEnd, borrowers, repaymentBps, endingBalances);
 
         // Test exact boundary: endDate = startDate + cycleDuration
         uint256 exactEnd = firstCycleEnd + TEST_CYCLE_DURATION;
@@ -528,9 +502,8 @@ contract MarketCycleFreezeTest is BaseTest {
 
         vm.prank(address(creditLine));
         // Should work without reverting (endDate >= startDate + cycleDuration)
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, exactEnd, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, exactEnd, borrowers, repaymentBps, endingBalances);
 
         // Test one second before boundary: endDate = startDate + cycleDuration - 1
         uint256 oneSecondBefore = exactEnd + TEST_CYCLE_DURATION - 1;
@@ -538,8 +511,7 @@ contract MarketCycleFreezeTest is BaseTest {
 
         vm.prank(address(creditLine));
         vm.expectRevert(ErrorsLib.InvalidCycleDuration.selector);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            testMarketId, oneSecondBefore, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(testMarketId, oneSecondBefore, borrowers, repaymentBps, endingBalances);
     }
 }

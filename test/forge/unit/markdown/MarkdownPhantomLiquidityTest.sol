@@ -76,7 +76,7 @@ contract MarkdownPhantomLiquidityTest is BaseTest {
 
         // The attack vector is completely blocked, preventing any phantom liquidity creation
         _continueMarketCycles(id, block.timestamp + 1 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         m = morpho.market(id);
 
@@ -115,7 +115,7 @@ contract MarkdownPhantomLiquidityTest is BaseTest {
 
         // Request markdown larger than borrower's debt (which is the cap)
         markdownManager.setMarkdownForBorrower(BORROWER, borrowerDebt + 100 ether);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mAfter = morpho.market(id);
 
@@ -135,7 +135,7 @@ contract MarkdownPhantomLiquidityTest is BaseTest {
 
         // Restore markdown
         markdownManager.setMarkdownForBorrower(BORROWER, 0);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mRestored = morpho.market(id);
 
@@ -201,8 +201,8 @@ contract MarkdownPhantomLiquidityTest is BaseTest {
         markdownManager.setMarkdownForBorrower(BORROWER, 30 ether);
         markdownManager.setMarkdownForBorrower(borrower2, 20 ether);
 
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-        morphoCredit.accrueBorrowerPremium(id, borrower2);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower2));
 
         Market memory m = morpho.market(id);
 

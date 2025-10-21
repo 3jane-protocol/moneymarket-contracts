@@ -9,8 +9,9 @@ import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {DebtFloorHandler} from "./DebtFloorHandler.sol";
 
@@ -103,9 +104,8 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
 
         // Get current debt
         (,, uint256 totalBorrowAssetsWaUSDC,) = usd3Strategy.getMarketLiquidity();
-        uint256 currentDebtUSDC = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(
-            usd3Strategy.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC)
-        );
+        uint256 currentDebtUSDC = ITokenizedStrategy(address(usd3Strategy))
+            .convertToAssets(usd3Strategy.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC));
 
         // If there's debt and a backing requirement, assets should meet floor
         if (currentDebtUSDC > 0 && minBackingRatio > 0) {
@@ -123,9 +123,8 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
 
         // Get current debt
         (,, uint256 totalBorrowAssetsWaUSDC,) = usd3Strategy.getMarketLiquidity();
-        uint256 currentDebtUSDC = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(
-            usd3Strategy.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC)
-        );
+        uint256 currentDebtUSDC = ITokenizedStrategy(address(usd3Strategy))
+            .convertToAssets(usd3Strategy.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC));
 
         uint256 expectedFloor;
         if (minBackingRatio == 0) {
@@ -166,9 +165,8 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
 
         (,, uint256 totalBorrowAssetsWaUSDC,) = usd3Strategy.getMarketLiquidity();
-        uint256 currentDebtUSDC = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(
-            usd3Strategy.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC)
-        );
+        uint256 currentDebtUSDC = ITokenizedStrategy(address(usd3Strategy))
+            .convertToAssets(usd3Strategy.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC));
 
         // Floor should be proportional to debt based on backing ratio
         if (minBackingRatio > 0 && currentDebtUSDC > 0) {

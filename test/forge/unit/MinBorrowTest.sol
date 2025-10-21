@@ -14,8 +14,9 @@ import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {USD3Mock} from "../../../src/mocks/USD3Mock.sol";
 import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 /// @title MinBorrowTest
 /// @notice Comprehensive tests for minBorrow functionality

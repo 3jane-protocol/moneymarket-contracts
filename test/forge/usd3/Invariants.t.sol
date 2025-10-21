@@ -8,8 +8,9 @@ import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
 import {USD3} from "../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../src/usd3/sUSD3.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {InvariantHandler} from "./handlers/InvariantHandler.sol";
 
@@ -337,9 +338,8 @@ contract InvariantsTest is Setup {
         if (susd3Supply > 0 && usd3Supply > 0) {
             // Get debt-based cap from sUSD3
             uint256 debtCap = susd3Strategy.getSubordinatedDebtCapInUSDC();
-            uint256 susd3HoldingsInAssets = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(
-                ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy))
-            );
+            uint256 susd3HoldingsInAssets = ITokenizedStrategy(address(usd3Strategy))
+                .convertToAssets(ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)));
             uint256 availableRoom = debtCap > susd3HoldingsInAssets ? debtCap - susd3HoldingsInAssets : 0;
 
             assertLe(
@@ -405,9 +405,12 @@ contract InvariantsTest is Setup {
 
         if (shares > 0) {
             vm.prank(actor);
-            try usd3Strategy.redeem(shares, actor, actor) returns (uint256) {
-                // Success
-            } catch {}
+            try usd3Strategy.redeem(shares, actor, actor) returns (
+                uint256
+            ) {
+            // Success
+            }
+                catch {}
         }
     }
 
@@ -438,9 +441,12 @@ contract InvariantsTest is Setup {
 
         if (amount > 0) {
             vm.prank(from);
-            try usd3Strategy.transfer(to, amount) returns (bool) {
-                // Success
-            } catch {}
+            try usd3Strategy.transfer(to, amount) returns (
+                bool
+            ) {
+            // Success
+            }
+                catch {}
         }
     }
 }

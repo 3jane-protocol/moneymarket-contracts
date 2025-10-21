@@ -364,11 +364,6 @@ interface IMorphoCredit {
         view
         returns (uint128 lastAccrualTime, uint128 rate, uint128 borrowAssetsAtLastAccrual);
 
-    /// @notice Manually accrue premium for a borrower
-    /// @param id Market ID
-    /// @param borrower Borrower address
-    function accrueBorrowerPremium(Id id, address borrower) external;
-
     /// @notice Batch accrue premiums for multiple borrowers
     /// @param id Market ID
     /// @param borrowers Array of borrower addresses

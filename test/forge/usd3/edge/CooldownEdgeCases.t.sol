@@ -6,8 +6,9 @@ import {ERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/ERC20.so
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 

@@ -51,9 +51,8 @@ contract MarkdownManagerTest is BaseTest {
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         // Setup initial supply
         loanToken.setBalance(SUPPLIER, 100_000e18);
@@ -100,7 +99,7 @@ contract MarkdownManagerTest is BaseTest {
         // Fast forward to default
         uint256 expectedDefaultTime = cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION;
         vm.warp(expectedDefaultTime + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Forward more time
         uint256 timeInDefault = 5 days;
@@ -140,7 +139,7 @@ contract MarkdownManagerTest is BaseTest {
 
         // Fast forward to default
         vm.warp(expectedDefaultTime + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Check repayment status
         (RepaymentStatus status, uint256 defaultStartTime) =
@@ -182,7 +181,7 @@ contract MarkdownManagerTest is BaseTest {
 
         // Measure gas for markdown update
         uint256 gasBefore = gasleft();
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
         uint256 gasUsed = gasBefore - gasleft();
 
         // Log gas usage (typical should be < 100k for external call + storage updates)
@@ -205,7 +204,7 @@ contract MarkdownManagerTest is BaseTest {
 
         // Should revert when trying to update markdown
         vm.expectRevert("Markdown calculation failed");
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
     }
 
     /// @notice Test re-enabling markdown manager after borrower defaults without one
@@ -222,7 +221,7 @@ contract MarkdownManagerTest is BaseTest {
 
         // Fast forward to default (no manager set)
         vm.warp(expectedDefaultTime + 5 days); // 5 days into default
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify borrower is in default with no markdown
         (RepaymentStatus status, uint256 defaultStartTime) =
@@ -252,7 +251,7 @@ contract MarkdownManagerTest is BaseTest {
         vm.warp(block.timestamp + 2 days); // Now 7 days total in default
 
         // Trigger markdown update
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify markdown is now calculated from original default time
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -430,7 +429,7 @@ contract MarkdownManagerTest is BaseTest {
         _setupBorrowerWithLoan(BORROWER, 10_000e18);
         _createPastObligation(BORROWER, 500, 10_000e18);
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Get initial markdown
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -459,7 +458,7 @@ contract MarkdownManagerTest is BaseTest {
 
         // Forward time and update
         vm.warp(block.timestamp + 1 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Markdown should increase with new rate
         borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -494,6 +493,8 @@ contract InvalidMarkdownManager is IMarkdownController {
     function slashJaneFull(address) external pure returns (uint256) {
         return 0;
     }
+
+    function resetBorrowerState(address) external pure {}
 }
 
 /// @notice Mock markdown manager that always reverts
@@ -515,6 +516,10 @@ contract RevertingMarkdownManager is IMarkdownController {
     }
 
     function slashJaneFull(address) external pure returns (uint256) {
+        revert("Markdown calculation failed");
+    }
+
+    function resetBorrowerState(address) external pure {
         revert("Markdown calculation failed");
     }
 }

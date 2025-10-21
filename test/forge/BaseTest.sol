@@ -21,8 +21,9 @@ import {ArrayLib} from "./helpers/ArrayLib.sol";
 import {MorphoLib} from "../../src/libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "../../src/libraries/periphery/MorphoBalancesLib.sol";
 import {MorphoCreditLib} from "../../src/libraries/periphery/MorphoCreditLib.sol";
-import {TransparentUpgradeableProxy} from
-    "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 contract BaseTest is Test {
@@ -328,9 +329,8 @@ contract BaseTest is Test {
 
             // Post first cycle with current timestamp
             vm.prank(marketParams.creditLine);
-            IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-                _id, block.timestamp, borrowers, repaymentBps, endingBalances
-            );
+            IMorphoCredit(address(morpho))
+                .closeCycleAndPostObligations(_id, block.timestamp, borrowers, repaymentBps, endingBalances);
         }
     }
 
@@ -436,9 +436,8 @@ contract BaseTest is Test {
         return bound(
             assets,
             0,
-            MAX_TEST_AMOUNT.toSharesDown(morpho.totalSupplyAssets(_id), morpho.totalSupplyShares(_id)).zeroFloorSub(
-                supplyShares
-            )
+            MAX_TEST_AMOUNT.toSharesDown(morpho.totalSupplyAssets(_id), morpho.totalSupplyShares(_id))
+                .zeroFloorSub(supplyShares)
         );
     }
 
@@ -599,9 +598,8 @@ contract BaseTest is Test {
         }
 
         vm.prank(mktParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            _id, block.timestamp, borrowers, repaymentBps, balances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(_id, block.timestamp, borrowers, repaymentBps, balances);
     }
 
     function _makePayment(address borrower, uint256 amount) internal {
@@ -618,9 +616,13 @@ contract BaseTest is Test {
     }
 
     function _triggerBorrowerAccrual(address borrower) internal {
-        // Trigger borrower-specific accrual using the public accrueBorrowerPremium function
-        // This works even for borrowers with outstanding repayments
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, borrower);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(borrower));
+    }
+
+    function _toArray(address value) internal pure virtual returns (address[] memory) {
+        address[] memory array = new address[](1);
+        array[0] = value;
+        return array;
     }
 
     function _getRepaymentDetails(Id _id, address borrower)
@@ -693,9 +695,8 @@ contract BaseTest is Test {
             uint256[] memory endingBalances = new uint256[](0);
 
             vm.prank(mktParams.creditLine);
-            IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-                marketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
-            );
+            IMorphoCredit(address(morpho))
+                .closeCycleAndPostObligations(marketId, firstCycleEnd, borrowers, repaymentBps, endingBalances);
             cycleLength = 1;
         }
 
@@ -715,9 +716,8 @@ contract BaseTest is Test {
             uint256[] memory endingBalances = new uint256[](0);
 
             vm.prank(mktParams.creditLine);
-            IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-                marketId, nextCycleEnd, borrowers, repaymentBps, endingBalances
-            );
+            IMorphoCredit(address(morpho))
+                .closeCycleAndPostObligations(marketId, nextCycleEnd, borrowers, repaymentBps, endingBalances);
 
             cycleLength++;
         }
@@ -755,9 +755,8 @@ contract BaseTest is Test {
                 uint256[] memory endingBalances = new uint256[](0);
 
                 vm.prank(mktParams.creditLine);
-                IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-                    marketId, newCycleEnd, borrowers, repaymentBps, endingBalances
-                );
+                IMorphoCredit(address(morpho))
+                    .closeCycleAndPostObligations(marketId, newCycleEnd, borrowers, repaymentBps, endingBalances);
             }
         }
     }

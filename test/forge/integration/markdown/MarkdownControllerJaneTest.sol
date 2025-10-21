@@ -241,8 +241,8 @@ contract MarkdownControllerJaneTest is BaseTest {
         uint256 initialDistributorBalance = jane.balanceOf(janeDistributor);
         uint256 totalSupply = jane.totalSupply();
 
-        // Trigger markdown update which should redistribute JANE proportionally
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        // Trigger markdown update which should burn JANE proportionally
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Expected redistribution: 10% of balance
         uint256 expectedRedistribute = initialBalance * 10 / 100;
@@ -257,7 +257,7 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Move to 25 days total in default (25% total markdown)
         vm.warp(defaultStart + 25 days);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Should redistribute additional 15% (25% total - 10% already redistributed)
         uint256 expectedTotalRedistribute = initialBalance * 25 / 100;
@@ -292,7 +292,7 @@ contract MarkdownControllerJaneTest is BaseTest {
         // Move to 50% markdown
         vm.warp(defaultStart + 50 days);
         uint256 distributorBalanceBefore50 = jane.balanceOf(janeDistributor);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         uint256 balanceAfter50Percent = jane.balanceOf(BORROWER);
         assertEq(balanceAfter50Percent, BORROWER_JANE_BALANCE / 2, "Should have 50% remaining");
@@ -318,7 +318,7 @@ contract MarkdownControllerJaneTest is BaseTest {
         // Move to 100% markdown
         vm.warp(defaultStart + 100 days);
         uint256 distributorBalanceBefore100 = jane.balanceOf(janeDistributor);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Should redistribute only remaining balance
         assertEq(jane.balanceOf(BORROWER), 0, "Should redistribute all remaining");
@@ -376,15 +376,14 @@ contract MarkdownControllerJaneTest is BaseTest {
         // Warp to the new cycle end
         vm.warp(newCycleEnd);
         vm.prank(marketParams.creditLine);
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, newCycleEnd, obligationBorrowers, repaymentBps, endingBalances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, newCycleEnd, obligationBorrowers, repaymentBps, endingBalances);
 
         // Move to default
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 10 days);
 
         // Trigger markdown - should not revert despite zero balance
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, borrower2);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(borrower2));
 
         assertEq(jane.balanceOf(borrower2), 0, "Should still be zero");
         assertEq(markdownController.janeSlashed(borrower2), 0, "No redistribution tracked");
@@ -408,7 +407,7 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Move to default with some markdown
         vm.warp(defaultStart + 20 days);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         uint256 balanceBeforeSettlement = jane.balanceOf(BORROWER);
         uint256 distributorBalanceBeforeSettlement = jane.balanceOf(janeDistributor);
@@ -529,15 +528,15 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         uint256 initialBalance = jane.balanceOf(BORROWER);
         uint256 distributorBalanceBefore = jane.balanceOf(janeDistributor);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
-        assertTrue(jane.balanceOf(BORROWER) < initialBalance, "JANE should be redistributed");
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        assertTrue(jane.balanceOf(BORROWER) < initialBalance, "JANE should be burned");
         assertTrue(jane.balanceOf(janeDistributor) > distributorBalanceBefore, "Distributor should receive JANE");
 
         // 5. Continue default - more redistribution
         vm.warp(defaultStart + 30 days);
         distributorBalanceBefore = jane.balanceOf(janeDistributor);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
-        assertTrue(jane.balanceOf(BORROWER) <= initialBalance * 70 / 100, "More JANE redistributed");
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        assertTrue(jane.balanceOf(BORROWER) <= initialBalance * 70 / 100, "More JANE burned");
         assertTrue(jane.balanceOf(janeDistributor) > distributorBalanceBefore, "Distributor receives more JANE");
 
         // 6. Settlement - full redistribution
@@ -573,8 +572,8 @@ contract MarkdownControllerJaneTest is BaseTest {
         // Accrue premium to trigger markdown
         uint256 balanceBefore = jane.balanceOf(BORROWER);
         uint256 distributorBalanceBefore = jane.balanceOf(janeDistributor);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
-        assertTrue(jane.balanceOf(BORROWER) < balanceBefore, "JANE should be redistributed during accrual");
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        assertTrue(jane.balanceOf(BORROWER) < balanceBefore, "JANE should be burned during accrual");
         assertTrue(jane.balanceOf(janeDistributor) > distributorBalanceBefore, "Distributor should receive JANE");
 
         // Close another cycle to unfreeze the market for new operations
@@ -644,9 +643,8 @@ contract MarkdownControllerJaneTest is BaseTest {
         // Warp to the new cycle end
         vm.warp(newCycleEnd);
         vm.prank(marketParams.creditLine);
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, newCycleEnd, borrowers, repaymentBpsList, endingBalances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, newCycleEnd, borrowers, repaymentBpsList, endingBalances);
 
         // Move forward a bit after creating the cycle
         vm.warp(block.timestamp + 1);
@@ -676,9 +674,8 @@ contract MarkdownControllerJaneTest is BaseTest {
             uint256[] memory endingBalances = new uint256[](0);
 
             vm.prank(marketParams.creditLine);
-            MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-                marketId, block.timestamp, borrowers, repaymentBps, endingBalances
-            );
+            MorphoCredit(address(morpho))
+                .closeCycleAndPostObligations(marketId, block.timestamp, borrowers, repaymentBps, endingBalances);
 
             vm.warp(nextCycleEnd + 1);
         }

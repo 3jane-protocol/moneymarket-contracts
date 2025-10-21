@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {
-    BaseHooksUpgradeable, IERC20, IMorphoCredit, IProtocolConfig, IStrategy, Math, SafeERC20, USD3
-} from "./USD3.sol";
+import {BaseHooksUpgradeable, IERC20, IMorphoCredit, IProtocolConfig, Math, SafeERC20, USD3} from "./USD3.sol";
+import {IStrategy} from "@tokenized-strategy/interfaces/IStrategy.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 
 /**
@@ -244,7 +243,7 @@ contract sUSD3 is BaseHooksUpgradeable {
                         VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Enforces maximum 15% subordination ratio (sUSD3's USD3 holdings relative to USD3 total supply)
+    /// @dev Enforces maximum subordination ratio based on market debt (actual or potential)
     /// @param _owner Address to check limit for
     /// @return Maximum deposit amount allowed
     function availableDepositLimit(address _owner) public view override returns (uint256) {
@@ -426,8 +425,7 @@ contract sUSD3 is BaseHooksUpgradeable {
 
         // Get actual borrowed amount
         (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
-        uint256 actualDebtUSDC =
-            IStrategy(address(asset)).convertToAssets(usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC));
+        uint256 actualDebtUSDC = usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
 
         // Get potential debt based on debt ceiling
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
@@ -435,7 +433,7 @@ contract sUSD3 is BaseHooksUpgradeable {
 
         uint256 potentialDebtUSDC;
         if (debtCap > 0) {
-            potentialDebtUSDC = IStrategy(address(asset)).convertToAssets(usd3.WAUSDC().convertToAssets(debtCap));
+            potentialDebtUSDC = usd3.WAUSDC().convertToAssets(debtCap);
         }
         uint256 maxDebtUSDC = Math.max(actualDebtUSDC, potentialDebtUSDC);
 
@@ -465,8 +463,7 @@ contract sUSD3 is BaseHooksUpgradeable {
 
         // Get actual borrowed amount
         (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
-        uint256 debtUSDC =
-            IStrategy(address(asset)).convertToAssets(usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC));
+        uint256 debtUSDC = usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
 
         // Calculate minimum required backing
         return (debtUSDC * backingRatio) / MAX_BPS;

@@ -36,4 +36,8 @@ interface IMarkdownController {
     /// @param borrower The borrower address
     /// @return slashed Amount of JANE redistributed
     function slashJaneFull(address borrower) external returns (uint256 slashed);
+
+    /// @notice Reset burn tracking state for a borrower
+    /// @param borrower The borrower address
+    function resetBorrowerState(address borrower) external;
 }

@@ -13,8 +13,9 @@ import {IERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 contract OperationTest is Setup {

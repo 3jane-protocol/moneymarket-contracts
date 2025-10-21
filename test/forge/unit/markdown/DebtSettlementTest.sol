@@ -84,9 +84,11 @@ contract DebtSettlementTest is BaseTest {
         Market memory marketBefore = morpho.market(id);
 
         // Calculate expected repay amount for exact shares - ensure we have enough
-        uint256 expectedRepayAmount = uint256(positionBefore.borrowShares).toAssetsUp(
-            marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares
-        ) + 1; // Add 1 wei buffer to ensure enough assets
+        uint256 expectedRepayAmount =
+            uint256(positionBefore.borrowShares)
+                    .toAssetsUp(marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares) + 1; // Add 1 wei buffer
+            // to
+            // ensure enough assets
 
         // Prepare full repayment
         loanToken.setBalance(address(creditLine), expectedRepayAmount);
@@ -239,7 +241,7 @@ contract DebtSettlementTest is BaseTest {
 
         // Fast forward to default
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify markdown exists
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -333,8 +335,8 @@ contract DebtSettlementTest is BaseTest {
 
         // Setup loan in new market
         Id callbackMarketId = MarketParams(
-            address(loanToken), address(0), address(oracle), address(irm), 0, address(callbackHandler)
-        ).id();
+                address(loanToken), address(0), address(oracle), address(irm), 0, address(callbackHandler)
+            ).id();
 
         vm.prank(address(callbackHandler));
         morphoCredit.setCreditLine(callbackMarketId, BORROWER, borrowAmount * 2, 0);
@@ -344,9 +346,10 @@ contract DebtSettlementTest is BaseTest {
         uint256 firstCycleEnd = block.timestamp + CYCLE_DURATION;
         vm.warp(firstCycleEnd);
         vm.prank(address(callbackHandler));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            callbackMarketId, firstCycleEnd, new address[](0), new uint256[](0), new uint256[](0)
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(
+                callbackMarketId, firstCycleEnd, new address[](0), new uint256[](0), new uint256[](0)
+            );
         vm.warp(firstCycleEnd + 1);
 
         loanToken.setBalance(SUPPLIER, 20_000e18);
@@ -424,9 +427,8 @@ contract DebtSettlementTest is BaseTest {
         // Get position and market before
         Position memory positionBefore = morpho.position(id, BORROWER);
         Market memory marketBefore = morpho.market(id);
-        uint256 totalDebt = uint256(positionBefore.borrowShares).toAssetsUp(
-            marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares
-        );
+        uint256 totalDebt = uint256(positionBefore.borrowShares)
+            .toAssetsUp(marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares);
 
         // Track credit line balance before
         uint256 creditLineBalanceBefore = loanToken.balanceOf(address(creditLine));
@@ -570,9 +572,8 @@ contract DebtSettlementTest is BaseTest {
 
         Position memory positionBefore = morpho.position(id, BORROWER);
         Market memory marketBefore = morpho.market(id);
-        uint256 totalDebt = uint256(positionBefore.borrowShares).toAssetsUp(
-            marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares
-        );
+        uint256 totalDebt = uint256(positionBefore.borrowShares)
+            .toAssetsUp(marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares);
 
         // Try to repay more than owed
         loanToken.setBalance(address(creditLine), excessiveRepayAmount);

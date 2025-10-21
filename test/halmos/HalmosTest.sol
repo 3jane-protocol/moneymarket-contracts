@@ -14,8 +14,9 @@ import "../../src/Morpho.sol";
 import "../../src/MorphoCredit.sol";
 import "../../src/libraries/ConstantsLib.sol";
 import {MorphoLib} from "../../src/libraries/periphery/MorphoLib.sol";
-import {TransparentUpgradeableProxy} from
-    "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 /// @custom:halmos --solver-timeout-assertion 0

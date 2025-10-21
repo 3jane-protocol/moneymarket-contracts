@@ -8,7 +8,8 @@ import {IMorpho, IMorphoCredit, MarketParams, Id} from "../interfaces/IMorpho.so
 import {MorphoLib} from "../libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "../libraries/periphery/MorphoBalancesLib.sol";
 import {SharesMathLib} from "../libraries/SharesMathLib.sol";
-import {IStrategy} from "@tokenized-strategy/interfaces/IStrategy.sol";
+import {IERC4626} from "../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
+import {Pausable} from "../../lib/openzeppelin/contracts/utils/Pausable.sol";
 import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
@@ -51,9 +52,9 @@ contract USD3 is BaseHooksUpgradeable {
     using Math for uint256;
 
     /*//////////////////////////////////////////////////////////////
-                        CONSTANTS 
+                        CONSTANTS
     //////////////////////////////////////////////////////////////*/
-    IStrategy public constant WAUSDC = IStrategy(0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E);
+    IERC4626 public constant WAUSDC = IERC4626(0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E);
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE - MORPHO PARAMETERS
@@ -139,13 +140,15 @@ contract USD3 is BaseHooksUpgradeable {
      *      The upgrade process MUST follow this sequence to prevent user losses:
      *      1. Set performance fee to 0 (via setPerformanceFee)
      *      2. Set profit unlock time to 0 (via setProfitMaxUnlockTime)
-     *      3. Call report() to update totalAssets from stale waUSDC values
-     *      4. Call reinitialize() to switch the underlying asset
-     *      5. Call syncTrancheShare() to restore performance fees
-     *      6. Restore profit unlock time to previous value
+     *      3. Call report() on OLD implementation to finalize state before upgrade
+     *      4. Upgrade proxy to new implementation
+     *      5. Call reinitialize() to switch the underlying asset
+     *      6. Call report() on NEW implementation to update totalAssets with new asset
+     *      7. Call syncTrancheShare() to restore performance fees
+     *      8. Restore profit unlock time to previous value
      *      This ensures totalAssets reflects the true USDC value before users can withdraw.
-     *      Without report() before reinitialize(), users would lose value as totalAssets
-     *      would not account for waUSDC pps versus usdc.
+     *      Without both report() calls, users would lose value as totalAssets would not
+     *      account for waUSDC appreciation or the asset switch.
      */
     function reinitialize() external reinitializer(2) {
         address usdc = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
@@ -192,7 +195,7 @@ contract USD3 is BaseHooksUpgradeable {
         returns (uint256 totalSupplyAssets, uint256 totalShares, uint256 totalBorrowAssets, uint256 waUSDCLiquidity)
     {
         (totalSupplyAssets, totalShares, totalBorrowAssets,) = morphoCredit.expectedMarketBalances(_marketParams);
-        waUSDCLiquidity = totalSupplyAssets - totalBorrowAssets;
+        waUSDCLiquidity = totalSupplyAssets > totalBorrowAssets ? totalSupplyAssets - totalBorrowAssets : 0;
     }
 
     /**
@@ -376,7 +379,16 @@ contract USD3 is BaseHooksUpgradeable {
 
         (, uint256 waUSDCMax, uint256 waUSDCLiquidity) = getPosition();
 
-        uint256 availableWaUSDC = balanceOfWaUSDC() + Math.min(waUSDCMax, waUSDCLiquidity);
+        uint256 availableWaUSDC;
+
+        if (Pausable(address(WAUSDC)).paused()) {
+            availableWaUSDC = 0;
+        } else {
+            uint256 localWaUSDC = Math.min(balanceOfWaUSDC(), WAUSDC.maxRedeem(address(this)));
+            uint256 morphoWaUSDC = Math.min(waUSDCMax, waUSDCLiquidity);
+            morphoWaUSDC = Math.min(morphoWaUSDC, WAUSDC.maxRedeem(address(morphoCredit)));
+            availableWaUSDC = localWaUSDC + morphoWaUSDC;
+        }
 
         uint256 availableLiquidity = idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
 
@@ -406,6 +418,12 @@ contract USD3 is BaseHooksUpgradeable {
             return 0;
         }
 
+        uint256 maxDeposit = WAUSDC.maxDeposit(address(this));
+
+        if (Pausable(address(WAUSDC)).paused() || maxDeposit == 0) {
+            return 0;
+        }
+
         // Block deposits from borrowers
         if (morphoCredit.borrowShares(marketId, _owner) > 0) {
             return 0;
@@ -420,7 +438,7 @@ contract USD3 is BaseHooksUpgradeable {
         if (cap <= currentTotalAssets) {
             return 0;
         }
-        return cap - currentTotalAssets;
+        return Math.min(cap - currentTotalAssets, maxDeposit);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -710,7 +728,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Clear the performanceFee bits (32-47) and set new value
         uint256 mask = ~(uint256(0xFFFF) << 32);
-        uint256 newSlotValue = (currentSlotValue & mask) | (uint256(trancheShare) << 32);
+        uint256 newSlotValue = (currentSlotValue & mask) | (trancheShare << 32);
 
         // Write back to storage
         assembly {

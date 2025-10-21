@@ -60,9 +60,8 @@ contract EffectiveSupplyTest is BaseTest {
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
     }
 
     /// @notice Test withdraw uses effective supply for share/asset conversion
@@ -82,7 +81,7 @@ contract EffectiveSupplyTest is BaseTest {
         // Create default scenario
         _createPastObligation(BORROWER, 500, borrowAmount);
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Get markdown info
         uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
@@ -120,7 +119,7 @@ contract EffectiveSupplyTest is BaseTest {
         _setupBorrowerWithLoan(BORROWER, borrowAmount);
         _createPastObligation(BORROWER, 500, borrowAmount);
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Get market state
         uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
@@ -167,9 +166,7 @@ contract EffectiveSupplyTest is BaseTest {
 
         // Fast forward to default and update all
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
-        for (uint256 i = 0; i < borrowers.length; i++) {
-            morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
-        }
+        morphoCredit.accruePremiumsForBorrowers(id, borrowers);
 
         // Get markdown info
         uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
@@ -224,7 +221,7 @@ contract EffectiveSupplyTest is BaseTest {
 
         // Fast forward to extreme markdown (70% after 70+ days)
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 70 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Get markdown info
         uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
@@ -270,7 +267,7 @@ contract EffectiveSupplyTest is BaseTest {
 
         // Create markdown
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 10 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Get markdown state
         uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;
@@ -335,12 +332,12 @@ contract EffectiveSupplyTest is BaseTest {
         // Now create default and markdown
         _createPastObligation(BORROWER, 500, borrowAmount);
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Forward another period with markdown
         vm.warp(block.timestamp + 30 days);
         morpho.accrueInterest(marketParams);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Get effective value change
         uint256 totalMarkdown = morpho.market(id).totalMarkdownAmount;

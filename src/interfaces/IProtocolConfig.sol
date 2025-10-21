@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-20later
 pragma solidity ^0.8.18;
+
 /// @notice Interface for the ProtocolConfig contract
 
 // Struct to hold market parameters

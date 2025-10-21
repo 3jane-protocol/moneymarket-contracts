@@ -15,8 +15,9 @@ import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {ProtocolConfig} from "../../../src/ProtocolConfig.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 contract MorphoCreditTest is Test {
     using MathLib for uint256;
@@ -112,9 +113,8 @@ contract MorphoCreditTest is Test {
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            marketId, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(marketId, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         // Set fee recipient
         vm.prank(owner);
@@ -323,9 +323,8 @@ contract MorphoCreditTest is Test {
         endingBalances[0] = 100e18; // Current balance
 
         vm.prank(address(creditLine));
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            marketId, cycleEndTime, borrowers, repaymentBps, endingBalances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(marketId, cycleEndTime, borrowers, repaymentBps, endingBalances);
 
         vm.expectRevert(ErrorsLib.OutstandingRepayment.selector);
         vm.prank(helper);
@@ -413,7 +412,7 @@ contract MorphoCreditTest is Test {
         vm.warp(block.timestamp + 1 hours);
 
         // Accrue premium
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         // Check that borrower's debt increased
         Position memory position = morpho.position(marketId, borrower);
@@ -449,7 +448,7 @@ contract MorphoCreditTest is Test {
         Position memory feePositionBefore = morpho.position(marketId, feeRecipient);
 
         // Accrue premium
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         // Check fee recipient received shares
         Position memory feePositionAfter = morpho.position(marketId, feeRecipient);
@@ -474,7 +473,7 @@ contract MorphoCreditTest is Test {
         vm.warp(block.timestamp + 1 hours);
 
         // Accrue premium (should do nothing)
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         uint256 borrowSharesAfter = morpho.position(marketId, borrower).borrowShares;
         assertEq(borrowSharesAfter, borrowSharesBefore);
@@ -494,7 +493,7 @@ contract MorphoCreditTest is Test {
         uint256 borrowSharesBefore = morpho.position(marketId, borrower).borrowShares;
 
         // Accrue premium immediately (no time elapsed)
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         uint256 borrowSharesAfter = morpho.position(marketId, borrower).borrowShares;
         assertEq(borrowSharesAfter, borrowSharesBefore);
@@ -540,12 +539,10 @@ contract MorphoCreditTest is Test {
 
         // Check both borrowers had premiums accrued
         Market memory marketData = morpho.market(marketId);
-        uint256 borrowAssets1 = uint256(morpho.position(marketId, borrower).borrowShares).toAssetsUp(
-            marketData.totalBorrowAssets, marketData.totalBorrowShares
-        );
-        uint256 borrowAssets2 = uint256(morpho.position(marketId, borrower2).borrowShares).toAssetsUp(
-            marketData.totalBorrowAssets, marketData.totalBorrowShares
-        );
+        uint256 borrowAssets1 = uint256(morpho.position(marketId, borrower).borrowShares)
+            .toAssetsUp(marketData.totalBorrowAssets, marketData.totalBorrowShares);
+        uint256 borrowAssets2 = uint256(morpho.position(marketId, borrower2).borrowShares)
+            .toAssetsUp(marketData.totalBorrowAssets, marketData.totalBorrowShares);
 
         // After 1 hour, both borrowers should have accrued premium
         assertGt(borrowAssets1, 1000e18);
@@ -602,7 +599,7 @@ contract MorphoCreditTest is Test {
         vm.warp(block.timestamp + 1 hours);
 
         // Manually accrue premium first to get accurate position
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         // Now get the borrower's shares after accrual
         Position memory pos = morpho.position(marketId, borrower);
@@ -645,7 +642,7 @@ contract MorphoCreditTest is Test {
 
         // This should not revert even in edge cases
         vm.warp(block.timestamp + 1);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(marketId, _toArray(borrower));
     }
 
     function testVerySmallPremiumAmount() public {
@@ -662,7 +659,7 @@ contract MorphoCreditTest is Test {
 
         // Should handle precision gracefully
         vm.warp(block.timestamp + 1 hours);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(marketId, _toArray(borrower));
     }
 
     function testSetBorrowerPremiumRateAccruesBaseInterestFirst() public {
@@ -739,7 +736,7 @@ contract MorphoCreditTest is Test {
         vm.warp(block.timestamp + MAX_ELAPSED_TIME + 30 days);
 
         // Trigger premium accrual
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         // Calculate expected premium for exactly MAX_ELAPSED_TIME (not actual elapsed)
         uint256 ratePerSecond = uint256(premiumRatePerSecond);
@@ -780,7 +777,7 @@ contract MorphoCreditTest is Test {
         vm.warp(block.timestamp + 1 seconds);
 
         // Trigger premium accrual
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         // Check that timestamp was updated even if premium was tiny
         (uint128 timestampAfter,,) = MorphoCredit(address(morpho)).borrowerPremium(marketId, borrower);
@@ -820,7 +817,7 @@ contract MorphoCreditTest is Test {
         vm.warp(block.timestamp + timeForMinPremium);
 
         // Trigger premium accrual
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         // Check state after
         Position memory posAfter = morpho.position(marketId, borrower);
@@ -848,7 +845,7 @@ contract MorphoCreditTest is Test {
         // Advance time and let some premium accrue
         // But stay within the active cycle period (< 60 days total)
         vm.warp(block.timestamp + 25 days); // Now at 55 days total
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         // Now repay more than the accrued interest (position decreases)
         uint256 repayAmount = 1_000e18;
@@ -861,9 +858,8 @@ contract MorphoCreditTest is Test {
         // Record debt after repay
         Position memory posAfterRepay = morpho.position(marketId, borrower);
         Market memory mktAfterRepay = morpho.market(marketId);
-        uint256 debtAfterRepay = uint256(posAfterRepay.borrowShares).toAssetsUp(
-            mktAfterRepay.totalBorrowAssets, mktAfterRepay.totalBorrowShares
-        );
+        uint256 debtAfterRepay = uint256(posAfterRepay.borrowShares)
+            .toAssetsUp(mktAfterRepay.totalBorrowAssets, mktAfterRepay.totalBorrowShares);
 
         // Advance time again but stay within the active cycle
         // We're currently at 55 days, cycle ends at 60 days
@@ -871,7 +867,7 @@ contract MorphoCreditTest is Test {
         vm.warp(block.timestamp + 4 days); // Now at 59 days total
 
         // Trigger premium accrual - position has decreased since last snapshot
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         // Premium should still accrue based on current position
         Position memory posFinal = morpho.position(marketId, borrower);
@@ -917,7 +913,7 @@ contract MorphoCreditTest is Test {
 
         // Trigger premium accrual
         // With high base rate and very low premium, totalGrowthAmount might be <= baseGrowthActual
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(marketId, borrower);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(marketId, _toArray(borrower));
 
         // Check state - should have minimal or no change due to premium
         Position memory posAfter = morpho.position(marketId, borrower);
@@ -934,5 +930,11 @@ contract MorphoCreditTest is Test {
         // Expected premium ≈ 2500e18 * 0.001e18 * 1 / 365 / 1e18 ≈ 6.849e15
         // But with high base rate, the premium calculation might result in 0
         assertLe(debtAfter - debtBefore, 1e16); // Allow small amount for rounding
+    }
+
+    function _toArray(address value) internal pure returns (address[] memory) {
+        address[] memory array = new address[](1);
+        array[0] = value;
+        return array;
     }
 }

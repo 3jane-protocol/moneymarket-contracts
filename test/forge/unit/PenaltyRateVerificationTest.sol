@@ -131,7 +131,7 @@ contract PenaltyRateVerificationTest is BaseTest {
         morpho.accrueInterest(marketParams);
         uint256 totalSupplyBefore = morpho.market(id).totalSupplyAssets;
 
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Step 6: Calculate expected penalty
         // Get the actual cycle end date from the obligation
@@ -223,7 +223,7 @@ contract PenaltyRateVerificationTest is BaseTest {
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "Should be delinquent");
 
         // Step 2: First accrual to capture initial penalty
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Record state after first accrual
         uint256 borrowAssetsAfterFirst = morpho.expectedBorrowAssets(marketParams, ALICE);
@@ -233,7 +233,7 @@ contract PenaltyRateVerificationTest is BaseTest {
         uint256 timeStep = 1 days;
         vm.warp(block.timestamp + timeStep);
 
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         uint256 borrowAssetsAfterSecond = morpho.expectedBorrowAssets(marketParams, ALICE);
         uint256 incrementalIncrease = borrowAssetsAfterSecond - borrowAssetsAfterFirst;
@@ -268,7 +268,7 @@ contract PenaltyRateVerificationTest is BaseTest {
         // Step 5: Do a third accrual after 2 days to verify compounding
         vm.warp(block.timestamp + 2 days);
 
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
         uint256 borrowAssetsAfterThird = morpho.expectedBorrowAssets(marketParams, ALICE);
         uint256 secondIncrement = borrowAssetsAfterThird - borrowAssetsAfterSecond;
 
@@ -331,20 +331,22 @@ contract PenaltyRateVerificationTest is BaseTest {
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + 1 days);
 
         // Initial accrual for both to capture the initial penalty
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE_PATH_A);
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE_PATH_B);
+        address[] memory aliceAddrs = new address[](2);
+        aliceAddrs[0] = ALICE_PATH_A;
+        aliceAddrs[1] = ALICE_PATH_B;
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, aliceAddrs);
 
         uint256 startTime = block.timestamp;
 
         // Path B: Daily accruals for 10 days
         for (uint256 i = 0; i < 10; i++) {
             vm.warp(startTime + (i + 1) * 1 days);
-            IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE_PATH_B);
+            IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE_PATH_B));
         }
 
         // Path A: Single accrual after 10 days
         vm.warp(startTime + 10 days);
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE_PATH_A);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE_PATH_A));
 
         // Compare final states
         uint256 borrowAssetsA = morpho.expectedBorrowAssets(marketParams, ALICE_PATH_A);

@@ -138,6 +138,11 @@ contract MarkdownManagerMock is IMarkdownController, Ownable {
         return 0;
     }
 
+    /// @inheritdoc IMarkdownController
+    function resetBorrowerState(address) external pure {
+        // Mock does not track borrower state
+    }
+
     /// @notice Set the daily markdown rate (for backward compatibility with old tests)
     /// @param _dailyMarkdownBps Daily markdown rate in basis points
     /// @dev Converts daily rate to full duration (70 days for 100% at 1% per day)

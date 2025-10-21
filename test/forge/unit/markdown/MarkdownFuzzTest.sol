@@ -193,7 +193,7 @@ contract MarkdownFuzzTest is BaseTest {
 
         // Move to default
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + defaultDelay);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Get markdown through actual system
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);

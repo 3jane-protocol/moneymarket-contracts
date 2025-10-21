@@ -8,8 +8,9 @@ import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {Math} from "../../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {Test} from "forge-std/Test.sol";
@@ -215,8 +216,9 @@ contract TransferRestrictionInvariants is Setup {
                     // But should be able to transfer to sUSD3
                     vm.prank(user);
                     try IERC20(address(usd3Strategy)).transfer(address(susd3Strategy), 0) {
-                        // Zero transfer to sUSD3 should work
-                    } catch {
+                    // Zero transfer to sUSD3 should work
+                    }
+                    catch {
                         assertTrue(false, "USD3 transfer to sUSD3 should work during commitment");
                     }
                 }
@@ -359,8 +361,9 @@ contract TransferRestrictionHandler is Test {
             if (amount > 0) {
                 IERC20(address(usd3)).approve(address(susd3), amount);
                 try susd3.deposit(amount, user) {
-                    // Success
-                } catch {
+                // Success
+                }
+                    catch {
                     // Might fail due to subordination ratio
                 }
             }
@@ -376,8 +379,9 @@ contract TransferRestrictionHandler is Test {
             amount = bound(amount, 1, balance);
 
             try susd3.startCooldown(amount) {
-                // Success
-            } catch {
+            // Success
+            }
+                catch {
                 // Might fail if still in lock period
             }
         }

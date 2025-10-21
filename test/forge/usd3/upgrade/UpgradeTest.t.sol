@@ -325,7 +325,7 @@ contract UpgradeTest is Setup {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        DATA COMPATIBILITY TESTS  
+                        DATA COMPATIBILITY TESTS
     //////////////////////////////////////////////////////////////*/
 
     function test_storageLayoutStability() public {

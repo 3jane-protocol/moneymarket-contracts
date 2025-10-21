@@ -15,7 +15,6 @@ import {
 } from "./interfaces/IMorpho.sol";
 import {IMarkdownController} from "./interfaces/IMarkdownController.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
-import {IMorphoRepayCallback} from "./interfaces/IMorphoCallbacks.sol";
 import {IProtocolConfig, MarketConfig} from "./interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "./libraries/ProtocolConfigLib.sol";
 import {ICreditLine} from "./interfaces/ICreditLine.sol";
@@ -24,7 +23,7 @@ import {Morpho} from "./Morpho.sol";
 import {UtilsLib} from "./libraries/UtilsLib.sol";
 import {EventsLib} from "./libraries/EventsLib.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
-import {MathLib, WAD} from "./libraries/MathLib.sol";
+import {MathLib} from "./libraries/MathLib.sol";
 import {MarketParamsLib} from "./libraries/MarketParamsLib.sol";
 import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
@@ -122,23 +121,20 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /* EXTERNAL FUNCTIONS - PREMIUM MANAGEMENT */
 
     /// @inheritdoc IMorphoCredit
-    function accrueBorrowerPremium(Id id, address borrower) external {
-        MarketParams memory marketParams = idToMarketParams[id];
-        _accrueInterest(marketParams, id);
-        _accrueBorrowerPremium(id, borrower);
-        _updateBorrowerMarkdown(id, borrower);
-        _snapshotBorrowerPosition(id, borrower);
-    }
-
-    /// @inheritdoc IMorphoCredit
     function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) external {
+        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
         MarketParams memory marketParams = idToMarketParams[id];
         _accrueInterest(marketParams, id);
         for (uint256 i = 0; i < borrowers.length; i++) {
-            _accrueBorrowerPremium(id, borrowers[i]);
-            _updateBorrowerMarkdown(id, borrowers[i]);
-            _snapshotBorrowerPosition(id, borrowers[i]);
+            _accrueBorrowerPremiumAndUpdate(id, borrowers[i]);
         }
+    }
+
+    /// @dev Internal helper to accrue premium and update borrower state
+    function _accrueBorrowerPremiumAndUpdate(Id id, address borrower) internal {
+        _accrueBorrowerPremium(id, borrower);
+        _updateBorrowerMarkdown(id, borrower);
+        _snapshotBorrowerPosition(id, borrower);
     }
 
     /* INTERNAL FUNCTIONS - PREMIUM CALCULATIONS */
@@ -303,9 +299,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Calculate current borrow assets
         Market memory targetMarket = market[id];
-        uint256 borrowAssetsCurrent = uint256(position[id][borrower].borrowShares).toAssetsUp(
-            targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
-        );
+        uint256 borrowAssetsCurrent = uint256(position[id][borrower].borrowShares)
+            .toAssetsUp(targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares);
 
         // Calculate premium and penalty accruals
         uint256 premiumAmount = _calculateOngoingPremiumAndPenalty(id, borrower, premium, status, borrowAssetsCurrent);
@@ -341,9 +336,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         Market memory targetMarket = market[id];
 
-        uint256 currentBorrowAssets = uint256(position[id][borrower].borrowShares).toAssetsUp(
-            targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
-        );
+        uint256 currentBorrowAssets = uint256(position[id][borrower].borrowShares)
+            .toAssetsUp(targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares);
 
         // Update timestamp if:
         // - Not initialized (safety check), OR
@@ -569,11 +563,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @inheritdoc Morpho
-    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256)
-        internal
-        virtual
-        override
-    {
+    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal virtual override {
         // Allow USD3 to withdraw on behalf of anyone
         if (msg.sender == usd3) return;
 
@@ -736,6 +726,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         bool wasInDefault = lastMarkdown > 0;
 
         if (isInDefault && !wasInDefault) {
+            IMarkdownController(manager).resetBorrowerState(borrower);
             emit EventsLib.DefaultStarted(id, borrower, statusStartTime);
         } else if (!isInDefault && wasInDefault) {
             emit EventsLib.DefaultCleared(id, borrower);

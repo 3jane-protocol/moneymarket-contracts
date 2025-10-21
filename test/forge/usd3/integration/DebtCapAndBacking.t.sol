@@ -11,8 +11,9 @@ import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {ErrorsLib} from "../../../../src/libraries/ErrorsLib.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 /**
@@ -101,9 +102,8 @@ contract DebtCapAndBackingTest is Setup {
         uint256[] memory endingBalances = new uint256[](0);
 
         vm.prank(marketParams.creditLine);
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            marketId, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(marketId, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         // Set credit line for borrower
         vm.prank(marketParams.creditLine);

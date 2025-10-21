@@ -15,8 +15,9 @@ import {MathLib as MorphoMathLib} from "../../../src/libraries/MathLib.sol";
 import "../../../lib/forge-std/src/Test.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {ProtocolConfig} from "../../../src/ProtocolConfig.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {AavePoolMock} from "../mocks/AavePoolMock.sol";
 
 contract AdaptiveCurveIrmTest is Test {
@@ -176,9 +177,8 @@ contract AdaptiveCurveIrmTest is Test {
         assertApproxEqRel(
             irm.borrowRateView(marketParams, market),
             uint256(
-                (ConstantsLib.INITIAL_RATE_AT_TARGET * 4).wMulToZero(
-                    (1.9836 ether - 1 ether) * WAD / (ConstantsLib.ADJUSTMENT_SPEED * 5 days)
-                )
+                (ConstantsLib.INITIAL_RATE_AT_TARGET * 4)
+                .wMulToZero((1.9836 ether - 1 ether) * WAD / (ConstantsLib.ADJUSTMENT_SPEED * 5 days))
             ),
             0.1 ether
         );
@@ -208,9 +208,8 @@ contract AdaptiveCurveIrmTest is Test {
         assertApproxEqRel(
             irm.borrowRateView(marketParams, market),
             uint256(
-                (ConstantsLib.INITIAL_RATE_AT_TARGET / 4).wMulToZero(
-                    (0.5041 ether - 1 ether) * WAD / (-ConstantsLib.ADJUSTMENT_SPEED * 5 days)
-                )
+                (ConstantsLib.INITIAL_RATE_AT_TARGET / 4)
+                .wMulToZero((0.5041 ether - 1 ether) * WAD / (-ConstantsLib.ADJUSTMENT_SPEED * 5 days))
             ),
             0.1 ether
         );
@@ -513,9 +512,8 @@ contract AdaptiveCurveIrmTest is Test {
         uint256 elapsed = block.timestamp - market.lastUpdate;
         int256 linearAdaptation = ConstantsLib.ADJUSTMENT_SPEED.wMulToZero(_err(market)) * int256(elapsed);
 
-        return rateAtTarget.wMulToZero(ExpLib.wExp(linearAdaptation)).bound(
-            ConstantsLib.MIN_RATE_AT_TARGET, ConstantsLib.MAX_RATE_AT_TARGET
-        );
+        return rateAtTarget.wMulToZero(ExpLib.wExp(linearAdaptation))
+            .bound(ConstantsLib.MIN_RATE_AT_TARGET, ConstantsLib.MAX_RATE_AT_TARGET);
     }
 
     function _expectedAvgRate(Id id, Market memory market) internal view returns (uint256) {
@@ -535,7 +533,7 @@ contract AdaptiveCurveIrmTest is Test {
         // Calculate difference and divide by linearAdaptation
         return uint256(
             (int256(_curve(int256(_expectedRateAtTarget(id, market)), err)) - int256(_curve(rateAtTarget, err)))
-                .wDivToZero(linearAdaptation)
+            .wDivToZero(linearAdaptation)
         );
     }
 

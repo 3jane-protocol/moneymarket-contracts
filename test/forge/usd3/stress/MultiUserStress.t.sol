@@ -10,8 +10,9 @@ import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {IMorpho, MarketParams} from "../../../../src/interfaces/IMorpho.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 /**
@@ -500,8 +501,9 @@ contract MultiUserStressTest is Setup {
             vm.startPrank(user);
             ERC20(address(usd3Strategy)).approve(address(susd3Strategy), usd3Balance);
             try susd3Strategy.deposit(usd3Balance, user) {
-                // Success
-            } catch {
+            // Success
+            }
+                catch {
                 // Hit subordination limit, that's OK
             }
             vm.stopPrank();

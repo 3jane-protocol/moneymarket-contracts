@@ -67,26 +67,28 @@ contract USD3MorphoIntegrationTest is Setup {
     function _initializeMarketWithCycle() internal {
         // Create an initial payment cycle to unfreeze the market
         vm.prank(marketParams.creditLine);
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id,
-            block.timestamp, // End date is current time (cycle just ended)
-            new address[](0), // No borrowers yet
-            new uint256[](0), // No repayment bps
-            new uint256[](0) // No ending balances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(
+                id,
+                block.timestamp, // End date is current time (cycle just ended)
+                new address[](0), // No borrowers yet
+                new uint256[](0), // No repayment bps
+                new uint256[](0) // No ending balances
+            );
     }
 
     // Custom helper to setup borrower with aToken loan
     function _setupBorrowerWithATokenLoan(address borrower, uint256 borrowAmount) internal {
         // First close a payment cycle to unfreeze the market
         vm.prank(marketParams.creditLine);
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id,
-            block.timestamp, // End date is current time
-            new address[](0), // No borrowers yet
-            new uint256[](0), // No repayment bps
-            new uint256[](0) // No ending balances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(
+                id,
+                block.timestamp, // End date is current time
+                new address[](0), // No borrowers yet
+                new uint256[](0), // No repayment bps
+                new uint256[](0) // No ending balances
+            );
 
         // Setup credit line directly on morpho - must call as creditLine
         vm.prank(marketParams.creditLine);
@@ -185,13 +187,14 @@ contract USD3MorphoIntegrationTest is Setup {
 
         // Create a new payment cycle since the old one expired
         vm.prank(marketParams.creditLine);
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id,
-            block.timestamp, // End date is current time
-            new address[](0), // No borrowers yet
-            new uint256[](0), // No repayment bps
-            new uint256[](0) // No ending balances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(
+                id,
+                block.timestamp, // End date is current time
+                new address[](0), // No borrowers yet
+                new uint256[](0), // No repayment bps
+                new uint256[](0) // No ending balances
+            );
 
         // First have borrower repay their loan to free up liquidity
         uint256 borrowShares = morpho.position(id, BORROWER).borrowShares;
