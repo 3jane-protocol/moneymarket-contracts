@@ -137,8 +137,8 @@ contract JaneTokenTransferTest is JaneSetup {
         bool grantRoleToReceiver
     ) public {
         vm.assume(from != address(0) && to != address(0));
-        vm.assume(from != minter && from != burner && from != owner);
-        vm.assume(to != minter && to != burner && to != owner);
+        vm.assume(from != minter && from != distributor && from != owner);
+        vm.assume(to != minter && to != distributor && to != owner);
         // Exclude addresses that already have tokens from setUp
         vm.assume(from != alice && from != bob);
         vm.assume(to != alice && to != bob);

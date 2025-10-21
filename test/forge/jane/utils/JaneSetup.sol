@@ -9,7 +9,7 @@ contract JaneSetup is Test {
 
     address public owner;
     address public minter;
-    address public burner;
+    address public distributor;
     address public alice;
     address public bob;
     address public charlie;
@@ -19,7 +19,6 @@ contract JaneSetup is Test {
 
     bytes32 public constant OWNER_ROLE = keccak256("OWNER_ROLE");
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
-    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
     bytes32 public constant TRANSFER_ROLE = keccak256("TRANSFER_ROLE");
 
     event TransferEnabled();
@@ -31,18 +30,22 @@ contract JaneSetup is Test {
     function setUp() public virtual {
         owner = makeAddr("owner");
         minter = makeAddr("minter");
-        burner = makeAddr("burner");
+        distributor = makeAddr("distributor");
         alice = makeAddr("alice");
         bob = makeAddr("bob");
         charlie = makeAddr("charlie");
         treasury = makeAddr("treasury");
 
-        token = new Jane(owner, minter, burner);
+        token = new Jane(owner, distributor);
+
+        // Grant MINTER_ROLE to minter for tests
+        vm.prank(owner);
+        token.grantRole(MINTER_ROLE, minter);
 
         vm.label(address(token), "JaneToken");
         vm.label(owner, "Owner");
         vm.label(minter, "Minter");
-        vm.label(burner, "Burner");
+        vm.label(distributor, "Distributor");
         vm.label(alice, "Alice");
         vm.label(bob, "Bob");
         vm.label(charlie, "Charlie");
@@ -77,16 +80,6 @@ contract JaneSetup is Test {
     function removeMinter(address account) internal {
         vm.prank(owner);
         token.revokeRole(MINTER_ROLE, account);
-    }
-
-    function addBurner(address account) internal {
-        vm.prank(owner);
-        token.grantRole(BURNER_ROLE, account);
-    }
-
-    function removeBurner(address account) internal {
-        vm.prank(owner);
-        token.revokeRole(BURNER_ROLE, account);
     }
 
     function createPermitSignature(uint256 privateKey, address spender, uint256 value, uint256 deadline)

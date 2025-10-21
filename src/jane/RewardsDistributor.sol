@@ -55,17 +55,24 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
     /// @notice Maximum total amount that can be claimed (sum of all epoch emissions)
     uint256 public maxClaimable;
 
+    /// @notice Maximum amount of tokens that can be minted during phase 1 LM program
+    uint256 private immutable maxLMMintable;
+
     /**
      * @notice Initializes the rewards distributor
      * @param _initialOwner Address that will own the contract
      * @param _jane Address of the JANE token contract
      * @param _useMint True to mint tokens on claim, false to transfer from contract balance
      * @param _start The start timestamp of epoch 0
+     * @param _maxLMMintable Maximum amount of tokens that can be minted during phase 1 LM program
      */
-    constructor(address _initialOwner, address _jane, bool _useMint, uint256 _start) Ownable(_initialOwner) {
+    constructor(address _initialOwner, address _jane, bool _useMint, uint256 _start, uint256 _maxLMMintable)
+        Ownable(_initialOwner)
+    {
         jane = Jane(_jane);
         useMint = _useMint;
         START = _start;
+        maxLMMintable = _maxLMMintable;
     }
 
     /**
@@ -110,6 +117,8 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
         } else {
             maxClaimable -= _prevEmissions - emissions;
         }
+
+        if (maxClaimable > _maxLM()) revert MaxClaimableExceeded();
 
         epochEmissions[_epoch] = emissions;
     }
@@ -224,5 +233,9 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
      */
     function sweep(IERC20 token) external onlyOwner {
         token.transfer(owner(), token.balanceOf(address(this)));
+    }
+
+    function _maxLM() internal view returns (uint256) {
+        return jane.transferable() ? type(uint256).max : maxLMMintable;
     }
 }
