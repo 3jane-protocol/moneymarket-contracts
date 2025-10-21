@@ -20,8 +20,8 @@ import {
  *      2. setProfitMaxUnlockTime(0)
  *      3. report() - before upgrade
  *      4. ProxyAdmin.upgrade()
- *      5. report() - after upgrade
- *      6. reinitialize()
+ *      5. reinitialize()
+ *      6. report() - after reinitialize
  *      7. syncTrancheShare()
  *      8. Restore fee settings
  *
@@ -105,15 +105,15 @@ contract ScheduleUSD3AtomicBatch is Script, SafeHelper, TimelockHelper {
             ProxyAdmin.upgradeAndCall, (ITransparentUpgradeableProxy(USD3_PROXY), newImplementation, "")
         );
 
-        // Operation 5: report() - AFTER upgrade
+        // Operation 5: reinitialize()
         targets[4] = USD3_PROXY;
         values[4] = 0;
-        datas[4] = abi.encodeWithSignature("report()");
+        datas[4] = abi.encodeWithSignature("reinitialize()");
 
-        // Operation 6: reinitialize()
+        // Operation 6: report() - AFTER reinitialize
         targets[5] = USD3_PROXY;
         values[5] = 0;
-        datas[5] = abi.encodeWithSignature("reinitialize()");
+        datas[5] = abi.encodeWithSignature("report()");
 
         // Operation 7: syncTrancheShare()
         targets[6] = USD3_PROXY;
@@ -145,8 +145,8 @@ contract ScheduleUSD3AtomicBatch is Script, SafeHelper, TimelockHelper {
         console2.log("2. setProfitMaxUnlockTime(0)");
         console2.log("3. report() [BEFORE upgrade]");
         console2.log("4. ProxyAdmin.upgrade()");
-        console2.log("5. report() [AFTER upgrade]");
-        console2.log("6. reinitialize()");
+        console2.log("5. reinitialize()");
+        console2.log("6. report() [AFTER reinitialize]");
         console2.log("7. syncTrancheShare()");
         console2.log("8. setPerformanceFee(", previousPerformanceFee, ")");
         console2.log("");

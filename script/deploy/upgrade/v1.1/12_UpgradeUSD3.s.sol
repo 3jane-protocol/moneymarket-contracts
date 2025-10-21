@@ -48,8 +48,9 @@ contract UpgradeUSD3 is Script {
         console.log("    3. report()");
         console.log("    4. upgrade(newImplementation)");
         console.log("    5. reinitialize()");
-        console.log("    6. syncTrancheShare()");
-        console.log("    7. restore performance fee settings");
+        console.log("    6. report()");
+        console.log("    7. syncTrancheShare()");
+        console.log("    8. restore performance fee settings");
 
         vm.stopBroadcast();
 

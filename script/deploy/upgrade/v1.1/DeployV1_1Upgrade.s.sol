@@ -232,8 +232,8 @@ contract DeployV1_1Upgrade is Script {
         console.log("    2. setProfitMaxUnlockTime(0)");
         console.log("    3. report() [BEFORE upgrade]");
         console.log("    4. ProxyAdmin.upgrade()");
-        console.log("    5. report() [AFTER upgrade]");
-        console.log("    6. reinitialize()");
+        console.log("    5. reinitialize()");
+        console.log("    6. report() [AFTER reinitialize]");
         console.log("    7. syncTrancheShare()");
         console.log("    8. setPerformanceFee(prevFee)");
         console.log("");

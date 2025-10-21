@@ -15,15 +15,15 @@ import {IUSD3} from "../../../../src/usd3/interfaces/IUSD3.sol";
  *      (still shows waUSDC amounts). If waUSDC appreciated (PPS > 1), users withdrawing
  *      would receive less than entitled value.
  *
- *      Solution: Execute report() BEFORE and AFTER upgrade to update totalAssets correctly.
+ *      Solution: Execute report() after reinitialize() to update totalAssets with new asset.
  *
  *      Multisig Batch Order (8 operations):
  *      1. setPerformanceFee(0) - Prevent fee distribution during report
  *      2. setProfitMaxUnlockTime(0) - Ensure immediate profit availability
- *      3. report() - Update totalAssets with old implementation
+ *      3. report() - Finalize state on old implementation
  *      4. upgrade(newImplementation) - Upgrade proxy implementation
- *      5. report() - Update totalAssets with new implementation
- *      6. reinitialize() - Switch asset from waUSDC to USDC
+ *      5. reinitialize() - Switch asset from waUSDC to USDC
+ *      6. report() - Update totalAssets with new asset
  *      7. syncTrancheShare() - Restore performance fee to sUSD3
  *      8. Restore performance fee settings
  *
@@ -86,16 +86,16 @@ contract USD3MultisigBatch is Script {
         console.log("   Calldata:", vm.toString(call4));
         console.log("");
 
-        console.log("5. usd3.report()");
-        bytes memory call5 = abi.encodeWithSignature("report()");
+        console.log("5. usd3.reinitialize()");
+        bytes memory call5 = abi.encodeWithSignature("reinitialize()");
         console.log("   Calldata:", vm.toString(call5));
-        console.log("   Purpose: Updates totalAssets with NEW implementation");
+        console.log("   Purpose: Switches asset from waUSDC to USDC");
         console.log("");
 
-        console.log("6. usd3.reinitialize()");
-        bytes memory call6 = abi.encodeWithSignature("reinitialize()");
+        console.log("6. usd3.report()");
+        bytes memory call6 = abi.encodeWithSignature("report()");
         console.log("   Calldata:", vm.toString(call6));
-        console.log("   Purpose: Switches asset from waUSDC to USDC");
+        console.log("   Purpose: Update totalAssets with NEW asset");
         console.log("");
 
         console.log("7. usd3.syncTrancheShare()");
