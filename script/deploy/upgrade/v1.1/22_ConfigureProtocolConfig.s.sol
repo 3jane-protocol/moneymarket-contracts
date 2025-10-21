@@ -9,7 +9,7 @@ import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol
 /**
  * @title ConfigureProtocolConfig
  * @notice Configure ProtocolConfig for v1.1 upgrade
- * @dev Updates parameters for MarkdownController and sUSD3 subordination logic
+ * @dev Updates parameters for MarkdownController, sUSD3 subordination logic, and debt cap
  */
 contract ConfigureProtocolConfig is Script {
     function run() external {
@@ -38,11 +38,19 @@ contract ConfigureProtocolConfig is Script {
             subordinatedDebtFloorBps = 10000; // Default: 100%
         }
 
+        uint256 debtCap;
+        try vm.envUint("DEBT_CAP") returns (uint256 cap) {
+            debtCap = cap;
+        } catch {
+            debtCap = 50_000_000e6; // Default: 50M waUSDC
+        }
+
         console.log("Configuring ProtocolConfig...");
         console.log("  ProtocolConfig:", protocolConfig);
         console.log("  Full markdown duration:", fullMarkdownDuration / 1 days, "days");
         console.log("  Subordinated debt cap:", subordinatedDebtCapBps / 100, "%");
         console.log("  Subordinated debt floor:", subordinatedDebtFloorBps / 100, "%");
+        console.log("  Debt cap:", debtCap / 1e6, "M waUSDC");
 
         IProtocolConfig config = IProtocolConfig(protocolConfig);
 
@@ -58,6 +66,9 @@ contract ConfigureProtocolConfig is Script {
 
         config.setConfig(ProtocolConfigLib.SUBORDINATED_DEBT_FLOOR_BPS, subordinatedDebtFloorBps);
         console.log("  Set SUBORDINATED_DEBT_FLOOR_BPS");
+
+        config.setConfig(ProtocolConfigLib.DEBT_CAP, debtCap);
+        console.log("  Set DEBT_CAP");
 
         console.log("ProtocolConfig configuration complete");
 
