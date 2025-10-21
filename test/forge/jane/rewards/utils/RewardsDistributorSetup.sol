@@ -7,7 +7,7 @@ import {MerkleTreeHelper} from "../mocks/MerkleTreeHelper.sol";
 import {Jane} from "../../../../../src/jane/Jane.sol";
 
 contract RewardsDistributorSetup is JaneSetup {
-    RewardsDistributor public distributor;
+    RewardsDistributor public rewardsDistributor;
     MerkleTreeHelper public merkleHelper;
 
     // Test users
@@ -34,10 +34,10 @@ contract RewardsDistributorSetup is JaneSetup {
         merkleHelper = new MerkleTreeHelper();
 
         // Deploy distributor in transfer mode by default
-        distributor = new RewardsDistributor(owner, address(token), false, START);
+        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START, 0);
 
         // Fund distributor with JANE tokens
-        mintTokens(address(distributor), 1_000_000e18);
+        mintTokens(address(rewardsDistributor), 1_000_000e18);
 
         // Enable transfers for testing
         setTransferable();
@@ -45,9 +45,9 @@ contract RewardsDistributorSetup is JaneSetup {
         // Set default epoch emissions to allow testing without explicit setup
         // This provides a generous cap for existing tests
         vm.prank(owner);
-        distributor.setEpochEmissions(0, 10_000_000e18);
+        rewardsDistributor.setEpochEmissions(0, 10_000_000e18);
 
-        vm.label(address(distributor), "RewardsDistributor");
+        vm.label(address(rewardsDistributor), "RewardsDistributor");
         vm.label(address(merkleHelper), "MerkleTreeHelper");
         vm.label(dave, "Dave");
         vm.label(eve, "Eve");
@@ -66,7 +66,7 @@ contract RewardsDistributorSetup is JaneSetup {
     {
         (root, proofs) = merkleHelper.generateMerkleTree(claims);
         vm.prank(owner);
-        distributor.updateRoot(root);
+        rewardsDistributor.updateRoot(root);
     }
 
     /**
@@ -88,7 +88,7 @@ contract RewardsDistributorSetup is JaneSetup {
      * @param amount Amount of tokens to fund
      */
     function fundDistributor(uint256 amount) internal {
-        mintTokens(address(distributor), amount);
+        mintTokens(address(rewardsDistributor), amount);
     }
 
     /**
@@ -98,7 +98,7 @@ contract RewardsDistributorSetup is JaneSetup {
      * @param proof Merkle proof
      */
     function claim(address user, uint256 totalAllocation, bytes32[] memory proof) internal {
-        distributor.claim(user, totalAllocation, proof);
+        rewardsDistributor.claim(user, totalAllocation, proof);
     }
 
     /**
@@ -110,7 +110,7 @@ contract RewardsDistributorSetup is JaneSetup {
      */
     function claimAs(address sender, address user, uint256 totalAllocation, bytes32[] memory proof) internal {
         vm.prank(sender);
-        distributor.claim(user, totalAllocation, proof);
+        rewardsDistributor.claim(user, totalAllocation, proof);
     }
 
     /**
@@ -128,7 +128,7 @@ contract RewardsDistributorSetup is JaneSetup {
      */
     function sweep(address tokenAddress) internal {
         vm.prank(owner);
-        distributor.sweep(Jane(tokenAddress));
+        rewardsDistributor.sweep(Jane(tokenAddress));
     }
 
     /**
@@ -153,7 +153,7 @@ contract RewardsDistributorSetup is JaneSetup {
      */
     function toggleMintMode(bool _useMint) internal {
         vm.prank(owner);
-        distributor.setUseMint(_useMint);
+        rewardsDistributor.setUseMint(_useMint);
     }
 
     /**
@@ -163,6 +163,6 @@ contract RewardsDistributorSetup is JaneSetup {
      */
     function setEpochEmissions(uint256 epoch, uint256 emissions) internal {
         vm.prank(owner);
-        distributor.setEpochEmissions(epoch, emissions);
+        rewardsDistributor.setEpochEmissions(epoch, emissions);
     }
 }

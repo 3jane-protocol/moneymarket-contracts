@@ -14,7 +14,7 @@ import {IProtocolConfig} from "../../../../src/interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 
 /// @title MarkdownControllerJaneTest
-/// @notice Tests for MarkdownController's JANE token freeze and burn functionality
+/// @notice Tests for MarkdownController's JANE token freeze and redistribution functionality
 contract MarkdownControllerJaneTest is BaseTest {
     using MarketParamsLib for MarketParams;
     using MorphoBalancesLib for IMorpho;
@@ -26,10 +26,10 @@ contract MarkdownControllerJaneTest is BaseTest {
     IMorphoCredit public morphoCredit;
 
     address public janeMinter;
-    address public janeBurner;
     address public janeOwner;
+    address public janeDistributor;
 
-    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
     uint256 constant INITIAL_JANE_SUPPLY = 1_000_000e18;
     uint256 constant BORROWER_JANE_BALANCE = 10_000e18;
@@ -53,8 +53,12 @@ contract MarkdownControllerJaneTest is BaseTest {
         // Deploy JANE token
         janeOwner = makeAddr("janeOwner");
         janeMinter = makeAddr("janeMinter");
-        janeBurner = makeAddr("janeBurner");
-        jane = new Jane(janeOwner, janeMinter, janeBurner);
+        janeDistributor = makeAddr("janeDistributor");
+        jane = new Jane(janeOwner, janeDistributor);
+
+        // Grant MINTER_ROLE to janeMinter
+        vm.prank(janeOwner);
+        jane.grantRole(MINTER_ROLE, janeMinter);
 
         // Deploy credit line
         creditLine = new CreditLineMock(morphoAddress);
@@ -84,10 +88,6 @@ contract MarkdownControllerJaneTest is BaseTest {
         // Set markdown controller in JANE token
         vm.prank(janeOwner);
         jane.setMarkdownController(address(markdownController));
-
-        // Authorize MarkdownController to burn JANE
-        vm.prank(janeOwner);
-        jane.grantRole(BURNER_ROLE, address(markdownController));
 
         // Initialize market cycles
         _continueMarketCyclesJane(id, block.timestamp + CYCLE_DURATION + 7 days);
@@ -218,9 +218,9 @@ contract MarkdownControllerJaneTest is BaseTest {
         assertFalse(markdownController.isFrozen(BORROWER), "Should not be frozen after repayment");
     }
 
-    // ============ Progressive JANE Burning Tests ============
+    // ============ Progressive JANE Redistribution Tests ============
 
-    /// @notice Test proportional burning based on time in default
+    /// @notice Test proportional redistribution based on time in default
     function testProgressiveJaneBurning() public {
         // Enable markdown for borrower
         vm.prank(OWNER);
@@ -238,26 +238,44 @@ contract MarkdownControllerJaneTest is BaseTest {
         vm.warp(defaultStart + 10 days);
 
         uint256 initialBalance = jane.balanceOf(BORROWER);
+        uint256 initialDistributorBalance = jane.balanceOf(janeDistributor);
+        uint256 totalSupply = jane.totalSupply();
 
         // Trigger markdown update which should burn JANE proportionally
         MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
-        // Expected burn: 10% of balance
-        uint256 expectedBurn = initialBalance * 10 / 100;
-        assertEq(jane.balanceOf(BORROWER), initialBalance - expectedBurn, "Should burn 10% of JANE");
-        assertEq(markdownController.janeBurned(BORROWER), expectedBurn, "Should track burned amount");
+        // Expected redistribution: 10% of balance
+        uint256 expectedRedistribute = initialBalance * 10 / 100;
+        assertEq(jane.balanceOf(BORROWER), initialBalance - expectedRedistribute, "Should redistribute 10% of JANE");
+        assertEq(
+            jane.balanceOf(janeDistributor),
+            initialDistributorBalance + expectedRedistribute,
+            "Distributor should receive redistributed JANE"
+        );
+        assertEq(jane.totalSupply(), totalSupply, "Total supply should remain constant");
+        assertEq(markdownController.janeSlashed(BORROWER), expectedRedistribute, "Should track redistributed amount");
 
         // Move to 25 days total in default (25% total markdown)
         vm.warp(defaultStart + 25 days);
         MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
-        // Should burn additional 15% (25% total - 10% already burned)
-        uint256 expectedTotalBurn = initialBalance * 25 / 100;
-        assertEq(jane.balanceOf(BORROWER), initialBalance - expectedTotalBurn, "Should have 25% total burn");
-        assertEq(markdownController.janeBurned(BORROWER), expectedTotalBurn, "Should track total burned");
+        // Should redistribute additional 15% (25% total - 10% already redistributed)
+        uint256 expectedTotalRedistribute = initialBalance * 25 / 100;
+        assertEq(
+            jane.balanceOf(BORROWER), initialBalance - expectedTotalRedistribute, "Should have 25% total redistribution"
+        );
+        assertEq(
+            jane.balanceOf(janeDistributor),
+            initialDistributorBalance + expectedTotalRedistribute,
+            "Distributor should have all redistributed tokens"
+        );
+        assertEq(jane.totalSupply(), totalSupply, "Total supply should remain constant");
+        assertEq(
+            markdownController.janeSlashed(BORROWER), expectedTotalRedistribute, "Should track total redistributed"
+        );
     }
 
-    /// @notice Test that burn amount cannot exceed balance
+    /// @notice Test that redistribution amount cannot exceed balance
     function testBurnCannotExceedBalance() public {
         // Enable markdown for borrower
         vm.prank(OWNER);
@@ -273,12 +291,18 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Move to 50% markdown
         vm.warp(defaultStart + 50 days);
+        uint256 distributorBalanceBefore50 = jane.balanceOf(janeDistributor);
         MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         uint256 balanceAfter50Percent = jane.balanceOf(BORROWER);
         assertEq(balanceAfter50Percent, BORROWER_JANE_BALANCE / 2, "Should have 50% remaining");
+        assertEq(
+            jane.balanceOf(janeDistributor),
+            distributorBalanceBefore50 + BORROWER_JANE_BALANCE / 2,
+            "Distributor should receive 50%"
+        );
 
-        // Temporarily disable markdown to allow transfer (testing burn logic, not freeze)
+        // Temporarily disable markdown to allow transfer (testing redistribution logic, not freeze)
         vm.prank(OWNER);
         markdownController.setEnableMarkdown(BORROWER, false);
 
@@ -293,16 +317,24 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Move to 100% markdown
         vm.warp(defaultStart + 100 days);
+        uint256 distributorBalanceBefore100 = jane.balanceOf(janeDistributor);
         MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
-        // Should burn only remaining balance
-        assertEq(jane.balanceOf(BORROWER), 0, "Should burn all remaining");
+        // Should redistribute only remaining balance
+        assertEq(jane.balanceOf(BORROWER), 0, "Should redistribute all remaining");
         assertEq(
-            markdownController.janeBurned(BORROWER), BORROWER_JANE_BALANCE / 2 + 100e18, "Should track actual burned"
+            jane.balanceOf(janeDistributor),
+            distributorBalanceBefore100 + 100e18,
+            "Distributor should receive remaining"
+        );
+        assertEq(
+            markdownController.janeSlashed(BORROWER),
+            BORROWER_JANE_BALANCE / 2 + 100e18,
+            "Should track actual redistributed"
         );
     }
 
-    /// @notice Test no burning when borrower has zero JANE balance
+    /// @notice Test no redistribution when borrower has zero JANE balance
     function testNoBurnWithZeroBalance() public {
         // Create a new borrower with no JANE
         address borrower2 = address(0xBEEF2);
@@ -354,12 +386,12 @@ contract MarkdownControllerJaneTest is BaseTest {
         MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(borrower2));
 
         assertEq(jane.balanceOf(borrower2), 0, "Should still be zero");
-        assertEq(markdownController.janeBurned(borrower2), 0, "No burn tracked");
+        assertEq(markdownController.janeSlashed(borrower2), 0, "No redistribution tracked");
     }
 
-    // ============ Full JANE Burn on Settlement Tests ============
+    // ============ Full JANE Redistribution on Settlement Tests ============
 
-    /// @notice Test complete JANE burn on settlement
+    /// @notice Test complete JANE redistribution on settlement
     function testFullJaneBurnOnSettlement() public {
         // Enable markdown for borrower
         vm.prank(OWNER);
@@ -378,8 +410,9 @@ contract MarkdownControllerJaneTest is BaseTest {
         MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         uint256 balanceBeforeSettlement = jane.balanceOf(BORROWER);
+        uint256 distributorBalanceBeforeSettlement = jane.balanceOf(janeDistributor);
         assertTrue(balanceBeforeSettlement > 0, "Should have JANE balance before settlement");
-        assertTrue(markdownController.janeBurned(BORROWER) > 0, "Should have partial burn tracked");
+        assertTrue(markdownController.janeSlashed(BORROWER) > 0, "Should have partial redistribution tracked");
 
         // Settle account
         vm.prank(address(creditLine));
@@ -387,9 +420,14 @@ contract MarkdownControllerJaneTest is BaseTest {
         emit AccountSettled(id, address(creditLine), BORROWER, 0, 0);
         MorphoCredit(address(morpho)).settleAccount(marketParams, BORROWER);
 
-        // Verify all JANE burned
-        assertEq(jane.balanceOf(BORROWER), 0, "All JANE should be burned");
-        assertEq(markdownController.janeBurned(BORROWER), 0, "Burn tracking should reset");
+        // Verify all JANE redistributed
+        assertEq(jane.balanceOf(BORROWER), 0, "All JANE should be redistributed");
+        assertEq(
+            jane.balanceOf(janeDistributor),
+            distributorBalanceBeforeSettlement + balanceBeforeSettlement,
+            "Distributor should receive all remaining JANE"
+        );
+        assertEq(markdownController.janeSlashed(BORROWER), 0, "Redistribution tracking should reset");
     }
 
     /// @notice Test settlement when borrower has no JANE
@@ -417,17 +455,17 @@ contract MarkdownControllerJaneTest is BaseTest {
 
     // ============ Access Control Tests ============
 
-    /// @notice Test only MorphoCredit can call burn functions
-    function testOnlyMorphoCreditCanBurn() public {
-        // Try to call burnJaneProportional as non-MorphoCredit
+    /// @notice Test only MorphoCredit can call redistribution functions
+    function testOnlyMorphoCreditCanSlash() public {
+        // Try to call slashJaneProportional as non-MorphoCredit (internally redistributes)
         vm.prank(BORROWER);
         vm.expectRevert("Only MorphoCredit");
-        markdownController.burnJaneProportional(BORROWER, 10 days);
+        markdownController.slashJaneProportional(BORROWER, 10 days);
 
-        // Try to call burnJaneFull as non-MorphoCredit
+        // Try to call slashJaneFull as non-MorphoCredit (internally redistributes)
         vm.prank(BORROWER);
         vm.expectRevert("Only MorphoCredit");
-        markdownController.burnJaneFull(BORROWER);
+        markdownController.slashJaneFull(BORROWER);
     }
 
     /// @notice Test only owner can set markdown enabled
@@ -460,7 +498,7 @@ contract MarkdownControllerJaneTest is BaseTest {
 
     // ============ Integration Flow Tests ============
 
-    /// @notice Test full flow: Borrow → Default → Freeze → Progressive Burn → Settlement
+    /// @notice Test full flow: Borrow → Default → Freeze → Progressive Redistribution → Settlement
     function testFullIntegrationFlow() public {
         // Enable markdown for borrower
         vm.prank(OWNER);
@@ -484,26 +522,36 @@ contract MarkdownControllerJaneTest is BaseTest {
         vm.expectRevert(Jane.TransferNotAllowed.selector);
         jane.transfer(SUPPLIER, 100e18);
 
-        // 4. Move to default - progressive burn starts
+        // 4. Move to default - progressive redistribution starts
         uint256 defaultStart = cycleEnd + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION;
         vm.warp(defaultStart + 10 days);
 
         uint256 initialBalance = jane.balanceOf(BORROWER);
+        uint256 distributorBalanceBefore = jane.balanceOf(janeDistributor);
         MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
         assertTrue(jane.balanceOf(BORROWER) < initialBalance, "JANE should be burned");
+        assertTrue(jane.balanceOf(janeDistributor) > distributorBalanceBefore, "Distributor should receive JANE");
 
-        // 5. Continue default - more burning
+        // 5. Continue default - more redistribution
         vm.warp(defaultStart + 30 days);
+        distributorBalanceBefore = jane.balanceOf(janeDistributor);
         MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
         assertTrue(jane.balanceOf(BORROWER) <= initialBalance * 70 / 100, "More JANE burned");
+        assertTrue(jane.balanceOf(janeDistributor) > distributorBalanceBefore, "Distributor receives more JANE");
 
-        // 6. Settlement - full burn
+        // 6. Settlement - full redistribution
         uint256 preSettlementBalance = jane.balanceOf(BORROWER);
+        uint256 preSettlementDistributorBalance = jane.balanceOf(janeDistributor);
         vm.prank(address(creditLine));
         MorphoCredit(address(morpho)).settleAccount(marketParams, BORROWER);
 
-        assertEq(jane.balanceOf(BORROWER), 0, "All JANE burned on settlement");
-        assertEq(markdownController.janeBurned(BORROWER), 0, "Burn counter reset");
+        assertEq(jane.balanceOf(BORROWER), 0, "All JANE redistributed on settlement");
+        assertEq(
+            jane.balanceOf(janeDistributor),
+            preSettlementDistributorBalance + preSettlementBalance,
+            "Distributor receives all remaining"
+        );
+        assertEq(markdownController.janeSlashed(BORROWER), 0, "Redistribution counter reset");
     }
 
     /// @notice Test markdown updates through hooks
@@ -523,8 +571,10 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Accrue premium to trigger markdown
         uint256 balanceBefore = jane.balanceOf(BORROWER);
+        uint256 distributorBalanceBefore = jane.balanceOf(janeDistributor);
         MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
         assertTrue(jane.balanceOf(BORROWER) < balanceBefore, "JANE should be burned during accrual");
+        assertTrue(jane.balanceOf(janeDistributor) > distributorBalanceBefore, "Distributor should receive JANE");
 
         // Close another cycle to unfreeze the market for new operations
         _continueMarketCyclesJane(id, block.timestamp + CYCLE_DURATION);
@@ -541,14 +591,18 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Repay - should trigger _beforeRepay and _afterRepay hooks
         balanceBefore = jane.balanceOf(BORROWER);
+        distributorBalanceBefore = jane.balanceOf(janeDistributor);
         loanToken.setBalance(BORROWER, 10_000e18);
         vm.prank(BORROWER);
         loanToken.approve(morphoAddress, type(uint256).max);
         vm.prank(BORROWER);
         morpho.repay(marketParams, 5_000e18, 0, BORROWER, hex"");
 
-        // Burn may occur if still in default
-        assertTrue(jane.balanceOf(BORROWER) <= balanceBefore, "JANE may be burned in repay hook");
+        // Redistribution may occur if still in default
+        assertTrue(jane.balanceOf(BORROWER) <= balanceBefore, "JANE may be redistributed in repay hook");
+        assertTrue(
+            jane.balanceOf(janeDistributor) >= distributorBalanceBefore, "Distributor may receive JANE in repay hook"
+        );
     }
 
     // ============ Helper Functions ============

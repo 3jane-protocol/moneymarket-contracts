@@ -8,15 +8,14 @@ contract JaneTokenBaseTest is JaneSetup {
     function test_constructor_setsCorrectAddresses() public view {
         assertEq(token.owner(), owner);
         assertTrue(token.hasRole(MINTER_ROLE, minter));
-        assertTrue(token.hasRole(BURNER_ROLE, burner));
         assertEq(token.getRoleMemberCount(MINTER_ROLE), 1);
-        assertEq(token.getRoleMemberCount(BURNER_ROLE), 1);
         assertFalse(token.hasRole(TRANSFER_ROLE, owner));
+        assertEq(token.distributor(), distributor);
     }
 
     function test_constructor_revertsWithZeroOwner() public {
         vm.expectRevert(Jane.InvalidAddress.selector);
-        new Jane(address(0), minter, burner);
+        new Jane(address(0), distributor);
     }
 
     function test_tokenMetadata() public view {
@@ -53,10 +52,6 @@ contract JaneTokenBaseTest is JaneSetup {
 
         mintTokens(bob, 500e18);
         assertEq(token.totalSupply(), 1500e18);
-
-        vm.prank(alice);
-        token.burn(200e18);
-        assertEq(token.totalSupply(), 1300e18);
     }
 
     function test_setTransferable_onlyOwner() public {
@@ -72,26 +67,6 @@ contract JaneTokenBaseTest is JaneSetup {
         vm.prank(alice);
         vm.expectRevert();
         token.setTransferable();
-    }
-
-    function test_finalizeMinting_onlyOwner() public {
-        assertFalse(token.mintFinalized());
-
-        vm.prank(owner);
-        vm.expectEmit(true, false, false, true);
-        emit MintingFinalized();
-        token.finalizeMinting();
-
-        assertTrue(token.mintFinalized());
-    }
-
-    function test_finalizeMinting_preventsFutureMinting() public {
-        vm.prank(owner);
-        token.finalizeMinting();
-
-        vm.prank(minter);
-        vm.expectRevert(Jane.MintFinalized.selector);
-        token.mint(alice, 1000e18);
     }
 
     function testFuzz_mint_variousAmounts(uint256 amount) public {
@@ -114,25 +89,10 @@ contract JaneTokenBaseTest is JaneSetup {
         assertEq(token.balanceOf(recipient), amount);
     }
 
-    function test_constructor_allowsZeroMinter() public {
-        Jane newToken = new Jane(owner, address(0), burner);
+    function test_constructor_allowsZeroDistributor() public {
+        Jane newToken = new Jane(owner, address(0));
         assertEq(newToken.getRoleMemberCount(MINTER_ROLE), 0);
         assertEq(newToken.owner(), owner);
-        assertTrue(newToken.hasRole(BURNER_ROLE, burner));
-    }
-
-    function test_constructor_allowsZeroBurner() public {
-        Jane newToken = new Jane(owner, minter, address(0));
-        assertEq(newToken.getRoleMemberCount(BURNER_ROLE), 0);
-        assertEq(newToken.owner(), owner);
-        assertTrue(newToken.hasRole(MINTER_ROLE, minter));
-    }
-
-    function test_constructor_bothMinterAndBurnerZero() public {
-        Jane newToken = new Jane(owner, address(0), address(0));
-        assertEq(newToken.getRoleMemberCount(MINTER_ROLE), 0);
-        assertEq(newToken.getRoleMemberCount(BURNER_ROLE), 0);
-        assertEq(newToken.owner(), owner);
-        assertTrue(newToken.hasRole(OWNER_ROLE, owner));
+        assertEq(newToken.distributor(), address(0));
     }
 }

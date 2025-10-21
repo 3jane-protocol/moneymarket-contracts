@@ -107,7 +107,7 @@ contract StaleMarkdownBurnBaselineTest is Test {
         morpho.setUsd3(morphoOwner);
 
         // Deploy JANE token - test contract is owner for easier role management
-        janeToken = new Jane(address(this), janeMinter, address(this));
+        janeToken = new Jane(address(this), address(this));
 
         // Deploy credit line mock
         creditLine = new CreditLineMock(address(morpho));
@@ -145,8 +145,8 @@ contract StaleMarkdownBurnBaselineTest is Test {
         markdownController =
             new MarkdownController(address(protocolConfig), morphoOwner, address(janeToken), address(morpho), marketId);
 
-        // Grant burner role to markdown controller (this contract has OWNER_ROLE in Jane)
-        janeToken.grantRole(janeToken.BURNER_ROLE(), address(markdownController));
+        // Set markdown controller address on Jane token (this contract has OWNER_ROLE in Jane)
+        janeToken.setMarkdownController(address(markdownController));
 
         // Set markdown manager on credit line
         vm.prank(morphoOwner);
@@ -221,7 +221,7 @@ contract StaleMarkdownBurnBaselineTest is Test {
 
         // Record baseline state for comparison
         uint256 initialBalanceTracked = markdownController.initialJaneBalance(borrower);
-        uint256 janeBurnedTracked = markdownController.janeBurned(borrower);
+        uint256 janeBurnedTracked = markdownController.janeSlashed(borrower);
         emit log_named_uint("Initial balance tracked after first default", initialBalanceTracked);
         emit log_named_uint("Jane burned tracked after first default", janeBurnedTracked);
 
@@ -429,7 +429,7 @@ contract StaleMarkdownBurnBaselineTest is Test {
 
         // Verify no burns occurred and baseline is 0
         assertEq(janeToken.balanceOf(borrower), 0, "Still zero JANE");
-        assertEq(markdownController.janeBurned(borrower), 0, "No burns tracked");
+        assertEq(markdownController.janeSlashed(borrower), 0, "No burns tracked");
     }
 
     /* HELPER FUNCTIONS */
