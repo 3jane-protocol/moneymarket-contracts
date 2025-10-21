@@ -40,6 +40,7 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Run Forge tests in ${{ matrix.type }} mode
+        timeout-minutes: 60
         run: yarn test:forge -vvv
         env:
           FOUNDRY_FUZZ_RUNS: ${{ matrix.fuzz-runs }}
