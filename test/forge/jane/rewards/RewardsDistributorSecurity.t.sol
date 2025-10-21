@@ -292,7 +292,7 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
     /// @notice Test transfer mode requires sufficient balance
     function test_transferMode_requiresSufficientBalance() public {
         // Deploy new distributor without funding
-        RewardsDistributor emptyDistributor = new RewardsDistributor(owner, address(token), false, START, 0);
+        RewardsDistributor emptyDistributor = new RewardsDistributor(owner, address(token), false, START);
 
         // Create root
         MerkleTreeHelper.Claim[] memory claims = new MerkleTreeHelper.Claim[](1);

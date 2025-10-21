@@ -521,7 +521,7 @@ contract RewardsDistributorUnitTest is RewardsDistributorSetup {
     /// @notice Test partial claims respect cap
     function test_maxClaimable_partialClaims() public {
         // Deploy fresh distributor for clean testing
-        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START, 0);
+        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START);
         fundDistributor(1_000_000e18);
 
         // Set specific cap
@@ -556,7 +556,7 @@ contract RewardsDistributorUnitTest is RewardsDistributorSetup {
     /// @notice Test maxClaimable with zero cap blocks all claims
     function test_maxClaimable_zeroCap() public {
         // Deploy fresh distributor without setting emissions (maxClaimable = 0)
-        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START, 0);
+        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START);
         fundDistributor(1_000_000e18);
 
         bytes32[][] memory proofs = setupSimpleRoot();
@@ -637,7 +637,7 @@ contract RewardsDistributorUnitTest is RewardsDistributorSetup {
     /// @notice Test getClaimable returns 0 when maxClaimable is 0 (Electisec #4)
     function test_fix_getClaimableZeroCap() public {
         // Deploy fresh distributor without setting emissions (maxClaimable = 0)
-        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START, 0);
+        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START);
         fundDistributor(1_000_000e18);
 
         setupSimpleRoot();

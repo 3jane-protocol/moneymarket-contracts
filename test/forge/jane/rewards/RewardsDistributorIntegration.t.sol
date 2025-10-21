@@ -436,7 +436,7 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
     /// @notice Test weekly lifecycle with epoch emissions
     function test_epochEmissions_weeklyLifecycle() public {
         // Deploy fresh distributor for clean testing
-        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START, 0);
+        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START);
         fundDistributor(1_000_000e18);
 
         // Set emissions for weeks 0-4
@@ -493,7 +493,7 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
     /// @notice Test insufficient cap scenario
     function test_epochEmissions_insufficientCap() public {
         // Deploy fresh distributor for clean testing
-        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START, 0);
+        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START);
         fundDistributor(1_000_000e18);
 
         // Set low cap
@@ -525,7 +525,7 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
     /// @notice Test dynamic emissions adjustment mid-cycle
     function test_epochEmissions_dynamicAdjustment() public {
         // Deploy fresh distributor for clean testing
-        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START, 0);
+        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START);
         fundDistributor(1_000_000e18);
 
         // Set initial low cap
