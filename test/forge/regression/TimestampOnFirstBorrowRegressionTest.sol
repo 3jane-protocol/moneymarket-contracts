@@ -89,7 +89,7 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
 
         // Step 5: Accrue premium after some time
         skip(ACCRUAL_PERIOD);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Step 6: Verify premium only accrued for actual borrow period
         uint256 borrowShares = morpho.position(id, BORROWER).borrowShares;
@@ -126,7 +126,7 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
 
         // Skip time and accrue
         skip(ACCRUAL_PERIOD);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify correct premium accrual
         uint256 borrowShares = morpho.position(id, BORROWER).borrowShares;
@@ -164,7 +164,7 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
 
         // Accrue some interest
         skip(ACCRUAL_PERIOD);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Repay fully using shares (this ensures exact full repayment)
         uint256 borrowShares = morpho.position(id, BORROWER).borrowShares;
@@ -194,7 +194,7 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
 
         // Accrue and verify premium only from second borrow
         skip(ACCRUAL_PERIOD);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         borrowShares = morpho.position(id, BORROWER).borrowShares;
         uint256 currentBorrowAssets =
@@ -255,9 +255,11 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
 
         // Accrue premium for all after 1 day
         skip(ACCRUAL_PERIOD);
-        morphoCredit.accrueBorrowerPremium(id, borrower1);
-        morphoCredit.accrueBorrowerPremium(id, borrower2);
-        morphoCredit.accrueBorrowerPremium(id, borrower3);
+        address[] memory borrowers = new address[](3);
+        borrowers[0] = borrower1;
+        borrowers[1] = borrower2;
+        borrowers[2] = borrower3;
+        morphoCredit.accruePremiumsForBorrowers(id, borrowers);
 
         // Verify each has correct premium based on their rate and time
         uint256 shares1 = morpho.position(id, borrower1).borrowShares;
@@ -274,11 +276,9 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
         // Each should have only 1 day of their respective premium rates
         uint256 expected1 =
             BORROW_AMOUNT + BORROW_AMOUNT.wMulDown((premiumRatePerSecond + baseRatePerSecond) * ACCRUAL_PERIOD);
-        uint256 expected2 =
-            BORROW_AMOUNT * 2
+        uint256 expected2 = BORROW_AMOUNT * 2
             + (BORROW_AMOUNT * 2).wMulDown((premiumRatePerSecond * 2 + baseRatePerSecond) * ACCRUAL_PERIOD);
-        uint256 expected3 =
-            BORROW_AMOUNT / 2
+        uint256 expected3 = BORROW_AMOUNT / 2
             + (BORROW_AMOUNT / 2).wMulDown((premiumRatePerSecond / 2 + baseRatePerSecond) * ACCRUAL_PERIOD);
 
         assertApproxEqRel(assets1, expected1, 0.01e18, "Borrower1 premium correct");
@@ -329,7 +329,7 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
         // Accrue some interest
         skip(ACCRUAL_PERIOD);
         uint256 accrualTime = block.timestamp;
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Note: accrueBorrowerPremium updates the timestamp to current time
         (uint256 timestampAfterAccrual,,) = morphoCredit.borrowerPremium(id, BORROWER);
@@ -375,7 +375,7 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
 
         // Accrue after 1 day
         skip(ACCRUAL_PERIOD);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Get actual debt
         uint256 borrowShares = morpho.position(id, BORROWER).borrowShares;
@@ -430,7 +430,7 @@ contract TimestampOnFirstBorrowRegressionTest is BaseTest {
 
         // Verify no extra premium was charged
         skip(1 days);
-        morphoCredit.accrueBorrowerPremium(id, newBorrower);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(newBorrower));
 
         uint256 borrowShares = morpho.position(id, newBorrower).borrowShares;
         uint256 currentAssets =

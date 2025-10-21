@@ -86,7 +86,8 @@ contract DebtSettlementTest is BaseTest {
         // Calculate expected repay amount for exact shares - ensure we have enough
         uint256 expectedRepayAmount =
             uint256(positionBefore.borrowShares)
-                .toAssetsUp(marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares) + 1; // Add 1 wei buffer to
+                    .toAssetsUp(marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares) + 1; // Add 1 wei buffer
+            // to
             // ensure enough assets
 
         // Prepare full repayment
@@ -240,7 +241,7 @@ contract DebtSettlementTest is BaseTest {
 
         // Fast forward to default
         _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify markdown exists
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);

@@ -8,12 +8,11 @@ import {UtilsLib} from "./libraries/UtilsLib.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {ExpLib} from "./libraries/ExpLib.sol";
 import {MathLib, WAD_INT as WAD} from "./libraries/MathLib.sol";
-import {ConstantsLib} from "./libraries/ConstantsLib.sol";
 import {MarketParamsLib} from "../../libraries/MarketParamsLib.sol";
 import {Id, MarketParams, Market, IMorphoCredit} from "../../interfaces/IMorpho.sol";
 import {MathLib as MorphoMathLib} from "../../libraries/MathLib.sol";
 import {Initializable} from "../../../lib/openzeppelin/contracts/proxy/utils/Initializable.sol";
-import {IAaveMarket, ReserveDataLegacy} from "./interfaces/IAaveMarket.sol";
+import {IAaveMarket} from "./interfaces/IAaveMarket.sol";
 
 /// @title AdaptiveCurveIrm
 /// @author Morpho Labs
@@ -186,7 +185,7 @@ contract AdaptiveCurveIrm is IAdaptiveCurveIrm, Initializable {
         // Non negative because 1 - 1/C >= 0, C - 1 >= 0.
         int256 coeff = err < 0 ? WAD - WAD.wDivToZero(curveSteepness) : curveSteepness - WAD;
         // Non negative if _rateAtTarget >= 0 because if err < 0, coeff <= 1.
-        return (coeff.wMulToZero(err) + WAD).wMulToZero(int256(_rateAtTarget));
+        return (coeff.wMulToZero(err) + WAD).wMulToZero(_rateAtTarget);
     }
 
     /// @dev Returns the new rate at target, for a given `startRateAtTarget` and a given `linearAdaptation`.

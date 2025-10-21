@@ -309,7 +309,7 @@ contract PremiumIntegrationTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + 30 days);
 
         // First trigger premium accrual to get accurate debt
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Now get the updated position with premium included
         Position memory positionAfterAccrual = morpho.position(id, BORROWER);
@@ -427,7 +427,7 @@ contract PremiumIntegrationTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + 10 days);
 
         // First accrue premium to get accurate debt
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Calculate actual debt
         Position memory positionBeforeRepay = morpho.position(id, BORROWER);
@@ -480,7 +480,7 @@ contract PremiumIntegrationTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + 30 days);
 
         // Manually accrue borrower's premium since withdraw doesn't trigger it
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Supplier withdraws
         vm.prank(SUPPLIER);
@@ -687,7 +687,7 @@ contract PremiumIntegrationTest is BaseTest {
         uint256 baseInterest = marketAfterBase.totalBorrowAssets - marketInitial.totalBorrowAssets;
 
         // Then accrue premium
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
         Market memory marketFinal = morpho.market(id);
         uint256 totalInterest = marketFinal.totalBorrowAssets - marketInitial.totalBorrowAssets;
 
@@ -727,7 +727,7 @@ contract PremiumIntegrationTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + 365 days);
 
         // Accrue premium
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Calculate debt
         Position memory position = morpho.position(id, BORROWER);
@@ -1019,7 +1019,7 @@ contract PremiumIntegrationTest is BaseTest {
         // First keeper accrues
         address keeper = makeAddr("Keeper");
         vm.prank(keeper);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Then user tries to borrow - should not double accrue
         uint256 marketTotalBefore = morpho.market(id).totalBorrowAssets;
@@ -1106,7 +1106,7 @@ contract PremiumIntegrationTest is BaseTest {
             uint256(posBefore.borrowShares).toAssetsUp(marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares);
 
         // Trigger potential premium accrual
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Check debt unchanged (only base interest should apply)
         Position memory posAfter = morpho.position(id, BORROWER);
@@ -1138,7 +1138,7 @@ contract PremiumIntegrationTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + 365 days);
 
         // Accrue premium
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Calculate expected debt using wTaylorCompounded
         uint256 growthFactor = uint256(premiumRatePerSecond).wTaylorCompounded(365 days);
@@ -1186,7 +1186,7 @@ contract PremiumIntegrationTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + 30 days);
 
         // Should not revert
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify state is consistent
         Market memory market = morpho.market(id);
@@ -1227,7 +1227,7 @@ contract PremiumIntegrationTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + 365 days);
 
         // Accrue premium
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Check fee recipient received shares
         Position memory feePosAfter = morpho.position(id, FEE_RECIPIENT);
@@ -1336,7 +1336,7 @@ contract PremiumIntegrationTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + 100 days);
 
         // Accrue premium
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Fee recipient should have no shares
         Position memory feePosAfter = morpho.position(id, FEE_RECIPIENT);

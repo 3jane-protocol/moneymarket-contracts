@@ -140,7 +140,7 @@ contract PremiumRateChangeTimestampTest is BaseTest {
 
         // Accrue interest again
         morpho.accrueInterest(marketParams);
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         uint256 debtAfterSecondAccrual = morpho.expectedBorrowAssets(marketParams, BORROWER);
 
@@ -203,7 +203,7 @@ contract PremiumRateChangeTimestampTest is BaseTest {
         // Final accrual to ensure no issues
         skip(3 days);
         morpho.accrueInterest(marketParams);
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         uint256 finalDebt = morpho.expectedBorrowAssets(marketParams, BORROWER);
         console.log("Final debt after multiple rate changes:", finalDebt);

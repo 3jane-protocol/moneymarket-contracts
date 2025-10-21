@@ -63,6 +63,7 @@ contract Helper is IHelper {
 
     /// @inheritdoc IHelper
     function deposit(uint256 assets, address receiver, bool hop) public returns (uint256) {
+        if (msg.sender != receiver) revert ErrorsLib.Unauthorized();
         IERC20(USDC).safeTransferFrom(msg.sender, address(this), assets);
 
         if (hop) {
@@ -121,7 +122,7 @@ contract Helper is IHelper {
         Id id = marketParams.id();
 
         // Accrue premium first to get accurate borrow shares
-        IMorphoCredit(MORPHO).accrueBorrowerPremium(id, onBehalf);
+        _accruePremiumsForBorrower(id, onBehalf);
 
         // Get current borrow shares after premium accrual
         Position memory pos = IMorpho(MORPHO).position(id, onBehalf);
@@ -141,8 +142,7 @@ contract Helper is IHelper {
         uint256 usdcNeeded = IERC4626(WAUSDC).previewMint(waUsdcNeeded);
 
         // Pull USDC from user and wrap to waUSDC
-        IERC20(USDC).safeTransferFrom(msg.sender, address(this), usdcNeeded);
-        IERC4626(WAUSDC).deposit(usdcNeeded, address(this));
+        _wrap(msg.sender, usdcNeeded);
 
         // Repay with shares to ensure complete repayment
         (, uint256 sharesRepaid) = IMorpho(MORPHO).repay(marketParams, 0, pos.borrowShares, onBehalf, data);
@@ -153,5 +153,11 @@ contract Helper is IHelper {
     function _wrap(address from, uint256 assets) internal returns (uint256) {
         IERC20(USDC).safeTransferFrom(from, address(this), assets);
         return IERC4626(WAUSDC).deposit(assets, address(this));
+    }
+
+    function _accruePremiumsForBorrower(Id id, address borrower) internal {
+        address[] memory borrowers = new address[](1);
+        borrowers[0] = borrower;
+        IMorphoCredit(MORPHO).accruePremiumsForBorrowers(id, borrowers);
     }
 }

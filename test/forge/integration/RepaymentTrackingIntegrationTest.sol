@@ -308,8 +308,8 @@ contract RepaymentTrackingIntegrationTest is BaseTest {
         vm.expectRevert(ErrorsLib.MustPayFullObligation.selector);
         morpho.repay(marketParams, 1, 0, ALICE, "");
 
-        // Can trigger accrual through accrueBorrowerPremium (since we're past grace period)
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        // Can trigger accrual through accruePremiumsForBorrowers (since we're past grace period)
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Premium should have accrued
         (uint128 lastAccrualTime,,) = IMorphoCredit(address(morpho)).borrowerPremium(id, ALICE);

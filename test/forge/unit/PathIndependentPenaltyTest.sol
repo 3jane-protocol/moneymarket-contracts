@@ -150,7 +150,7 @@ contract PathIndependentPenaltyTest is BaseTest {
     // Helper function to calculate borrower's total debt including premiums
     function _calculateBorrowerDebt(Id _id, address borrower) internal returns (uint256) {
         // First accrue interest and premiums
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(_id, borrower);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(_id, _toArray(borrower));
 
         // Get the market state
         Market memory m = morpho.market(_id);

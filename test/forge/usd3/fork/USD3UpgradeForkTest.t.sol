@@ -88,6 +88,21 @@ contract USD3UpgradeForkTest is MainnetForkBase {
         // First capture pre-upgrade state
         test_capturePreUpgradeState();
 
+        // Per CLAUDE.md, must set fees to 0 and call report() BEFORE upgrading
+        address management = ITokenizedStrategy(USD3_PROXY).management();
+        impersonate(management);
+
+        // Set performance fee to 0
+        ITokenizedStrategy(USD3_PROXY).setPerformanceFee(0);
+
+        // Set profit unlock time to 0
+        ITokenizedStrategy(USD3_PROXY).setProfitMaxUnlockTime(0);
+
+        // Call report() on OLD implementation before upgrade
+        ITokenizedStrategy(USD3_PROXY).report();
+
+        stopImpersonate();
+
         // Simulate upgrade by owner/governance
         // Note: In production, this would be done through proxy admin
         // For testing, we'll use vm.etch to replace implementation
@@ -111,7 +126,7 @@ contract USD3UpgradeForkTest is MainnetForkBase {
      * @notice Test reinitialize after upgrade
      */
     function test_reinitializeAfterUpgrade() public requiresFork {
-        // Perform upgrade
+        // Perform upgrade (which already set fees to 0 and called report on OLD implementation)
         test_upgradeImplementation();
 
         USD3 upgradedUSD3 = USD3(USD3_PROXY);
@@ -121,20 +136,14 @@ contract USD3UpgradeForkTest is MainnetForkBase {
         address management = ITokenizedStrategy(USD3_PROXY).management();
         impersonate(management);
 
-        // 1. Temporarily set performance fee to 0 to prevent fee distribution
-        ITokenizedStrategy(USD3_PROXY).setPerformanceFee(0);
-
-        // 2. Set profit unlock time to 0 for immediate availability
-        ITokenizedStrategy(USD3_PROXY).setProfitMaxUnlockTime(0);
-
-        // 3. Call reinitialize to switch asset from waUSDC to USDC
+        // 1. Call reinitialize to switch asset from waUSDC to USDC
         upgradedUSD3.reinitialize();
 
-        // 4. Call report to update totalAssets to correct USDC value
+        // 2. Call report() on NEW implementation to update totalAssets to correct USDC value
         // This is CRITICAL - without this, totalAssets shows waUSDC amounts not USDC value
         ITokenizedStrategy(USD3_PROXY).report();
 
-        // 5. Restore settings (in production would restore actual values)
+        // 3. Restore settings (in production would restore actual values)
         // For testing we'll leave them as-is
 
         stopImpersonate();

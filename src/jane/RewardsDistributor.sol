@@ -176,7 +176,8 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
         }
 
         // Update claimed amount
-        claimed[user] = alreadyClaimed + claimable;
+        uint256 newTotalClaimed = alreadyClaimed + claimable;
+        claimed[user] = newTotalClaimed;
         totalClaimed += claimable;
 
         // Distribute tokens
@@ -186,7 +187,7 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
             jane.transfer(user, claimable);
         }
 
-        emit Claimed(user, claimable, totalAllocation);
+        emit Claimed(user, claimable, newTotalClaimed);
     }
 
     /**
@@ -196,8 +197,13 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
      * @return Claimable amount
      */
     function getClaimable(address user, uint256 totalAllocation) external view returns (uint256) {
+        if (maxClaimable == 0 || totalClaimed >= maxClaimable) return 0;
+
         uint256 alreadyClaimed = claimed[user];
-        return totalAllocation > alreadyClaimed ? totalAllocation - alreadyClaimed : 0;
+        uint256 unclaimed = totalAllocation > alreadyClaimed ? totalAllocation - alreadyClaimed : 0;
+
+        uint256 remaining = maxClaimable - totalClaimed;
+        return unclaimed > remaining ? remaining : unclaimed;
     }
 
     /**

@@ -181,7 +181,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // First accrue premium to get accurate debt
         vm.prank(BORROWER);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Calculate final debt after premium accrual
         Position memory finalPosition = morpho.position(id, BORROWER);
@@ -248,8 +248,8 @@ contract PremiumScenarioTest is BaseTest {
         _continueMarketCycles(id2, block.timestamp + 90 days);
 
         // Manually accrue premiums for both markets
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id, BORROWER);
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id2, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id2, _toArray(BORROWER));
 
         // Check debt in both markets
         Position memory pos1 = morpho.position(id, BORROWER);
@@ -267,7 +267,7 @@ contract PremiumScenarioTest is BaseTest {
 
         // Borrower prioritizes repaying higher premium market
         // First accrue premium to get accurate repayment amount
-        MorphoCredit(address(morpho)).accrueBorrowerPremium(id2, BORROWER);
+        MorphoCredit(address(morpho)).accruePremiumsForBorrowers(id2, _toArray(BORROWER));
 
         // Get updated position after premium accrual
         pos2 = morpho.position(id2, BORROWER);

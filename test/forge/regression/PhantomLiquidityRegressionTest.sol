@@ -121,7 +121,7 @@ contract PhantomLiquidityRegressionTest is BaseTest {
 
         // Apply POC's huge markdown value
         maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, MARKDOWN_AMOUNT);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory m = morpho.market(id);
 
@@ -170,7 +170,7 @@ contract PhantomLiquidityRegressionTest is BaseTest {
 
         // Apply markdown larger than debt
         maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 200 ether);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mMarkdown = morpho.market(id);
         uint256 actualMarkdown = mMarkdown.totalMarkdownAmount;
@@ -180,7 +180,7 @@ contract PhantomLiquidityRegressionTest is BaseTest {
 
         // Reverse markdown
         maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 0);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mReversed = morpho.market(id);
 
@@ -230,6 +230,6 @@ contract PhantomLiquidityRegressionTest is BaseTest {
 
         // Move to default (31 days past cycle end, which is 1 day ago from _createMultipleObligations)
         vm.warp(block.timestamp + 30 days);
-        morphoCredit.accrueBorrowerPremium(id, borrower);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower));
     }
 }
