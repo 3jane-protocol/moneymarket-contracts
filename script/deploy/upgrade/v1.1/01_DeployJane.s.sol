@@ -8,8 +8,8 @@ import {Jane} from "../../../../src/jane/Jane.sol";
 /**
  * @title DeployJane
  * @notice Deploy Jane token for v1.1 upgrade
- * @dev Deploys with owner, minter and burner as address(0) initially
- *      Minter (RewardsDistributor) and Burner (MarkdownController) will be added in Phase 3
+ * @dev Deploys with owner and distributor
+ *      Minter role (RewardsDistributor) will be added in Phase 3
  */
 contract DeployJane is Script {
     function run() external returns (address) {
@@ -20,25 +20,24 @@ contract DeployJane is Script {
             return existing;
         }
 
-        // Load owner from environment
+        // Load owner and distributor from environment
         address owner = vm.envAddress("OWNER_ADDRESS");
+        address distributor = vm.envAddress("DISTRIBUTOR_ADDRESS");
 
         console.log("Deploying Jane token...");
         console.log("  Owner:", owner);
-        console.log("  Initial minter: 0x0 (will add RewardsDistributor in Phase 3)");
-        console.log("  Initial burner: 0x0 (will add MarkdownController in Phase 3)");
+        console.log("  Distributor:", distributor);
+        console.log("  Note: Minter role will be granted to RewardsDistributor in Phase 3");
 
         vm.startBroadcast();
 
         Jane jane = new Jane(
             owner, // initialOwner
-            address(0), // minter (add RewardsDistributor later)
-            address(0) // burner (add MarkdownController later)
+            distributor // distributor for redistributed tokens
         );
 
         console.log("Jane token deployed at:", address(jane));
         console.log("  transferable:", false, "(default)");
-        console.log("  mintFinalized:", false, "(default)");
 
         vm.stopBroadcast();
 

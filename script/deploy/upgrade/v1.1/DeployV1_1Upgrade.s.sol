@@ -8,7 +8,6 @@ import {console} from "forge-std/console.sol";
 import {DeployJane} from "./01_DeployJane.s.sol";
 import {DeployMarkdownController} from "./02_DeployMarkdownController.s.sol";
 import {DeployRewardsDistributor} from "./03_DeployRewardsDistributor.s.sol";
-import {DeployPYTLocker} from "./04_DeployPYTLocker.s.sol";
 import {DeployHelperV2} from "./05_DeployHelperV2.s.sol";
 
 // Phase 2: Upgrade existing contracts
@@ -28,7 +27,7 @@ import {ConfigureProtocolConfig} from "./22_ConfigureProtocolConfig.s.sol";
  * @dev Executes all deployment, upgrade, and configuration scripts in sequence
  *
  *      Execution Phases:
- *      Phase 1: Deploy new contracts (Jane, MarkdownController, RewardsDistributor, PYTLocker, HelperV2)
+ *      Phase 1: Deploy new contracts (Jane, MarkdownController, RewardsDistributor, HelperV2)
  *      Phase 2: Upgrade existing contracts (MorphoCredit, IRM, USD3, sUSD3)
  *      Phase 3: Configure contracts (Jane roles, MorphoCredit helper, ProtocolConfig)
  *
@@ -36,7 +35,8 @@ import {ConfigureProtocolConfig} from "./22_ConfigureProtocolConfig.s.sol";
  *                   to generate the atomic multisig transaction for USD3 upgrade.
  *
  *      Environment Variables Required:
- *      - OWNER: Protocol owner address
+ *      - OWNER_ADDRESS: Protocol owner address
+ *      - DISTRIBUTOR_ADDRESS: Jane token distributor address
  *      - MORPHO_ADDRESS: MorphoCredit proxy address
  *      - USD3_ADDRESS: USD3 proxy address
  *      - SUSD3_ADDRESS: sUSD3 proxy address
@@ -45,14 +45,13 @@ import {ConfigureProtocolConfig} from "./22_ConfigureProtocolConfig.s.sol";
  *      - USDC_ADDRESS: USDC token address
  *      - WAUSDC_ADDRESS: Wrapped Aave USDC address
  *      - MARKET_ID: Morpho market identifier
- *      - Optional: FULL_MARKDOWN_DURATION, SUBORDINATED_DEBT_CAP_BPS, SUBORDINATED_DEBT_FLOOR_BPS
+ *      - Optional: FULL_MARKDOWN_DURATION, SUBORDINATED_DEBT_CAP_BPS, SUBORDINATED_DEBT_FLOOR_BPS, MAX_LM_MINTABLE
  */
 contract DeployV1_1Upgrade is Script {
     struct DeployedAddresses {
         address jane;
         address markdownController;
         address rewardsDistributor;
-        address pytLocker;
         address helperV2;
         address morphoCreditImpl;
         address irmImpl;
@@ -74,31 +73,25 @@ contract DeployV1_1Upgrade is Script {
         console.log("========================================");
         console.log("");
 
-        console.log("1/5: Deploying Jane token...");
+        console.log("1/4: Deploying Jane token...");
         DeployJane deployJane = new DeployJane();
         deployed.jane = deployJane.run();
         console.log("  Deployed at:", deployed.jane);
         console.log("");
 
-        console.log("2/5: Deploying MarkdownController...");
+        console.log("2/4: Deploying MarkdownController...");
         DeployMarkdownController deployMarkdownController = new DeployMarkdownController();
         deployed.markdownController = deployMarkdownController.run();
         console.log("  Deployed at:", deployed.markdownController);
         console.log("");
 
-        console.log("3/5: Deploying RewardsDistributor...");
+        console.log("3/4: Deploying RewardsDistributor...");
         DeployRewardsDistributor deployRewardsDistributor = new DeployRewardsDistributor();
         deployed.rewardsDistributor = deployRewardsDistributor.run();
         console.log("  Deployed at:", deployed.rewardsDistributor);
         console.log("");
 
-        console.log("4/5: Deploying PYTLocker...");
-        DeployPYTLocker deployPYTLocker = new DeployPYTLocker();
-        deployed.pytLocker = deployPYTLocker.run();
-        console.log("  Deployed at:", deployed.pytLocker);
-        console.log("");
-
-        console.log("5/5: Deploying HelperV2...");
+        console.log("4/4: Deploying HelperV2...");
         DeployHelperV2 deployHelperV2 = new DeployHelperV2();
         deployed.helperV2 = deployHelperV2.run();
         console.log("  Deployed at:", deployed.helperV2);
@@ -185,7 +178,6 @@ contract DeployV1_1Upgrade is Script {
         console.log("  Jane:                ", deployed.jane);
         console.log("  MarkdownController:  ", deployed.markdownController);
         console.log("  RewardsDistributor:  ", deployed.rewardsDistributor);
-        console.log("  PYTLocker:           ", deployed.pytLocker);
         console.log("  HelperV2:            ", deployed.helperV2);
         console.log("");
 
