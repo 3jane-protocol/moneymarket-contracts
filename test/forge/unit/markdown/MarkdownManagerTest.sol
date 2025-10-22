@@ -486,11 +486,11 @@ contract InvalidMarkdownManager is IMarkdownController {
         return false;
     }
 
-    function burnJaneProportional(address, uint256) external pure returns (uint256) {
+    function slashJaneProportional(address, uint256) external pure returns (uint256) {
         return 0;
     }
 
-    function burnJaneFull(address) external pure returns (uint256) {
+    function slashJaneFull(address) external pure returns (uint256) {
         return 0;
     }
 
@@ -511,11 +511,11 @@ contract RevertingMarkdownManager is IMarkdownController {
         revert("Markdown calculation failed");
     }
 
-    function burnJaneProportional(address, uint256) external pure returns (uint256) {
+    function slashJaneProportional(address, uint256) external pure returns (uint256) {
         revert("Markdown calculation failed");
     }
 
-    function burnJaneFull(address) external pure returns (uint256) {
+    function slashJaneFull(address) external pure returns (uint256) {
         revert("Markdown calculation failed");
     }
 

@@ -2,7 +2,6 @@
 pragma solidity ^0.8.22;
 
 import {ERC20, ERC20Permit} from "../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-import {ERC20Burnable} from "../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import {AccessControlEnumerable} from "../../lib/openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
 import {IMarkdownController} from "../interfaces/IMarkdownController.sol";
 
@@ -10,13 +9,12 @@ import {IMarkdownController} from "../interfaces/IMarkdownController.sol";
  * @title Jane
  * @notice 3Jane protocol governance and rewards token with controlled transfer capabilities
  */
-contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
+contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
     error TransferNotAllowed();
-    error MintFinalized();
     error InvalidAddress();
+    error Unauthorized();
 
     event TransferEnabled();
-    event MintingFinalized();
     event MarkdownControllerSet(address indexed controller);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
@@ -26,9 +24,6 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
     /// @notice Role identifier for minters (can mint new tokens before minting is finalized)
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
-    /// @notice Role identifier for burners (can burn tokens from any account)
-    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
-
     /// @notice Role identifier for transfer-enabled accounts (can transfer when transfers are disabled)
     bytes32 public constant TRANSFER_ROLE = keccak256("TRANSFER_ROLE");
 
@@ -36,31 +31,23 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
     /// @dev When true, anyone can transfer. When false, only addresses with transfer role can participate in transfers
     bool public transferable;
 
-    /// @notice Whether minting has been permanently disabled
-    /// @dev Once set to true, no new tokens can ever be minted
-    bool public mintFinalized;
-
     /// @notice MarkdownController that manages transfer freezes for delinquent borrowers
     address public markdownController;
 
+    /// @notice Address that will receive redistributed tokens
+    address public distributor;
+
     /**
-     * @notice Initializes the JANE token with owner, minter, and burner
+     * @notice Initializes the JANE token with owner and distributor
      * @param _initialOwner Address that will be the contract owner
-     * @param _minter Address that will have minting privileges
-     * @param _burner Address that will have burning privileges
+     * @param _distributor Address that will receive redistributed tokens from defaulted borrowers
      */
-    constructor(address _initialOwner, address _minter, address _burner) ERC20("JANE", "JANE") ERC20Permit("JANE") {
+    constructor(address _initialOwner, address _distributor) ERC20("JANE", "JANE") ERC20Permit("JANE") {
         if (_initialOwner == address(0)) revert InvalidAddress();
         _grantRole(OWNER_ROLE, _initialOwner);
         _setRoleAdmin(MINTER_ROLE, OWNER_ROLE);
-        _setRoleAdmin(BURNER_ROLE, OWNER_ROLE);
         _setRoleAdmin(TRANSFER_ROLE, OWNER_ROLE);
-        if (_minter != address(0)) {
-            _grantRole(MINTER_ROLE, _minter);
-        }
-        if (_burner != address(0)) {
-            _grantRole(BURNER_ROLE, _burner);
-        }
+        distributor = _distributor;
     }
 
     /**
@@ -73,21 +60,22 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
     }
 
     /**
-     * @notice Permanently disables minting (one-way switch)
-     * @dev Once finalized, no new tokens can ever be minted
-     */
-    function finalizeMinting() external onlyRole(OWNER_ROLE) {
-        mintFinalized = true;
-        emit MintingFinalized();
-    }
-
-    /**
      * @notice Sets the MarkdownController address
      * @param _controller Address of the MarkdownController contract
      */
     function setMarkdownController(address _controller) external onlyRole(OWNER_ROLE) {
         markdownController = _controller;
         emit MarkdownControllerSet(_controller);
+    }
+
+    /**
+     * @notice Renounces the ability to grant MINTER_ROLE (one-way operation)
+     * @dev Sets MINTER_ROLE admin to 0 (which no one has)
+     * Existing minters can still mint until they individually renounce
+     * After this, no new minters can ever be granted
+     */
+    function renounceMintAdmin() external onlyRole(OWNER_ROLE) {
+        _setRoleAdmin(MINTER_ROLE, bytes32(0));
     }
 
     /**
@@ -128,20 +116,20 @@ contract Jane is ERC20, ERC20Permit, ERC20Burnable, AccessControlEnumerable {
      * @param value Amount of tokens to mint
      */
     function mint(address account, uint256 value) external onlyRole(MINTER_ROLE) {
-        if (mintFinalized) revert MintFinalized();
         if (account == address(0)) revert InvalidAddress();
         _mint(account, value);
     }
 
     /**
-     * @notice Burns tokens from the specified account
-     * @dev Only callable by accounts with burner role
-     * @param account Address from which to burn tokens
-     * @param value Amount of tokens to burn
+     * @notice Redistributes JANE from defaulted borrower to distributor
+     * @dev Only callable by MarkdownController during default/settlement
+     * @param borrower Address of the defaulted borrower
+     * @param amount Amount of tokens to redistribute
      */
-    function burn(address account, uint256 value) external onlyRole(BURNER_ROLE) {
-        if (account == address(0)) revert InvalidAddress();
-        _burn(account, value);
+    function redistributeFromBorrower(address borrower, uint256 amount) external {
+        if (msg.sender != markdownController) revert Unauthorized();
+        if (borrower == address(0) || distributor == address(0)) revert InvalidAddress();
+        _transfer(borrower, distributor, amount);
     }
 
     /**

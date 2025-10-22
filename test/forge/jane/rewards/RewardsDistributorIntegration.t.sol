@@ -20,8 +20,8 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         week1[2] = MerkleTreeHelper.Claim(charlie, 300e18);
         (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(week1);
 
-        distributor.claim(alice, 100e18, proofs1[0]);
-        distributor.claim(bob, 200e18, proofs1[1]);
+        rewardsDistributor.claim(alice, 100e18, proofs1[0]);
+        rewardsDistributor.claim(bob, 200e18, proofs1[1]);
 
         assertEq(token.balanceOf(alice), 100e18);
         assertEq(token.balanceOf(bob), 200e18);
@@ -33,8 +33,8 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         week2[2] = MerkleTreeHelper.Claim(charlie, 600e18);
         (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(week2);
 
-        distributor.claim(alice, 250e18, proofs2[0]);
-        distributor.claim(charlie, 600e18, proofs2[2]);
+        rewardsDistributor.claim(alice, 250e18, proofs2[0]);
+        rewardsDistributor.claim(charlie, 600e18, proofs2[2]);
 
         assertEq(token.balanceOf(alice), 250e18);
         assertEq(token.balanceOf(charlie), 600e18);
@@ -46,7 +46,7 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         week3[2] = MerkleTreeHelper.Claim(charlie, 1000e18);
         (bytes32 root3, bytes32[][] memory proofs3) = updateRoot(week3);
 
-        distributor.claim(bob, 800e18, proofs3[1]);
+        rewardsDistributor.claim(bob, 800e18, proofs3[1]);
 
         assertEq(token.balanceOf(bob), 800e18);
     }
@@ -63,12 +63,12 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
         // Users claim in different order
-        distributor.claim(charlie, 300e18, proofs[2]);
-        distributor.claim(alice, 100e18, proofs[0]);
-        distributor.claim(frank, 600e18, proofs[5]);
-        distributor.claim(bob, 200e18, proofs[1]);
-        distributor.claim(eve, 500e18, proofs[4]);
-        distributor.claim(dave, 400e18, proofs[3]);
+        rewardsDistributor.claim(charlie, 300e18, proofs[2]);
+        rewardsDistributor.claim(alice, 100e18, proofs[0]);
+        rewardsDistributor.claim(frank, 600e18, proofs[5]);
+        rewardsDistributor.claim(bob, 200e18, proofs[1]);
+        rewardsDistributor.claim(eve, 500e18, proofs[4]);
+        rewardsDistributor.claim(dave, 400e18, proofs[3]);
 
         // Verify all balances
         assertEq(token.balanceOf(alice), 100e18);
@@ -94,15 +94,15 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
 
         vm.expectEmit(true, false, false, true);
         emit Claimed(alice, 100e18, 100e18);
-        distributor.claim(alice, 100e18, proofs[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs[0]);
 
         vm.expectEmit(true, false, false, true);
         emit Claimed(bob, 200e18, 200e18);
-        distributor.claim(bob, 200e18, proofs[1]);
+        rewardsDistributor.claim(bob, 200e18, proofs[1]);
 
         vm.expectEmit(true, false, false, true);
         emit Claimed(charlie, 300e18, 300e18);
-        distributor.claim(charlie, 300e18, proofs[2]);
+        rewardsDistributor.claim(charlie, 300e18, proofs[2]);
 
         vm.stopPrank();
 
@@ -125,7 +125,7 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
             uint256 amount = claims[i].amount;
 
             uint256 gasBefore = gasleft();
-            distributor.claim(user, amount, proofs[i]);
+            rewardsDistributor.claim(user, amount, proofs[i]);
             uint256 gasUsed = gasBefore - gasleft();
 
             if (i == 0) {
@@ -133,7 +133,7 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
             }
 
             assertEq(token.balanceOf(user), amount);
-            assertEq(distributor.claimed(user), amount);
+            assertEq(rewardsDistributor.claimed(user), amount);
         }
     }
 
@@ -155,29 +155,31 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
             uint256 amount = claims[idx].amount;
 
             uint256 gasBefore = gasleft();
-            distributor.claim(user, amount, proofs[idx]);
+            rewardsDistributor.claim(user, amount, proofs[idx]);
             uint256 gasUsed = gasBefore - gasleft();
 
             emit log_named_uint(string.concat("Gas for claim at index ", vm.toString(idx), " (50 users)"), gasUsed);
 
-            assertEq(distributor.claimed(user), amount);
+            assertEq(rewardsDistributor.claimed(user), amount);
         }
     }
 
     /// @notice Test sweep functionality with multiple tokens
     function test_sweepMultipleTokens() public {
-        Jane token2 = new Jane(owner, minter, burner);
-        Jane token3 = new Jane(owner, minter, burner);
+        Jane token2 = new Jane(owner, distributor);
+        Jane token3 = new Jane(owner, distributor);
 
         vm.startPrank(owner);
         token2.setTransferable();
         token3.setTransferable();
+        token2.grantRole(MINTER_ROLE, minter);
+        token3.grantRole(MINTER_ROLE, minter);
         vm.stopPrank();
 
         // Send tokens to distributor
         vm.startPrank(minter);
-        token2.mint(address(distributor), 1000e18);
-        token3.mint(address(distributor), 2000e18);
+        token2.mint(address(rewardsDistributor), 1000e18);
+        token3.mint(address(rewardsDistributor), 2000e18);
         vm.stopPrank();
 
         // Sweep all tokens
@@ -186,8 +188,8 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
 
         assertEq(token2.balanceOf(owner), 1000e18);
         assertEq(token3.balanceOf(owner), 2000e18);
-        assertEq(token2.balanceOf(address(distributor)), 0);
-        assertEq(token3.balanceOf(address(distributor)), 0);
+        assertEq(token2.balanceOf(address(rewardsDistributor)), 0);
+        assertEq(token3.balanceOf(address(rewardsDistributor)), 0);
     }
 
     /// @notice Test progressive weekly updates over time
@@ -203,14 +205,14 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
             claims[0] = MerkleTreeHelper.Claim(alice, 100e18 * (i + 1));
             (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
-            distributor.claim(alice, 100e18 * (i + 1), proofs[0]);
+            rewardsDistributor.claim(alice, 100e18 * (i + 1), proofs[0]);
 
             emit log_named_uint(string.concat("Week ", vm.toString(i + 1), " timestamp"), block.timestamp);
         }
 
         // Final balance should be last allocation amount
         assertEq(token.balanceOf(alice), 500e18);
-        assertEq(distributor.claimed(alice), 500e18);
+        assertEq(rewardsDistributor.claimed(alice), 500e18);
     }
 
     /// @notice Test emergency withdrawal scenario
@@ -222,16 +224,16 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
         // Alice claims before emergency
-        distributor.claim(alice, 100e18, proofs[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs[0]);
 
         // Simulate emergency: sweep remaining tokens
-        uint256 distributorBalance = token.balanceOf(address(distributor));
+        uint256 distributorBalance = token.balanceOf(address(rewardsDistributor));
         uint256 ownerBalanceBefore = token.balanceOf(owner);
 
         sweep(address(token));
 
         assertEq(token.balanceOf(owner), ownerBalanceBefore + distributorBalance);
-        assertEq(token.balanceOf(address(distributor)), 0);
+        assertEq(token.balanceOf(address(rewardsDistributor)), 0);
     }
 
     /// @notice Test partial claims scenario
@@ -244,38 +246,38 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
 
         // Only half of users claim
         for (uint256 i = 0; i < 5; i++) {
-            distributor.claim(claims[i].user, claims[i].amount, proofs[i]);
+            rewardsDistributor.claim(claims[i].user, claims[i].amount, proofs[i]);
         }
 
         // Check claimed status
         for (uint256 i = 0; i < 10; i++) {
             if (i < 5) {
-                assertEq(distributor.claimed(claims[i].user), 100e18);
+                assertEq(rewardsDistributor.claimed(claims[i].user), 100e18);
             } else {
-                assertEq(distributor.claimed(claims[i].user), 0);
+                assertEq(rewardsDistributor.claimed(claims[i].user), 0);
             }
         }
 
         // Calculate unclaimed amount
         uint256 unclaimedAmount = 500e18; // 5 users * 100e18
-        uint256 distributorBalance = token.balanceOf(address(distributor));
+        uint256 distributorBalance = token.balanceOf(address(rewardsDistributor));
         assertTrue(distributorBalance >= unclaimedAmount);
     }
 
     /// @notice Test mode switching full lifecycle
     function test_modeSwitch_fullLifecycle() public {
-        addMinter(address(distributor));
+        addMinter(address(rewardsDistributor));
 
         // Phase 1: Transfer mode
-        assertFalse(distributor.useMint());
+        assertFalse(rewardsDistributor.useMint());
         MerkleTreeHelper.Claim[] memory claims1 = new MerkleTreeHelper.Claim[](2);
         claims1[0] = MerkleTreeHelper.Claim(alice, 100e18);
         claims1[1] = MerkleTreeHelper.Claim(bob, 200e18);
         (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(claims1);
 
-        uint256 distributorBalanceBefore = token.balanceOf(address(distributor));
-        distributor.claim(alice, 100e18, proofs1[0]);
-        assertEq(token.balanceOf(address(distributor)), distributorBalanceBefore - 100e18);
+        uint256 distributorBalanceBefore = token.balanceOf(address(rewardsDistributor));
+        rewardsDistributor.claim(alice, 100e18, proofs1[0]);
+        assertEq(token.balanceOf(address(rewardsDistributor)), distributorBalanceBefore - 100e18);
 
         // Switch to mint mode
         toggleMintMode(true);
@@ -287,7 +289,7 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(claims2);
 
         uint256 supplyBefore = token.totalSupply();
-        distributor.claim(charlie, 300e18, proofs2[0]);
+        rewardsDistributor.claim(charlie, 300e18, proofs2[0]);
         assertEq(token.totalSupply(), supplyBefore + 300e18);
 
         // Switch back to transfer mode
@@ -298,7 +300,7 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         claims3[0] = MerkleTreeHelper.Claim(bob, 200e18);
         (bytes32 root3, bytes32[][] memory proofs3) = updateRoot(claims3);
 
-        distributor.claim(bob, 200e18, proofs3[0]);
+        rewardsDistributor.claim(bob, 200e18, proofs3[0]);
         assertEq(token.balanceOf(bob), 200e18);
     }
 
@@ -308,28 +310,28 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         MerkleTreeHelper.Claim[] memory claims1 = new MerkleTreeHelper.Claim[](1);
         claims1[0] = MerkleTreeHelper.Claim(alice, 100e18);
         (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(claims1);
-        distributor.claim(alice, 100e18, proofs1[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs1[0]);
 
         assertEq(token.balanceOf(alice), 100e18);
-        assertEq(distributor.claimed(alice), 100e18);
+        assertEq(rewardsDistributor.claimed(alice), 100e18);
 
         // Update 2: alice = 250 (increase by 150)
         MerkleTreeHelper.Claim[] memory claims2 = new MerkleTreeHelper.Claim[](1);
         claims2[0] = MerkleTreeHelper.Claim(alice, 250e18);
         (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(claims2);
-        distributor.claim(alice, 250e18, proofs2[0]);
+        rewardsDistributor.claim(alice, 250e18, proofs2[0]);
 
         assertEq(token.balanceOf(alice), 250e18);
-        assertEq(distributor.claimed(alice), 250e18);
+        assertEq(rewardsDistributor.claimed(alice), 250e18);
 
         // Update 3: alice = 500 (increase by 250)
         MerkleTreeHelper.Claim[] memory claims3 = new MerkleTreeHelper.Claim[](1);
         claims3[0] = MerkleTreeHelper.Claim(alice, 500e18);
         (bytes32 root3, bytes32[][] memory proofs3) = updateRoot(claims3);
-        distributor.claim(alice, 500e18, proofs3[0]);
+        rewardsDistributor.claim(alice, 500e18, proofs3[0]);
 
         assertEq(token.balanceOf(alice), 500e18);
-        assertEq(distributor.claimed(alice), 500e18);
+        assertEq(rewardsDistributor.claimed(alice), 500e18);
     }
 
     /// @notice Test staggered user onboarding
@@ -338,15 +340,15 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         MerkleTreeHelper.Claim[] memory week1 = new MerkleTreeHelper.Claim[](1);
         week1[0] = MerkleTreeHelper.Claim(alice, 100e18);
         (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(week1);
-        distributor.claim(alice, 100e18, proofs1[0]);
+        rewardsDistributor.claim(alice, 100e18, proofs1[0]);
 
         // Week 2: Alice + Bob
         MerkleTreeHelper.Claim[] memory week2 = new MerkleTreeHelper.Claim[](2);
         week2[0] = MerkleTreeHelper.Claim(alice, 250e18);
         week2[1] = MerkleTreeHelper.Claim(bob, 150e18);
         (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(week2);
-        distributor.claim(alice, 250e18, proofs2[0]);
-        distributor.claim(bob, 150e18, proofs2[1]);
+        rewardsDistributor.claim(alice, 250e18, proofs2[0]);
+        rewardsDistributor.claim(bob, 150e18, proofs2[1]);
 
         // Week 3: Alice + Bob + Charlie
         MerkleTreeHelper.Claim[] memory week3 = new MerkleTreeHelper.Claim[](3);
@@ -354,9 +356,9 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         week3[1] = MerkleTreeHelper.Claim(bob, 300e18);
         week3[2] = MerkleTreeHelper.Claim(charlie, 200e18);
         (bytes32 root3, bytes32[][] memory proofs3) = updateRoot(week3);
-        distributor.claim(alice, 400e18, proofs3[0]);
-        distributor.claim(bob, 300e18, proofs3[1]);
-        distributor.claim(charlie, 200e18, proofs3[2]);
+        rewardsDistributor.claim(alice, 400e18, proofs3[0]);
+        rewardsDistributor.claim(bob, 300e18, proofs3[1]);
+        rewardsDistributor.claim(charlie, 200e18, proofs3[2]);
 
         assertEq(token.balanceOf(alice), 400e18);
         assertEq(token.balanceOf(bob), 300e18);
@@ -384,11 +386,11 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         (bytes32 root3, bytes32[][] memory proofs3) = updateRoot(week3);
 
         // Alice finally claims in week 3 - gets full cumulative amount
-        distributor.claim(alice, 500e18, proofs3[0]);
+        rewardsDistributor.claim(alice, 500e18, proofs3[0]);
         assertEq(token.balanceOf(alice), 500e18);
 
         // Bob has been claiming regularly
-        distributor.claim(bob, 500e18, proofs3[1]);
+        rewardsDistributor.claim(bob, 500e18, proofs3[1]);
         assertEq(token.balanceOf(bob), 500e18);
     }
 
@@ -407,7 +409,7 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         }
         (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(week1);
         for (uint256 i = 0; i < 4; i++) {
-            distributor.claim(users[i], 100e18 * (i + 1), proofs1[i]);
+            rewardsDistributor.claim(users[i], 100e18 * (i + 1), proofs1[i]);
         }
 
         // Week 2: Double allocations
@@ -417,7 +419,7 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         }
         (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(week2);
         for (uint256 i = 0; i < 4; i++) {
-            distributor.claim(users[i], 200e18 * (i + 1), proofs2[i]);
+            rewardsDistributor.claim(users[i], 200e18 * (i + 1), proofs2[i]);
         }
 
         // Verify final balances
@@ -434,7 +436,7 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
     /// @notice Test weekly lifecycle with epoch emissions
     function test_epochEmissions_weeklyLifecycle() public {
         // Deploy fresh distributor for clean testing
-        distributor = new RewardsDistributor(owner, address(token), false, START);
+        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START);
         fundDistributor(1_000_000e18);
 
         // Set emissions for weeks 0-4
@@ -444,7 +446,7 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         setEpochEmissions(3, 2500e18);
         setEpochEmissions(4, 3000e18);
 
-        assertEq(distributor.maxClaimable(), 10000e18);
+        assertEq(rewardsDistributor.maxClaimable(), 10000e18);
 
         // Week 0: Distribute 800e18
         warpTo(START);
@@ -457,9 +459,9 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
 
         for (uint256 i = 0; i < 4; i++) {
             address user = i == 0 ? alice : i == 1 ? bob : i == 2 ? charlie : dave;
-            distributor.claim(user, week0[i].amount, proofs0[i]);
+            rewardsDistributor.claim(user, week0[i].amount, proofs0[i]);
         }
-        assertEq(distributor.totalClaimed(), 800e18);
+        assertEq(rewardsDistributor.totalClaimed(), 800e18);
 
         // Week 2: Distribute additional 1200e18 (total: 2000e18)
         warpTo(START + 604800 * 2);
@@ -472,9 +474,9 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
 
         for (uint256 i = 0; i < 4; i++) {
             address user = i == 0 ? alice : i == 1 ? bob : i == 2 ? charlie : dave;
-            distributor.claim(user, week2[i].amount, proofs2[i]);
+            rewardsDistributor.claim(user, week2[i].amount, proofs2[i]);
         }
-        assertEq(distributor.totalClaimed(), 2200e18); // alice: 400, bob: 600, charlie: 800, dave: 400
+        assertEq(rewardsDistributor.totalClaimed(), 2200e18); // alice: 400, bob: 600, charlie: 800, dave: 400
 
         // Week 4: Try to claim beyond cap
         warpTo(START + 604800 * 4);
@@ -483,15 +485,15 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         (bytes32 root4, bytes32[][] memory proofs4) = updateRoot(week4);
 
         // Can only claim 7800e18 more (maxClaimable - totalClaimed = 10000 - 2200)
-        distributor.claim(eve, 9000e18, proofs4[0]);
-        assertEq(distributor.totalClaimed(), 10000e18);
+        rewardsDistributor.claim(eve, 9000e18, proofs4[0]);
+        assertEq(rewardsDistributor.totalClaimed(), 10000e18);
         assertEq(token.balanceOf(eve), 7800e18);
     }
 
     /// @notice Test insufficient cap scenario
     function test_epochEmissions_insufficientCap() public {
         // Deploy fresh distributor for clean testing
-        distributor = new RewardsDistributor(owner, address(token), false, START);
+        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START);
         fundDistributor(1_000_000e18);
 
         // Set low cap
@@ -506,24 +508,24 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
         // First two can claim
-        distributor.claim(alice, 200e18, proofs[0]);
-        distributor.claim(bob, 200e18, proofs[1]);
-        assertEq(distributor.totalClaimed(), 400e18);
+        rewardsDistributor.claim(alice, 200e18, proofs[0]);
+        rewardsDistributor.claim(bob, 200e18, proofs[1]);
+        assertEq(rewardsDistributor.totalClaimed(), 400e18);
 
         // Third can claim partial
-        distributor.claim(charlie, 200e18, proofs[2]);
-        assertEq(distributor.totalClaimed(), 500e18);
+        rewardsDistributor.claim(charlie, 200e18, proofs[2]);
+        assertEq(rewardsDistributor.totalClaimed(), 500e18);
         assertEq(token.balanceOf(charlie), 100e18);
 
         // Fourth cannot claim at all
         vm.expectRevert(RewardsDistributor.MaxClaimableExceeded.selector);
-        distributor.claim(dave, 200e18, proofs[3]);
+        rewardsDistributor.claim(dave, 200e18, proofs[3]);
     }
 
     /// @notice Test dynamic emissions adjustment mid-cycle
     function test_epochEmissions_dynamicAdjustment() public {
         // Deploy fresh distributor for clean testing
-        distributor = new RewardsDistributor(owner, address(token), false, START);
+        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START);
         fundDistributor(1_000_000e18);
 
         // Set initial low cap
@@ -536,26 +538,26 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         (bytes32 root, bytes32[][] memory proofs) = updateRoot(claims);
 
         // Alice claims
-        distributor.claim(alice, 200e18, proofs[0]);
-        assertEq(distributor.totalClaimed(), 200e18);
+        rewardsDistributor.claim(alice, 200e18, proofs[0]);
+        assertEq(rewardsDistributor.totalClaimed(), 200e18);
 
         // Bob can only partially claim
-        distributor.claim(bob, 200e18, proofs[1]);
-        assertEq(distributor.totalClaimed(), 300e18);
+        rewardsDistributor.claim(bob, 200e18, proofs[1]);
+        assertEq(rewardsDistributor.totalClaimed(), 300e18);
         assertEq(token.balanceOf(bob), 100e18);
 
         // Owner increases epoch 0 emissions
         setEpochEmissions(0, 600e18);
-        assertEq(distributor.maxClaimable(), 600e18);
+        assertEq(rewardsDistributor.maxClaimable(), 600e18);
 
         // Bob can now claim remaining
-        distributor.claim(bob, 200e18, proofs[1]);
-        assertEq(distributor.totalClaimed(), 400e18);
+        rewardsDistributor.claim(bob, 200e18, proofs[1]);
+        assertEq(rewardsDistributor.totalClaimed(), 400e18);
         assertEq(token.balanceOf(bob), 200e18);
 
         // Charlie can claim
-        distributor.claim(charlie, 200e18, proofs[2]);
-        assertEq(distributor.totalClaimed(), 600e18);
+        rewardsDistributor.claim(charlie, 200e18, proofs[2]);
+        assertEq(rewardsDistributor.totalClaimed(), 600e18);
         assertEq(token.balanceOf(charlie), 200e18);
     }
 
@@ -568,7 +570,7 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
 
         // Warp to epoch 0
         warpTo(START);
-        assertEq(distributor.epoch(), 0);
+        assertEq(rewardsDistributor.epoch(), 0);
 
         // Create progressive claims
         MerkleTreeHelper.Claim[] memory claims1 = new MerkleTreeHelper.Claim[](2);
@@ -576,13 +578,13 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         claims1[1] = MerkleTreeHelper.Claim(bob, 500e18);
         (bytes32 root1, bytes32[][] memory proofs1) = updateRoot(claims1);
 
-        distributor.claim(alice, 500e18, proofs1[0]);
-        distributor.claim(bob, 500e18, proofs1[1]);
-        assertEq(distributor.totalClaimed(), 1000e18);
+        rewardsDistributor.claim(alice, 500e18, proofs1[0]);
+        rewardsDistributor.claim(bob, 500e18, proofs1[1]);
+        assertEq(rewardsDistributor.totalClaimed(), 1000e18);
 
         // Warp to epoch 1
         warpTo(START + 604800);
-        assertEq(distributor.epoch(), 1);
+        assertEq(rewardsDistributor.epoch(), 1);
 
         // Update allocations
         MerkleTreeHelper.Claim[] memory claims2 = new MerkleTreeHelper.Claim[](2);
@@ -590,13 +592,13 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         claims2[1] = MerkleTreeHelper.Claim(bob, 1250e18);
         (bytes32 root2, bytes32[][] memory proofs2) = updateRoot(claims2);
 
-        distributor.claim(alice, 1250e18, proofs2[0]);
-        distributor.claim(bob, 1250e18, proofs2[1]);
-        assertEq(distributor.totalClaimed(), 2500e18);
+        rewardsDistributor.claim(alice, 1250e18, proofs2[0]);
+        rewardsDistributor.claim(bob, 1250e18, proofs2[1]);
+        assertEq(rewardsDistributor.totalClaimed(), 2500e18);
 
         // Warp to epoch 2
         warpTo(START + 604800 * 2);
-        assertEq(distributor.epoch(), 2);
+        assertEq(rewardsDistributor.epoch(), 2);
 
         // Final claims
         MerkleTreeHelper.Claim[] memory claims3 = new MerkleTreeHelper.Claim[](2);
@@ -604,9 +606,9 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
         claims3[1] = MerkleTreeHelper.Claim(bob, 2250e18);
         (bytes32 root3, bytes32[][] memory proofs3) = updateRoot(claims3);
 
-        distributor.claim(alice, 2250e18, proofs3[0]);
-        distributor.claim(bob, 2250e18, proofs3[1]);
-        assertEq(distributor.totalClaimed(), 4500e18);
+        rewardsDistributor.claim(alice, 2250e18, proofs3[0]);
+        rewardsDistributor.claim(bob, 2250e18, proofs3[1]);
+        assertEq(rewardsDistributor.totalClaimed(), 4500e18);
 
         assertEq(token.balanceOf(alice), 2250e18);
         assertEq(token.balanceOf(bob), 2250e18);

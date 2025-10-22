@@ -79,61 +79,6 @@ contract JaneTokenOwnershipTest is JaneSetup {
         token.mint(bob, 100e18);
     }
 
-    function test_addBurner_success() public {
-        address newBurner = makeAddr("newBurner");
-
-        assertFalse(token.hasRole(BURNER_ROLE, newBurner));
-
-        vm.prank(owner);
-        token.grantRole(BURNER_ROLE, newBurner);
-
-        assertTrue(token.hasRole(BURNER_ROLE, newBurner));
-        assertEq(token.getRoleMemberCount(BURNER_ROLE), 2); // burner + newBurner
-    }
-
-    function test_addBurner_revertsNonAdmin() public {
-        address newBurner = makeAddr("newBurner");
-
-        vm.prank(alice);
-        vm.expectRevert();
-        token.grantRole(BURNER_ROLE, newBurner);
-    }
-
-    function test_removeBurner_success() public {
-        assertTrue(token.hasRole(BURNER_ROLE, burner));
-
-        vm.prank(owner);
-        token.revokeRole(BURNER_ROLE, burner);
-
-        assertFalse(token.hasRole(BURNER_ROLE, burner));
-        assertEq(token.getRoleMemberCount(BURNER_ROLE), 0);
-    }
-
-    function test_removeBurner_revertsNonAdmin() public {
-        vm.prank(alice);
-        vm.expectRevert();
-        token.revokeRole(BURNER_ROLE, burner);
-    }
-
-    function test_burner_functionalityWorks() public {
-        address newBurner = makeAddr("newBurner");
-        mintTokens(alice, 1000e18);
-
-        vm.prank(owner);
-        token.grantRole(BURNER_ROLE, newBurner);
-
-        vm.prank(newBurner);
-        token.burn(alice, 100e18);
-        assertEq(token.balanceOf(alice), 900e18);
-
-        vm.prank(owner);
-        token.revokeRole(BURNER_ROLE, burner);
-
-        vm.prank(burner);
-        vm.expectRevert();
-        token.burn(alice, 100e18);
-    }
-
     function test_owner_canBeTransferred() public {
         address newOwner = makeAddr("newAdmin");
 
@@ -177,12 +122,6 @@ contract JaneTokenOwnershipTest is JaneSetup {
         vm.prank(alice);
         vm.expectRevert();
         token.setTransferable();
-    }
-
-    function test_nonOwner_cannotFinalizeMinting() public {
-        vm.prank(alice);
-        vm.expectRevert();
-        token.finalizeMinting();
     }
 
     function test_multipleTransferRoles() public {
@@ -294,7 +233,6 @@ contract JaneTokenOwnershipTest is JaneSetup {
 
     function test_roleAdminConfiguration() public view {
         assertEq(token.getRoleAdmin(MINTER_ROLE), OWNER_ROLE);
-        assertEq(token.getRoleAdmin(BURNER_ROLE), OWNER_ROLE);
         assertEq(token.getRoleAdmin(TRANSFER_ROLE), OWNER_ROLE);
         assertEq(token.getRoleAdmin(OWNER_ROLE), 0x00);
     }
@@ -303,19 +241,15 @@ contract JaneTokenOwnershipTest is JaneSetup {
         grantTransferRole(alice);
         vm.prank(owner);
         token.grantRole(MINTER_ROLE, alice);
-        vm.prank(owner);
-        token.grantRole(BURNER_ROLE, alice);
 
         assertTrue(token.hasRole(TRANSFER_ROLE, alice));
         assertTrue(token.hasRole(MINTER_ROLE, alice));
-        assertTrue(token.hasRole(BURNER_ROLE, alice));
 
         vm.prank(owner);
         token.revokeRole(MINTER_ROLE, alice);
 
         assertTrue(token.hasRole(TRANSFER_ROLE, alice));
         assertFalse(token.hasRole(MINTER_ROLE, alice));
-        assertTrue(token.hasRole(BURNER_ROLE, alice));
     }
 
     function test_adminGrantsSelfOtherRoles() public {
