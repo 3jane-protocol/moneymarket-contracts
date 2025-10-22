@@ -34,7 +34,7 @@ contract RewardsDistributorSetup is JaneSetup {
         merkleHelper = new MerkleTreeHelper();
 
         // Deploy distributor in transfer mode by default
-        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START, 0);
+        rewardsDistributor = new RewardsDistributor(owner, address(token), false, START);
 
         // Fund distributor with JANE tokens
         mintTokens(address(rewardsDistributor), 1_000_000e18);
