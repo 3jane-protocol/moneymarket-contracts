@@ -4,8 +4,9 @@ pragma solidity ^0.8.0;
 import {Test} from "../../../lib/forge-std/src/Test.sol";
 import {ProtocolConfig} from "../../../src/ProtocolConfig.sol";
 import {MarketConfig, CreditLineConfig, IRMConfig} from "../../../src/interfaces/IProtocolConfig.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 
 contract ProtocolConfigTest is Test {

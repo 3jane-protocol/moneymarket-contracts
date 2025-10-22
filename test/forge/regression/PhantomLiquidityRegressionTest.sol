@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
-import {MarkdownManagerMock} from "../mocks/MarkdownManagerMock.sol";
+import {MarkdownManagerMock} from "../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {HelperMock} from "../../../src/mocks/HelperMock.sol";
 import {Market, RepaymentStatus} from "../../../src/interfaces/IMorpho.sol";
@@ -31,7 +31,7 @@ contract PhantomLiquidityRegressionTest is BaseTest {
         super.setUp();
 
         // Recreate exact POC setup
-        maliciousMarkdownManager = new MarkdownManagerMock();
+        maliciousMarkdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
         maliciousCreditLine = new CreditLineMock(morphoAddress);
         morphoCredit = IMorphoCredit(morphoAddress);
         helper = new HelperMock(morphoAddress);
@@ -121,7 +121,7 @@ contract PhantomLiquidityRegressionTest is BaseTest {
 
         // Apply POC's huge markdown value
         maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, MARKDOWN_AMOUNT);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory m = morpho.market(id);
 
@@ -170,7 +170,7 @@ contract PhantomLiquidityRegressionTest is BaseTest {
 
         // Apply markdown larger than debt
         maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 200 ether);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mMarkdown = morpho.market(id);
         uint256 actualMarkdown = mMarkdown.totalMarkdownAmount;
@@ -180,7 +180,7 @@ contract PhantomLiquidityRegressionTest is BaseTest {
 
         // Reverse markdown
         maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 0);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mReversed = morpho.market(id);
 
@@ -230,6 +230,6 @@ contract PhantomLiquidityRegressionTest is BaseTest {
 
         // Move to default (31 days past cycle end, which is 1 day ago from _createMultipleObligations)
         vm.warp(block.timestamp + 30 days);
-        morphoCredit.accrueBorrowerPremium(id, borrower);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower));
     }
 }

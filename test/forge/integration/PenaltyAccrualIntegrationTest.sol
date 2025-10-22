@@ -299,7 +299,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
             // days
 
         // Bob is in default
-        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, BOB);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, BOB);
         assertEq(uint256(status), uint256(RepaymentStatus.Default));
 
         uint256 assetsBefore = morpho.expectedBorrowAssets(marketParams, BOB);
@@ -340,9 +340,8 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         uint256[] memory repaymentBps2 = new uint256[](0);
         uint256[] memory endingBalances2 = new uint256[](0);
         vm.prank(address(creditLine));
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            market2Id, block.timestamp, borrowers2, repaymentBps2, endingBalances2
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(market2Id, block.timestamp, borrowers2, repaymentBps2, endingBalances2);
 
         // Continue cycles for the original market too
         _continueMarketCycles(id, block.timestamp);
@@ -443,7 +442,8 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
 
         // Verify all have delinquent status
         for (uint256 i = 0; i < 10; i++) {
-            (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, allBorrowers[i]);
+            (RepaymentStatus status,) =
+                MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, allBorrowers[i]);
             assertEq(uint256(status), uint256(RepaymentStatus.Delinquent));
         }
     }
@@ -460,7 +460,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         morpho.borrow(marketParams, 20000e18, 0, ALICE, ALICE);
 
         // Trigger initial accrual to sync timestamps
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Step 2: Create Cycle 1 obligation that will make Alice delinquent using helper
         // This ensures proper cycle spacing and management
@@ -472,11 +472,11 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
             // days = delinquent
 
         // Record the timestamp when this cycle was created
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 cycle1EndDate) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 cycle1EndDate) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
 
         // Verify Alice is delinquent
-        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "Should be delinquent from Cycle 1");
 
         // Record the cycle ID and ending balance that were set
@@ -512,7 +512,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
 
         // Step 5: Trigger penalty accrual
         _continueMarketCycles(id, block.timestamp + 5 days);
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         uint256 debtAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
         uint256 totalAccrued = debtAfter - debtBefore;
@@ -529,8 +529,9 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
 
         // Verify that the penalty is NOT based on Cycle 2's parameters
         // Get the actual cycle 2 end date
-        uint256 newCycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 cycle2EndDate) = IMorphoCredit(address(morpho)).getCycleDates(id, newCycleLength - 1);
+        uint256 newCycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 cycle2EndDate) =
+            MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, newCycleLength - 1);
         uint256 timeSinceCycle2 = block.timestamp - cycle2EndDate;
         uint256 wrongPenalty = uint256(25000e18).wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(timeSinceCycle2)); // Using
             // Cycle 2's balance

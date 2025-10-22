@@ -5,8 +5,9 @@ import "../BaseTest.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 /// @title FeeRecipientWithdrawRegressionTest
 /// @notice Regression test for Sherlock issue #23 - Fee recipient withdrawal capability
@@ -28,7 +29,7 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
 
     // Test constants
     uint256 constant SUPPLY_AMOUNT = 10000e18;
-    uint256 constant BORROW_AMOUNT = 1000e18;
+    uint256 constant BORROW_AMOUNT = 3000e18; // Larger amount to allow partial repayments
     uint256 constant FEE_RATE = 0.1e18; // 10% fee
     uint128 constant PREMIUM_RATE = 3170979; // ~10% APR
 
@@ -76,14 +77,20 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
 
         // Initialize market cycles to prevent freezing (market has credit line)
         // We need to create an initial cycle for the real morpho instance
-        vm.warp(block.timestamp + 30 days);
+        // Create the first cycle that ends in the past to ensure market is active
+        uint256 firstCycleEnd = 10 days; // End the first cycle at 10 days
+        vm.warp(firstCycleEnd);
         address[] memory borrowers = new address[](0);
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(address(creditLine));
-        IMorphoCredit(realMorphoAddress).closeCycleAndPostObligations(
-            testMarketId, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(realMorphoAddress)
+            .closeCycleAndPostObligations(testMarketId, block.timestamp, borrowers, repaymentBps, endingBalances);
+
+        // Now warp to a time well within the next cycle period
+        // The next cycle would end at 10 days + 30 days = 40 days
+        // Let's be at day 15, clearly within the active period
+        vm.warp(15 days);
 
         // Supply liquidity through USD3
         loanToken.setBalance(mockUsd3, SUPPLY_AMOUNT);
@@ -115,6 +122,15 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
 
         // Fast forward to accrue interest
         skip(30 days);
+
+        // We're now at 45 days, past the next cycle end of 40 days
+        // Post a new cycle to unfreeze the market
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(address(creditLine));
+        IMorphoCredit(realMorphoAddress)
+            .closeCycleAndPostObligations(testMarketId, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         // Repay partial amount to trigger fee accrual
         vm.startPrank(BORROWER);
@@ -178,6 +194,24 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
         for (uint256 i = 0; i < 3; i++) {
             skip(10 days);
 
+            // Check if we need to post a new cycle
+            // We started at 15 days, first cycle ends at 10 days, next at 40 days
+            // After 1st skip: 25 days (OK)
+            // After 2nd skip: 35 days (OK)
+            // After 3rd skip: 45 days (past 40, need new cycle)
+            if (block.timestamp >= 40 days) {
+                address[] memory _borrowers = new address[](0);
+                uint256[] memory _repaymentBps = new uint256[](0);
+                uint256[] memory _endingBalances = new uint256[](0);
+                vm.stopPrank(); // Stop the BORROWER prank before starting creditLine prank
+                vm.prank(address(creditLine));
+                IMorphoCredit(realMorphoAddress)
+                    .closeCycleAndPostObligations(
+                        testMarketId, block.timestamp, _borrowers, _repaymentBps, _endingBalances
+                    );
+                vm.startPrank(BORROWER); // Resume BORROWER prank
+            }
+
             // Each repayment triggers fee accrual
             realMorpho.repay(testMarketParams, BORROW_AMOUNT / 10, 0, BORROWER, "");
 
@@ -227,9 +261,10 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
         uint256[] memory emptyRepaymentBps = new uint256[](0);
         uint256[] memory emptyBalances = new uint256[](0);
         vm.prank(address(creditLine));
-        IMorphoCredit(realMorphoAddress).closeCycleAndPostObligations(
-            testMarketId, block.timestamp, emptyBorrowers, emptyRepaymentBps, emptyBalances
-        );
+        IMorphoCredit(realMorphoAddress)
+            .closeCycleAndPostObligations(
+                testMarketId, block.timestamp, emptyBorrowers, emptyRepaymentBps, emptyBalances
+            );
 
         vm.startPrank(BORROWER);
         loanToken.approve(realMorphoAddress, type(uint256).max);
@@ -258,8 +293,19 @@ contract FeeRecipientWithdrawRegressionTest is BaseTest {
 
         // Generate fees for new fee recipient
         skip(30 days);
+
+        // We're now at ~75 days, need another cycle
+        address[] memory _borrowers = new address[](0);
+        uint256[] memory _repaymentBps = new uint256[](0);
+        uint256[] memory _endingBalances = new uint256[](0);
+        vm.prank(address(creditLine));
+        IMorphoCredit(realMorphoAddress)
+            .closeCycleAndPostObligations(testMarketId, block.timestamp, _borrowers, _repaymentBps, _endingBalances);
+
         vm.prank(BORROWER);
-        realMorpho.repay(testMarketParams, BORROW_AMOUNT / 4, 0, BORROWER, "");
+        // Second repayment - keep remaining debt above minBorrow (1000e18)
+        // Current debt is ~1500e18, repay 400e18 to leave ~1100e18
+        realMorpho.repay(testMarketParams, 400e18, 0, BORROWER, "");
 
         // New fee recipient can also withdraw their shares
         Position memory newFeePos = realMorpho.position(testMarketId, newFeeRecipient);

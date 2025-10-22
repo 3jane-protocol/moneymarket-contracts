@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
-import {MarkdownManagerMock} from "../../mocks/MarkdownManagerMock.sol";
+import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
@@ -28,7 +28,7 @@ contract MarkdownPhantomLiquidityTest is BaseTest {
         super.setUp();
 
         // Deploy markdown manager
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
 
         // Deploy credit line
         creditLine = new CreditLineMock(morphoAddress);
@@ -76,7 +76,7 @@ contract MarkdownPhantomLiquidityTest is BaseTest {
 
         // The attack vector is completely blocked, preventing any phantom liquidity creation
         _continueMarketCycles(id, block.timestamp + 1 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         m = morpho.market(id);
 
@@ -115,7 +115,7 @@ contract MarkdownPhantomLiquidityTest is BaseTest {
 
         // Request markdown larger than borrower's debt (which is the cap)
         markdownManager.setMarkdownForBorrower(BORROWER, borrowerDebt + 100 ether);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mAfter = morpho.market(id);
 
@@ -135,7 +135,7 @@ contract MarkdownPhantomLiquidityTest is BaseTest {
 
         // Restore markdown
         markdownManager.setMarkdownForBorrower(BORROWER, 0);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mRestored = morpho.market(id);
 
@@ -180,8 +180,8 @@ contract MarkdownPhantomLiquidityTest is BaseTest {
 
         // For the second borrower, we need to use the same cycle, so we'll add them to the existing cycle
         // Get the current cycle ID
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 cycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 cycleEnd) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
 
         // Add second borrower's obligation to the same cycle
         address[] memory borrowers = new address[](1);
@@ -201,8 +201,8 @@ contract MarkdownPhantomLiquidityTest is BaseTest {
         markdownManager.setMarkdownForBorrower(BORROWER, 30 ether);
         markdownManager.setMarkdownForBorrower(borrower2, 20 ether);
 
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-        morphoCredit.accrueBorrowerPremium(id, borrower2);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower2));
 
         Market memory m = morpho.market(id);
 

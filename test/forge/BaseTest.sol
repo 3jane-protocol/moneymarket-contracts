@@ -11,6 +11,7 @@ import {ERC20Mock} from "../../src/mocks/ERC20Mock.sol";
 import {OracleMock} from "../../src/mocks/OracleMock.sol";
 import {MorphoCreditMock} from "../../src/mocks/MorphoCreditMock.sol";
 import {ProtocolConfig} from "../../src/ProtocolConfig.sol";
+import {ProtocolConfigLib} from "../../src/libraries/ProtocolConfigLib.sol";
 
 import "../../src/Morpho.sol";
 import "../../src/MorphoCredit.sol";
@@ -19,8 +20,10 @@ import {SigUtils} from "./helpers/SigUtils.sol";
 import {ArrayLib} from "./helpers/ArrayLib.sol";
 import {MorphoLib} from "../../src/libraries/periphery/MorphoLib.sol";
 import {MorphoBalancesLib} from "../../src/libraries/periphery/MorphoBalancesLib.sol";
-import {TransparentUpgradeableProxy} from
-    "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {MorphoCreditLib} from "../../src/libraries/periphery/MorphoCreditLib.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 contract BaseTest is Test {
@@ -30,6 +33,7 @@ contract BaseTest is Test {
     using ArrayLib for address[];
     using MorphoLib for IMorpho;
     using MorphoBalancesLib for IMorpho;
+    using MorphoCreditLib for IMorphoCredit;
     using MarketParamsLib for MarketParams;
 
     uint256 internal constant BLOCK_TIME = 1;
@@ -221,7 +225,7 @@ contract BaseTest is Test {
         protocolConfig.setConfig(keccak256("IS_PAUSED"), 0); // Not paused
         protocolConfig.setConfig(keccak256("MAX_ON_CREDIT"), 0.95 ether); // 95% max on credit
         protocolConfig.setConfig(keccak256("IRP"), uint256(0.1 ether / int256(365 days))); // 10% IRP
-        protocolConfig.setConfig(keccak256("MIN_BORROW"), 1000e18); // 1 token minimum borrow
+        protocolConfig.setConfig(keccak256("MIN_BORROW"), 1000e18); // 1000 token minimum borrow
         protocolConfig.setConfig(keccak256("GRACE_PERIOD"), 7 days); // 7 days grace period
         protocolConfig.setConfig(keccak256("DELINQUENCY_PERIOD"), 23 days); // 23 days delinquency period
         protocolConfig.setConfig(keccak256("CYCLE_DURATION"), CYCLE_DURATION); // 30 days cycle duration
@@ -242,6 +246,9 @@ contract BaseTest is Test {
         protocolConfig.setConfig(keccak256("TRANCHE_SHARE_VARIANT"), 1); // Variant 1
         protocolConfig.setConfig(keccak256("SUSD3_LOCK_DURATION"), 30 days); // 30 days lock duration
         protocolConfig.setConfig(keccak256("SUSD3_COOLDOWN_PERIOD"), 7 days); // 7 days cooldown period
+
+        // Markdown configuration
+        protocolConfig.setConfig(ProtocolConfigLib.FULL_MARKDOWN_DURATION, 70 days); // 70 days for 100% markdown
 
         vm.stopPrank();
     }
@@ -285,6 +292,12 @@ contract BaseTest is Test {
         IMorphoCredit(address(morpho)).setCreditLine(marketParams.id(), borrower, HIGH_COLLATERAL_AMOUNT, 0);
     }
 
+    function _disableMinBorrow() internal {
+        // Helper to disable minBorrow for tests that need to test small amounts
+        vm.prank(OWNER);
+        protocolConfig.setConfig(keccak256("MIN_BORROW"), 0);
+    }
+
     function _setupMockUsd3() internal returns (address) {
         address mockUsd3 = makeAddr("MockUSD3");
         vm.prank(OWNER);
@@ -306,7 +319,7 @@ contract BaseTest is Test {
     /// @param _id Market ID to initialize
     function _initializeFirstCycle(Id _id) internal {
         // Only initialize if no cycles exist
-        if (IMorphoCredit(address(morpho)).getPaymentCycleLength(_id) == 0) {
+        if (MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), _id) == 0) {
             // Warp to ensure we can close the cycle
             vm.warp(block.timestamp + CYCLE_DURATION);
 
@@ -316,9 +329,8 @@ contract BaseTest is Test {
 
             // Post first cycle with current timestamp
             vm.prank(marketParams.creditLine);
-            IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-                _id, block.timestamp, borrowers, repaymentBps, endingBalances
-            );
+            IMorphoCredit(address(morpho))
+                .closeCycleAndPostObligations(_id, block.timestamp, borrowers, repaymentBps, endingBalances);
         }
     }
 
@@ -424,9 +436,8 @@ contract BaseTest is Test {
         return bound(
             assets,
             0,
-            MAX_TEST_AMOUNT.toSharesDown(morpho.totalSupplyAssets(_id), morpho.totalSupplyShares(_id)).zeroFloorSub(
-                supplyShares
-            )
+            MAX_TEST_AMOUNT.toSharesDown(morpho.totalSupplyAssets(_id), morpho.totalSupplyShares(_id))
+                .zeroFloorSub(supplyShares)
         );
     }
 
@@ -572,11 +583,11 @@ contract BaseTest is Test {
         MarketParams memory mktParams = morpho.idToMarketParams(_id);
 
         // Ensure market has a cycle and enough time has passed
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(_id);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), _id);
         require(cycleLength > 0, "Market needs at least one cycle");
 
         // Get last cycle end date
-        (, uint256 lastCycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(_id, cycleLength - 1);
+        (, uint256 lastCycleEnd) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), _id, cycleLength - 1);
 
         // Calculate new cycle end that's at least CYCLE_DURATION after last one
         uint256 targetCycleEnd = lastCycleEnd + CYCLE_DURATION + (daysAgo * 1 days);
@@ -587,9 +598,8 @@ contract BaseTest is Test {
         }
 
         vm.prank(mktParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            _id, block.timestamp, borrowers, repaymentBps, balances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(_id, block.timestamp, borrowers, repaymentBps, balances);
     }
 
     function _makePayment(address borrower, uint256 amount) internal {
@@ -606,9 +616,13 @@ contract BaseTest is Test {
     }
 
     function _triggerBorrowerAccrual(address borrower) internal {
-        // Trigger borrower-specific accrual using the public accrueBorrowerPremium function
-        // This works even for borrowers with outstanding repayments
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, borrower);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(borrower));
+    }
+
+    function _toArray(address value) internal pure virtual returns (address[] memory) {
+        address[] memory array = new address[](1);
+        array[0] = value;
+        return array;
     }
 
     function _getRepaymentDetails(Id _id, address borrower)
@@ -617,7 +631,7 @@ contract BaseTest is Test {
         returns (uint128 cycleId, uint128 amountDue, uint128 endingBalance, RepaymentStatus status)
     {
         (cycleId, amountDue, endingBalance) = IMorphoCredit(address(morpho)).repaymentObligation(_id, borrower);
-        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(_id, borrower);
+        (status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), _id, borrower);
     }
 
     function _calculatePenaltyInterest(uint256 endingBalance, uint256 penaltyDuration, uint256 penaltyRate)
@@ -629,7 +643,8 @@ contract BaseTest is Test {
     }
 
     function _assertRepaymentStatus(Id _id, address borrower, RepaymentStatus expectedStatus) internal {
-        (RepaymentStatus actualStatus,) = IMorphoCredit(address(morpho)).getRepaymentStatus(_id, borrower);
+        (RepaymentStatus actualStatus,) =
+            MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), _id, borrower);
         assertEq(uint256(actualStatus), uint256(expectedStatus), "Unexpected repayment status");
     }
 
@@ -668,7 +683,7 @@ contract BaseTest is Test {
         // Only continue cycles if market has a credit line
         if (mktParams.creditLine == address(0)) return;
 
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(marketId);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), marketId);
 
         // If no cycles exist yet, initialize first cycle
         if (cycleLength == 0) {
@@ -680,15 +695,15 @@ contract BaseTest is Test {
             uint256[] memory endingBalances = new uint256[](0);
 
             vm.prank(mktParams.creditLine);
-            IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-                marketId, firstCycleEnd, borrowers, repaymentBps, endingBalances
-            );
+            IMorphoCredit(address(morpho))
+                .closeCycleAndPostObligations(marketId, firstCycleEnd, borrowers, repaymentBps, endingBalances);
             cycleLength = 1;
         }
 
         // Continue posting cycles until we reach target time
         while (true) {
-            (, uint256 lastCycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(marketId, cycleLength - 1);
+            (, uint256 lastCycleEnd) =
+                MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), marketId, cycleLength - 1);
             uint256 nextCycleEnd = lastCycleEnd + CYCLE_DURATION;
 
             // Stop if next cycle would be beyond target time
@@ -701,9 +716,8 @@ contract BaseTest is Test {
             uint256[] memory endingBalances = new uint256[](0);
 
             vm.prank(mktParams.creditLine);
-            IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-                marketId, nextCycleEnd, borrowers, repaymentBps, endingBalances
-            );
+            IMorphoCredit(address(morpho))
+                .closeCycleAndPostObligations(marketId, nextCycleEnd, borrowers, repaymentBps, endingBalances);
 
             cycleLength++;
         }
@@ -722,14 +736,15 @@ contract BaseTest is Test {
 
         if (mktParams.creditLine == address(0)) return;
 
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(marketId);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), marketId);
 
         if (cycleLength == 0) {
             // Initialize first cycle
             _continueMarketCycles(marketId, block.timestamp + CYCLE_DURATION);
         } else {
             // Check if market is frozen and post new cycle if needed
-            (, uint256 lastCycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(marketId, cycleLength - 1);
+            (, uint256 lastCycleEnd) =
+                MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), marketId, cycleLength - 1);
             uint256 expectedNextEnd = lastCycleEnd + CYCLE_DURATION;
 
             if (block.timestamp > expectedNextEnd) {
@@ -740,21 +755,21 @@ contract BaseTest is Test {
                 uint256[] memory endingBalances = new uint256[](0);
 
                 vm.prank(mktParams.creditLine);
-                IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-                    marketId, newCycleEnd, borrowers, repaymentBps, endingBalances
-                );
+                IMorphoCredit(address(morpho))
+                    .closeCycleAndPostObligations(marketId, newCycleEnd, borrowers, repaymentBps, endingBalances);
             }
         }
     }
 
     function _createPastObligation(address borrower, uint256 repaymentBps, uint256 endingBalance) internal {
         // Ensure enough time has passed for a new cycle
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
         uint256 minTimeForNextCycle = CYCLE_DURATION + 1 days;
 
         if (cycleLength > 0) {
             // Get the last cycle's end date and ensure we're past the minimum duration
-            (, uint256 lastCycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+            (, uint256 lastCycleEnd) =
+                MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
             uint256 timeNeeded = lastCycleEnd + CYCLE_DURATION + 1 days;
             if (block.timestamp < timeNeeded) {
                 vm.warp(timeNeeded);

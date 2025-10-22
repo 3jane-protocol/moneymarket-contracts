@@ -61,26 +61,35 @@ contract USD3MorphoIntegrationTest is Setup {
         // Fund test contract for _triggerAccrual() calls
         deal(address(asset), address(this), 1000e6);
         asset.approve(address(morpho), type(uint256).max);
-
-        // Initialize market with payment cycle to prevent MarketFrozen errors
-        _initializeMarketWithCycle();
     }
 
     // Helper function to initialize market with a payment cycle
     function _initializeMarketWithCycle() internal {
         // Create an initial payment cycle to unfreeze the market
         vm.prank(marketParams.creditLine);
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id,
-            block.timestamp, // End date is current time (cycle just ended)
-            new address[](0), // No borrowers yet
-            new uint256[](0), // No repayment bps
-            new uint256[](0) // No ending balances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(
+                id,
+                block.timestamp, // End date is current time (cycle just ended)
+                new address[](0), // No borrowers yet
+                new uint256[](0), // No repayment bps
+                new uint256[](0) // No ending balances
+            );
     }
 
     // Custom helper to setup borrower with aToken loan
     function _setupBorrowerWithATokenLoan(address borrower, uint256 borrowAmount) internal {
+        // First close a payment cycle to unfreeze the market
+        vm.prank(marketParams.creditLine);
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(
+                id,
+                block.timestamp, // End date is current time
+                new address[](0), // No borrowers yet
+                new uint256[](0), // No repayment bps
+                new uint256[](0) // No ending balances
+            );
+
         // Setup credit line directly on morpho - must call as creditLine
         vm.prank(marketParams.creditLine);
         MorphoCredit(address(morpho)).setCreditLine(id, borrower, borrowAmount * 2, 0);
@@ -178,21 +187,32 @@ contract USD3MorphoIntegrationTest is Setup {
 
         // Create a new payment cycle since the old one expired
         vm.prank(marketParams.creditLine);
-        MorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id,
-            block.timestamp, // End date is current time
-            new address[](0), // No borrowers yet
-            new uint256[](0), // No repayment bps
-            new uint256[](0) // No ending balances
-        );
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(
+                id,
+                block.timestamp, // End date is current time
+                new address[](0), // No borrowers yet
+                new uint256[](0), // No repayment bps
+                new uint256[](0) // No ending balances
+            );
 
         // First have borrower repay their loan to free up liquidity
-        uint256 borrowerDebt = morpho.market(id).totalBorrowAssets;
-        vm.prank(BORROWER);
-        asset.approve(address(morpho), borrowerDebt);
-        deal(address(asset), BORROWER, borrowerDebt);
-        vm.prank(BORROWER);
-        morpho.repay(marketParams, borrowerDebt, 0, BORROWER, "");
+        uint256 borrowShares = morpho.position(id, BORROWER).borrowShares;
+        uint256 borrowerDebt = morpho.expectedBorrowAssets(marketParams, BORROWER);
+
+        // Borrower needs waUSDC to repay since the market uses waUSDC as loanToken
+        // Add some extra for interest accrued
+        uint256 repayAmount = borrowerDebt + borrowerDebt / 10; // Add 10% buffer for interest
+
+        // Give borrower USDC first, then wrap to waUSDC
+        deal(address(asset), BORROWER, repayAmount);
+        vm.startPrank(BORROWER);
+        asset.approve(address(waUSDC), repayAmount);
+        waUSDC.deposit(repayAmount, BORROWER);
+        IERC20(address(waUSDC)).approve(address(morpho), repayAmount);
+        // Repay using shares to clear all debt (0 for assets, borrowShares for shares)
+        morpho.repay(marketParams, 0, borrowShares, BORROWER, "");
+        vm.stopPrank();
 
         // Now withdraw should include profit
         vm.prank(SUPPLIER);

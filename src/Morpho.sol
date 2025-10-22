@@ -82,8 +82,12 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
 
     /// @dev Reverts if the caller is not the owner.
     modifier onlyOwner() {
-        if (msg.sender != owner) revert ErrorsLib.NotOwner();
+        requireOwner();
         _;
+    }
+
+    function requireOwner() internal {
+        if (msg.sender != owner) revert ErrorsLib.NotOwner();
     }
 
     /* ONLY OWNER FUNCTIONS */
@@ -386,9 +390,8 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         virtual
         returns (bool)
     {
-        uint256 borrowed = uint256(position[id][borrower].borrowShares).toAssetsUp(
-            market[id].totalBorrowAssets, market[id].totalBorrowShares
-        );
+        uint256 borrowed = uint256(position[id][borrower].borrowShares)
+            .toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
         uint256 maxBorrow = uint256(position[id][borrower].collateral).mulDivDown(collateralPrice, ORACLE_PRICE_SCALE)
             .wMulDown(marketParams.lltv);
 
@@ -421,8 +424,7 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
     /// @param shares The amount of shares to borrow.
     function _beforeWithdraw(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
         internal
-        virtual
-    {}
+        virtual {}
 
     /// @dev Hook called before borrow operations to allow for premium accrual or other pre-processing.
     /// @param marketParams The market parameters.
@@ -432,8 +434,7 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
     /// @param shares The amount of shares to borrow.
     function _beforeBorrow(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
         internal
-        virtual
-    {}
+        virtual {}
 
     /// @dev Hook called before repay operations to allow for premium accrual or other pre-processing.
     /// @param marketParams The market parameters.
@@ -443,8 +444,7 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
     /// @param shares The amount of shares to repay.
     function _beforeRepay(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets, uint256 shares)
         internal
-        virtual
-    {}
+        virtual {}
 
     /// @dev Hook called after borrow operations to allow for post-processing.
     /// @param marketParams The market parameters.

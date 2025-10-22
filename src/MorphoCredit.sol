@@ -13,17 +13,17 @@ import {
     MarkdownState,
     IMorphoCredit
 } from "./interfaces/IMorpho.sol";
-import {IMarkdownManager} from "./interfaces/IMarkdownManager.sol";
+import {IMarkdownController} from "./interfaces/IMarkdownController.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
-import {IMorphoRepayCallback} from "./interfaces/IMorphoCallbacks.sol";
 import {IProtocolConfig, MarketConfig} from "./interfaces/IProtocolConfig.sol";
+import {ProtocolConfigLib} from "./libraries/ProtocolConfigLib.sol";
 import {ICreditLine} from "./interfaces/ICreditLine.sol";
 import {Morpho} from "./Morpho.sol";
 
 import {UtilsLib} from "./libraries/UtilsLib.sol";
 import {EventsLib} from "./libraries/EventsLib.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
-import {MathLib, WAD} from "./libraries/MathLib.sol";
+import {MathLib} from "./libraries/MathLib.sol";
 import {MarketParamsLib} from "./libraries/MarketParamsLib.sol";
 import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
@@ -83,7 +83,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /* CONSTANTS */
 
-    /// @notice Minimum premium amount to accrue (prevents precision loss)
     uint256 internal constant MIN_PREMIUM_THRESHOLD = 1;
 
     /// @notice Maximum elapsed time for premium accrual (365 days)
@@ -111,42 +110,31 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @inheritdoc IMorphoCredit
     function setHelper(address newHelper) external onlyOwner {
-        if (newHelper == helper) revert ErrorsLib.AlreadySet();
-
         helper = newHelper;
-
-        emit EventsLib.SetHelper(newHelper);
     }
 
     /// @inheritdoc IMorphoCredit
     function setUsd3(address newUsd3) external onlyOwner {
-        if (newUsd3 == usd3) revert ErrorsLib.AlreadySet();
-
         usd3 = newUsd3;
-
-        emit EventsLib.SetUsd3(newUsd3);
     }
 
     /* EXTERNAL FUNCTIONS - PREMIUM MANAGEMENT */
 
     /// @inheritdoc IMorphoCredit
-    function accrueBorrowerPremium(Id id, address borrower) external {
-        MarketParams memory marketParams = idToMarketParams[id];
-        _accrueInterest(marketParams, id);
-        _accrueBorrowerPremium(id, borrower);
-        _updateBorrowerMarkdown(id, borrower);
-        _snapshotBorrowerPosition(id, borrower);
-    }
-
-    /// @inheritdoc IMorphoCredit
     function accruePremiumsForBorrowers(Id id, address[] calldata borrowers) external {
+        if (market[id].lastUpdate == 0) revert ErrorsLib.MarketNotCreated();
         MarketParams memory marketParams = idToMarketParams[id];
         _accrueInterest(marketParams, id);
         for (uint256 i = 0; i < borrowers.length; i++) {
-            _accrueBorrowerPremium(id, borrowers[i]);
-            _updateBorrowerMarkdown(id, borrowers[i]);
-            _snapshotBorrowerPosition(id, borrowers[i]);
+            _accrueBorrowerPremiumAndUpdate(id, borrowers[i]);
         }
+    }
+
+    /// @dev Internal helper to accrue premium and update borrower state
+    function _accrueBorrowerPremiumAndUpdate(Id id, address borrower) internal {
+        _accrueBorrowerPremium(id, borrower);
+        _updateBorrowerMarkdown(id, borrower);
+        _snapshotBorrowerPosition(id, borrower);
     }
 
     /* INTERNAL FUNCTIONS - PREMIUM CALCULATIONS */
@@ -302,8 +290,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// 5. Update timestamp to prevent double accrual
     /// @dev MUST be called after _accrueInterest to ensure base rate is current
     function _accrueBorrowerPremium(Id id, address borrower) internal {
-        RepaymentObligation memory obligation = repaymentObligation[id][borrower];
-        (RepaymentStatus status,) = _getRepaymentStatus(id, borrower, obligation);
+        (RepaymentStatus status,) = getRepaymentStatus(id, borrower);
 
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
         if (premium.rate == 0 && status == RepaymentStatus.Current) return;
@@ -312,9 +299,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Calculate current borrow assets
         Market memory targetMarket = market[id];
-        uint256 borrowAssetsCurrent = uint256(position[id][borrower].borrowShares).toAssetsUp(
-            targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
-        );
+        uint256 borrowAssetsCurrent = uint256(position[id][borrower].borrowShares)
+            .toAssetsUp(targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares);
 
         // Calculate premium and penalty accruals
         uint256 premiumAmount = _calculateOngoingPremiumAndPenalty(id, borrower, premium, status, borrowAssetsCurrent);
@@ -350,9 +336,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         Market memory targetMarket = market[id];
 
-        uint256 currentBorrowAssets = uint256(position[id][borrower].borrowShares).toAssetsUp(
-            targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares
-        );
+        uint256 currentBorrowAssets = uint256(position[id][borrower].borrowShares)
+            .toAssetsUp(targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares);
 
         // Update timestamp if:
         // - Not initialized (safety check), OR
@@ -536,22 +521,15 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Get repayment status for a borrower
     /// @param id Market ID
     /// @param borrower Borrower address
-    /// @return status The borrower's current repayment status
-    /// @return statusStartTime The timestamp when the current status began
-    function getRepaymentStatus(Id id, address borrower) public view returns (RepaymentStatus, uint256) {
-        return _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
-    }
-
-    /// @notice Get repayment status for a borrower
-    /// @param id Market ID
-    /// @param obligation the borrower repaymentObligation struct
     /// @return _status The borrower's current repayment status
     /// @return _statusStartTime The timestamp when the current status began
-    function _getRepaymentStatus(Id id, address, RepaymentObligation memory obligation)
+    function getRepaymentStatus(Id id, address borrower)
         internal
         view
         returns (RepaymentStatus _status, uint256 _statusStartTime)
     {
+        RepaymentObligation memory obligation = repaymentObligation[id][borrower];
+
         if (obligation.amountDue == 0) return (RepaymentStatus.Current, 0);
 
         // Validate cycleId is within bounds
@@ -585,11 +563,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @inheritdoc Morpho
-    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256)
-        internal
-        virtual
-        override
-    {
+    function _beforeWithdraw(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal virtual override {
         // Allow USD3 to withdraw on behalf of anyone
         if (msg.sender == usd3) return;
 
@@ -601,7 +575,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /// @inheritdoc Morpho
-    function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal virtual override {
+    function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256 assets, uint256)
+        internal
+        virtual
+        override
+    {
         if (msg.sender != helper) revert ErrorsLib.NotHelper();
         if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
         if (_isMarketFrozen(id)) revert ErrorsLib.MarketFrozen();
@@ -611,6 +589,22 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (status != RepaymentStatus.Current) revert ErrorsLib.OutstandingRepayment();
         _accrueBorrowerPremium(id, onBehalf);
         // No need to update markdown - borrower must be Current to borrow, so markdown is always 0
+
+        // Check debt cap
+        uint256 debtCap = IProtocolConfig(protocolConfig).config(ProtocolConfigLib.DEBT_CAP);
+        if (debtCap > 0 && market[id].totalBorrowAssets + assets > debtCap) {
+            revert ErrorsLib.DebtCapExceeded();
+        }
+
+        // Check minimum borrow requirement
+        uint256 minBorrow = IProtocolConfig(protocolConfig).getMarketConfig().minBorrow;
+        if (minBorrow > 0) {
+            Market memory m = market[id];
+            uint256 currentDebt =
+                uint256(position[id][onBehalf].borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+            uint256 newDebt = currentDebt + assets;
+            if (newDebt < minBorrow) revert ErrorsLib.BelowMinimumBorrow();
+        }
     }
 
     /// @inheritdoc Morpho
@@ -627,6 +621,18 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         // Accrue premium (including penalty if past grace period)
         _accrueBorrowerPremium(id, onBehalf);
         _updateBorrowerMarkdown(id, onBehalf); // TODO: decide whether to remove
+
+        // Check minimum borrow requirement for remaining debt
+        uint256 minBorrow = IProtocolConfig(protocolConfig).getMarketConfig().minBorrow;
+        if (minBorrow > 0) {
+            Market memory m = market[id];
+            uint256 currentDebt =
+                uint256(position[id][onBehalf].borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+            if (currentDebt > assets) {
+                uint256 remainingDebt = currentDebt - assets;
+                if (remainingDebt < minBorrow) revert ErrorsLib.BelowMinimumBorrow();
+            }
+        }
 
         // Track payment against obligation
         _trackObligationPayment(id, onBehalf, assets);
@@ -660,30 +666,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         repaymentObligation[id][borrower].amountDue = 0;
 
         emit EventsLib.RepaymentTracked(id, borrower, payment, 0);
-    }
-
-    /* EXTERNAL VIEW FUNCTIONS */
-
-    /// @notice Get the total number of payment cycles for a market
-    /// @param id Market ID
-    /// @return The number of payment cycles
-    function getPaymentCycleLength(Id id) external view returns (uint256) {
-        return paymentCycle[id].length;
-    }
-
-    /// @notice Get both start and end dates for a given cycle
-    /// @param id Market ID
-    /// @param cycleId Cycle ID
-    /// @return startDate The cycle start date
-    /// @return endDate The cycle end date
-    function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate) {
-        if (cycleId >= paymentCycle[id].length) revert ErrorsLib.InvalidCycleId();
-
-        endDate = paymentCycle[id][cycleId].endDate;
-
-        if (cycleId != 0) {
-            startDate = paymentCycle[id][cycleId - 1].endDate + 1 days;
-        }
     }
 
     /* INTERNAL FUNCTIONS - HEALTH CHECK OVERRIDES */
@@ -737,14 +719,14 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (manager == address(0)) return; // No markdown manager set
 
         uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
-        (RepaymentStatus status, uint256 statusStartTime) =
-            _getRepaymentStatus(id, borrower, repaymentObligation[id][borrower]);
+        (RepaymentStatus status, uint256 statusStartTime) = getRepaymentStatus(id, borrower);
 
         // Check if in default and emit status change events
         bool isInDefault = status == RepaymentStatus.Default && statusStartTime > 0;
         bool wasInDefault = lastMarkdown > 0;
 
         if (isInDefault && !wasInDefault) {
+            IMarkdownController(manager).resetBorrowerState(borrower);
             emit EventsLib.DefaultStarted(id, borrower, statusStartTime);
         } else if (!isInDefault && wasInDefault) {
             emit EventsLib.DefaultCleared(id, borrower);
@@ -756,7 +738,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             uint256 timeInDefault = block.timestamp > statusStartTime ? block.timestamp - statusStartTime : 0;
             uint256 borrowerAssets = _getBorrowerAssets(id, borrower);
 
-            newMarkdown = IMarkdownManager(manager).calculateMarkdown(borrower, borrowerAssets, timeInDefault);
+            newMarkdown = IMarkdownController(manager).calculateMarkdown(borrower, borrowerAssets, timeInDefault);
+
+            // Slash JANE proportionally to markdown
+            IMarkdownController(manager).slashJaneProportional(borrower, timeInDefault);
 
             // Cap markdown at the borrower's actual outstanding debt
             // since markdown represents the write-down of the loan value
@@ -836,7 +821,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 lastCycleEnd = paymentCycle[id][cycleCount - 1].endDate;
         uint256 expectedNextCycleEnd = lastCycleEnd + cycleDuration;
 
-        return block.timestamp > expectedNextCycleEnd;
+        return block.timestamp >= expectedNextCycleEnd;
     }
 
     /// @notice Settle a borrower's account by writing off all remaining debt
@@ -872,6 +857,12 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Calculate written off assets
         writtenOffAssets = writtenOffShares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+
+        // Slash all remaining JANE on settlement
+        address manager = ICreditLine(idToMarketParams[id].creditLine).mm();
+        if (manager != address(0)) {
+            IMarkdownController(manager).slashJaneFull(borrower);
+        }
 
         // Clear position and apply supply adjustment
         _applySettlement(id, borrower, writtenOffShares, writtenOffAssets);

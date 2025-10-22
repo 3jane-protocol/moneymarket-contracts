@@ -11,7 +11,9 @@ import {
     RepaymentStatus,
     MarkdownState
 } from "../../interfaces/IMorpho.sol";
-import {IMarkdownManager} from "../../interfaces/IMarkdownManager.sol";
+import {IMarkdownController} from "../../interfaces/IMarkdownController.sol";
+import {IProtocolConfig, MarketConfig} from "../../interfaces/IProtocolConfig.sol";
+import {ErrorsLib} from "../ErrorsLib.sol";
 import {MorphoLib} from "./MorphoLib.sol";
 import {MorphoCreditStorageLib} from "./MorphoCreditStorageLib.sol";
 import {MorphoBalancesLib} from "./MorphoBalancesLib.sol";
@@ -50,7 +52,7 @@ library MorphoCreditLib {
         borrowAssets = morphoBase.expectedBorrowAssets(morphoBase.idToMarketParams(id), borrower);
 
         // Get repayment status
-        (RepaymentStatus status, uint256 statusStartTime) = morpho.getRepaymentStatus(id, borrower);
+        (RepaymentStatus status, uint256 statusStartTime) = getRepaymentStatus(morpho, id, borrower);
 
         // Only set defaultStartTime if actually in default status
         if (status == RepaymentStatus.Default) {
@@ -60,7 +62,7 @@ library MorphoCreditLib {
             address manager = getMarkdownManager(morpho, id);
             if (manager != address(0) && defaultStartTime > 0 && borrowAssets > 0) {
                 uint256 timeInDefault = block.timestamp > defaultStartTime ? block.timestamp - defaultStartTime : 0;
-                currentMarkdown = IMarkdownManager(manager).calculateMarkdown(borrower, borrowAssets, timeInDefault);
+                currentMarkdown = IMarkdownController(manager).calculateMarkdown(borrower, borrowAssets, timeInDefault);
             }
         }
     }
@@ -160,5 +162,83 @@ library MorphoCreditLib {
         bytes32[] memory slots = new bytes32[](1);
         slots[0] = MorphoCreditStorageLib.helperSlot();
         helper = address(uint160(uint256(_asIMorpho(morpho).extSloads(slots)[0])));
+    }
+
+    /// @notice Get repayment status for a borrower
+    /// @param morpho The MorphoCredit instance
+    /// @param id Market ID
+    /// @param borrower Borrower address
+    /// @return status The borrower's current repayment status
+    /// @return statusStartTime The timestamp when the current status began
+    function getRepaymentStatus(IMorphoCredit morpho, Id id, address borrower)
+        internal
+        view
+        returns (RepaymentStatus status, uint256 statusStartTime)
+    {
+        // Get repayment obligation
+        RepaymentObligation memory obligation = getRepaymentObligation(morpho, id, borrower);
+
+        if (obligation.amountDue == 0) return (RepaymentStatus.Current, 0);
+
+        // Get payment cycle length to validate cycleId
+        uint256 cycleLength = getPaymentCycleLength(morpho, id);
+        if (obligation.paymentCycleId >= cycleLength) return (RepaymentStatus.Current, 0); // Invalid cycle
+
+        // Get cycle end date
+        bytes32[] memory slots = new bytes32[](1);
+        slots[0] = MorphoCreditStorageLib.paymentCycleElementSlot(id, obligation.paymentCycleId);
+        uint256 cycleEndDate = uint256(_asIMorpho(morpho).extSloads(slots)[0]);
+        statusStartTime = cycleEndDate;
+
+        // Get market config for grace and delinquency periods
+        IProtocolConfig protocolConfig = IProtocolConfig(morpho.protocolConfig());
+        MarketConfig memory terms = protocolConfig.getMarketConfig();
+
+        if (block.timestamp <= statusStartTime + terms.gracePeriod) {
+            return (RepaymentStatus.GracePeriod, statusStartTime);
+        }
+        statusStartTime += terms.gracePeriod;
+        if (block.timestamp < statusStartTime + terms.delinquencyPeriod) {
+            return (RepaymentStatus.Delinquent, statusStartTime);
+        }
+
+        return (RepaymentStatus.Default, statusStartTime + terms.delinquencyPeriod);
+    }
+
+    /// @notice Get the total number of payment cycles for a market
+    /// @param morpho The MorphoCredit instance
+    /// @param id Market ID
+    /// @return length The number of payment cycles
+    function getPaymentCycleLength(IMorphoCredit morpho, Id id) internal view returns (uint256 length) {
+        bytes32[] memory slots = new bytes32[](1);
+        slots[0] = MorphoCreditStorageLib.paymentCycleLengthSlot(id);
+        length = uint256(_asIMorpho(morpho).extSloads(slots)[0]);
+    }
+
+    /// @notice Get both start and end dates for a given cycle
+    /// @param morpho The MorphoCredit instance
+    /// @param id Market ID
+    /// @param cycleId Cycle ID
+    /// @return startDate The cycle start date
+    /// @return endDate The cycle end date
+    function getCycleDates(IMorphoCredit morpho, Id id, uint256 cycleId)
+        internal
+        view
+        returns (uint256 startDate, uint256 endDate)
+    {
+        // Check bounds
+        uint256 cycleLength = getPaymentCycleLength(morpho, id);
+        if (cycleId >= cycleLength) revert ErrorsLib.InvalidCycleId();
+
+        // Get end date for the requested cycle
+        bytes32[] memory slots = new bytes32[](1);
+        slots[0] = MorphoCreditStorageLib.paymentCycleElementSlot(id, cycleId);
+        endDate = uint256(_asIMorpho(morpho).extSloads(slots)[0]);
+
+        // Get start date (previous cycle's end date + 1 day, or 0 for first cycle)
+        if (cycleId != 0) {
+            slots[0] = MorphoCreditStorageLib.paymentCycleElementSlot(id, cycleId - 1);
+            startDate = uint256(_asIMorpho(morpho).extSloads(slots)[0]) + 1 days;
+        }
     }
 }

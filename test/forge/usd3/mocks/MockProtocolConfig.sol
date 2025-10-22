@@ -2,7 +2,10 @@
 pragma solidity ^0.8.18;
 
 import {
-    IProtocolConfig, MarketConfig, CreditLineConfig, IRMConfig
+    IProtocolConfig,
+    MarketConfig,
+    CreditLineConfig,
+    IRMConfig
 } from "../../../../src/interfaces/IProtocolConfig.sol";
 
 /**
@@ -20,6 +23,7 @@ contract MockProtocolConfig is IProtocolConfig {
     bytes32 private constant SUSD3_COOLDOWN_PERIOD = keccak256("SUSD3_COOLDOWN_PERIOD");
     bytes32 private constant USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
     bytes32 private constant SUSD3_WITHDRAWAL_WINDOW = keccak256("SUSD3_WITHDRAWAL_WINDOW");
+    bytes32 private constant USD3_SUPPLY_CAP = keccak256("USD3_SUPPLY_CAP");
     bytes32 private constant CYCLE_DURATION = keccak256("CYCLE_DURATION");
     bytes32 private constant IS_PAUSED = keccak256("IS_PAUSED");
     bytes32 private constant MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
@@ -38,6 +42,7 @@ contract MockProtocolConfig is IProtocolConfig {
         config[SUSD3_COOLDOWN_PERIOD] = 7 days;
         config[USD3_COMMITMENT_TIME] = 0; // No commitment by default in tests
         config[SUSD3_WITHDRAWAL_WINDOW] = 2 days;
+        config[USD3_SUPPLY_CAP] = 0; // No cap by default in tests
         config[CYCLE_DURATION] = 30 days;
         config[MAX_ON_CREDIT] = 10000; // 100%
         config[GRACE_PERIOD] = 7 days;
@@ -113,5 +118,9 @@ contract MockProtocolConfig is IProtocolConfig {
 
     function getCycleDuration() external view returns (uint256) {
         return config[CYCLE_DURATION];
+    }
+
+    function getUsd3SupplyCap() external view returns (uint256) {
+        return config[USD3_SUPPLY_CAP];
     }
 }

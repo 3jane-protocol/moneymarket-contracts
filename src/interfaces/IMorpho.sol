@@ -364,11 +364,6 @@ interface IMorphoCredit {
         view
         returns (uint128 lastAccrualTime, uint128 rate, uint128 borrowAssetsAtLastAccrual);
 
-    /// @notice Manually accrue premium for a borrower
-    /// @param id Market ID
-    /// @param borrower Borrower address
-    function accrueBorrowerPremium(Id id, address borrower) external;
-
     /// @notice Batch accrue premiums for multiple borrowers
     /// @param id Market ID
     /// @param borrowers Array of borrower addresses
@@ -400,28 +395,6 @@ interface IMorphoCredit {
         uint256[] calldata repaymentBps,
         uint256[] calldata endingBalances
     ) external;
-
-    /// @notice Get repayment status for a borrower
-    /// @param id Market ID
-    /// @param borrower Borrower address
-    /// @return status The borrower's current repayment status
-    /// @return statusStartTime The timestamp when the current status began
-    function getRepaymentStatus(Id id, address borrower)
-        external
-        view
-        returns (RepaymentStatus status, uint256 statusStartTime);
-
-    /// @notice Get the total number of payment cycles for a market
-    /// @param id Market ID
-    /// @return The number of payment cycles
-    function getPaymentCycleLength(Id id) external view returns (uint256);
-
-    /// @notice Get both start and end dates for a given cycle
-    /// @param id Market ID
-    /// @param cycleId Cycle ID
-    /// @return startDate The cycle start date
-    /// @return endDate The cycle end date
-    function getCycleDates(Id id, uint256 cycleId) external view returns (uint256 startDate, uint256 endDate);
 
     /// @notice Get repayment obligation for a borrower
     /// @param id Market ID

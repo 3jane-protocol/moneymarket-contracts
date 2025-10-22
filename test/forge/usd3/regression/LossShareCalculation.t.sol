@@ -6,8 +6,9 @@ import {USD3} from "../../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {console2} from "forge-std/console2.sol";
 import {IMorpho, IMorphoCredit, MarketParams, Id} from "../../../../src/interfaces/IMorpho.sol";
@@ -133,22 +134,22 @@ contract LossShareCalculationTest is Setup {
         // For simplicity, we'll use a more direct approach:
         // We'll withdraw some assets from the strategy's position to simulate a loss
 
-        // Simulate a loss by having the strategy withdraw and then lose assets
-        // First, we need to free up some funds from MorphoCredit
+        // Simulate a loss by having the strategy withdraw and then lose waUSDC
+        // The strategy holds waUSDC, not USDC, after wrapping
         vm.startPrank(address(usd3Strategy));
 
-        // Get current idle balance
-        uint256 idleBalance = asset.balanceOf(address(usd3Strategy));
-        console2.log("Idle balance before withdrawal:", idleBalance);
+        // Get current waUSDC balance (both local and in Morpho)
+        uint256 localWaUSDC = IERC20(address(waUSDC)).balanceOf(address(usd3Strategy));
+        console2.log("Local waUSDC balance before withdrawal:", localWaUSDC);
 
-        if (idleBalance < lossAmount) {
+        if (localWaUSDC < lossAmount) {
             // Need to withdraw from MorphoCredit
-            uint256 toWithdraw = lossAmount - idleBalance;
+            uint256 toWithdraw = lossAmount - localWaUSDC;
             morpho.withdraw(params, toWithdraw, 0, address(usd3Strategy), address(usd3Strategy));
         }
 
-        // Now simulate the loss
-        asset.transfer(address(0xdead), lossAmount);
+        // Now simulate the loss with waUSDC
+        IERC20(address(waUSDC)).transfer(address(0xdead), lossAmount);
         vm.stopPrank();
 
         console2.log("\nSimulated loss of:", lossAmount);
@@ -271,11 +272,11 @@ contract LossShareCalculationTest is Setup {
         IMorpho morpho = usd3Strategy.morphoCredit();
 
         vm.startPrank(address(usd3Strategy));
-        // Withdraw funds from MorphoCredit to create idle balance
+        // Withdraw waUSDC from MorphoCredit to create idle balance
         morpho.withdraw(params, lossAmount, 0, address(usd3Strategy), address(usd3Strategy));
 
-        // Now transfer them away to simulate loss
-        asset.transfer(address(0xdead), lossAmount);
+        // Now transfer waUSDC away to simulate loss
+        IERC20(address(waUSDC)).transfer(address(0xdead), lossAmount);
         vm.stopPrank();
 
         // Report the loss

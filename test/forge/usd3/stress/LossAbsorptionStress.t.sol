@@ -7,8 +7,9 @@ import {ERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/ERC20.so
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {IMorpho, MarketParams} from "../../../../src/interfaces/IMorpho.sol";
 
@@ -136,9 +137,8 @@ contract LossAbsorptionStressTest is Setup {
         vm.stopPrank();
 
         uint256 totalAssetsBefore = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
-        uint256 aliceAssetsBefore = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(
-            ITokenizedStrategy(address(usd3Strategy)).balanceOf(alice)
-        );
+        uint256 aliceAssetsBefore = ITokenizedStrategy(address(usd3Strategy))
+            .convertToAssets(ITokenizedStrategy(address(usd3Strategy)).balanceOf(alice));
 
         // Simulate large loss (10%)
         uint256 loss = (totalAssetsBefore * 10) / 100;
@@ -149,9 +149,8 @@ contract LossAbsorptionStressTest is Setup {
         vm.stopPrank();
 
         uint256 totalAssetsAfter = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
-        uint256 aliceAssetsAfter = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(
-            ITokenizedStrategy(address(usd3Strategy)).balanceOf(alice)
-        );
+        uint256 aliceAssetsAfter = ITokenizedStrategy(address(usd3Strategy))
+            .convertToAssets(ITokenizedStrategy(address(usd3Strategy)).balanceOf(alice));
 
         // Large loss should be properly reported and distributed
         assertGt(actualLoss, 0, "Should report actual loss");
@@ -180,9 +179,8 @@ contract LossAbsorptionStressTest is Setup {
         vm.stopPrank();
 
         uint256 initialTotalAssets = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
-        uint256 initialAliceAssets = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(
-            ITokenizedStrategy(address(usd3Strategy)).balanceOf(alice)
-        );
+        uint256 initialAliceAssets = ITokenizedStrategy(address(usd3Strategy))
+            .convertToAssets(ITokenizedStrategy(address(usd3Strategy)).balanceOf(alice));
 
         // First loss - 3%
         uint256 loss1 = (ITokenizedStrategy(address(usd3Strategy)).totalAssets() * 3) / 100;
@@ -207,9 +205,8 @@ contract LossAbsorptionStressTest is Setup {
         assertLt(assetsAfterSecond, assetsAfterFirst, "Second loss should further reduce total assets");
 
         // Verify cumulative effect
-        uint256 finalAliceAssets = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(
-            ITokenizedStrategy(address(usd3Strategy)).balanceOf(alice)
-        );
+        uint256 finalAliceAssets = ITokenizedStrategy(address(usd3Strategy))
+            .convertToAssets(ITokenizedStrategy(address(usd3Strategy)).balanceOf(alice));
         uint256 totalAliceLoss = initialAliceAssets - finalAliceAssets;
         assertGt(totalAliceLoss, 0, "Alice should have cumulative losses from both events");
         assertGt(actualLoss1, 0, "First loss should be reported");
@@ -424,9 +421,8 @@ contract LossAbsorptionStressTest is Setup {
         vm.stopPrank();
 
         uint256 totalAssetsBeforeLoss = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
-        uint256 aliceAssetsBeforeLoss = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(
-            ITokenizedStrategy(address(usd3Strategy)).balanceOf(alice)
-        );
+        uint256 aliceAssetsBeforeLoss = ITokenizedStrategy(address(usd3Strategy))
+            .convertToAssets(ITokenizedStrategy(address(usd3Strategy)).balanceOf(alice));
 
         // Initial loss
         uint256 loss = (totalAssetsBeforeLoss * 7) / 100;
@@ -447,9 +443,8 @@ contract LossAbsorptionStressTest is Setup {
         vm.stopPrank();
 
         uint256 totalAssetsAfterRecovery = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
-        uint256 aliceAssetsAfterRecovery = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(
-            ITokenizedStrategy(address(usd3Strategy)).balanceOf(alice)
-        );
+        uint256 aliceAssetsAfterRecovery = ITokenizedStrategy(address(usd3Strategy))
+            .convertToAssets(ITokenizedStrategy(address(usd3Strategy)).balanceOf(alice));
 
         // Recovery should show as profit and increase total assets
         assertGt(profit, 0, "Should show profit from recovery");
@@ -500,7 +495,7 @@ contract LossAbsorptionStressTest is Setup {
     }
 
     /*//////////////////////////////////////////////////////////////
-                    EDGE CASE LOSS ABSORPTION TESTS  
+                    EDGE CASE LOSS ABSORPTION TESTS
     //////////////////////////////////////////////////////////////*/
 
     function test_lossAbsorption_insufficientSusd3Shares() public {

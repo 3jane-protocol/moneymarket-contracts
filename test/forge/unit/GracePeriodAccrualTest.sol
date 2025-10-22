@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../BaseTest.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {ConfigurableIrmMock} from "../mocks/ConfigurableIrmMock.sol";
 import {Id, MarketParams, RepaymentStatus, IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
@@ -93,18 +94,18 @@ contract GracePeriodAccrualTest is BaseTest {
         morpho.borrow(marketParams, INITIAL_BORROW, 0, ALICE, ALICE);
 
         // Trigger accrual to sync timestamps before creating obligation
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Step 2: Create obligation that puts Alice in grace period using helper
         // This will create a past obligation properly
         _createPastObligation(ALICE, OBLIGATION_BPS, ENDING_BALANCE);
 
         // Verify we're in grace period
-        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod), "Should be in grace period");
 
         // Accrue again after obligation creation to reset the accounting
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Step 3: Record state before accrual
         uint256 borrowAssetsBefore = morpho.expectedBorrowAssets(marketParams, ALICE);
@@ -114,7 +115,7 @@ contract GracePeriodAccrualTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + 2 days); // Now 5 days after cycle end, still in grace
 
         // Step 5: Trigger accrual - this should work now!
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Step 6: Verify accrual happened
         uint256 borrowAssetsAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
@@ -146,13 +147,13 @@ contract GracePeriodAccrualTest is BaseTest {
         morpho.borrow(marketParams, INITIAL_BORROW, 0, ALICE, ALICE);
 
         // Trigger accrual to sync timestamps before creating obligation
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Create obligation using helper
         _createPastObligation(ALICE, OBLIGATION_BPS, ENDING_BALANCE);
 
         // Accrue again after obligation creation to reset the accounting
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Record state
         uint256 borrowAssetsBefore = morpho.expectedBorrowAssets(marketParams, ALICE);
@@ -161,7 +162,7 @@ contract GracePeriodAccrualTest is BaseTest {
         _continueMarketCycles(id, block.timestamp + 1 days);
 
         // Accrue
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         uint256 borrowAssetsAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
         uint256 actualIncrease = borrowAssetsAfter - borrowAssetsBefore;
@@ -188,14 +189,14 @@ contract GracePeriodAccrualTest is BaseTest {
         morpho.borrow(marketParams, INITIAL_BORROW, 0, ALICE, ALICE);
 
         // Trigger accrual to sync timestamps before creating obligation
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Create obligation using helper
         _createPastObligation(ALICE, OBLIGATION_BPS, ENDING_BALANCE);
 
         // Should still be in grace period
         {
-            (RepaymentStatus _status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+            (RepaymentStatus _status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
             assertEq(uint256(_status), uint256(RepaymentStatus.GracePeriod), "Should be in grace period");
         }
 
@@ -207,12 +208,12 @@ contract GracePeriodAccrualTest is BaseTest {
 
         // Now should be delinquent
         {
-            (RepaymentStatus _status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+            (RepaymentStatus _status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
             assertEq(uint256(_status), uint256(RepaymentStatus.Delinquent), "Should be delinquent");
         }
 
         // Accrue - this should include penalty
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         uint256 borrowAssetsAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
 
@@ -247,13 +248,13 @@ contract GracePeriodAccrualTest is BaseTest {
         morpho.borrow(marketParams, INITIAL_BORROW, 0, ALICE, ALICE);
 
         // Trigger accrual to sync timestamps before creating obligation
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Create obligation using helper
         _createPastObligation(ALICE, OBLIGATION_BPS, ENDING_BALANCE);
 
         // Accrue to sync state after obligation creation
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Record debt before repayment
         uint256 debtBefore = morpho.expectedBorrowAssets(marketParams, ALICE);
@@ -269,7 +270,7 @@ contract GracePeriodAccrualTest is BaseTest {
 
         // Verify status is now Current
         {
-            (RepaymentStatus _status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+            (RepaymentStatus _status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
             assertEq(uint256(_status), uint256(RepaymentStatus.Current), "Should be current after payment");
         }
 
@@ -279,7 +280,7 @@ contract GracePeriodAccrualTest is BaseTest {
 
         // Move time forward and verify no penalty accrues
         _continueMarketCycles(id, block.timestamp + 10 days);
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         uint256 debtFinal = morpho.expectedBorrowAssets(marketParams, ALICE);
 

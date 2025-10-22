@@ -6,8 +6,9 @@ import {USD3} from "../../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
@@ -125,8 +126,11 @@ contract EdgeCases is Setup {
         bytes32 TRANCHE_RATIO = keccak256("TRANCHE_RATIO");
         protocolConfig.setConfig(TRANCHE_RATIO, ratio);
 
-        // Calculate expected limit
+        // Set debt cap to match USD3 supply for predictable test behavior
         uint256 usd3Supply = IERC20(address(usd3Strategy)).totalSupply();
+        setMorphoDebtCap(usd3Supply);
+
+        // Calculate expected limit based on debt cap
         uint256 expectedMaxDeposit = ratio == 0 ? 0 : (usd3Supply * ratio) / 10000;
 
         // Check deposit limit

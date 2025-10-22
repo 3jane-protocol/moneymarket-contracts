@@ -45,9 +45,8 @@ contract PremiumCompoundingTest is BaseTest {
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         // Set up initial balances
         loanToken.setBalance(SUPPLIER, HIGH_COLLATERAL_AMOUNT);
@@ -99,7 +98,7 @@ contract PremiumCompoundingTest is BaseTest {
         console.log("After base interest (10% APR): %e", amountAfterBase / 1e18);
 
         // Now accrue premium
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Get final position
         pos = morpho.position(id, BORROWER);
@@ -150,7 +149,7 @@ contract PremiumCompoundingTest is BaseTest {
             vm.warp(block.timestamp + 30 days);
 
             morpho.accrueInterest(marketParams);
-            morphoCredit.accrueBorrowerPremium(id, BORROWER);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
             Position memory pos = morpho.position(id, BORROWER);
             Market memory market = morpho.market(id);

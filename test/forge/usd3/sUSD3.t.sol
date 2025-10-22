@@ -6,8 +6,9 @@ import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
 import {sUSD3} from "../../../src/usd3/sUSD3.sol";
 import {USD3} from "../../../src/usd3/USD3.sol";
 // import {ISUSD3} from "../interfaces/ISUSD3.sol"; // Interface not found, not used in test
-import {TransparentUpgradeableProxy} from
-    "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
@@ -294,10 +295,13 @@ contract sUSD3Test is Setup {
     //////////////////////////////////////////////////////////////*/
 
     function test_subordinationRatio_enforcement() public {
+        // Set debt cap to match expected USD3 supply for this test
+        setMorphoDebtCap(14_000e6); // Match the total USD3 that will exist
+
         // First have alice deposit a large amount to USD3
         vm.startPrank(alice);
         underlyingAsset.approve(address(usd3), type(uint256).max);
-        usd3.deposit(4_000e6, alice); // Total USD3: 9000e6
+        usd3.deposit(4_000e6, alice); // Total USD3: 14000e6 (10000 from setUp + 4000 here)
         vm.stopPrank();
 
         // Now try to deposit to sUSD3 to exceed 15% ratio
@@ -562,8 +566,11 @@ contract sUSD3Test is Setup {
     function test_subordinationRatio_exactBoundary() public {
         // Test exact 15% subordination ratio boundary
 
-        // Work with existing USD3 supply from setUp (10 billion)
+        // Work with existing USD3 supply from setUp
         uint256 existingUsd3 = ERC20(address(usd3)).totalSupply();
+
+        // Set debt cap to match USD3 supply for predictable limits
+        setMorphoDebtCap(existingUsd3);
 
         // Calculate max USD3 that sUSD3 can hold (15% of USD3 total supply)
         // Ratio is: sUSD3's USD3 holdings / USD3 totalSupply <= 15%
@@ -624,11 +631,14 @@ contract sUSD3Test is Setup {
     function test_subordinationRatio_zeroSupply() public {
         // Test ratio calculation when starting from zero
 
-        // Note: USD3 already has initial supply from setUp (10 billion)
+        // Note: USD3 already has initial supply from setUp
         uint256 usd3Supply = ERC20(address(usd3)).totalSupply();
         uint256 susd3Supply = ERC20(address(susd3Strategy)).totalSupply();
         assertGt(usd3Supply, 0, "USD3 has initial supply from setUp");
         assertEq(susd3Supply, 0, "sUSD3 should start at zero");
+
+        // Set debt cap to match initial USD3 supply
+        setMorphoDebtCap(usd3Supply);
 
         // Check deposit limit with existing USD3 supply
         uint256 availableLimit = susd3Strategy.availableDepositLimit(alice);
@@ -645,8 +655,11 @@ contract sUSD3Test is Setup {
         usd3.deposit(1000e6, charlie);
         vm.stopPrank();
 
-        // Check sUSD3 deposit limit after additional USD3 deposit
+        // Update debt cap after Charlie's deposit
         uint256 newUsd3Supply = ERC20(address(usd3)).totalSupply();
+        setMorphoDebtCap(newUsd3Supply);
+
+        // Check sUSD3 deposit limit after additional USD3 deposit
         uint256 limitAfterDeposit = susd3Strategy.availableDepositLimit(bob);
 
         // The limit should be based on the 15% subordination ratio

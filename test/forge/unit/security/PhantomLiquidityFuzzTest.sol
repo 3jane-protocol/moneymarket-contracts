@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
-import {MarkdownManagerMock} from "../../mocks/MarkdownManagerMock.sol";
+import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
 import {Market, RepaymentStatus} from "../../../../src/interfaces/IMorpho.sol";
@@ -25,7 +25,7 @@ contract PhantomLiquidityFuzzTest is BaseTest {
         super.setUp();
 
         // Deploy contracts
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
         creditLine = new CreditLineMock(morphoAddress);
         morphoCredit = IMorphoCredit(morphoAddress);
         helper = new HelperMock(morphoAddress);
@@ -89,14 +89,14 @@ contract PhantomLiquidityFuzzTest is BaseTest {
 
         // Warp to default status (30+ days past due)
         vm.warp(block.timestamp + 31 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Record state after first markdown but before applying test markdown
         Market memory mBefore = morpho.market(id);
 
         // Apply markdown
         markdownManager.setMarkdownForBorrower(BORROWER, markdownAmount);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mAfter = morpho.market(id);
 
@@ -125,7 +125,7 @@ contract PhantomLiquidityFuzzTest is BaseTest {
 
         // Reverse markdown
         markdownManager.setMarkdownForBorrower(BORROWER, 0);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mFinal = morpho.market(id);
 
@@ -164,7 +164,7 @@ contract PhantomLiquidityFuzzTest is BaseTest {
             uint256 supplyBefore = mBeforeUpdate.totalSupplyAssets;
 
             markdownManager.setMarkdownForBorrower(BORROWER, markdowns[i]);
-            morphoCredit.accrueBorrowerPremium(id, BORROWER);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
             // Verify markdown behavior after each update
             Market memory m = morpho.market(id);
@@ -211,7 +211,7 @@ contract PhantomLiquidityFuzzTest is BaseTest {
         // Calculate and apply markdown
         uint256 markdownAmount = (borrowAmount * markdownPercent) / 10000;
         markdownManager.setMarkdownForBorrower(BORROWER, markdownAmount);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify markdown is properly bounded
         Market memory m = morpho.market(id);
@@ -271,7 +271,7 @@ contract PhantomLiquidityFuzzTest is BaseTest {
             uint256 markdownAmount = bound(uint256(keccak256(abi.encode(seed, i, "markdown"))), 0, borrowAmounts[i] * 2);
 
             markdownManager.setMarkdownForBorrower(borrowers[i], markdownAmount);
-            morphoCredit.accrueBorrowerPremium(id, borrowers[i]);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrowers[i]));
 
             // Track actual markdown applied (capped at debt)
             totalMarkdownApplied += markdownAmount > borrowAmounts[i] ? borrowAmounts[i] : markdownAmount;
@@ -297,8 +297,8 @@ contract PhantomLiquidityFuzzTest is BaseTest {
 
         // Now we need to create another cycle with obligations
         // Get the last cycle end date and add CYCLE_DURATION
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 lastCycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 lastCycleEnd) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
         uint256 newCycleEnd = lastCycleEnd + CYCLE_DURATION;
 
         // Warp to new cycle end if needed
@@ -311,6 +311,6 @@ contract PhantomLiquidityFuzzTest is BaseTest {
 
         // Move to default (past grace and delinquent periods)
         _continueMarketCycles(id, block.timestamp + 31 days);
-        morphoCredit.accrueBorrowerPremium(id, borrower);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower));
     }
 }

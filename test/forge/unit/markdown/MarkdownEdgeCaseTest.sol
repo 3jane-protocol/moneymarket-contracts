@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
-import {MarkdownManagerMock} from "../../mocks/MarkdownManagerMock.sol";
+import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
 import {Market, RepaymentStatus} from "../../../../src/interfaces/IMorpho.sol";
@@ -25,7 +25,7 @@ contract MarkdownEdgeCaseTest is BaseTest {
         super.setUp();
 
         // Deploy contracts
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
         creditLine = new CreditLineMock(morphoAddress);
         morphoCredit = IMorphoCredit(morphoAddress);
         helper = new HelperMock(morphoAddress);
@@ -52,9 +52,8 @@ contract MarkdownEdgeCaseTest is BaseTest {
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
     }
 
     /// @notice Test markdown with zero debt borrower
@@ -68,11 +67,11 @@ contract MarkdownEdgeCaseTest is BaseTest {
 
         // Set up borrower with credit line but no debt
         vm.prank(address(creditLine));
-        morphoCredit.setCreditLine(id, BORROWER, 100 ether, 0);
+        morphoCredit.setCreditLine(id, BORROWER, 2000 ether, 0);
 
         // Try to set markdown without any debt
         markdownManager.setMarkdownForBorrower(BORROWER, 50 ether);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory m = morpho.market(id);
 
@@ -84,37 +83,37 @@ contract MarkdownEdgeCaseTest is BaseTest {
     /// @notice Test markdown with maximum uint256 values
     function testMarkdownWithMaxValues() public {
         // Supply funds
-        loanToken.setBalance(SUPPLIER, 1000 ether);
+        loanToken.setBalance(SUPPLIER, 2000 ether);
         vm.startPrank(SUPPLIER);
         loanToken.approve(address(morpho), type(uint256).max);
-        morpho.supply(marketParams, 1000 ether, 0, SUPPLIER, "");
+        morpho.supply(marketParams, 2000 ether, 0, SUPPLIER, "");
         vm.stopPrank();
 
         // Set up borrower
         vm.prank(address(creditLine));
-        morphoCredit.setCreditLine(id, BORROWER, 100 ether, 0);
+        morphoCredit.setCreditLine(id, BORROWER, 2000 ether, 0);
 
         vm.prank(BORROWER);
-        morpho.borrow(marketParams, 50 ether, 0, BORROWER, BORROWER);
+        morpho.borrow(marketParams, 1000e18, 0, BORROWER, BORROWER);
 
         // Create an obligation that will put borrower in default
-        _createPastObligation(BORROWER, 10000, 50 ether); // 100% repayment
+        _createPastObligation(BORROWER, 10000, 1000e18); // 100% repayment
 
         // Warp to default status (30+ days past due)
         vm.warp(block.timestamp + 31 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Try to set a very large markdown value (but not max to avoid overflow)
         // Use a value that won't overflow when multiplied by 200 in the mock
         uint256 largeMarkdown = type(uint256).max / 200; // Prevent overflow in mock calculation
         markdownManager.setMarkdownForBorrower(BORROWER, largeMarkdown);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory m = morpho.market(id);
 
-        // Markdown should be capped at debt (around 50 ether)
-        assertTrue(m.totalMarkdownAmount < 60 ether, "Markdown capped at debt");
-        assertTrue(m.totalSupplyAssets > 940 ether, "Supply reduced by debt amount");
+        // Markdown should be capped at debt (around 1000e18)
+        assertTrue(m.totalMarkdownAmount < 1100e18, "Markdown capped at debt");
+        assertTrue(m.totalSupplyAssets > 900e18, "Supply reduced by debt amount");
     }
 
     /// @notice Test markdown with minimum borrow amount (1 wei)
@@ -139,11 +138,11 @@ contract MarkdownEdgeCaseTest is BaseTest {
 
         // Warp to default status (30+ days past due)
         vm.warp(block.timestamp + 31 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Set markdown
         markdownManager.setMarkdownForBorrower(BORROWER, 1 ether);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory m = morpho.market(id);
 
@@ -162,27 +161,27 @@ contract MarkdownEdgeCaseTest is BaseTest {
 
         // Set up borrower
         vm.prank(address(creditLine));
-        morphoCredit.setCreditLine(id, BORROWER, 100 ether, 0);
+        morphoCredit.setCreditLine(id, BORROWER, 2000 ether, 0);
 
         vm.prank(BORROWER);
-        morpho.borrow(marketParams, 50 ether, 0, BORROWER, BORROWER);
+        morpho.borrow(marketParams, 1000e18, 0, BORROWER, BORROWER);
 
         // Create an obligation that will put borrower in default
-        _createPastObligation(BORROWER, 10000, 50 ether); // 100% repayment
+        _createPastObligation(BORROWER, 10000, 1000e18); // 100% repayment
 
         // Warp to default status (30+ days past due)
         vm.warp(block.timestamp + 31 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Apply multiple markdowns in same block
-        markdownManager.setMarkdownForBorrower(BORROWER, 20 ether);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        markdownManager.setMarkdownForBorrower(BORROWER, 400e18);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory m1 = morpho.market(id);
 
         // Update markdown again in same block
-        markdownManager.setMarkdownForBorrower(BORROWER, 30 ether);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        markdownManager.setMarkdownForBorrower(BORROWER, 600e18);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory m2 = morpho.market(id);
 
@@ -194,43 +193,43 @@ contract MarkdownEdgeCaseTest is BaseTest {
     /// @notice Test markdown behavior when debt changes
     function testMarkdownWithDebtChanges() public {
         // Supply funds
-        loanToken.setBalance(SUPPLIER, 1000 ether);
+        loanToken.setBalance(SUPPLIER, 10000 ether);
         vm.startPrank(SUPPLIER);
         loanToken.approve(address(morpho), type(uint256).max);
-        morpho.supply(marketParams, 1000 ether, 0, SUPPLIER, "");
+        morpho.supply(marketParams, 10000 ether, 0, SUPPLIER, "");
         vm.stopPrank();
 
         // Set up borrower
         vm.prank(address(creditLine));
-        morphoCredit.setCreditLine(id, BORROWER, 100 ether, 0);
+        morphoCredit.setCreditLine(id, BORROWER, 2000 ether, 0);
 
         vm.prank(BORROWER);
-        morpho.borrow(marketParams, 50 ether, 0, BORROWER, BORROWER);
+        morpho.borrow(marketParams, 1000e18, 0, BORROWER, BORROWER);
 
         // Create an obligation that will put borrower in default
-        _createPastObligation(BORROWER, 10000, 50 ether); // 100% repayment
+        _createPastObligation(BORROWER, 10000, 1000e18); // 100% repayment
 
         // Warp to default status (30+ days past due)
         vm.warp(block.timestamp + 31 days);
         _continueMarketCycles(id, block.timestamp + 1 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Apply markdown
-        markdownManager.setMarkdownForBorrower(BORROWER, 30 ether);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        markdownManager.setMarkdownForBorrower(BORROWER, 600e18);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mWithMarkdown = morpho.market(id);
         assertTrue(mWithMarkdown.totalMarkdownAmount > 0, "Markdown applied");
 
         // Clear markdown before repayment to avoid underflow
         markdownManager.setMarkdownForBorrower(BORROWER, 0);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
-        // Repay the exact obligation amount (50 ether)
-        loanToken.setBalance(BORROWER, 50 ether);
+        // Repay the exact obligation amount (1000e18)
+        loanToken.setBalance(BORROWER, 1000e18);
         vm.startPrank(BORROWER);
         loanToken.approve(address(morpho), type(uint256).max);
-        morpho.repay(marketParams, 50 ether, 0, BORROWER, "");
+        morpho.repay(marketParams, 1000e18, 0, BORROWER, "");
         vm.stopPrank();
 
         // After repayment, markdown should remain zero
@@ -267,39 +266,39 @@ contract MarkdownEdgeCaseTest is BaseTest {
 
         // Set up borrower
         vm.prank(address(creditLine));
-        morphoCredit.setCreditLine(id, BORROWER, 100 ether, 0);
+        morphoCredit.setCreditLine(id, BORROWER, 2000 ether, 0);
 
         vm.prank(BORROWER);
-        morpho.borrow(marketParams, 50 ether, 0, BORROWER, BORROWER);
+        morpho.borrow(marketParams, 1000e18, 0, BORROWER, BORROWER);
 
         // Create a past obligation that will transition through states
-        _createPastObligation(BORROWER, 10000, 50 ether); // 100% repayment obligation
+        _createPastObligation(BORROWER, 10000, 1000e18); // 100% repayment obligation
 
         // Current state
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
-        markdownManager.setMarkdownForBorrower(BORROWER, 10 ether);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        markdownManager.setMarkdownForBorrower(BORROWER, 200e18);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mCurrent = morpho.market(id);
         assertEq(mCurrent.totalMarkdownAmount, 0, "No markdown in current state");
 
         // Grace period
         vm.warp(block.timestamp + 3 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mGrace = morpho.market(id);
         assertEq(mGrace.totalMarkdownAmount, 0, "No markdown in grace period");
 
         // Delinquent state
         vm.warp(block.timestamp + 8 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mDelinquent = morpho.market(id);
         assertEq(mDelinquent.totalMarkdownAmount, 0, "No markdown in delinquent state");
 
         // Default state
         vm.warp(block.timestamp + 25 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mDefault = morpho.market(id);
         assertTrue(mDefault.totalMarkdownAmount > 0, "Markdown applied in default state");
@@ -308,28 +307,28 @@ contract MarkdownEdgeCaseTest is BaseTest {
     /// @notice Test markdown with interest accrual edge cases
     function testMarkdownWithInterestAccrual() public {
         // Supply funds
-        loanToken.setBalance(SUPPLIER, 1000 ether);
+        loanToken.setBalance(SUPPLIER, 2000 ether);
         vm.startPrank(SUPPLIER);
         loanToken.approve(address(morpho), type(uint256).max);
-        morpho.supply(marketParams, 1000 ether, 0, SUPPLIER, "");
+        morpho.supply(marketParams, 2000 ether, 0, SUPPLIER, "");
         vm.stopPrank();
 
         // Set up borrower
         vm.prank(address(creditLine));
-        morphoCredit.setCreditLine(id, BORROWER, 100 ether, 0);
+        morphoCredit.setCreditLine(id, BORROWER, 2000 ether, 0);
 
         vm.prank(BORROWER);
-        morpho.borrow(marketParams, 50 ether, 0, BORROWER, BORROWER);
+        morpho.borrow(marketParams, 1000e18, 0, BORROWER, BORROWER);
 
-        // Let interest accrue significantly
-        vm.warp(block.timestamp + 365 days);
+        // Let interest accrue moderately (90 days instead of 365)
+        vm.warp(block.timestamp + 90 days);
 
         // Create an obligation that will put borrower in default
-        _createPastObligation(BORROWER, 10000, 50 ether); // 100% repayment
+        _createPastObligation(BORROWER, 10000, 1000e18); // 100% repayment
 
         // Warp to default status (30+ days past due)
         vm.warp(block.timestamp + 31 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Apply markdown after significant interest
         Market memory mBefore = morpho.market(id);
@@ -337,7 +336,7 @@ contract MarkdownEdgeCaseTest is BaseTest {
         uint256 debtWithInterest = borrowShares.toAssetsUp(mBefore.totalBorrowAssets, mBefore.totalBorrowShares);
 
         markdownManager.setMarkdownForBorrower(BORROWER, debtWithInterest * 2);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory mAfter = morpho.market(id);
 
@@ -360,8 +359,8 @@ contract MarkdownEdgeCaseTest is BaseTest {
 
         // Now we need to create another cycle with obligations
         // Get the last cycle end date and add CYCLE_DURATION
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 lastCycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 lastCycleEnd) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
         uint256 newCycleEnd = lastCycleEnd + CYCLE_DURATION;
 
         // Warp to new cycle end if needed
@@ -374,6 +373,6 @@ contract MarkdownEdgeCaseTest is BaseTest {
 
         // Move to default (past grace and delinquent periods)
         _continueMarketCycles(id, block.timestamp + 31 days);
-        morphoCredit.accrueBorrowerPremium(id, borrower);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(borrower));
     }
 }

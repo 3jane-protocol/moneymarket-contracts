@@ -8,6 +8,7 @@ import {Id, MarketParams, RepaymentStatus, IMorphoCredit} from "../../../src/int
 import {EventsLib} from "../../../src/libraries/EventsLib.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 import {MathLib} from "../../../src/libraries/MathLib.sol";
+import {MorphoCreditLib} from "../../../src/libraries/periphery/MorphoCreditLib.sol";
 
 /// @title Penalty Rate Verification Test
 /// @notice Precise tests to verify penalty interest accrues at exactly the expected rates
@@ -108,12 +109,12 @@ contract PenaltyRateVerificationTest is BaseTest {
         _createPastObligation(ALICE, OBLIGATION_BPS, ENDING_BALANCE);
 
         // Warp to be exactly at the end of grace period
-        uint256 cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 cycleEndDate) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 cycleEndDate) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
         vm.warp(cycleEndDate + GRACE_PERIOD_DURATION);
 
         // Verify we're still in grace period
-        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.GracePeriod), "Should be in grace period");
 
         // Step 3: Record state before crossing into delinquency
@@ -123,19 +124,20 @@ contract PenaltyRateVerificationTest is BaseTest {
         vm.warp(block.timestamp + 1);
 
         // Now we should be delinquent
-        (status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "Should be delinquent");
 
         // Step 5: Trigger full market accrual first, then borrower premium
         morpho.accrueInterest(marketParams);
         uint256 totalSupplyBefore = morpho.market(id).totalSupplyAssets;
 
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Step 6: Calculate expected penalty
         // Get the actual cycle end date from the obligation
-        cycleLength = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 actualCycleEndDate) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLength - 1);
+        cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 actualCycleEndDate) =
+            MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLength - 1);
         // Penalty duration is from cycle end date to now
         uint256 penaltyDuration = block.timestamp - actualCycleEndDate;
         uint256 expectedPenaltyGrowth = PENALTY_RATE_PER_SECOND.wTaylorCompounded(penaltyDuration);
@@ -212,16 +214,16 @@ contract PenaltyRateVerificationTest is BaseTest {
         _createPastObligation(ALICE, OBLIGATION_BPS, ENDING_BALANCE);
 
         // Warp to be 3 days past grace period (well into delinquency)
-        uint256 cycleLen = IMorphoCredit(address(morpho)).getPaymentCycleLength(id);
-        (, uint256 cycleEnd) = IMorphoCredit(address(morpho)).getCycleDates(id, cycleLen - 1);
+        uint256 cycleLen = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
+        (, uint256 cycleEnd) = MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, cycleLen - 1);
         vm.warp(cycleEnd + GRACE_PERIOD_DURATION + 3 days);
 
         // Verify we're delinquent
-        (RepaymentStatus status,) = IMorphoCredit(address(morpho)).getRepaymentStatus(id, ALICE);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
         assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "Should be delinquent");
 
         // Step 2: First accrual to capture initial penalty
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         // Record state after first accrual
         uint256 borrowAssetsAfterFirst = morpho.expectedBorrowAssets(marketParams, ALICE);
@@ -231,7 +233,7 @@ contract PenaltyRateVerificationTest is BaseTest {
         uint256 timeStep = 1 days;
         vm.warp(block.timestamp + timeStep);
 
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
 
         uint256 borrowAssetsAfterSecond = morpho.expectedBorrowAssets(marketParams, ALICE);
         uint256 incrementalIncrease = borrowAssetsAfterSecond - borrowAssetsAfterFirst;
@@ -266,7 +268,7 @@ contract PenaltyRateVerificationTest is BaseTest {
         // Step 5: Do a third accrual after 2 days to verify compounding
         vm.warp(block.timestamp + 2 days);
 
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
         uint256 borrowAssetsAfterThird = morpho.expectedBorrowAssets(marketParams, ALICE);
         uint256 secondIncrement = borrowAssetsAfterThird - borrowAssetsAfterSecond;
 
@@ -329,20 +331,22 @@ contract PenaltyRateVerificationTest is BaseTest {
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + 1 days);
 
         // Initial accrual for both to capture the initial penalty
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE_PATH_A);
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE_PATH_B);
+        address[] memory aliceAddrs = new address[](2);
+        aliceAddrs[0] = ALICE_PATH_A;
+        aliceAddrs[1] = ALICE_PATH_B;
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, aliceAddrs);
 
         uint256 startTime = block.timestamp;
 
         // Path B: Daily accruals for 10 days
         for (uint256 i = 0; i < 10; i++) {
             vm.warp(startTime + (i + 1) * 1 days);
-            IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE_PATH_B);
+            IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE_PATH_B));
         }
 
         // Path A: Single accrual after 10 days
         vm.warp(startTime + 10 days);
-        IMorphoCredit(address(morpho)).accrueBorrowerPremium(id, ALICE_PATH_A);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE_PATH_A));
 
         // Compare final states
         uint256 borrowAssetsA = morpho.expectedBorrowAssets(marketParams, ALICE_PATH_A);

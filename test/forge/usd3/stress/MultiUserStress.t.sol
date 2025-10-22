@@ -10,8 +10,9 @@ import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {IMorpho, MarketParams} from "../../../../src/interfaces/IMorpho.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 /**
@@ -309,6 +310,7 @@ contract MultiUserStressTest is Setup {
         // Test subordination with users depositing different amounts over time
 
         // Large USD3 deposits to establish base
+        uint256 totalUsd3Deposited = 0;
         for (uint256 i = 0; i < 3; i++) {
             address user = users[i];
 
@@ -316,7 +318,12 @@ contract MultiUserStressTest is Setup {
             asset.approve(address(usd3Strategy), LARGE_AMOUNT);
             usd3Strategy.deposit(LARGE_AMOUNT, user);
             vm.stopPrank();
+
+            totalUsd3Deposited += LARGE_AMOUNT;
         }
+
+        // Set debt cap based on actual USD3 deposits to test subordination properly
+        setMorphoDebtCap(totalUsd3Deposited);
 
         // Smaller sUSD3 deposits from remaining users
         for (uint256 i = 3; i < NUM_USERS; i++) {
@@ -326,8 +333,14 @@ contract MultiUserStressTest is Setup {
             vm.startPrank(user);
             asset.approve(address(usd3Strategy), amount);
             uint256 usd3Shares = usd3Strategy.deposit(amount, user);
+            totalUsd3Deposited += amount;
+            vm.stopPrank();
+
+            // Update debt cap to reflect new USD3 deposits
+            setMorphoDebtCap(totalUsd3Deposited);
 
             // Try to stake to sUSD3
+            vm.startPrank(user);
             ERC20(address(usd3Strategy)).approve(address(susd3Strategy), usd3Shares);
 
             try susd3Strategy.deposit(usd3Shares, user) {
@@ -488,8 +501,9 @@ contract MultiUserStressTest is Setup {
             vm.startPrank(user);
             ERC20(address(usd3Strategy)).approve(address(susd3Strategy), usd3Balance);
             try susd3Strategy.deposit(usd3Balance, user) {
-                // Success
-            } catch {
+            // Success
+            }
+                catch {
                 // Hit subordination limit, that's OK
             }
             vm.stopPrank();

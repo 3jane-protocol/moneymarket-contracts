@@ -6,8 +6,9 @@ import {USD3} from "../../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {TransparentUpgradeableProxy} from
-    "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {console2} from "forge-std/console2.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
@@ -396,7 +397,7 @@ contract BypassAttempts is Setup {
         // Withdraw partial amount (within cooldown)
         require(withdrawLimit > 0, "No withdrawal available");
         uint256 sharesToRedeem = totalShares / 4; // Redeem a quarter of total shares
-        // Need to approve the strategy to burn shares on behalf of alice
+            // Need to approve the strategy to burn shares on behalf of alice
         vm.startPrank(alice);
         IERC20(address(susd3Strategy)).approve(address(susd3Strategy), sharesToRedeem);
         susd3Strategy.redeem(sharesToRedeem, alice, alice);

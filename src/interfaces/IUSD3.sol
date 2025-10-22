@@ -13,4 +13,5 @@ interface IUSD3 is IERC4626 {
     // - redeem(uint256 shares, address receiver, address owner) returns (uint256 assets)
     // - And all other ERC4626 standard functions
     function whitelist(address user) external view returns (bool);
+    function availableDepositLimit(address owner) external view returns (uint256);
 }

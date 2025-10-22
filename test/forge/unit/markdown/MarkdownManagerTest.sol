@@ -2,11 +2,14 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
+import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
 import {MorphoBalancesLib} from "../../../../src/libraries/periphery/MorphoBalancesLib.sol";
-import {IMarkdownManager} from "../../../../src/interfaces/IMarkdownManager.sol";
+import {IMarkdownController} from "../../../../src/interfaces/IMarkdownController.sol";
+import {IProtocolConfig} from "../../../../src/interfaces/IProtocolConfig.sol";
+import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {Market} from "../../../../src/interfaces/IMorpho.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
 
@@ -48,9 +51,8 @@ contract MarkdownManagerTest is BaseTest {
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         // Setup initial supply
         loanToken.setBalance(SUPPLIER, 100_000e18);
@@ -60,8 +62,9 @@ contract MarkdownManagerTest is BaseTest {
 
     /// @notice Test setting and updating markdown manager
     function testSetMarkdownManager() public {
-        // Deploy markdown manager
-        markdownManager = new MarkdownManagerMock();
+        // Deploy markdown manager with protocol config
+        address protocolConfig = morphoCredit.protocolConfig();
+        markdownManager = new MarkdownManagerMock(protocolConfig, OWNER);
 
         vm.prank(OWNER);
         creditLine.setMm(address(markdownManager));
@@ -71,7 +74,17 @@ contract MarkdownManagerTest is BaseTest {
 
     /// @notice Test correct parameters passed to markdown manager
     function testMarkdownManagerParameterPassing() public {
-        markdownManager = new MarkdownManagerMock();
+        address protocolConfig = morphoCredit.protocolConfig();
+        markdownManager = new MarkdownManagerMock(protocolConfig, OWNER);
+
+        // Set full markdown duration to 100 days
+        vm.prank(OWNER);
+        IProtocolConfig(protocolConfig).setConfig(ProtocolConfigLib.FULL_MARKDOWN_DURATION, 100 days);
+
+        // Enable markdown for borrower
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(BORROWER, true);
+
         vm.prank(OWNER);
         creditLine.setMm(address(markdownManager));
 
@@ -86,14 +99,15 @@ contract MarkdownManagerTest is BaseTest {
         // Fast forward to default
         uint256 expectedDefaultTime = cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION;
         vm.warp(expectedDefaultTime + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Forward more time
         uint256 timeInDefault = 5 days;
         vm.warp(expectedDefaultTime + timeInDefault);
 
         // Get repayment status and borrow assets
-        (RepaymentStatus status, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultStartTime) =
+            MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
 
         // Calculate markdown using the manager
@@ -107,7 +121,7 @@ contract MarkdownManagerTest is BaseTest {
         assertEq(defaultStartTime, expectedDefaultTime, "Default start time should match");
         assertTrue(borrowAssets >= 10_000e18, "Borrow assets should be at least initial amount");
 
-        // Calculate expected markdown (1% per day for 5 days = 5%)
+        // Calculate expected markdown (5 days / 100 days = 5%)
         uint256 expectedMarkdown = borrowAssets * 5 / 100;
         assertEq(markdown, expectedMarkdown, "Markdown calculation should be correct");
     }
@@ -125,10 +139,11 @@ contract MarkdownManagerTest is BaseTest {
 
         // Fast forward to default
         vm.warp(expectedDefaultTime + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Check repayment status
-        (RepaymentStatus status, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultStartTime) =
+            MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdown = 0; // No manager set, so no markdown calculation
 
         // Without a manager, borrower should still be in default status with proper timestamp
@@ -143,7 +158,17 @@ contract MarkdownManagerTest is BaseTest {
 
     /// @notice Test gas consumption of external markdown calls
     function testMarkdownGasConsumption() public {
-        markdownManager = new MarkdownManagerMock();
+        address protocolConfig = morphoCredit.protocolConfig();
+        markdownManager = new MarkdownManagerMock(protocolConfig, OWNER);
+
+        // Set full markdown duration
+        vm.prank(OWNER);
+        IProtocolConfig(protocolConfig).setConfig(ProtocolConfigLib.FULL_MARKDOWN_DURATION, 70 days);
+
+        // Enable markdown for borrower
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(BORROWER, true);
+
         vm.prank(OWNER);
         creditLine.setMm(address(markdownManager));
 
@@ -156,7 +181,7 @@ contract MarkdownManagerTest is BaseTest {
 
         // Measure gas for markdown update
         uint256 gasBefore = gasleft();
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
         uint256 gasUsed = gasBefore - gasleft();
 
         // Log gas usage (typical should be < 100k for external call + storage updates)
@@ -179,11 +204,12 @@ contract MarkdownManagerTest is BaseTest {
 
         // Should revert when trying to update markdown
         vm.expectRevert("Markdown calculation failed");
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
     }
 
     /// @notice Test re-enabling markdown manager after borrower defaults without one
     function testReenablingMarkdownManager() public {
+        address protocolConfig = morphoCredit.protocolConfig();
         // Setup borrower without markdown manager
         _setupBorrowerWithLoan(BORROWER, 10_000e18);
         _createPastObligation(BORROWER, 500, 10_000e18);
@@ -195,10 +221,11 @@ contract MarkdownManagerTest is BaseTest {
 
         // Fast forward to default (no manager set)
         vm.warp(expectedDefaultTime + 5 days); // 5 days into default
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify borrower is in default with no markdown
-        (RepaymentStatus status, uint256 defaultStartTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultStartTime) =
+            MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         assertEq(uint8(status), uint8(RepaymentStatus.Default), "Should be in default");
         assertEq(defaultStartTime, expectedDefaultTime, "Should track default start time");
 
@@ -207,7 +234,16 @@ contract MarkdownManagerTest is BaseTest {
         assertEq(markdownBefore, 0, "Should have no markdown without manager");
 
         // Now set a markdown manager after borrower already defaulted
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(protocolConfig, OWNER);
+
+        // Set full markdown duration to 100 days
+        vm.prank(OWNER);
+        IProtocolConfig(protocolConfig).setConfig(ProtocolConfigLib.FULL_MARKDOWN_DURATION, 100 days);
+
+        // Enable markdown for borrower
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(BORROWER, true);
+
         vm.prank(OWNER);
         creditLine.setMm(address(markdownManager));
 
@@ -215,7 +251,7 @@ contract MarkdownManagerTest is BaseTest {
         vm.warp(block.timestamp + 2 days); // Now 7 days total in default
 
         // Trigger markdown update
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Verify markdown is now calculated from original default time
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
@@ -230,7 +266,7 @@ contract MarkdownManagerTest is BaseTest {
         uint256 daysInDefault = timeInDefault / 1 days;
         assertEq(daysInDefault, 7, "Should use full time in default");
 
-        // With 1% daily rate, 7 days = 7% markdown
+        // With 100 days to full markdown, 7 days = 7% markdown
         uint256 expectedMarkdownAmount = borrowAssets * 7 / 100;
         assertApproxEqAbs(markdownAfter, expectedMarkdownAmount, 1e18, "Markdown should be ~7% of debt");
 
@@ -239,10 +275,153 @@ contract MarkdownManagerTest is BaseTest {
         assertEq(market.totalMarkdownAmount, markdownAfter, "Market total should match borrower markdown");
     }
 
+    /// @notice Test markdown only applies to enabled borrowers
+    function testMarkdownOnlyForEnabledBorrowers() public {
+        address protocolConfig = morphoCredit.protocolConfig();
+        markdownManager = new MarkdownManagerMock(protocolConfig, OWNER);
+
+        // Set full markdown duration
+        vm.prank(OWNER);
+        IProtocolConfig(protocolConfig).setConfig(ProtocolConfigLib.FULL_MARKDOWN_DURATION, 30 days);
+
+        vm.prank(OWNER);
+        creditLine.setMm(address(markdownManager));
+
+        // Setup borrower in default but NOT enabled for markdown
+        _setupBorrowerWithLoan(BORROWER, 10_000e18);
+        _createPastObligation(BORROWER, 500, 10_000e18);
+
+        // Fast forward to default
+        (uint128 cycleId,,) = morphoCredit.repaymentObligation(id, BORROWER);
+        uint256 cycleEndDate = morphoCredit.paymentCycle(id, cycleId);
+        uint256 expectedDefaultTime = cycleEndDate + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION;
+        vm.warp(expectedDefaultTime + 5 days);
+
+        // Check markdown is zero since borrower not enabled
+        uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        uint256 markdown = markdownManager.calculateMarkdown(BORROWER, borrowAssets, 5 days);
+        assertEq(markdown, 0, "Markdown should be zero for non-enabled borrower");
+
+        // Now enable markdown for borrower
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(BORROWER, true);
+
+        // Check markdown is now applied
+        markdown = markdownManager.calculateMarkdown(BORROWER, borrowAssets, 5 days);
+        uint256 expectedMarkdown = borrowAssets * 5 / 30; // 5 days out of 30
+        assertEq(markdown, expectedMarkdown, "Markdown should be applied for enabled borrower");
+    }
+
+    /// @notice Test owner-only access control
+    function testOnlyOwnerCanEnableMarkdown() public {
+        address protocolConfig = morphoCredit.protocolConfig();
+        markdownManager = new MarkdownManagerMock(protocolConfig, OWNER);
+
+        // Non-owner tries to enable markdown
+        vm.prank(BORROWER);
+        vm.expectRevert();
+        markdownManager.setEnableMarkdown(BORROWER, true);
+
+        // Owner can enable
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(BORROWER, true);
+        assertTrue(markdownManager.markdownEnabled(BORROWER), "Owner should be able to enable");
+    }
+
+    /// @notice Test zero duration disables markdown
+    function testZeroDurationDisablesMarkdown() public {
+        address protocolConfig = morphoCredit.protocolConfig();
+        markdownManager = new MarkdownManagerMock(protocolConfig, OWNER);
+
+        // Set duration to 0 (feature disabled)
+        vm.prank(OWNER);
+        IProtocolConfig(protocolConfig).setConfig(ProtocolConfigLib.FULL_MARKDOWN_DURATION, 0);
+
+        // Enable markdown for borrower
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(BORROWER, true);
+
+        // Check markdown is still zero even though borrower is enabled
+        uint256 markdown = markdownManager.calculateMarkdown(BORROWER, 10_000e18, 30 days);
+        assertEq(markdown, 0, "Markdown should be zero when duration is zero");
+
+        // Check multiplier is 100%
+        uint256 multiplier = markdownManager.getMarkdownMultiplier(30 days);
+        assertEq(multiplier, 1e18, "Multiplier should be 100% when duration is zero");
+    }
+
+    /// @notice Test linear markdown calculation
+    function testLinearMarkdownCalculation() public {
+        address protocolConfig = morphoCredit.protocolConfig();
+        markdownManager = new MarkdownManagerMock(protocolConfig, OWNER);
+
+        // Set duration to 100 days
+        vm.prank(OWNER);
+        IProtocolConfig(protocolConfig).setConfig(ProtocolConfigLib.FULL_MARKDOWN_DURATION, 100 days);
+
+        // Enable markdown for borrower
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(BORROWER, true);
+
+        uint256 borrowAmount = 10_000e18;
+
+        // Test various time points
+        assertEq(markdownManager.calculateMarkdown(BORROWER, borrowAmount, 0), 0, "0 days = 0% markdown");
+        assertEq(
+            markdownManager.calculateMarkdown(BORROWER, borrowAmount, 10 days),
+            borrowAmount * 10 / 100,
+            "10 days = 10% markdown"
+        );
+        assertEq(
+            markdownManager.calculateMarkdown(BORROWER, borrowAmount, 50 days),
+            borrowAmount * 50 / 100,
+            "50 days = 50% markdown"
+        );
+        assertEq(
+            markdownManager.calculateMarkdown(BORROWER, borrowAmount, 100 days),
+            borrowAmount,
+            "100 days = 100% markdown"
+        );
+        assertEq(
+            markdownManager.calculateMarkdown(BORROWER, borrowAmount, 200 days),
+            borrowAmount,
+            "200 days = capped at 100% markdown"
+        );
+    }
+
+    /// @notice Test markdown multiplier calculation
+    function testMarkdownMultiplierCalculation() public {
+        address protocolConfig = morphoCredit.protocolConfig();
+        markdownManager = new MarkdownManagerMock(protocolConfig, OWNER);
+
+        // Set duration to 100 days
+        vm.prank(OWNER);
+        IProtocolConfig(protocolConfig).setConfig(ProtocolConfigLib.FULL_MARKDOWN_DURATION, 100 days);
+
+        // Test various time points
+        assertEq(markdownManager.getMarkdownMultiplier(0), 1e18, "0 days = 100% value");
+        assertEq(markdownManager.getMarkdownMultiplier(25 days), 0.75e18, "25 days = 75% value");
+        assertEq(markdownManager.getMarkdownMultiplier(50 days), 0.5e18, "50 days = 50% value");
+        assertEq(markdownManager.getMarkdownMultiplier(75 days), 0.25e18, "75 days = 25% value");
+        assertEq(markdownManager.getMarkdownMultiplier(100 days), 0, "100 days = 0% value");
+        assertEq(markdownManager.getMarkdownMultiplier(200 days), 0, "200 days = 0% value");
+    }
+
     /// @notice Test updating manager while borrowers have markdown
     function testUpdateManagerWithExistingMarkdowns() public {
+        address protocolConfig = morphoCredit.protocolConfig();
+
         // Set initial manager
-        markdownManager = new MarkdownManagerMock();
+        markdownManager = new MarkdownManagerMock(protocolConfig, OWNER);
+
+        // Set full markdown duration to 100 days
+        vm.prank(OWNER);
+        IProtocolConfig(protocolConfig).setConfig(ProtocolConfigLib.FULL_MARKDOWN_DURATION, 100 days);
+
+        // Enable markdown for borrower
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(BORROWER, true);
+
         vm.prank(OWNER);
         creditLine.setMm(address(markdownManager));
 
@@ -250,11 +429,11 @@ contract MarkdownManagerTest is BaseTest {
         _setupBorrowerWithLoan(BORROWER, 10_000e18);
         _createPastObligation(BORROWER, 500, 10_000e18);
         vm.warp(block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Get initial markdown
         uint256 borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (RepaymentStatus status, uint256 defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (RepaymentStatus status, uint256 defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdownBefore = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
@@ -262,9 +441,16 @@ contract MarkdownManagerTest is BaseTest {
         }
         assertTrue(markdownBefore > 0, "Should have initial markdown");
 
-        // Create new manager with different rate (2% daily instead of 1%)
-        MarkdownManagerMock newManager = new MarkdownManagerMock();
-        newManager.setDailyMarkdownRate(200); // 2% daily (200 bps)
+        // Create new manager with different rate (50 days to full markdown instead of 100)
+        MarkdownManagerMock newManager = new MarkdownManagerMock(protocolConfig, OWNER);
+
+        // Change to 50 days for full markdown
+        vm.prank(OWNER);
+        IProtocolConfig(protocolConfig).setConfig(ProtocolConfigLib.FULL_MARKDOWN_DURATION, 50 days);
+
+        // Enable markdown for borrower in new manager
+        vm.prank(OWNER);
+        newManager.setEnableMarkdown(BORROWER, true);
 
         // Update manager
         vm.prank(OWNER);
@@ -272,11 +458,11 @@ contract MarkdownManagerTest is BaseTest {
 
         // Forward time and update
         vm.warp(block.timestamp + 1 days);
-        morphoCredit.accrueBorrowerPremium(id, BORROWER);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         // Markdown should increase with new rate
         borrowAssets = morpho.expectedBorrowAssets(marketParams, BORROWER);
-        (status, defaultTime) = morphoCredit.getRepaymentStatus(id, BORROWER);
+        (status, defaultTime) = MorphoCreditLib.getRepaymentStatus(morphoCredit, id, BORROWER);
         uint256 markdownAfter = 0;
         if (status == RepaymentStatus.Default && defaultTime > 0) {
             uint256 timeInDefault = block.timestamp > defaultTime ? block.timestamp - defaultTime : 0;
@@ -287,7 +473,7 @@ contract MarkdownManagerTest is BaseTest {
 }
 
 /// @notice Mock markdown manager that returns zero markdown
-contract InvalidMarkdownManager is IMarkdownManager {
+contract InvalidMarkdownManager is IMarkdownController {
     function calculateMarkdown(address, uint256, uint256) external pure returns (uint256) {
         return 0;
     }
@@ -295,15 +481,45 @@ contract InvalidMarkdownManager is IMarkdownManager {
     function getMarkdownMultiplier(uint256) external pure returns (uint256) {
         return 1e18;
     }
+
+    function isFrozen(address) external pure returns (bool) {
+        return false;
+    }
+
+    function slashJaneProportional(address, uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function slashJaneFull(address) external pure returns (uint256) {
+        return 0;
+    }
+
+    function resetBorrowerState(address) external pure {}
 }
 
 /// @notice Mock markdown manager that always reverts
-contract RevertingMarkdownManager is IMarkdownManager {
+contract RevertingMarkdownManager is IMarkdownController {
     function calculateMarkdown(address, uint256, uint256) external pure returns (uint256) {
         revert("Markdown calculation failed");
     }
 
     function getMarkdownMultiplier(uint256) external pure returns (uint256) {
+        revert("Markdown calculation failed");
+    }
+
+    function isFrozen(address) external pure returns (bool) {
+        revert("Markdown calculation failed");
+    }
+
+    function slashJaneProportional(address, uint256) external pure returns (uint256) {
+        revert("Markdown calculation failed");
+    }
+
+    function slashJaneFull(address) external pure returns (uint256) {
+        revert("Markdown calculation failed");
+    }
+
+    function resetBorrowerState(address) external pure {
         revert("Markdown calculation failed");
     }
 }

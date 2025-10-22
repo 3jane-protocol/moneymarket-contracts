@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
-import {MarkdownManagerMock} from "../../mocks/MarkdownManagerMock.sol";
+import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLine} from "../../../../src/CreditLine.sol";
 import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
@@ -31,7 +31,7 @@ contract PhantomLiquidityTest is BaseTest {
 
         // Set up malicious actors
         maliciousOwner = makeAddr("MaliciousOwner");
-        maliciousMarkdownManager = new MarkdownManagerMock();
+        maliciousMarkdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
         maliciousCreditLine = new CreditLine(
             address(morpho),
             maliciousOwner,
@@ -74,9 +74,8 @@ contract PhantomLiquidityTest is BaseTest {
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         IMorphoCredit mc = IMorphoCredit(address(morpho));
 
@@ -104,7 +103,7 @@ contract PhantomLiquidityTest is BaseTest {
         assertEq(morphoBalance, 10 ** 10 * 10 ** 18, "All funds should remain safe");
         maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 0);
         vm.warp(block.timestamp + 1 days);
-        mc.accrueBorrowerPremium(id, BORROWER);
+        mc.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         m = morpho.market(id);
 
@@ -132,9 +131,8 @@ contract PhantomLiquidityTest is BaseTest {
         uint256[] memory repaymentBps = new uint256[](0);
         uint256[] memory endingBalances = new uint256[](0);
         vm.prank(marketParams.creditLine);
-        IMorphoCredit(address(morpho)).closeCycleAndPostObligations(
-            id, block.timestamp, borrowers, repaymentBps, endingBalances
-        );
+        IMorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(id, block.timestamp, borrowers, repaymentBps, endingBalances);
 
         IMorphoCredit mc = IMorphoCredit(address(morpho));
 
@@ -172,7 +170,7 @@ contract PhantomLiquidityTest is BaseTest {
 
         // Set markdown way above borrower's debt
         maliciousMarkdownManager.setMarkdownForBorrower(BORROWER, 1000 ether);
-        mc.accrueBorrowerPremium(id, BORROWER);
+        mc.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
         Market memory m = morpho.market(id);
 
