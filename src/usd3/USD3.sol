@@ -5,9 +5,13 @@ import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
 import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {IMorpho, IMorphoCredit, MarketParams, Id} from "../interfaces/IMorpho.sol";
-import {MorphoLib} from "../libraries/periphery/MorphoLib.sol";
-import {MorphoBalancesLib} from "../libraries/periphery/MorphoBalancesLib.sol";
-import {SharesMathLib} from "../libraries/SharesMathLib.sol";
+import {
+    MorphoLib,
+    MorphoBalancesLib,
+    MarketParamsLib,
+    SharesMathLib
+} from "../libraries/periphery/MorphoBalancesLib.sol";
+import {MorphoCreditBalancesLib} from "../libraries/periphery/MorphoCreditBalancesLib.sol";
 import {IERC4626} from "../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Pausable} from "../../lib/openzeppelin/contracts/utils/Pausable.sol";
 import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
@@ -48,6 +52,8 @@ contract USD3 is BaseHooksUpgradeable {
     using SafeERC20 for IERC20;
     using MorphoLib for IMorpho;
     using MorphoBalancesLib for IMorpho;
+    using MorphoCreditBalancesLib for IMorphoCredit;
+    using MarketParamsLib for MarketParams;
     using SharesMathLib for uint256;
     using Math for uint256;
 
@@ -184,18 +190,24 @@ contract USD3 is BaseHooksUpgradeable {
 
     /**
      * @dev Get current market liquidity information
-     * @return totalSupplyAssets Total assets supplied to the market
+     * @return totalSupplyAssets Total assets supplied to the market (already reduced by markdown)
      * @return totalShares Total supply shares in the market
      * @return totalBorrowAssets Total assets borrowed from the market
-     * @return waUSDCLiquidity Available liquidity in the market
+     * @return waUSDCLiquidity Available liquidity in the market (accounts for markdown)
      */
     function getMarketLiquidity()
         public
         view
         returns (uint256 totalSupplyAssets, uint256 totalShares, uint256 totalBorrowAssets, uint256 waUSDCLiquidity)
     {
-        (totalSupplyAssets, totalShares, totalBorrowAssets,) = morphoCredit.expectedMarketBalances(_marketParams);
-        waUSDCLiquidity = totalSupplyAssets > totalBorrowAssets ? totalSupplyAssets - totalBorrowAssets : 0;
+        // Use optimized function that fetches market only once and returns markdown as 5th value
+        uint256 totalMarkdownAmount;
+        (totalSupplyAssets, totalShares, totalBorrowAssets,, totalMarkdownAmount) =
+            IMorphoCredit(address(morphoCredit)).expectedMarketBalances(_marketParams);
+
+        // Add markdown back to get effective liquidity (actual tokens still present)
+        uint256 effectiveSupply = totalSupplyAssets + totalMarkdownAmount;
+        waUSDCLiquidity = effectiveSupply > totalBorrowAssets ? effectiveSupply - totalBorrowAssets : 0;
     }
 
     /**
