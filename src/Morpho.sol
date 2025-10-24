@@ -222,7 +222,7 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         market[id].totalSupplyShares -= shares.toUint128();
         market[id].totalSupplyAssets -= assets.toUint128();
 
-        if (market[id].totalBorrowAssets > market[id].totalSupplyAssets) revert ErrorsLib.InsufficientLiquidity();
+        _checkLiquidity(id);
 
         emit EventsLib.Withdraw(id, msg.sender, onBehalf, receiver, assets, shares);
 
@@ -260,7 +260,7 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
         market[id].totalBorrowAssets += assets.toUint128();
 
         if (!_isHealthy(marketParams, id, onBehalf)) revert ErrorsLib.InsufficientCollateral();
-        if (market[id].totalBorrowAssets > market[id].totalSupplyAssets) revert ErrorsLib.InsufficientLiquidity();
+        _checkLiquidity(id);
 
         emit EventsLib.Borrow(id, msg.sender, onBehalf, receiver, assets, shares);
 
@@ -458,6 +458,13 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
     /// @param onBehalf The address whose debt was repaid.
     /// @param assets The amount of assets repaid.
     function _afterRepay(MarketParams memory marketParams, Id id, address onBehalf, uint256 assets) internal virtual {}
+
+    /// @dev Hook to check liquidity for withdraw and borrow operations.
+    /// @param id The market id.
+    /// @dev Override this in derived contracts to implement custom liquidity checks (e.g., accounting for markdown).
+    function _checkLiquidity(Id id) internal view virtual {
+        if (market[id].totalBorrowAssets > market[id].totalSupplyAssets) revert ErrorsLib.InsufficientLiquidity();
+    }
 
     /* STORAGE VIEW */
 
