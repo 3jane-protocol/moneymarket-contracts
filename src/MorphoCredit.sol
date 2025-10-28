@@ -211,7 +211,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @param borrower Borrower address
     /// @param status Current repayment status
-    /// @param borrowAssetsCurrent Current borrow assets after base accrual
+    /// @param borrowAssets Current borrow assets after base accrual and premiums applied
     /// @return penaltyAmount The calculated penalty amount
     /// @dev Penalty calculation logic:
     /// 1. Only applies if status is Delinquent or Default
@@ -219,7 +219,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// 3. Uses ending balance from obligation as the principal
     /// 4. Calculates premium from cycle end date to now to ensure time period consistency
     /// 5. Applies penalty rate on top of base + premium growth from cycle end
-    function _calculateInitialPenalty(Id id, address borrower, RepaymentStatus status, uint256 borrowAssetsCurrent)
+    function _calculateInitialPenalty(Id id, address borrower, RepaymentStatus status, uint256 borrowAssets)
         internal
         view
         returns (uint256 penaltyAmount)
@@ -242,22 +242,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             elapsed = MAX_ELAPSED_TIME;
         }
 
-        // Calculate premium from cycleEndDate to now to ensure time period consistency
-        // between the elapsed time and the premium calculation
-        uint256 premiumFromCycleEnd = 0;
-        if (premium.rate > 0) {
-            // Calculate what the premium would be if accrued from cycle end
-            premiumFromCycleEnd =
-                _calculateBorrowerPremiumAmount(obligation.endingBalance, borrowAssetsCurrent, premium.rate, elapsed);
-        }
-
         // Now calculate penalty with the correctly-scoped premium
-        penaltyAmount = _calculateBorrowerPremiumAmount(
-            obligation.endingBalance,
-            borrowAssetsCurrent + premiumFromCycleEnd, // Use premium from cycle end only
-            terms.irp,
-            elapsed
-        );
+        penaltyAmount = _calculateBorrowerPremiumAmount(obligation.endingBalance, borrowAssets, terms.irp, elapsed);
     }
 
     /// @dev Update position and market with premium shares
@@ -317,7 +303,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 premiumAmount = _calculateOngoingPremiumAndPenalty(id, borrower, premium, status, borrowAssetsCurrent);
 
         // Calculate penalty if needed (handles first penalty accrual)
-        uint256 penaltyAmount = _calculateInitialPenalty(id, borrower, status, borrowAssetsCurrent);
+        uint256 penaltyAmount = _calculateInitialPenalty(id, borrower, status, borrowAssetsCurrent + premiumAmount);
 
         uint256 totalPremium = premiumAmount + penaltyAmount;
 
