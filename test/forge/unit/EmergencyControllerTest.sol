@@ -15,12 +15,21 @@ import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 // Mock contracts for testing
 contract MockMorphoCredit {
     address public protocolConfig;
+    mapping(Id => mapping(address => uint128)) public borrowerDrp;
 
     constructor(address _protocolConfig) {
         protocolConfig = _protocolConfig;
     }
 
-    function setCreditLine(Id, address, uint256, uint128) external {}
+    function setCreditLine(Id id, address borrower, uint256, uint128 drp) external {
+        borrowerDrp[id][borrower] = drp;
+    }
+
+    function borrowerPremium(Id id, address borrower) external view returns (uint128, uint128, uint128) {
+        // Return mock data: (lastAccrualTime, rate, borrowAssetsAtLastAccrual)
+        return (uint128(block.timestamp), borrowerDrp[id][borrower], 0);
+    }
+
     function closeCycleAndPostObligations(Id, uint256, address[] calldata, uint256[] calldata, uint256[] calldata)
         external {}
     function addObligationsToLatestCycle(Id, address[] calldata, uint256[] calldata, uint256[] calldata) external {}
@@ -189,7 +198,7 @@ contract EmergencyControllerTest is Test {
 
     function test_EmergencyStopDeployments_EmitsEvent() public {
         vm.expectEmit(true, false, false, true);
-        emit EmergencyController.DeploymentsStopped(emergencyMultisig);
+        emit EmergencyController.USD3DeploymentsStopped(emergencyMultisig);
 
         vm.prank(emergencyMultisig);
         emergencyController.emergencyStopDeployments();
@@ -246,6 +255,40 @@ contract EmergencyControllerTest is Test {
 
         vm.prank(emergencyMultisig);
         emergencyController.emergencyRevokeCreditLine(marketId, borrower);
+    }
+
+    function test_EmergencyRevokeCreditLine_PreservesDRP() public {
+        Id marketId = Id.wrap(bytes32(uint256(1)));
+        address borrower = makeAddr("Borrower");
+        uint128 originalDrp = 500; // 5% APR in bps
+
+        // Set initial credit line with DRP
+        Id[] memory ids = new Id[](1);
+        address[] memory borrowers = new address[](1);
+        uint256[] memory vv = new uint256[](1);
+        uint256[] memory credit = new uint256[](1);
+        uint128[] memory drp = new uint128[](1);
+
+        ids[0] = marketId;
+        borrowers[0] = borrower;
+        vv[0] = 1000 ether;
+        credit[0] = 500 ether;
+        drp[0] = originalDrp;
+
+        vm.prank(address(emergencyController)); // OZD can call setCreditLines
+        creditLine.setCreditLines(ids, borrowers, vv, credit, drp);
+
+        // Verify initial DRP is set
+        (, uint128 currentDrp,) = mockMorpho.borrowerPremium(marketId, borrower);
+        assertEq(currentDrp, originalDrp, "Initial DRP not set correctly");
+
+        // Revoke credit line
+        vm.prank(emergencyMultisig);
+        emergencyController.emergencyRevokeCreditLine(marketId, borrower);
+
+        // Verify DRP is preserved after revocation
+        (, uint128 drpAfterRevoke,) = mockMorpho.borrowerPremium(marketId, borrower);
+        assertEq(drpAfterRevoke, originalDrp, "DRP should be preserved after credit revocation");
     }
 
     // ============ Integration Tests ============

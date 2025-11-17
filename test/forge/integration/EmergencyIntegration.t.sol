@@ -25,6 +25,11 @@ contract MockMorphoCredit {
         drpRates[id][borrower] = drp;
     }
 
+    function borrowerPremium(Id id, address borrower) external view returns (uint128, uint128, uint128) {
+        // Return mock data: (lastAccrualTime, rate, borrowAssetsAtLastAccrual)
+        return (uint128(block.timestamp), drpRates[id][borrower], 0);
+    }
+
     function closeCycleAndPostObligations(Id, uint256, address[] calldata, uint256[] calldata, uint256[] calldata)
         external {}
 

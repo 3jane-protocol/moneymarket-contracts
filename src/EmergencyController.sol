@@ -12,6 +12,13 @@ interface IProtocolConfigEmergency {
     function setEmergencyConfig(bytes32 key, uint256 value) external;
 }
 
+interface IMorphoCredit {
+    function borrowerPremium(Id id, address borrower)
+        external
+        view
+        returns (uint128 lastAccrualTime, uint128 rate, uint128 borrowAssetsAtLastAccrual);
+}
+
 /// @title EmergencyController
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
@@ -27,7 +34,7 @@ contract EmergencyController is Ownable {
     // Custom events
     event EmergencyPauseActivated(address indexed executor);
     event BorrowingStopped(address indexed executor);
-    event DeploymentsStopped(address indexed executor);
+    event USD3DeploymentsStopped(address indexed executor);
     event DepositsStopped(address indexed executor);
     event CreditLineRevoked(address indexed borrower, address indexed executor);
 
@@ -71,7 +78,7 @@ contract EmergencyController is Ownable {
     /// @dev Does NOT affect existing deployed funds or borrower credit lines
     function emergencyStopDeployments() external onlyOwner {
         protocolConfig.setEmergencyConfig(ProtocolConfigLib.MAX_ON_CREDIT, 0);
-        emit DeploymentsStopped(msg.sender);
+        emit USD3DeploymentsStopped(msg.sender);
     }
 
     /// @notice Stop all new deposits to USD3
@@ -87,8 +94,13 @@ contract EmergencyController is Ownable {
     /// @param id Market ID
     /// @param borrower Address to revoke credit from
     /// @dev Sets the borrower's credit line to 0, preventing further borrowing
+    /// @dev Preserves the borrower's existing DRP rate so they continue paying risk premium on existing debt
     function emergencyRevokeCreditLine(Id id, address borrower) external onlyOwner {
         if (borrower == address(0)) revert ErrorsLib.ZeroAddress();
+
+        // Query the borrower's current DRP to preserve it
+        address morpho = creditLine.MORPHO();
+        (, uint128 currentDrp,) = IMorphoCredit(morpho).borrowerPremium(id, borrower);
 
         Id[] memory ids = new Id[](1);
         address[] memory borrowers = new address[](1);
@@ -100,7 +112,7 @@ contract EmergencyController is Ownable {
         borrowers[0] = borrower;
         vv[0] = 1; // Set minimal vv to avoid division by zero in LTV check
         credit[0] = 0; // Revoke credit
-        drp[0] = 0;
+        drp[0] = currentDrp; // Preserve existing DRP rate
 
         creditLine.setCreditLines(ids, borrowers, vv, credit, drp);
         emit CreditLineRevoked(borrower, msg.sender);
