@@ -17,6 +17,10 @@ library ProtocolConfigLib {
     bytes32 internal constant GRACE_PERIOD = keccak256("GRACE_PERIOD");
 
     // Interest Rate Keys
+    bytes32 internal constant CURVE_STEEPNESS = keccak256("CURVE_STEEPNESS");
+    bytes32 internal constant ADJUSTMENT_SPEED = keccak256("ADJUSTMENT_SPEED");
+    bytes32 internal constant TARGET_UTILIZATION = keccak256("TARGET_UTILIZATION");
+    bytes32 internal constant INITIAL_RATE_AT_TARGET = keccak256("INITIAL_RATE_AT_TARGET");
     bytes32 internal constant MIN_RATE_AT_TARGET = keccak256("MIN_RATE_AT_TARGET");
     bytes32 internal constant MAX_RATE_AT_TARGET = keccak256("MAX_RATE_AT_TARGET");
 
