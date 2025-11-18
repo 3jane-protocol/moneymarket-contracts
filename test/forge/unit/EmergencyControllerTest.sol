@@ -138,90 +138,79 @@ contract EmergencyControllerTest is Test {
         assertEq(controller.owner(), emergencyMultisig);
     }
 
-    // ============ Emergency Pause Tests ============
+    // ============ setConfig Tests ============
 
-    function test_EmergencyPause_OnlyOwner() public {
+    function test_SetConfig_Pause_OnlyOwner() public {
         // Emergency multisig can pause
         vm.prank(emergencyMultisig);
-        emergencyController.emergencyPause();
+        emergencyController.setConfig(IS_PAUSED, 1);
         assertEq(protocolConfig.config(IS_PAUSED), 1);
 
         // Random user cannot pause
         vm.prank(randomUser);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", randomUser));
-        emergencyController.emergencyPause();
+        emergencyController.setConfig(IS_PAUSED, 1);
     }
 
-    function test_EmergencyPause_EmitsEvent() public {
-        vm.expectEmit(true, false, false, true);
-        emit EmergencyController.EmergencyPauseActivated(emergencyMultisig);
-
+    function test_SetConfig_Pause_OnlyOne() public {
+        // Can set to 1 (pause)
         vm.prank(emergencyMultisig);
-        emergencyController.emergencyPause();
+        emergencyController.setConfig(IS_PAUSED, 1);
+        assertEq(protocolConfig.config(IS_PAUSED), 1);
+
+        // Cannot set to 0 (unpause)
+        vm.prank(emergencyMultisig);
+        vm.expectRevert(ProtocolConfig.EmergencyCanOnlyPause.selector);
+        emergencyController.setConfig(IS_PAUSED, 0);
+
+        // Cannot set to other values
+        vm.prank(emergencyMultisig);
+        vm.expectRevert(ProtocolConfig.EmergencyCanOnlyPause.selector);
+        emergencyController.setConfig(IS_PAUSED, 2);
     }
 
-    // ============ Emergency Stop Borrowing Tests ============
-
-    function test_EmergencyStopBorrowing_OnlyOwner() public {
-        // Emergency multisig can stop borrowing
+    function test_SetConfig_DebtCap_OnlyZero() public {
+        // Can set to 0 (stop borrowing)
         vm.prank(emergencyMultisig);
-        emergencyController.emergencyStopBorrowing();
+        emergencyController.setConfig(DEBT_CAP, 0);
         assertEq(protocolConfig.config(DEBT_CAP), 0);
 
-        // Random user cannot stop borrowing
-        vm.prank(randomUser);
-        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", randomUser));
-        emergencyController.emergencyStopBorrowing();
+        // Cannot set to non-zero
+        vm.prank(emergencyMultisig);
+        vm.expectRevert(ProtocolConfig.EmergencyCanOnlySetToZero.selector);
+        emergencyController.setConfig(DEBT_CAP, 1000);
     }
 
-    function test_EmergencyStopBorrowing_EmitsEvent() public {
-        vm.expectEmit(true, false, false, true);
-        emit EmergencyController.BorrowingStopped(emergencyMultisig);
-
+    function test_SetConfig_MaxOnCredit_OnlyZero() public {
+        // Can set to 0 (stop deployments)
         vm.prank(emergencyMultisig);
-        emergencyController.emergencyStopBorrowing();
-    }
-
-    // ============ Emergency Stop Credit Tests ============
-
-    function test_EmergencyStopDeployments_OnlyOwner() public {
-        // Emergency multisig can stop credit
-        vm.prank(emergencyMultisig);
-        emergencyController.emergencyStopDeployments();
+        emergencyController.setConfig(MAX_ON_CREDIT, 0);
         assertEq(protocolConfig.config(MAX_ON_CREDIT), 0);
 
-        // Random user cannot stop credit
-        vm.prank(randomUser);
-        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", randomUser));
-        emergencyController.emergencyStopDeployments();
+        // Cannot set to non-zero
+        vm.prank(emergencyMultisig);
+        vm.expectRevert(ProtocolConfig.EmergencyCanOnlySetToZero.selector);
+        emergencyController.setConfig(MAX_ON_CREDIT, 1 ether);
     }
 
-    function test_EmergencyStopDeployments_EmitsEvent() public {
-        vm.expectEmit(true, false, false, true);
-        emit EmergencyController.USD3DeploymentsStopped(emergencyMultisig);
-
+    function test_SetConfig_SupplyCap_OnlyZero() public {
+        // Can set to 0 (stop deposits)
         vm.prank(emergencyMultisig);
-        emergencyController.emergencyStopDeployments();
-    }
-
-    // ============ Emergency Stop Deposits Tests ============
-
-    function test_EmergencyStopUsd3Deposits_OnlyOwner() public {
-        vm.prank(emergencyMultisig);
-        emergencyController.emergencyStopUsd3Deposits();
+        emergencyController.setConfig(USD3_SUPPLY_CAP, 0);
         assertEq(protocolConfig.config(USD3_SUPPLY_CAP), 0);
 
-        vm.prank(randomUser);
-        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", randomUser));
-        emergencyController.emergencyStopUsd3Deposits();
+        // Cannot set to non-zero
+        vm.prank(emergencyMultisig);
+        vm.expectRevert(ProtocolConfig.EmergencyCanOnlySetToZero.selector);
+        emergencyController.setConfig(USD3_SUPPLY_CAP, 1000000);
     }
 
-    function test_EmergencyStopDeposits_EmitsEvent() public {
-        vm.expectEmit(true, false, false, true);
-        emit EmergencyController.DepositsStopped(emergencyMultisig);
-
+    function test_SetConfig_UnauthorizedParameter() public {
+        // Cannot set non-emergency parameters
+        bytes32 randomParam = keccak256("RANDOM_PARAM");
         vm.prank(emergencyMultisig);
-        emergencyController.emergencyStopUsd3Deposits();
+        vm.expectRevert(ProtocolConfig.UnauthorizedEmergencyConfig.selector);
+        emergencyController.setConfig(randomParam, 0);
     }
 
     // ============ Credit Line Revocation Tests ============
@@ -299,15 +288,15 @@ contract EmergencyControllerTest is Test {
         vm.startPrank(emergencyMultisig);
 
         // 1. Pause the protocol
-        emergencyController.emergencyPause();
+        emergencyController.setConfig(IS_PAUSED, 1);
         assertEq(protocolConfig.config(IS_PAUSED), 1);
 
         // 2. Stop all borrowing
-        emergencyController.emergencyStopBorrowing();
+        emergencyController.setConfig(DEBT_CAP, 0);
         assertEq(protocolConfig.config(DEBT_CAP), 0);
 
         // 3. Stop USD3 deposits
-        emergencyController.emergencyStopUsd3Deposits();
+        emergencyController.setConfig(USD3_SUPPLY_CAP, 0);
         assertEq(protocolConfig.config(USD3_SUPPLY_CAP), 0);
 
         // 4. Revoke suspicious borrower's credit line

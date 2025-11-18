@@ -223,9 +223,9 @@ contract EmergencyIntegration is Test {
         vm.startPrank(emergencyMultisig);
 
         // Immediate response - no delay needed
-        emergencyController.emergencyPause();
-        emergencyController.emergencyStopBorrowing();
-        emergencyController.emergencyStopUsd3Deposits();
+        emergencyController.setConfig(IS_PAUSED, 1);
+        emergencyController.setConfig(DEBT_CAP, 0);
+        emergencyController.setConfig(USD3_SUPPLY_CAP, 0);
 
         // Revoke credit line of compromised account
         Id marketId = Id.wrap(bytes32(uint256(1)));
@@ -266,10 +266,10 @@ contract EmergencyIntegration is Test {
         vm.startPrank(emergencyMultisig); // Simulating compromised multisig
 
         // Attacker can only make protocol MORE restrictive
-        emergencyController.emergencyPause();
-        emergencyController.emergencyStopBorrowing();
-        emergencyController.emergencyStopDeployments();
-        emergencyController.emergencyStopUsd3Deposits();
+        emergencyController.setConfig(IS_PAUSED, 1);
+        emergencyController.setConfig(DEBT_CAP, 0);
+        emergencyController.setConfig(MAX_ON_CREDIT, 0);
+        emergencyController.setConfig(USD3_SUPPLY_CAP, 0);
 
         // Attacker CANNOT unpause or raise limits
         // These would fail if EmergencyController tried them
@@ -339,7 +339,7 @@ contract EmergencyIntegration is Test {
 
         // Emergency: Stop new borrowing but allow withdrawals
         vm.prank(emergencyMultisig);
-        emergencyController.emergencyStopBorrowing();
+        emergencyController.setConfig(DEBT_CAP, 0);
 
         // Verify selective restriction
         assertEq(protocolConfig.config(IS_PAUSED), 0); // Not paused
@@ -348,7 +348,7 @@ contract EmergencyIntegration is Test {
 
         // Later, also stop deposits if needed
         vm.prank(emergencyMultisig);
-        emergencyController.emergencyStopUsd3Deposits();
+        emergencyController.setConfig(USD3_SUPPLY_CAP, 0);
 
         assertEq(protocolConfig.config(USD3_SUPPLY_CAP), 0);
     }
@@ -366,7 +366,7 @@ contract EmergencyIntegration is Test {
         // Community detects the malicious transaction
         // Emergency multisig immediately pauses protocol
         vm.prank(emergencyMultisig);
-        emergencyController.emergencyPause();
+        emergencyController.setConfig(IS_PAUSED, 1);
 
         // Protocol is protected during the 2-day timelock period
         assertEq(protocolConfig.config(IS_PAUSED), 1);

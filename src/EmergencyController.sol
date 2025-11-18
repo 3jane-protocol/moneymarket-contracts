@@ -23,19 +23,15 @@ interface IMorphoCredit {
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
 /// @notice Emergency controller for immediate protocol safety actions
-/// @dev Provides binary stop controls and credit line revocation capabilities
-/// @dev Key emergency actions:
-/// - Pause protocol: Stops all borrowing operations
-/// - Stop borrowing: Sets DEBT_CAP to 0
-/// - Stop deployments: Sets MAX_ON_CREDIT to 0 (prevents USD3 from deploying to MorphoCredit)
-/// - Stop deposits: Sets USD3_SUPPLY_CAP to 0
-/// - Revoke credit: Remove individual borrower's credit line
+/// @dev Provides binary stop controls via setConfig() and credit line revocation
+/// @dev setConfig() enforces binary constraints through ProtocolConfig.setEmergencyConfig():
+/// - IS_PAUSED: Can only be set to 1 (pause protocol)
+/// - DEBT_CAP: Can only be set to 0 (stop new borrowing)
+/// - MAX_ON_CREDIT: Can only be set to 0 (stop USD3 deployments to MorphoCredit)
+/// - USD3_SUPPLY_CAP: Can only be set to 0 (stop new deposits)
+/// @dev emergencyRevokeCreditLine() removes individual borrower's credit line while preserving DRP
 contract EmergencyController is Ownable {
     // Custom events
-    event EmergencyPauseActivated(address indexed executor);
-    event BorrowingStopped(address indexed executor);
-    event USD3DeploymentsStopped(address indexed executor);
-    event DepositsStopped(address indexed executor);
     event CreditLineRevoked(address indexed borrower, address indexed executor);
 
     /// @notice Address of the ProtocolConfig contract
@@ -58,34 +54,12 @@ contract EmergencyController is Ownable {
 
     // ============ Emergency Stop Functions ============
 
-    /// @notice Pause the entire protocol
-    /// @dev Sets IS_PAUSED = 1, preventing all borrowing operations
-    function emergencyPause() external onlyOwner {
-        protocolConfig.setEmergencyConfig(ProtocolConfigLib.IS_PAUSED, 1);
-        emit EmergencyPauseActivated(msg.sender);
-    }
-
-    /// @notice Stop all new borrowing
-    /// @dev Sets DEBT_CAP = 0, preventing new borrows
-    function emergencyStopBorrowing() external onlyOwner {
-        protocolConfig.setEmergencyConfig(ProtocolConfigLib.DEBT_CAP, 0);
-        emit BorrowingStopped(msg.sender);
-    }
-
-    /// @notice Stop USD3 deployments to MorphoCredit markets
-    /// @dev Sets MAX_ON_CREDIT = 0, preventing USD3 strategy from deploying funds to credit markets
-    /// @dev This protects lenders by keeping funds in the strategy rather than lending them out
-    /// @dev Does NOT affect existing deployed funds or borrower credit lines
-    function emergencyStopDeployments() external onlyOwner {
-        protocolConfig.setEmergencyConfig(ProtocolConfigLib.MAX_ON_CREDIT, 0);
-        emit USD3DeploymentsStopped(msg.sender);
-    }
-
-    /// @notice Stop all new deposits to USD3
-    /// @dev Sets USD3_SUPPLY_CAP = 0, preventing new deposits
-    function emergencyStopUsd3Deposits() external onlyOwner {
-        protocolConfig.setEmergencyConfig(ProtocolConfigLib.USD3_SUPPLY_CAP, 0);
-        emit DepositsStopped(msg.sender);
+    /// @notice Set emergency configuration with binary constraints
+    /// @param key Configuration key (IS_PAUSED, DEBT_CAP, MAX_ON_CREDIT, USD3_SUPPLY_CAP)
+    /// @param value Configuration value (binary constraints enforced by ProtocolConfig)
+    /// @dev IS_PAUSED can only be set to 1, others can only be set to 0
+    function setConfig(bytes32 key, uint256 value) external onlyOwner {
+        protocolConfig.setEmergencyConfig(key, value);
     }
 
     // ============ Credit Line Control ============
