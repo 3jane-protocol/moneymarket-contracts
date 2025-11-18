@@ -2,22 +2,13 @@
 pragma solidity ^0.8.18;
 
 import {Id, MarketParams} from "./interfaces/IMorpho.sol";
+import {IMorphoCredit} from "./interfaces/IMorpho.sol";
 import {ICreditLine} from "./interfaces/ICreditLine.sol";
+import {IProtocolConfig} from "./interfaces/IProtocolConfig.sol";
 import {CreditLine} from "./CreditLine.sol";
 import {Ownable} from "../lib/openzeppelin/contracts/access/Ownable.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {ProtocolConfigLib} from "./libraries/ProtocolConfigLib.sol";
-
-interface IProtocolConfigEmergency {
-    function setEmergencyConfig(bytes32 key, uint256 value) external;
-}
-
-interface IMorphoCredit {
-    function borrowerPremium(Id id, address borrower)
-        external
-        view
-        returns (uint128 lastAccrualTime, uint128 rate, uint128 borrowAssetsAtLastAccrual);
-}
 
 /// @title EmergencyController
 /// @author 3Jane
@@ -35,7 +26,7 @@ contract EmergencyController is Ownable {
     event CreditLineRevoked(address indexed borrower, address indexed executor);
 
     /// @notice Address of the ProtocolConfig contract
-    IProtocolConfigEmergency public immutable protocolConfig;
+    IProtocolConfig public immutable protocolConfig;
 
     /// @notice Address of the CreditLine contract
     ICreditLine public immutable creditLine;
@@ -48,7 +39,7 @@ contract EmergencyController is Ownable {
         if (_protocolConfig == address(0) || _creditLine == address(0) || _owner == address(0)) {
             revert ErrorsLib.ZeroAddress();
         }
-        protocolConfig = IProtocolConfigEmergency(_protocolConfig);
+        protocolConfig = IProtocolConfig(_protocolConfig);
         creditLine = ICreditLine(_creditLine);
     }
 
