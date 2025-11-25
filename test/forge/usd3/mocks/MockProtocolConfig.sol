@@ -60,6 +60,11 @@ contract MockProtocolConfig is IProtocolConfig {
         config[key] = value;
     }
 
+    function setEmergencyConfig(bytes32 key, uint256 value) external {
+        require(msg.sender == owner, "Not owner");
+        config[key] = value;
+    }
+
     function getIsPaused() external view returns (uint256) {
         return config[IS_PAUSED];
     }

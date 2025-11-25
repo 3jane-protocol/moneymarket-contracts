@@ -50,6 +50,11 @@ interface IProtocolConfig {
     /// @param value The configuration value
     function setConfig(bytes32 key, uint256 value) external;
 
+    /// @dev Set emergency configuration with binary constraints
+    /// @param key The configuration key (IS_PAUSED, DEBT_CAP, MAX_ON_CREDIT, USD3_SUPPLY_CAP)
+    /// @param value The configuration value (binary constraints enforced)
+    function setEmergencyConfig(bytes32 key, uint256 value) external;
+
     // Credit Line getters
     /// @dev Get the credit line parameters
     /// @return The credit line parameters

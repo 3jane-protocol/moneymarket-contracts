@@ -106,16 +106,16 @@ contract AdaptiveCurveIrmTest is Test {
         vm.startPrank(OWNER);
         // IRM configurations
         protocolConfig.setConfig(keccak256("CURVE_STEEPNESS"), uint256(ConstantsLib.CURVE_STEEPNESS)); // 4 curve
-            // steepness
+        // steepness
         protocolConfig.setConfig(keccak256("ADJUSTMENT_SPEED"), uint256(ConstantsLib.ADJUSTMENT_SPEED));
         protocolConfig.setConfig(keccak256("TARGET_UTILIZATION"), uint256(ConstantsLib.TARGET_UTILIZATION)); // 90%
-            // target utilization
+        // target utilization
         protocolConfig.setConfig(keccak256("INITIAL_RATE_AT_TARGET"), uint256(ConstantsLib.INITIAL_RATE_AT_TARGET)); // 4%
-            // initial rate
+        // initial rate
         protocolConfig.setConfig(keccak256("MIN_RATE_AT_TARGET"), uint256(ConstantsLib.MIN_RATE_AT_TARGET)); // 0.1%
-            // minimum rate
+        // minimum rate
         protocolConfig.setConfig(keccak256("MAX_RATE_AT_TARGET"), uint256(ConstantsLib.MAX_RATE_AT_TARGET)); // 200%
-            // maximum rate
+        // maximum rate
 
         vm.stopPrank();
     }
