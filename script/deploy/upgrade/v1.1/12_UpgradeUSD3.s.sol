@@ -3,8 +3,6 @@ pragma solidity 0.8.22;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
-import {Upgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
-import {Options} from "openzeppelin-foundry-upgrades/Options.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
 
 /**

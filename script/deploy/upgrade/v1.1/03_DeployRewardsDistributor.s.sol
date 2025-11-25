@@ -37,29 +37,19 @@ contract DeployRewardsDistributor is Script {
             useMint = mint;
         } catch {}
 
-        // Maximum amount of JANE that can be minted during phase 1 LM program
-        uint256 maxLMMintable;
-        try vm.envUint("MAX_LM_MINTABLE") returns (uint256 max) {
-            maxLMMintable = max;
-        } catch {
-            maxLMMintable = 100_000_000e18; // Default: 100M JANE
-        }
-
         console.log("Deploying RewardsDistributor...");
         console.log("  Owner:", owner);
         console.log("  Jane:", jane);
         console.log("  Use mint mode:", useMint);
         console.log("  Epoch 0 start:", epochStart);
-        console.log("  Max LM mintable:", maxLMMintable / 1e18, "JANE");
 
         vm.startBroadcast();
 
-        RewardsDistributor rewardsDistributor = new RewardsDistributor(
+        RewardsDistributor rewardsDistributor = new RewardsDistributor{salt: bytes32("3jane")}(
             owner, // initialOwner
             jane, // jane token address
             useMint, // use mint mode
-            epochStart, // epoch 0 start timestamp (7-day epochs)
-            maxLMMintable // maximum mintable for phase 1 LM program
+            epochStart // epoch 0 start timestamp (7-day epochs)
         );
 
         console.log("RewardsDistributor deployed at:", address(rewardsDistributor));

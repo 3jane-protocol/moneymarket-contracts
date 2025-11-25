@@ -16,10 +16,8 @@ import {UpgradeIRM} from "./11_UpgradeIRM.s.sol";
 import {UpgradeUSD3} from "./12_UpgradeUSD3.s.sol";
 import {UpgradeSUSD3} from "./13_UpgradeSUSD3.s.sol";
 
-// Phase 3: Configure contracts
-import {ConfigureJane} from "./20_ConfigureJane.s.sol";
-import {ConfigureMorphoCredit} from "./21_ConfigureMorphoCredit.s.sol";
-import {ConfigureProtocolConfig} from "./22_ConfigureProtocolConfig.s.sol";
+// Phase 3: Configure contracts - MUST be done via Safe multisig
+// Use script/operations/ConfigureV1_1Safe.s.sol instead of direct execution
 
 /**
  * @title DeployV1_1Upgrade
@@ -28,11 +26,13 @@ import {ConfigureProtocolConfig} from "./22_ConfigureProtocolConfig.s.sol";
  *
  *      Execution Phases:
  *      Phase 1: Deploy new contracts (Jane, MarkdownController, RewardsDistributor, HelperV2)
- *      Phase 2: Upgrade existing contracts (MorphoCredit, IRM, USD3, sUSD3)
- *      Phase 3: Configure contracts (Jane roles, MorphoCredit helper, ProtocolConfig)
+ *      Phase 2: Deploy new implementations (MorphoCredit, IRM, USD3, sUSD3)
+ *      Phase 3: Configure contracts via Safe multisig (use ConfigureV1_1Safe.s.sol)
  *
- *      ⚠️ CRITICAL: After running this script, execute USD3MultisigBatch separately
- *                   to generate the atomic multisig transaction for USD3 upgrade.
+ *      ⚠️ CRITICAL:
+ *      - This script only executes Phase 1 & 2 (deployments)
+ *      - Phase 3 MUST be done via Safe multisig using script/operations/ConfigureV1_1Safe.s.sol
+ *      - Phase 4-7 (upgrades) go through TimelockController via Safe multisig
  *
  *      Environment Variables Required:
  *      - OWNER_ADDRESS: Protocol owner address
@@ -138,32 +138,37 @@ contract DeployV1_1Upgrade is Script {
         console.log("");
 
         // ====================================================================
-        // PHASE 3: CONFIGURE CONTRACTS
+        // PHASE 3: CONFIGURE CONTRACTS (VIA SAFE MULTISIG)
         // ====================================================================
         console.log("========================================");
         console.log("PHASE 3: CONFIGURE CONTRACTS");
         console.log("========================================");
         console.log("");
-
-        console.log("1/3: Configuring Jane token...");
-        ConfigureJane configureJane = new ConfigureJane();
-        configureJane.run();
-        console.log("  Jane configuration complete");
+        console.log(unicode"⚠️  IMPORTANT: Phase 3 configuration MUST be done via Safe multisig");
         console.log("");
-
-        console.log("2/3: Configuring MorphoCredit...");
-        ConfigureMorphoCredit configureMorphoCredit = new ConfigureMorphoCredit();
-        configureMorphoCredit.run();
-        console.log("  MorphoCredit configuration complete");
+        console.log("This orchestration script ONLY deploys new contracts (Phase 1)");
+        console.log("and new implementations (Phase 2).");
         console.log("");
-
-        console.log("3/3: Configuring ProtocolConfig...");
-        ConfigureProtocolConfig configureProtocolConfig = new ConfigureProtocolConfig();
-        configureProtocolConfig.run();
-        console.log("  ProtocolConfig configuration complete");
+        console.log("Phase 3 configuration modifies existing protocol state and");
+        console.log("requires multisig approval for security.");
         console.log("");
-
-        console.log("Phase 3 complete");
+        console.log("To execute Phase 3 configuration:");
+        console.log("  1. Run simulation:");
+        console.log("     yarn script:forge script/operations/ConfigureV1_1Safe.s.sol \\");
+        console.log("       --sig \"run(bool)\" false --sender $OWNER_ADDRESS");
+        console.log("");
+        console.log("  2. Propose to Safe:");
+        console.log("     yarn script:forge script/operations/ConfigureV1_1Safe.s.sol \\");
+        console.log("       --sig \"run(bool)\" true --sender $OWNER_ADDRESS --broadcast");
+        console.log("");
+        console.log("  3. Approve in Safe UI");
+        console.log("  4. Execute once threshold reached");
+        console.log("");
+        console.log("Phase 3 will batch 10 operations atomically:");
+        console.log("  - Jane: Grant MINTER_ROLE, set MarkdownController, transfer ownership (x2)");
+        console.log("  - MorphoCredit: Set HelperV2");
+        console.log("  - CreditLine: Set MarkdownController");
+        console.log("  - ProtocolConfig: Set 4 configuration values");
         console.log("");
 
         // ====================================================================
@@ -200,66 +205,54 @@ contract DeployV1_1Upgrade is Script {
         console.log("  Min delay: 2 days");
         console.log("");
 
-        console.log("=== STEP 1: SCHEDULE UPGRADES (via Safe multisig) ===");
+        console.log("=== RECOMMENDED APPROACH: Combined Scripts ===");
         console.log("");
-        console.log("1a. Schedule MorphoCredit upgrade:");
-        console.log("  yarn script:forge script/operations/ScheduleMorphoCreditUpgrade.s.sol \\");
-        console.log("    --sig \"run(address,bool)\" \\");
-        console.log("    ", deployed.morphoCreditImpl, "false");
-        console.log("");
-
-        console.log("1b. Schedule IRM upgrade:");
-        console.log("  yarn script:forge script/operations/ScheduleIRMUpgrade.s.sol \\");
-        console.log("    --sig \"run(address,bool)\" \\");
-        console.log("    ", deployed.irmImpl, "false");
-        console.log("");
-
-        console.log("1c. Schedule USD3 ATOMIC BATCH (8 operations):");
-        console.log("  CRITICAL: All 8 operations execute atomically!");
-        console.log("  yarn script:forge script/operations/ScheduleUSD3AtomicBatch.s.sol \\");
-        console.log("    --sig \"run(address,uint16,uint256,bool)\" \\");
-        console.log("    ", deployed.usd3Impl, "<prevFee> <prevUnlockTime> false");
-        console.log("  Batch operations:");
-        console.log("    1. setPerformanceFee(0)");
-        console.log("    2. setProfitMaxUnlockTime(0)");
-        console.log("    3. report() [BEFORE upgrade]");
-        console.log("    4. ProxyAdmin.upgrade()");
-        console.log("    5. reinitialize()");
-        console.log("    6. report() [AFTER reinitialize]");
-        console.log("    7. syncTrancheShare()");
-        console.log("    8. setPerformanceFee(prevFee)");
-        console.log("");
-
-        console.log("=== STEP 2: WAIT FOR TIMELOCK DELAY ===");
-        console.log("");
-        console.log("Wait 2 days (172800 seconds) after scheduling");
-        console.log("");
-
-        console.log("=== STEP 3: EXECUTE UPGRADES (anyone can execute) ===");
-        console.log("");
-        console.log("Use ExecuteTimelockViaSafe.s.sol with operation IDs from Step 1");
-        console.log("  yarn script:forge script/operations/ExecuteTimelockViaSafe.s.sol \\");
-        console.log("    --sig \"run(bytes32,bool)\" \\");
-        console.log("    <operationId> false");
-        console.log("");
-
-        console.log("=== STEP 4: SCHEDULE sUSD3 UPGRADE (AFTER USD3 completes) ===");
-        console.log("");
-        console.log("4a. Schedule sUSD3 upgrade:");
-        console.log("  yarn script:forge script/operations/ScheduleSUSD3Upgrade.s.sol \\");
-        console.log("    --sig \"run(address,bool)\" \\");
+        console.log("STEP 1: Schedule all 4 upgrades at once");
+        console.log("  yarn script:forge script/operations/ScheduleAllUpgrades.s.sol \\");
+        console.log("    --sig \"run(address,address,address,address,bool)\" \\");
+        console.log("    ", deployed.morphoCreditImpl, "\\");
+        console.log("    ", deployed.irmImpl, "\\");
+        console.log("    ", deployed.usd3Impl, "\\");
         console.log("    ", deployed.susd3Impl, "false");
         console.log("");
-        console.log("4b. Wait 2 days");
+        console.log("  Returns: Single operation ID for all 4 upgrades");
         console.log("");
-        console.log("4c. Execute sUSD3 upgrade via ExecuteTimelockViaSafe.s.sol");
+
+        console.log("STEP 2: Wait 2 days (172800 seconds)");
+        console.log("");
+
+        console.log("STEP 3: Execute all 4 upgrades at once");
+        console.log("  yarn script:forge script/operations/ExecuteAllUpgrades.s.sol \\");
+        console.log("    --sig \"run(bytes32,uint256,bool)\" \\");
+        console.log("    <operationId> <prevUnlockTime> false");
+        console.log("");
+        console.log("  This creates a Safe batch with 7 operations:");
+        console.log("    1. USD3.setPerformanceFee(0)");
+        console.log("    2. USD3.setProfitMaxUnlockTime(0)");
+        console.log("    3. USD3.report() [BEFORE upgrade]");
+        console.log("    4. Timelock.executeBatch() -> Upgrades all 4 implementations + USD3.reinitialize()");
+        console.log("    5. USD3.report() [AFTER reinitialize]");
+        console.log("    6. USD3.syncTrancheShare() [Sets performanceFee to TRANCHE_SHARE_VARIANT]");
+        console.log("    7. USD3.setProfitMaxUnlockTime(prevUnlockTime)");
+        console.log("");
+
+        console.log("=== ALTERNATIVE: Individual Scripts ===");
+        console.log("");
+        console.log("For granular control, use individual scheduling/execution scripts:");
+        console.log("  - ScheduleMorphoCreditUpgrade.s.sol");
+        console.log("  - ScheduleIRMUpgrade.s.sol");
+        console.log("  - ScheduleUSD3AtomicBatch.s.sol");
+        console.log("  - ScheduleSUSD3Upgrade.s.sol");
+        console.log("");
+        console.log("See V1_1_DEPLOYMENT_COMMANDS.md for detailed instructions");
         console.log("");
 
         console.log("=== IMPORTANT NOTES ===");
         console.log("");
-        console.log("- Save all operation IDs from scheduling scripts");
+        console.log("- Combined approach: 1 operation ID to track (simpler)");
+        console.log("- Individual approach: 4 operation IDs to track (more control)");
         console.log("- USD3 atomic batch prevents user losses during waUSDC -> USDC migration");
-        console.log("- sUSD3 MUST be upgraded AFTER USD3 completes");
+        console.log("- All 4 implementations upgrade atomically in Safe batch");
         console.log("- Test reference: test/forge/usd3/integration/USD3UpgradeMultisigBatch.t.sol");
         console.log("");
 

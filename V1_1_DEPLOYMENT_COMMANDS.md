@@ -37,11 +37,25 @@
 
 ## Deployment Workflow
 
-### Phase 1: Deploy New Contracts (5 scripts)
+### Phase 1: Deploy New Contracts (4 scripts)
 
 These deploy new immutable contracts. No upgrades involved.
 
 #### 1.1 Deploy Jane Token
+
+**Note:** Jane is deployed via CREATE3 (using CreateX) for deterministic addressing independent of constructor parameters.
+
+**Pre-compute deployment address (optional but recommended):**
+```bash
+# Verify the deployment address before deploying
+yarn script:forge script/compute/ComputeJaneAddress.s.sol
+```
+
+This will display the deterministic address where Jane will be deployed. The address depends only on:
+- `JANE_CREATE3_SALT` - The salt you generated
+- `OWNER_ADDRESS` - The deployer address
+
+The address is independent of constructor parameters (owner, distributor) and contract bytecode.
 
 **Dry Run (Simulation):**
 ```bash
@@ -62,6 +76,9 @@ yarn script:forge script/deploy/upgrade/v1.1/01_DeployJane.s.sol \
 ```bash
 # Copy JANE_ADDRESS from output for use in next scripts
 export JANE_ADDRESS=<address_from_output>
+
+# Verify the deployed address matches the pre-computed address
+echo "Deployed JANE at: $JANE_ADDRESS"
 ```
 
 #### 1.2 Deploy MarkdownController
@@ -108,21 +125,6 @@ yarn script:forge script/deploy/upgrade/v1.1/03_DeployRewardsDistributor.s.sol \
 export REWARDS_DISTRIBUTOR_ADDRESS=<address_from_output>
 ```
 
-#### 1.4 Deploy PYTLocker (Optional)
-
-**Dry Run:**
-```bash
-yarn script:forge script/deploy/upgrade/v1.1/04_DeployPYTLocker.s.sol \
-  --account 3jane-p-deployer \
-  --sender $OWNER_ADDRESS
-```
-
-**Wet Run:**
-```bash
-yarn script:forge script/deploy/upgrade/v1.1/04_DeployPYTLocker.s.sol \
-  --account 3jane-p-deployer \
-  --sender $OWNER_ADDRESS \
-  --broadcast --verify
 ```
 
 #### 1.5 Deploy HelperV2
@@ -243,60 +245,86 @@ export SUSD3_IMPL=<address_from_output>
 
 ---
 
-### Phase 3: Configure Contracts (3 scripts)
+### Phase 3: Configure All Contracts (Single Safe Transaction)
 
-Configure newly deployed contracts with roles and parameters.
+**⚠️ IMPORTANT**: All Phase 3 configuration happens in ONE atomic Safe multisig transaction.
 
-#### 3.1 Configure Jane Token
+This batches 9 operations into a single transaction:
+1. **MorphoCredit & CreditLine (2 operations):**
+   - Set HelperV2 on MorphoCredit
+   - Set MarkdownController on CreditLine
 
-**Dry Run:**
+2. **ProtocolConfig (7 operations):**
+   - Set FULL_MARKDOWN_DURATION (2 years default)
+   - Set TRANCHE_RATIO (10000 = 100% default)
+   - Set MIN_SUSD3_BACKING_RATIO (10000 = 100% default)
+   - Set DEBT_CAP (7M USDC default)
+   - Set USD3_SUPPLY_CAP (50M USDC default)
+   - Set CURVE_STEEPNESS (1.5 default)
+   - Set IRP (10% annual default)
+
+#### Required Environment Variables
+
+Ensure these are set before running:
+- `MARKDOWN_CONTROLLER_ADDRESS` - from step 1.2
+- `HELPER_V2_ADDRESS` - from step 1.5
+- `MORPHO_ADDRESS` - MorphoCredit proxy
+- `CREDIT_LINE_ADDRESS` - CreditLine contract
+- `PROTOCOL_CONFIG` - ProtocolConfig contract
+- `SAFE_ADDRESS` - Safe multisig address
+- `WALLET_TYPE` - "account" or "local"
+- `SAFE_PROPOSER_ACCOUNT` - Foundry account name (if WALLET_TYPE=account)
+
+**Optional (use defaults if not set):**
+- `FULL_MARKDOWN_DURATION` - default: 63072000 (2 years)
+- `SUBORDINATED_DEBT_CAP_BPS` - default: 10000 (100%)
+- `SUBORDINATED_DEBT_FLOOR_BPS` - default: 10000 (100%)
+- `DEBT_CAP` - default: 7000000000000 (7M USDC)
+- `USD3_SUPPLY_CAP` - default: 50000000000000 (50M USDC)
+- `CURVE_STEEPNESS` - default: 1500000000000000000 (1.5)
+- `IRP` - default: 3170979198 (10% annual)
+- `BASE_FEE_LIMIT` - default: 50 (gwei)
+
+#### Dry Run (Simulation)
+
+**Always run simulation first** to verify all operations:
+
 ```bash
-yarn script:forge script/deploy/upgrade/v1.1/20_ConfigureJane.s.sol \
-  --account 3jane-p-deployer \
+yarn script:forge script/operations/ConfigureV1_1Safe.s.sol \
+  --sig "run(bool)" false \
   --sender $OWNER_ADDRESS
 ```
 
-**Wet Run:**
+This will:
+- Simulate all 12 operations
+- Display transaction details
+- Check base fee
+- Verify all addresses are set correctly
+- **NOT** send to Safe API
+
+#### Wet Run (Propose to Safe)
+
+After verifying simulation succeeds:
+
 ```bash
-yarn script:forge script/deploy/upgrade/v1.1/20_ConfigureJane.s.sol \
-  --account 3jane-p-deployer \
+yarn script:forge script/operations/ConfigureV1_1Safe.s.sol \
+  --sig "run(bool)" true \
   --sender $OWNER_ADDRESS \
   --broadcast
 ```
 
-#### 3.2 Configure MorphoCredit
+This will:
+- Batch all 9 operations
+- Sign with your proposer key
+- Send transaction to Safe API
+- Display Safe UI URL
 
-**Dry Run:**
-```bash
-yarn script:forge script/deploy/upgrade/v1.1/21_ConfigureMorphoCredit.s.sol \
-  --account 3jane-p-deployer \
-  --sender $OWNER_ADDRESS
-```
+#### After Proposing
 
-**Wet Run:**
-```bash
-yarn script:forge script/deploy/upgrade/v1.1/21_ConfigureMorphoCredit.s.sol \
-  --account 3jane-p-deployer \
-  --sender $OWNER_ADDRESS \
-  --broadcast
-```
-
-#### 3.3 Configure ProtocolConfig
-
-**Dry Run:**
-```bash
-yarn script:forge script/deploy/upgrade/v1.1/22_ConfigureProtocolConfig.s.sol \
-  --account 3jane-p-deployer \
-  --sender $OWNER_ADDRESS
-```
-
-**Wet Run:**
-```bash
-yarn script:forge script/deploy/upgrade/v1.1/22_ConfigureProtocolConfig.s.sol \
-  --account 3jane-p-deployer \
-  --sender $OWNER_ADDRESS \
-  --broadcast
-```
+1. **View in Safe UI**: Click the URL displayed in the output
+2. **Multisig Approval**: Required signers must approve the transaction
+3. **Execute**: Once threshold is reached, anyone can execute
+4. **Verify**: All 9 operations execute atomically (all-or-nothing)
 
 ---
 
@@ -304,9 +332,13 @@ yarn script:forge script/deploy/upgrade/v1.1/22_ConfigureProtocolConfig.s.sol \
 
 **⚠️ CRITICAL**: All proxy upgrades MUST be scheduled through TimelockController via Safe multisig.
 
+**Two approaches available:**
+- **Option A (Recommended)**: Schedule all 4 upgrades at once using `ScheduleAllUpgrades.s.sol` (simpler, single operation ID)
+- **Option B**: Schedule each upgrade individually (more granular control)
+
 #### 4.1 Get Current USD3 Fee Settings
 
-Before scheduling USD3 batch, save current fee settings to restore later:
+Before scheduling upgrades, save current USD3 fee settings to restore later:
 
 ```bash
 # Get current performance fee
@@ -320,7 +352,51 @@ export USD3_PREV_PERFORMANCE_FEE=<value_from_above>
 export USD3_PREV_PROFIT_UNLOCK_TIME=<value_from_above>
 ```
 
-#### 4.2 Schedule MorphoCredit Upgrade
+---
+
+#### Option A: Schedule All Upgrades at Once (Recommended)
+
+**Single Timelock operation** containing all 4 ProxyAdmin upgrades:
+- MorphoCredit ProxyAdmin.upgradeAndCall()
+- IRM ProxyAdmin.upgradeAndCall()
+- USD3 ProxyAdmin.upgradeAndCall()
+- sUSD3 ProxyAdmin.upgradeAndCall()
+
+**Advantages:**
+- Single operation ID to track
+- All upgrades execute together
+- Simpler workflow
+
+**Dry Run:**
+```bash
+yarn script:forge script/operations/ScheduleAllUpgrades.s.sol \
+  --sig "run(address,address,address,address,bool)" \
+  $MORPHO_CREDIT_IMPL $IRM_IMPL $USD3_IMPL $SUSD3_IMPL false \
+  --account 3jane-p-deployer \
+  --sender $SAFE_ADDRESS
+```
+
+**Wet Run:**
+```bash
+yarn script:forge script/operations/ScheduleAllUpgrades.s.sol \
+  --sig "run(address,address,address,address,bool)" \
+  $MORPHO_CREDIT_IMPL $IRM_IMPL $USD3_IMPL $SUSD3_IMPL true \
+  --account 3jane-p-deployer \
+  --sender $SAFE_ADDRESS \
+  --broadcast
+```
+
+**Save Operation ID from output** - You'll only have ONE operation ID for all 4 upgrades.
+
+**Skip to Phase 5** if using this approach.
+
+---
+
+#### Option B: Schedule Each Upgrade Individually
+
+Use this approach if you need granular control over individual upgrades.
+
+##### 4.2 Schedule MorphoCredit Upgrade
 
 **Dry Run (Simulation via Safe):**
 ```bash
@@ -341,7 +417,7 @@ yarn script:forge script/operations/ScheduleMorphoCreditUpgrade.s.sol \
 
 **Save Operation ID from output**
 
-#### 4.3 Schedule IRM Upgrade
+##### 4.3 Schedule IRM Upgrade
 
 **Dry Run:**
 ```bash
@@ -362,15 +438,19 @@ yarn script:forge script/operations/ScheduleIRMUpgrade.s.sol \
 
 **Save Operation ID from output**
 
-#### 4.4 Schedule USD3 Atomic Batch (8 Operations)
+##### 4.4 Schedule USD3 ProxyAdmin Upgrade
 
-**⚠️ MOST CRITICAL**: This schedules 8 atomic operations to prevent user losses.
+**⚠️ IMPORTANT**: This schedules ONLY the ProxyAdmin upgrade. The full atomic batch (9 operations) will be executed via Safe at execution time.
+
+**Why Two Steps:**
+- Timelock only owns ProxyAdmin, not USD3
+- Safe multisig has management/keeper roles on USD3
+- Safe batch wraps Timelock execution with USD3 operations at execution time
 
 **Dry Run:**
 ```bash
 yarn script:forge script/operations/ScheduleUSD3AtomicBatch.s.sol \
-  --sig "run(address,uint16,uint256,bool)" \
-  $USD3_IMPL $USD3_PREV_PERFORMANCE_FEE $USD3_PREV_PROFIT_UNLOCK_TIME false \
+  --sig "run(address,bool)" $USD3_IMPL false \
   --account 3jane-p-deployer \
   --sender $SAFE_ADDRESS
 ```
@@ -378,8 +458,7 @@ yarn script:forge script/operations/ScheduleUSD3AtomicBatch.s.sol \
 **Wet Run:**
 ```bash
 yarn script:forge script/operations/ScheduleUSD3AtomicBatch.s.sol \
-  --sig "run(address,uint16,uint256,bool)" \
-  $USD3_IMPL $USD3_PREV_PERFORMANCE_FEE $USD3_PREV_PROFIT_UNLOCK_TIME true \
+  --sig "run(address,bool)" $USD3_IMPL true \
   --account 3jane-p-deployer \
   --sender $SAFE_ADDRESS \
   --broadcast
@@ -387,15 +466,29 @@ yarn script:forge script/operations/ScheduleUSD3AtomicBatch.s.sol \
 
 **Save Operation ID from output**
 
-**Atomic Batch Operations:**
-1. setPerformanceFee(0)
-2. setProfitMaxUnlockTime(0)
-3. report() [BEFORE upgrade]
-4. ProxyAdmin.upgrade()
-5. reinitialize()
-6. report() [AFTER reinitialize]
-7. syncTrancheShare()
-8. setPerformanceFee(prevFee)
+**Scheduled Operation:**
+- ProxyAdmin.upgradeAndCall(USD3_PROXY, newImplementation, "")
+
+##### 4.5 Schedule sUSD3 Upgrade
+
+**Dry Run:**
+```bash
+yarn script:forge script/operations/ScheduleSUSD3Upgrade.s.sol \
+  --sig "run(address,bool)" $SUSD3_IMPL false \
+  --account 3jane-p-deployer \
+  --sender $SAFE_ADDRESS
+```
+
+**Wet Run:**
+```bash
+yarn script:forge script/operations/ScheduleSUSD3Upgrade.s.sol \
+  --sig "run(address,bool)" $SUSD3_IMPL true \
+  --account 3jane-p-deployer \
+  --sender $SAFE_ADDRESS \
+  --broadcast
+```
+
+**Save Operation ID from output**
 
 ---
 
@@ -421,7 +514,53 @@ cast block-number --rpc-url $RPC_URL
 
 After 2-day delay, execute scheduled operations. **Anyone can execute** once delay passes.
 
-#### 6.1 Execute MorphoCredit Upgrade
+**Two approaches available (must match your scheduling approach):**
+
+---
+
+#### Option A: Execute All Upgrades at Once (If you used ScheduleAllUpgrades)
+
+**⚠️ CRITICAL**: Use `ExecuteAllUpgrades.s.sol` to execute all 4 upgrades atomically via Safe.
+
+This script creates a Safe batch with 7 operations:
+1. USD3.setPerformanceFee(0)
+2. USD3.setProfitMaxUnlockTime(0)
+3. USD3.report() [BEFORE upgrade]
+4. **Timelock.executeBatch()** → Upgrades all 4 implementations + USD3.reinitialize()
+5. USD3.report() [AFTER reinitialize]
+6. USD3.syncTrancheShare() [Sets performanceFee to TRANCHE_SHARE_VARIANT]
+7. USD3.setProfitMaxUnlockTime(prevUnlockTime)
+
+**Dry Run:**
+```bash
+yarn script:forge script/operations/ExecuteAllUpgrades.s.sol \
+  --sig "run(bytes32,uint256,bool)" \
+  <OPERATION_ID> $USD3_PREV_PROFIT_UNLOCK_TIME false \
+  --account 3jane-p-deployer \
+  --sender $SAFE_ADDRESS
+```
+
+**Wet Run:**
+```bash
+yarn script:forge script/operations/ExecuteAllUpgrades.s.sol \
+  --sig "run(bytes32,uint256,bool)" \
+  <OPERATION_ID> $USD3_PREV_PROFIT_UNLOCK_TIME true \
+  --account 3jane-p-deployer \
+  --sender $SAFE_ADDRESS \
+  --broadcast
+```
+
+**Note:** All 4 implementations upgrade + USD3.reinitialize() at step 4. The USD3 atomic batch prevents user losses during waUSDC → USDC migration.
+
+**Skip to Verification** if using this approach.
+
+---
+
+#### Option B: Execute Each Upgrade Individually (If you scheduled individually)
+
+Use this approach if you scheduled upgrades individually in Phase 4 Option B.
+
+##### 6.1 Execute MorphoCredit Upgrade
 
 **Dry Run:**
 ```bash
@@ -440,7 +579,7 @@ yarn script:forge script/operations/ExecuteTimelockViaSafe.s.sol \
   --broadcast
 ```
 
-#### 6.2 Execute IRM Upgrade
+##### 6.2 Execute IRM Upgrade
 
 **Dry Run:**
 ```bash
@@ -459,65 +598,39 @@ yarn script:forge script/operations/ExecuteTimelockViaSafe.s.sol \
   --broadcast
 ```
 
-#### 6.3 Execute USD3 Atomic Batch
+##### 6.3 Execute USD3 Atomic Batch
+
+**⚠️ CRITICAL**: Use `ExecuteUSD3AtomicBatch.s.sol` to execute the full atomic batch via Safe.
+
+This script creates a Safe batch with 7 operations:
+1. USD3.setPerformanceFee(0)
+2. USD3.setProfitMaxUnlockTime(0)
+3. USD3.report() [BEFORE upgrade]
+4. **Timelock.executeBatch()** → ProxyAdmin.upgradeAndCall() + USD3.reinitialize()
+5. USD3.report() [AFTER reinitialize]
+6. USD3.syncTrancheShare() [Sets performanceFee to TRANCHE_SHARE_VARIANT]
+7. USD3.setProfitMaxUnlockTime(prevUnlockTime)
 
 **Dry Run:**
 ```bash
-yarn script:forge script/operations/ExecuteTimelockViaSafe.s.sol \
-  --sig "run(bytes32,bool)" <USD3_OPERATION_ID> false \
+yarn script:forge script/operations/ExecuteUSD3AtomicBatch.s.sol \
+  --sig "run(bytes32,uint256,bool)" \
+  <USD3_OPERATION_ID> $USD3_PREV_PROFIT_UNLOCK_TIME false \
   --account 3jane-p-deployer \
   --sender $SAFE_ADDRESS
 ```
 
 **Wet Run:**
 ```bash
-yarn script:forge script/operations/ExecuteTimelockViaSafe.s.sol \
-  --sig "run(bytes32,bool)" <USD3_OPERATION_ID> true \
+yarn script:forge script/operations/ExecuteUSD3AtomicBatch.s.sol \
+  --sig "run(bytes32,uint256,bool)" \
+  <USD3_OPERATION_ID> $USD3_PREV_PROFIT_UNLOCK_TIME true \
   --account 3jane-p-deployer \
   --sender $SAFE_ADDRESS \
   --broadcast
 ```
 
-**Verify USD3 Upgrade:**
-```bash
-# Check new asset is USDC (not waUSDC)
-cast call $USD3_ADDRESS "asset()" --rpc-url $RPC_URL
-# Should return USDC address: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
-
-# Check totalAssets updated correctly
-cast call $USD3_ADDRESS "totalAssets()" --rpc-url $RPC_URL
-```
-
----
-
-### Phase 7: Schedule & Execute sUSD3 Upgrade
-
-**⚠️ IMPORTANT**: Must wait until USD3 upgrade is FULLY COMPLETE before scheduling sUSD3.
-
-#### 7.1 Schedule sUSD3 Upgrade
-
-**Dry Run:**
-```bash
-yarn script:forge script/operations/ScheduleSUSD3Upgrade.s.sol \
-  --sig "run(address,bool)" $SUSD3_IMPL false \
-  --account 3jane-p-deployer \
-  --sender $SAFE_ADDRESS
-```
-
-**Wet Run:**
-```bash
-yarn script:forge script/operations/ScheduleSUSD3Upgrade.s.sol \
-  --sig "run(address,bool)" $SUSD3_IMPL true \
-  --account 3jane-p-deployer \
-  --sender $SAFE_ADDRESS \
-  --broadcast
-```
-
-**Save Operation ID from output**
-
-#### 7.2 Wait 2 Days
-
-#### 7.3 Execute sUSD3 Upgrade
+##### 6.4 Execute sUSD3 Upgrade
 
 **Dry Run:**
 ```bash
@@ -534,6 +647,19 @@ yarn script:forge script/operations/ExecuteTimelockViaSafe.s.sol \
   --account 3jane-p-deployer \
   --sender $SAFE_ADDRESS \
   --broadcast
+```
+
+---
+
+### Verify All Upgrades
+
+**Check USD3 asset changed to USDC:**
+```bash
+cast call $USD3_ADDRESS "asset()" --rpc-url $RPC_URL
+# Should return USDC address: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+
+# Check totalAssets updated correctly
+cast call $USD3_ADDRESS "totalAssets()" --rpc-url $RPC_URL
 ```
 
 ---

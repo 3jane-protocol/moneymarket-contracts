@@ -128,7 +128,7 @@ abstract contract SafeHelper is Script, Test {
     modifier isBatch(address safe_) {
         // Set the Safe API base URL and multisend address based on chain
         chainId = block.chainid;
-        SAFE_API_BASE_URL = "https://safe-transaction-mainnet.safe.global/api/v1/";
+        SAFE_API_BASE_URL = "https://api.safe.global/tx-service/eth/api/v1/";
         SAFE_MULTISEND_ADDRESS = 0x40A2aCCbd92BCA938b02010E17A5b8929b49130D;
         safe = safe_;
 
