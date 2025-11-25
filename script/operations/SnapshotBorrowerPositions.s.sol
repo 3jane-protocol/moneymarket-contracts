@@ -74,6 +74,9 @@ contract SnapshotBorrowerPositions is Script {
         int256 timeDiff = int256(block.timestamp) - int256(targetTimestamp);
         if (timeDiff >= 0) {
             console2.log("Time difference:   +%d seconds", uint256(timeDiff));
+            if (uint256(timeDiff) <= AVG_BLOCK_TIME) {
+                console2.log("(Within one block time - optimal accuracy)");
+            }
         } else {
             console2.log("Time difference:   -%d seconds", uint256(-timeDiff));
         }
@@ -92,6 +95,16 @@ contract SnapshotBorrowerPositions is Script {
         uint256 totalDebt = 0;
         uint256 activeBorrowers = 0;
 
+        // Extract borrower addresses for batch premium accrual
+        address[] memory borrowerAddresses = new address[](borrowers.length);
+        for (uint256 i = 0; i < borrowers.length; i++) {
+            borrowerAddresses[i] = borrowers[i].borrower;
+        }
+
+        // Batch accrue premiums for all borrowers
+        console2.log("Accruing premiums for all borrowers...");
+        morphoCredit.accruePremiumsForBorrowers(MARKET_ID, borrowerAddresses);
+
         // Get market state for share conversion
         IMorpho morpho = IMorpho(address(morphoCredit));
         Market memory marketState = morpho.market(MARKET_ID);
@@ -99,9 +112,6 @@ contract SnapshotBorrowerPositions is Script {
         // Process each borrower
         for (uint256 i = 0; i < borrowers.length; i++) {
             address borrower = borrowers[i].borrower;
-
-            // Accrue premium to get accurate balance at this block
-            morphoCredit.accrueBorrowerPremium(MARKET_ID, borrower);
 
             // Get position
             Position memory pos = morpho.position(MARKET_ID, borrower);
@@ -143,9 +153,9 @@ contract SnapshotBorrowerPositions is Script {
         _runSnapshot(borrowersJson, targetTimestamp, repaymentBps, outputPath);
     }
 
-    /// @notice Find block number for a given timestamp using heuristic
+    /// @notice Find block number for a given timestamp using hybrid heuristic + binary search
     /// @param targetTimestamp Unix timestamp to find block for
-    /// @return targetBlock The block number closest to the timestamp
+    /// @return targetBlock The nearest block number with timestamp >= targetTimestamp
     function _findBlockForTimestamp(uint256 targetTimestamp) private returns (uint256 targetBlock) {
         // Get current state (already forked via command line)
         uint256 currentBlock = block.number;
@@ -154,7 +164,7 @@ contract SnapshotBorrowerPositions is Script {
         console2.log("Current block:     %d", currentBlock);
         console2.log("Current timestamp: %d", currentTimestamp);
 
-        // Calculate block delta using average block time
+        // Step 1: Use heuristic to get close estimate
         uint256 timeDelta;
         bool goingBack;
 
@@ -167,20 +177,63 @@ contract SnapshotBorrowerPositions is Script {
         }
 
         uint256 blockDelta = timeDelta / AVG_BLOCK_TIME;
+        uint256 estimatedBlock;
 
-        // Calculate target block
         if (goingBack) {
-            targetBlock = currentBlock - blockDelta;
-            console2.log("Going back %d blocks", blockDelta);
+            estimatedBlock = currentBlock - blockDelta;
+            console2.log("Heuristic: going back %d blocks", blockDelta);
         } else {
-            targetBlock = currentBlock + blockDelta;
-            console2.log("Going forward %d blocks", blockDelta);
+            estimatedBlock = currentBlock + blockDelta;
+            console2.log("Heuristic: going forward %d blocks", blockDelta);
         }
 
-        console2.log("Target block:      %d", targetBlock);
+        console2.log("Heuristic estimate: block %d", estimatedBlock);
 
-        // Roll to the target block
-        vm.rollFork(targetBlock);
+        // Step 2: Define search range around estimate
+        // ~700 seconds error = ~58 blocks, so ±100 blocks is very safe
+        uint256 searchRadius = 100;
+        uint256 low = estimatedBlock > searchRadius ? estimatedBlock - searchRadius : 1;
+        uint256 high = estimatedBlock + searchRadius;
+
+        console2.log("Binary search range: [%d, %d]", low, high);
+
+        // Step 3: Binary search for nearest block where timestamp >= targetTimestamp
+        uint256 bestBlock = high; // Default to high end
+        uint256 bestDiff = type(uint256).max;
+
+        while (low <= high) {
+            uint256 mid = (low + high) / 2;
+            vm.rollFork(mid);
+            uint256 midTimestamp = block.timestamp;
+
+            if (midTimestamp >= targetTimestamp) {
+                uint256 diff = midTimestamp - targetTimestamp;
+
+                // Update best if this is closer
+                if (diff < bestDiff) {
+                    bestBlock = mid;
+                    bestDiff = diff;
+                }
+
+                // Early termination if we're within one block time
+                if (diff <= AVG_BLOCK_TIME) {
+                    console2.log("Found block within AVG_BLOCK_TIME, terminating early");
+                    break;
+                }
+
+                // Try to find an even closer block on the left
+                high = mid - 1;
+            } else {
+                // Need to go higher to satisfy >= constraint
+                low = mid + 1;
+            }
+        }
+
+        // Roll to the best block found
+        vm.rollFork(bestBlock);
+        targetBlock = bestBlock;
+
+        console2.log("Target block:      %d", targetBlock);
 
         return targetBlock;
     }
