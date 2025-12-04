@@ -15,6 +15,7 @@ import {
 contract MockProtocolConfig is IProtocolConfig {
     mapping(bytes32 => uint256) public config;
     address public owner;
+    address public emergencyAdmin;
 
     // Configuration keys
     bytes32 private constant TRANCHE_RATIO = keccak256("TRANCHE_RATIO");
@@ -62,8 +63,13 @@ contract MockProtocolConfig is IProtocolConfig {
         config[key] = value;
     }
 
-    function setEmergencyConfig(bytes32 key, uint256 value) external {
+    function setEmergencyAdmin(address _emergencyAdmin) external {
         require(msg.sender == owner, "Not owner");
+        emergencyAdmin = _emergencyAdmin;
+    }
+
+    function setEmergencyConfig(bytes32 key, uint256 value) external {
+        require(msg.sender == owner || msg.sender == emergencyAdmin, "Not authorized");
         config[key] = value;
     }
 
