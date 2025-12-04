@@ -31,6 +31,7 @@ contract MockProtocolConfig is IProtocolConfig {
     bytes32 private constant DELINQUENCY_PERIOD = keccak256("DELINQUENCY_PERIOD");
     bytes32 private constant MIN_BORROW = keccak256("MIN_BORROW");
     bytes32 private constant IRP = keccak256("IRP");
+    bytes32 private constant DEBT_CAP = keccak256("DEBT_CAP");
 
     constructor() {
         owner = msg.sender;
@@ -42,7 +43,8 @@ contract MockProtocolConfig is IProtocolConfig {
         config[SUSD3_COOLDOWN_PERIOD] = 7 days;
         config[USD3_COMMITMENT_TIME] = 0; // No commitment by default in tests
         config[SUSD3_WITHDRAWAL_WINDOW] = 2 days;
-        config[USD3_SUPPLY_CAP] = 0; // No cap by default in tests
+        config[USD3_SUPPLY_CAP] = type(uint256).max; // Unlimited by default in tests
+        config[DEBT_CAP] = type(uint256).max; // Unlimited for testing
         config[CYCLE_DURATION] = 30 days;
         config[MAX_ON_CREDIT] = 10000; // 100%
         config[GRACE_PERIOD] = 7 days;

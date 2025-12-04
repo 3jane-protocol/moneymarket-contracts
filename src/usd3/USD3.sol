@@ -430,8 +430,11 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         uint256 cap = supplyCap();
-        if (cap == 0 || cap == type(uint256).max) {
-            return type(uint256).max;
+        if (cap == 0) {
+            return 0;
+        }
+        if (cap == type(uint256).max) {
+            return maxDeposit;
         }
 
         uint256 currentTotalAssets = TokenizedStrategy.totalAssets();
