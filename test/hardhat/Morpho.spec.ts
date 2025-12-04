@@ -169,9 +169,7 @@ describe("Morpho", () => {
       .setConfig(hre.ethers.keccak256(hre.ethers.toUtf8Bytes("CYCLE_DURATION")), CYCLE_DURATION);
 
     // Set debt cap to unlimited for testing
-    await protocolConfig
-      .connect(admin)
-      .setConfig(hre.ethers.keccak256(hre.ethers.toUtf8Bytes("DEBT_CAP")), MaxUint256);
+    await protocolConfig.connect(admin).setConfig(hre.ethers.keccak256(hre.ethers.toUtf8Bytes("DEBT_CAP")), MaxUint256);
 
     // Deploy MorphoCredit implementation with ProtocolConfig
     const MorphoCreditFactory = await hre.ethers.getContractFactory("MorphoCredit", admin);
