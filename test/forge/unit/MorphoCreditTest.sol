@@ -886,7 +886,7 @@ contract MorphoCreditTest is Test {
         uint256 supplyAmount = 5_000e18; // Within initial balance
         uint256 borrowAmount = 2500e18;
         uint128 premiumRatePerSecond = uint128(uint256(0.001e18) / 365 days); // 0.1% APR converted to per-second - very
-            // low
+        // low
 
         vm.prank(supplier);
         morpho.supply(marketParams, supplyAmount, 0, supplier, "");

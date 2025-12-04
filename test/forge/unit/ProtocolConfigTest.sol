@@ -39,6 +39,8 @@ contract ProtocolConfigTest is Test {
     bytes32 private constant USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
     bytes32 private constant SUSD3_WITHDRAWAL_WINDOW = keccak256("SUSD3_WITHDRAWAL_WINDOW");
     bytes32 private constant CYCLE_DURATION = keccak256("CYCLE_DURATION");
+    bytes32 private constant USD3_SUPPLY_CAP = keccak256("USD3_SUPPLY_CAP");
+    bytes32 private constant DEBT_CAP = keccak256("DEBT_CAP");
 
     function setUp() public {
         owner = makeAddr("ProtocolConfigOwner");
@@ -192,5 +194,176 @@ contract ProtocolConfigTest is Test {
         vm.prank(owner);
         protocolConfig.setConfig(SUSD3_WITHDRAWAL_WINDOW, testValue);
         assertEq(protocolConfig.getSusd3WithdrawalWindow(), testValue);
+    }
+
+    // ============ Emergency Admin Tests ============
+
+    function test_SetEmergencyAdmin_OnlyOwner() public {
+        address emergencyAdmin = makeAddr("EmergencyAdmin");
+
+        // Owner can set emergency admin
+        vm.prank(owner);
+        protocolConfig.setEmergencyAdmin(emergencyAdmin);
+        assertEq(protocolConfig.emergencyAdmin(), emergencyAdmin);
+
+        // Non-owner cannot set emergency admin
+        vm.prank(nonOwner);
+        vm.expectRevert(ErrorsLib.NotOwner.selector);
+        protocolConfig.setEmergencyAdmin(makeAddr("AnotherAdmin"));
+    }
+
+    function test_SetEmergencyAdmin_EmitsEvent() public {
+        address emergencyAdmin = makeAddr("EmergencyAdmin");
+
+        vm.expectEmit(true, false, false, true);
+        emit ProtocolConfig.EmergencyAdminSet(emergencyAdmin);
+
+        vm.prank(owner);
+        protocolConfig.setEmergencyAdmin(emergencyAdmin);
+    }
+
+    function test_SetEmergencyConfig_Pause_OnlyOne() public {
+        address emergencyAdmin = makeAddr("EmergencyAdmin");
+        vm.prank(owner);
+        protocolConfig.setEmergencyAdmin(emergencyAdmin);
+
+        // Emergency admin can set pause to 1
+        vm.prank(emergencyAdmin);
+        protocolConfig.setEmergencyConfig(IS_PAUSED, 1);
+        assertEq(protocolConfig.config(IS_PAUSED), 1);
+
+        // Emergency admin cannot set pause to 0 (unpause)
+        vm.prank(emergencyAdmin);
+        vm.expectRevert(ProtocolConfig.EmergencyCanOnlyPause.selector);
+        protocolConfig.setEmergencyConfig(IS_PAUSED, 0);
+
+        // Emergency admin cannot set pause to any other value
+        vm.prank(emergencyAdmin);
+        vm.expectRevert(ProtocolConfig.EmergencyCanOnlyPause.selector);
+        protocolConfig.setEmergencyConfig(IS_PAUSED, 2);
+    }
+
+    function test_SetEmergencyConfig_DebtCap_OnlyZero() public {
+        address emergencyAdmin = makeAddr("EmergencyAdmin");
+        vm.prank(owner);
+        protocolConfig.setEmergencyAdmin(emergencyAdmin);
+
+        // Emergency admin can set DEBT_CAP to 0
+        vm.prank(emergencyAdmin);
+        protocolConfig.setEmergencyConfig(DEBT_CAP, 0);
+        assertEq(protocolConfig.config(DEBT_CAP), 0);
+
+        // Emergency admin cannot set DEBT_CAP to non-zero
+        vm.prank(emergencyAdmin);
+        vm.expectRevert(ProtocolConfig.EmergencyCanOnlySetToZero.selector);
+        protocolConfig.setEmergencyConfig(DEBT_CAP, 1000);
+    }
+
+    function test_SetEmergencyConfig_MaxOnCredit_OnlyZero() public {
+        address emergencyAdmin = makeAddr("EmergencyAdmin");
+        vm.prank(owner);
+        protocolConfig.setEmergencyAdmin(emergencyAdmin);
+
+        // Emergency admin can set MAX_ON_CREDIT to 0
+        vm.prank(emergencyAdmin);
+        protocolConfig.setEmergencyConfig(MAX_ON_CREDIT, 0);
+        assertEq(protocolConfig.config(MAX_ON_CREDIT), 0);
+
+        // Emergency admin cannot set MAX_ON_CREDIT to non-zero
+        vm.prank(emergencyAdmin);
+        vm.expectRevert(ProtocolConfig.EmergencyCanOnlySetToZero.selector);
+        protocolConfig.setEmergencyConfig(MAX_ON_CREDIT, 1 ether);
+    }
+
+    function test_SetEmergencyConfig_SupplyCap_OnlyZero() public {
+        address emergencyAdmin = makeAddr("EmergencyAdmin");
+        vm.prank(owner);
+        protocolConfig.setEmergencyAdmin(emergencyAdmin);
+
+        // Emergency admin can set USD3_SUPPLY_CAP to 0
+        vm.prank(emergencyAdmin);
+        protocolConfig.setEmergencyConfig(USD3_SUPPLY_CAP, 0);
+        assertEq(protocolConfig.config(USD3_SUPPLY_CAP), 0);
+
+        // Emergency admin cannot set supply cap to non-zero
+        vm.prank(emergencyAdmin);
+        vm.expectRevert(ProtocolConfig.EmergencyCanOnlySetToZero.selector);
+        protocolConfig.setEmergencyConfig(USD3_SUPPLY_CAP, 1000000);
+    }
+
+    function test_SetEmergencyConfig_UnauthorizedParameter() public {
+        address emergencyAdmin = makeAddr("EmergencyAdmin");
+        vm.prank(owner);
+        protocolConfig.setEmergencyAdmin(emergencyAdmin);
+
+        // Emergency admin cannot set non-emergency parameters
+        bytes32 randomParam = keccak256("RANDOM_PARAM");
+        vm.prank(emergencyAdmin);
+        vm.expectRevert(ProtocolConfig.UnauthorizedEmergencyConfig.selector);
+        protocolConfig.setEmergencyConfig(randomParam, 0);
+
+        // Emergency admin cannot set other config parameters
+        vm.prank(emergencyAdmin);
+        vm.expectRevert(ProtocolConfig.UnauthorizedEmergencyConfig.selector);
+        protocolConfig.setEmergencyConfig(MAX_LTV, 0);
+    }
+
+    function test_SetEmergencyConfig_NotAuthorized() public {
+        // Random address cannot call setEmergencyConfig
+        vm.prank(nonOwner);
+        vm.expectRevert(ErrorsLib.Unauthorized.selector);
+        protocolConfig.setEmergencyConfig(IS_PAUSED, 1);
+    }
+
+    function test_SetEmergencyConfig_OwnerCanAlsoCall() public {
+        // Owner can also call setEmergencyConfig
+        vm.prank(owner);
+        protocolConfig.setEmergencyConfig(IS_PAUSED, 1);
+        assertEq(protocolConfig.config(IS_PAUSED), 1);
+
+        vm.prank(owner);
+        protocolConfig.setEmergencyConfig(DEBT_CAP, 0);
+        assertEq(protocolConfig.config(DEBT_CAP), 0);
+    }
+
+    function test_OwnerCanRestoreAfterEmergency() public {
+        address emergencyAdmin = makeAddr("EmergencyAdmin");
+        vm.prank(owner);
+        protocolConfig.setEmergencyAdmin(emergencyAdmin);
+
+        // Emergency admin sets emergency values
+        vm.startPrank(emergencyAdmin);
+        protocolConfig.setEmergencyConfig(IS_PAUSED, 1);
+        protocolConfig.setEmergencyConfig(DEBT_CAP, 0);
+        protocolConfig.setEmergencyConfig(MAX_ON_CREDIT, 0);
+        protocolConfig.setEmergencyConfig(USD3_SUPPLY_CAP, 0);
+        vm.stopPrank();
+
+        // Owner can restore all values using setConfig
+        vm.startPrank(owner);
+        protocolConfig.setConfig(IS_PAUSED, 0); // Unpause
+        protocolConfig.setConfig(DEBT_CAP, 1000000 ether); // Restore debt cap
+        protocolConfig.setConfig(MAX_ON_CREDIT, 500000 ether); // Restore credit cap
+        protocolConfig.setConfig(USD3_SUPPLY_CAP, 10000000 ether); // Restore supply cap
+        vm.stopPrank();
+
+        assertEq(protocolConfig.config(IS_PAUSED), 0);
+        assertEq(protocolConfig.config(DEBT_CAP), 1000000 ether);
+        assertEq(protocolConfig.config(MAX_ON_CREDIT), 500000 ether);
+        assertEq(protocolConfig.config(USD3_SUPPLY_CAP), 10000000 ether);
+    }
+
+    function test_GetNewConfigValues() public {
+        // Test the new getter functions
+        uint256 testValue1 = 1000000 ether;
+        uint256 testValue2 = 250000 ether;
+
+        vm.startPrank(owner);
+        protocolConfig.setConfig(USD3_SUPPLY_CAP, testValue1);
+        protocolConfig.setConfig(DEBT_CAP, testValue2);
+        vm.stopPrank();
+
+        assertEq(protocolConfig.getUsd3SupplyCap(), testValue1);
+        assertEq(protocolConfig.getDebtCap(), testValue2);
     }
 }
