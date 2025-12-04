@@ -11,7 +11,7 @@
   "scripts": {
     "prepare": "husky install && forge install",
     "build:forge": "FOUNDRY_PROFILE=build forge build",
-    "build:forge:size": "yarn test:forge --size",
+    "build:forge:size": "yarn build:forge --sizes",
     "build:hardhat": "npx hardhat compile",
     "test:forge": "FOUNDRY_PROFILE=test forge test",
     "test:forge:irm": "FOUNDRY_PROFILE=test-irm forge test",
