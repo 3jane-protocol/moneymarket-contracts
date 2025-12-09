@@ -626,7 +626,7 @@ contract USD3 is BaseHooksUpgradeable {
 
     /**
      * @notice Get the supply cap from ProtocolConfig
-     * @return Supply cap in asset units (0 means no cap)
+     * @return Supply cap in asset units
      */
     function supplyCap() public view returns (uint256) {
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());

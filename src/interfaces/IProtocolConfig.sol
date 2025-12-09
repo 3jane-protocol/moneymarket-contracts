@@ -108,7 +108,7 @@ interface IProtocolConfig {
     function getSusd3WithdrawalWindow() external view returns (uint256);
 
     /// @dev Get the USD3 supply cap
-    /// @return The supply cap in asset units (0 means no cap)
+    /// @return The supply cap in asset units
     function getUsd3SupplyCap() external view returns (uint256);
 
     /// @dev Get configuration value by key
