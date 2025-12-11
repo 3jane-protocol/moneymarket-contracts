@@ -290,6 +290,35 @@ contract sUSD3Test is Setup {
         susd3Strategy.withdraw(depositAmount, alice, alice);
     }
 
+    function test_withdraw_zeroCooldownDuration() public {
+        // When cooldown duration is 0, users can withdraw without calling startCooldown
+        uint256 depositAmount = 1000e6;
+        vm.startPrank(alice);
+        ERC20(address(usd3)).approve(address(susd3Strategy), depositAmount);
+        susd3Strategy.deposit(depositAmount, alice);
+        vm.stopPrank();
+
+        // Skip lock period
+        skip(90 days + 1);
+
+        // Get protocol config and set cooldown duration to 0
+        address morphoAddress = address(usd3.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(protocolConfigAddress);
+
+        bytes32 SUSD3_COOLDOWN_PERIOD = keccak256("SUSD3_COOLDOWN_PERIOD");
+        protocolConfig.setConfig(SUSD3_COOLDOWN_PERIOD, 0);
+        assertEq(susd3Strategy.cooldownDuration(), 0);
+
+        // Withdraw without starting cooldown - should succeed
+        uint256 balanceBefore = ERC20(address(usd3)).balanceOf(alice);
+        vm.prank(alice);
+        susd3Strategy.withdraw(depositAmount, alice, alice);
+        uint256 balanceAfter = ERC20(address(usd3)).balanceOf(alice);
+
+        assertEq(balanceAfter - balanceBefore, depositAmount, "Should withdraw full amount");
+    }
+
     /*//////////////////////////////////////////////////////////////
                     SUBORDINATION RATIO TESTS
     //////////////////////////////////////////////////////////////*/
