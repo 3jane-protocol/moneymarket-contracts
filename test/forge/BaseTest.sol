@@ -229,6 +229,7 @@ contract BaseTest is Test {
         protocolConfig.setConfig(keccak256("GRACE_PERIOD"), 7 days); // 7 days grace period
         protocolConfig.setConfig(keccak256("DELINQUENCY_PERIOD"), 23 days); // 23 days delinquency period
         protocolConfig.setConfig(keccak256("CYCLE_DURATION"), CYCLE_DURATION); // 30 days cycle duration
+        protocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, type(uint256).max); // Unlimited for testing
 
         // IRM configurations
         protocolConfig.setConfig(keccak256("CURVE_STEEPNESS"), uint256(4 ether)); // 4 curve steepness
