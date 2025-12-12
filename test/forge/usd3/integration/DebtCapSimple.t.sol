@@ -77,4 +77,39 @@ contract DebtCapSimpleTest is Setup {
         vm.prank(borrower2);
         helper.borrow(marketParams, 1100e6, 0, borrower2, borrower2);
     }
+
+    function test_debtCap_zeroStopsBorrowing() public {
+        protocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, 0);
+
+        vm.prank(alice);
+        asset.approve(address(strategy), DEPOSIT_AMOUNT);
+        vm.prank(alice);
+        strategy.deposit(DEPOSIT_AMOUNT, alice);
+
+        setMaxOnCredit(8000);
+
+        // Ensure funds deployed
+        vm.prank(keeper);
+        strategy.report();
+
+        IMorpho morpho = USD3(address(strategy)).morphoCredit();
+        Id marketId = USD3(address(strategy)).marketId();
+        MarketParams memory marketParams = USD3(address(strategy)).marketParams();
+
+        // Close cycle to enable borrowing
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+        vm.prank(marketParams.creditLine);
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(marketId, block.timestamp, borrowers, repaymentBps, endingBalances);
+
+        vm.prank(marketParams.creditLine);
+        MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, 2 * DEBT_CAP_USDC, 0);
+
+        uint256 borrowAmount = 1_000e6;
+        vm.expectRevert(ErrorsLib.DebtCapExceeded.selector);
+        vm.prank(borrower);
+        helper.borrow(marketParams, borrowAmount, 0, borrower, borrower);
+    }
 }
