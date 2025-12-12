@@ -225,4 +225,47 @@ abstract contract TimelockHelper is Script {
         }
         // State is Ready, can proceed
     }
+
+    /* ========== SIMULATION FUNCTIONS ========== */
+
+    /// @notice Simulate execution of a batch operation to verify it will succeed
+    /// @dev Uses vm.prank to simulate being the timelock and executes each call
+    function simulateExecution(
+        address _timelock,
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory datas
+    ) internal {
+        console2.log("=== Simulating Timelock Execution ===");
+
+        for (uint256 i = 0; i < targets.length; i++) {
+            console2.log("Simulating call %d of %d", i + 1, targets.length);
+            console2.log("  Target:", targets[i]);
+
+            vm.prank(_timelock);
+            (bool success, bytes memory returnData) = targets[i].call{value: values[i]}(datas[i]);
+
+            if (success) {
+                console2.log("  Result: SUCCESS");
+            } else {
+                console2.log("  Result: FAILED");
+                console2.log("  Revert reason:", _getRevertMsg(returnData));
+                revert("Simulation failed - execution would revert");
+            }
+        }
+
+        console2.log("=== All calls simulated successfully ===");
+    }
+
+    /// @notice Extract revert reason from return data
+    function _getRevertMsg(bytes memory returnData) internal pure returns (string memory) {
+        // If the return data is less than 68 bytes, it's not a standard revert
+        if (returnData.length < 68) return "Unknown error";
+
+        // Skip the selector (4 bytes) and decode the string
+        assembly {
+            returnData := add(returnData, 0x04)
+        }
+        return abi.decode(returnData, (string));
+    }
 }

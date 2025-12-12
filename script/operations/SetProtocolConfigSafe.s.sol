@@ -3,16 +3,27 @@ pragma solidity 0.8.22;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {SafeHelper} from "../utils/SafeHelper.sol";
+import {TimelockHelper} from "../utils/TimelockHelper.sol";
 import {IProtocolConfig} from "../../src/interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../../src/libraries/ProtocolConfigLib.sol";
 
 /**
  * @title SetProtocolConfigSafe
- * @notice Set protocol configuration values via Safe multisig transaction
- * @dev Supports setting any subset of protocol config values in a single atomic transaction
- *      Only non-zero environment variables are included in the batch
+ * @notice Set protocol configuration values via Safe multisig transaction through Timelock
+ * @dev Supports setting any subset of protocol config values in a single atomic transaction.
+ *      Since ProtocolConfig is owned by the Timelock, updates must go through schedule/execute.
+ *
+ *      Usage:
+ *      1. Schedule: forge script ... -s "schedule(bool)" true
+ *      2. Wait for timelock delay (24 hours)
+ *      3. Execute: forge script ... -s "execute(bool)" true (with same env vars)
  */
-contract SetProtocolConfigSafe is Script, SafeHelper {
+contract SetProtocolConfigSafe is Script, SafeHelper, TimelockHelper {
+    // Mainnet addresses
+    address constant TIMELOCK = 0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2;
+    address constant DEFAULT_SAFE = 0x33333333Bd7045F1A601A1E289D7AB21036fB5EF;
+    address constant DEFAULT_PROTOCOL_CONFIG = 0x6b276A2A7dd8b629adBA8A06AD6573d01C84f34E;
+
     struct ConfigUpdate {
         bytes32 key;
         uint256 value;
@@ -204,6 +215,367 @@ contract SetProtocolConfigSafe is Script, SafeHelper {
     }
 
     /**
+     * @notice Schedule config updates via Timelock (Step 1)
+     * @param send Whether to send transaction to Safe API (true) or just simulate (false)
+     */
+    function schedule(bool send) external isBatch(vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE)) isTimelock(TIMELOCK) {
+        if (!_baseFeeOkay()) {
+            console2.log("Aborting: Base fee too high");
+            return;
+        }
+
+        address protocolConfig = vm.envOr("PROTOCOL_CONFIG", DEFAULT_PROTOCOL_CONFIG);
+        console2.log("=== Schedule Protocol Config Update via Timelock ===");
+        console2.log("Safe address:", vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE));
+        console2.log("Timelock address:", TIMELOCK);
+        console2.log("ProtocolConfig address:", protocolConfig);
+        console2.log("Send to Safe:", send);
+        console2.log("");
+
+        // Build config updates from environment variables
+        _buildConfigUpdates(protocolConfig);
+
+        if (updates.length == 0) {
+            console2.log("No configuration updates found in environment variables");
+            console2.log("Set environment variables for the configs you want to update");
+            console2.log("Example: IS_PAUSED=1 DEBT_CAP=10000000000000 forge script ...");
+            return;
+        }
+
+        // Build timelock operation arrays
+        (address[] memory targets, uint256[] memory values, bytes[] memory datas) =
+            _buildTimelockOperationArrays(protocolConfig);
+
+        // Generate deterministic salt from config updates
+        bytes32 salt = _generateSalt();
+        bytes32 predecessor = bytes32(0);
+
+        // Calculate operation ID
+        bytes32 operationId = calculateBatchOperationId(targets, values, datas, predecessor, salt);
+
+        console2.log("=== Configuration Updates ===");
+        for (uint256 i = 0; i < updates.length; i++) {
+            console2.log("%d. %s", i + 1, updates[i].description);
+        }
+        console2.log("");
+
+        console2.log("Operation details:");
+        console2.log("  Salt:", vm.toString(salt));
+        console2.log("  Operation ID:", vm.toString(operationId));
+        console2.log("");
+
+        // Check if operation already exists
+        if (isOperation(TIMELOCK, operationId)) {
+            logOperationState(TIMELOCK, operationId);
+            console2.log("");
+            console2.log("Operation already exists. Use execute() to execute when ready.");
+            return;
+        }
+
+        // Simulate execution to verify calls will succeed
+        simulateExecution(TIMELOCK, targets, values, datas);
+        console2.log("");
+
+        // Get minimum delay
+        uint256 minDelay = getMinDelay(TIMELOCK);
+        console2.log("Timelock delay:", minDelay, "seconds (%d hours)", minDelay / 3600);
+        console2.log("");
+
+        // Encode the schedule call
+        bytes memory scheduleCalldata = encodeScheduleBatch(targets, values, datas, predecessor, salt, minDelay);
+
+        // Add to Safe batch
+        console2.log("Adding scheduleBatch call to Safe transaction...");
+        addToBatch(TIMELOCK, scheduleCalldata);
+
+        if (send) {
+            console2.log("Sending transaction to Safe API...");
+            executeBatch(true);
+            console2.log("");
+            console2.log("Transaction sent successfully!");
+            console2.log("");
+            console2.log("=== IMPORTANT ===");
+            console2.log("Operation ID: %s", vm.toString(operationId));
+            console2.log("");
+            console2.log("Next steps:");
+            console2.log("1. Multisig signers must approve and execute the schedule transaction");
+            console2.log("2. Wait %d seconds (%d hours) after scheduling", minDelay, minDelay / 3600);
+            console2.log("3. Run execute() with the SAME environment variables");
+        } else {
+            console2.log("Simulation mode - not sending to Safe");
+            executeBatch(false);
+            console2.log("");
+            console2.log("Simulation completed successfully");
+            console2.log("Operation ID would be: %s", vm.toString(operationId));
+        }
+    }
+
+    /**
+     * @notice Execute scheduled config updates (Step 2 - after delay)
+     * @param send Whether to send transaction to Safe API (true) or just simulate (false)
+     */
+    function execute(bool send) external isBatch(vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE)) isTimelock(TIMELOCK) {
+        if (!_baseFeeOkay()) {
+            console2.log("Aborting: Base fee too high");
+            return;
+        }
+
+        address protocolConfig = vm.envOr("PROTOCOL_CONFIG", DEFAULT_PROTOCOL_CONFIG);
+        console2.log("=== Execute Protocol Config Update via Timelock ===");
+        console2.log("Safe address:", vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE));
+        console2.log("Timelock address:", TIMELOCK);
+        console2.log("ProtocolConfig address:", protocolConfig);
+        console2.log("Send to Safe:", send);
+        console2.log("");
+
+        // Rebuild config updates from environment variables (must match schedule)
+        _buildConfigUpdates(protocolConfig);
+
+        if (updates.length == 0) {
+            console2.log("No configuration updates found in environment variables");
+            console2.log("You must use the SAME environment variables as when scheduling");
+            return;
+        }
+
+        // Build timelock operation arrays
+        (address[] memory targets, uint256[] memory values, bytes[] memory datas) =
+            _buildTimelockOperationArrays(protocolConfig);
+
+        // Regenerate the same salt
+        bytes32 salt = _generateSalt();
+        bytes32 predecessor = bytes32(0);
+
+        // Calculate operation ID
+        bytes32 operationId = calculateBatchOperationId(targets, values, datas, predecessor, salt);
+
+        console2.log("=== Configuration Updates ===");
+        for (uint256 i = 0; i < updates.length; i++) {
+            console2.log("%d. %s", i + 1, updates[i].description);
+        }
+        console2.log("");
+
+        console2.log("Operation ID:", vm.toString(operationId));
+        console2.log("");
+
+        // Check operation state
+        logOperationState(TIMELOCK, operationId);
+        console2.log("");
+
+        // Verify operation is ready
+        requireOperationReady(TIMELOCK, operationId);
+
+        // Encode the execute call
+        bytes memory executeCalldata = encodeExecuteBatch(targets, values, datas, predecessor, salt);
+
+        // Add to Safe batch
+        console2.log("Adding executeBatch call to Safe transaction...");
+        addToBatch(TIMELOCK, executeCalldata);
+
+        if (send) {
+            console2.log("Sending transaction to Safe API...");
+            executeBatch(true);
+            console2.log("");
+            console2.log("Transaction sent successfully!");
+            console2.log("");
+            console2.log("Once executed, the following config values will be updated:");
+            for (uint256 i = 0; i < updates.length; i++) {
+                console2.log("  - %s", updates[i].description);
+            }
+        } else {
+            console2.log("Simulation mode - not sending to Safe");
+            executeBatch(false);
+            console2.log("");
+            console2.log("Simulation completed successfully");
+        }
+    }
+
+    /**
+     * @notice Check status of a scheduled operation
+     */
+    function checkStatus() external {
+        address protocolConfig = vm.envOr("PROTOCOL_CONFIG", DEFAULT_PROTOCOL_CONFIG);
+        console2.log("=== Check Protocol Config Update Status ===");
+        console2.log("Timelock address:", TIMELOCK);
+        console2.log("ProtocolConfig address:", protocolConfig);
+        console2.log("");
+
+        // Build config updates from environment variables
+        _buildConfigUpdates(protocolConfig);
+
+        if (updates.length == 0) {
+            console2.log("No configuration updates found in environment variables");
+            return;
+        }
+
+        // Build timelock operation arrays
+        (address[] memory targets, uint256[] memory values, bytes[] memory datas) =
+            _buildTimelockOperationArrays(protocolConfig);
+
+        // Regenerate the same salt
+        bytes32 salt = _generateSalt();
+        bytes32 predecessor = bytes32(0);
+
+        // Calculate operation ID
+        bytes32 operationId = calculateBatchOperationId(targets, values, datas, predecessor, salt);
+
+        console2.log("=== Configuration Updates ===");
+        for (uint256 i = 0; i < updates.length; i++) {
+            console2.log("%d. %s", i + 1, updates[i].description);
+        }
+        console2.log("");
+
+        console2.log("Operation ID:", vm.toString(operationId));
+        console2.log("");
+
+        logOperationState(TIMELOCK, operationId);
+
+        // Show timelock delay
+        uint256 minDelay = getMinDelay(TIMELOCK);
+        console2.log("");
+        console2.log("Current timelock delay:", minDelay, "seconds (%d hours)", minDelay / 3600);
+    }
+
+    /**
+     * @notice Build config updates array from environment variables
+     */
+    function _buildConfigUpdates(address protocolConfig) private {
+        // Clear any existing updates
+        delete updates;
+
+        // CREDIT LINE CONFIGURATION
+        _checkAndAddConfig(protocolConfig, "MAX_LTV", ProtocolConfigLib.MAX_LTV, "Max LTV", false);
+        _checkAndAddConfig(protocolConfig, "MAX_VV", ProtocolConfigLib.MAX_VV, "Max VV", false);
+        _checkAndAddConfig(
+            protocolConfig, "MAX_CREDIT_LINE", ProtocolConfigLib.MAX_CREDIT_LINE, "Max credit line", false
+        );
+        _checkAndAddConfig(
+            protocolConfig, "MIN_CREDIT_LINE", ProtocolConfigLib.MIN_CREDIT_LINE, "Min credit line", false
+        );
+        _checkAndAddConfig(protocolConfig, "MAX_DRP", ProtocolConfigLib.MAX_DRP, "Max DRP", false);
+
+        // MARKET CONFIGURATION
+        _checkAndAddConfig(protocolConfig, "IS_PAUSED", ProtocolConfigLib.IS_PAUSED, "Market pause state", false);
+        _checkAndAddConfig(
+            protocolConfig, "MAX_ON_CREDIT", ProtocolConfigLib.MAX_ON_CREDIT, "Max on credit (USDC)", true
+        );
+        _checkAndAddConfig(protocolConfig, "IRP", ProtocolConfigLib.IRP, "Interest rate premium (IRP)", false);
+        _checkAndAddConfig(protocolConfig, "MIN_BORROW", ProtocolConfigLib.MIN_BORROW, "Min borrow amount", false);
+        _checkAndAddConfig(protocolConfig, "GRACE_PERIOD", ProtocolConfigLib.GRACE_PERIOD, "Grace period", false);
+        _checkAndAddConfig(
+            protocolConfig, "DELINQUENCY_PERIOD", ProtocolConfigLib.DELINQUENCY_PERIOD, "Delinquency period", false
+        );
+        _checkAndAddConfig(protocolConfig, "CYCLE_DURATION", ProtocolConfigLib.CYCLE_DURATION, "Cycle duration", false);
+
+        // IRM CONFIGURATION
+        _checkAndAddConfig(
+            protocolConfig, "CURVE_STEEPNESS", ProtocolConfigLib.CURVE_STEEPNESS, "Curve steepness", false
+        );
+        _checkAndAddConfig(
+            protocolConfig, "ADJUSTMENT_SPEED", ProtocolConfigLib.ADJUSTMENT_SPEED, "Adjustment speed", false
+        );
+        _checkAndAddConfig(
+            protocolConfig, "TARGET_UTILIZATION", ProtocolConfigLib.TARGET_UTILIZATION, "Target utilization", false
+        );
+        _checkAndAddConfig(
+            protocolConfig,
+            "INITIAL_RATE_AT_TARGET",
+            ProtocolConfigLib.INITIAL_RATE_AT_TARGET,
+            "Initial rate at target",
+            false
+        );
+        _checkAndAddConfig(
+            protocolConfig, "MIN_RATE_AT_TARGET", ProtocolConfigLib.MIN_RATE_AT_TARGET, "Min rate at target", false
+        );
+        _checkAndAddConfig(
+            protocolConfig, "MAX_RATE_AT_TARGET", ProtocolConfigLib.MAX_RATE_AT_TARGET, "Max rate at target", false
+        );
+
+        // USD3 & sUSD3 CONFIGURATION
+        _checkAndAddConfig(protocolConfig, "TRANCHE_RATIO", ProtocolConfigLib.TRANCHE_RATIO, "Tranche ratio", false);
+        _checkAndAddConfig(
+            protocolConfig,
+            "TRANCHE_SHARE_VARIANT",
+            ProtocolConfigLib.TRANCHE_SHARE_VARIANT,
+            "Tranche share variant",
+            false
+        );
+        _checkAndAddConfig(
+            protocolConfig, "SUSD3_LOCK_DURATION", ProtocolConfigLib.SUSD3_LOCK_DURATION, "sUSD3 lock duration", false
+        );
+        _checkAndAddConfig(
+            protocolConfig,
+            "SUSD3_COOLDOWN_PERIOD",
+            ProtocolConfigLib.SUSD3_COOLDOWN_PERIOD,
+            "sUSD3 cooldown period",
+            false
+        );
+        _checkAndAddConfig(
+            protocolConfig,
+            "USD3_COMMITMENT_TIME",
+            ProtocolConfigLib.USD3_COMMITMENT_TIME,
+            "USD3 commitment time",
+            false
+        );
+        _checkAndAddConfig(
+            protocolConfig,
+            "SUSD3_WITHDRAWAL_WINDOW",
+            ProtocolConfigLib.SUSD3_WITHDRAWAL_WINDOW,
+            "sUSD3 withdrawal window",
+            false
+        );
+        _checkAndAddConfig(
+            protocolConfig, "USD3_SUPPLY_CAP", ProtocolConfigLib.USD3_SUPPLY_CAP, "USD3 supply cap (USDC)", true
+        );
+
+        // V1.1 CONFIGURATION
+        _checkAndAddConfig(protocolConfig, "DEBT_CAP", ProtocolConfigLib.DEBT_CAP, "Debt cap (waUSDC)", true);
+        _checkAndAddConfig(
+            protocolConfig,
+            "MIN_SUSD3_BACKING_RATIO",
+            ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO,
+            "Min sUSD3 backing ratio",
+            false
+        );
+        _checkAndAddConfig(
+            protocolConfig,
+            "FULL_MARKDOWN_DURATION",
+            ProtocolConfigLib.FULL_MARKDOWN_DURATION,
+            "Full markdown duration",
+            false
+        );
+    }
+
+    /**
+     * @notice Build timelock operation arrays from updates
+     */
+    function _buildTimelockOperationArrays(address protocolConfig)
+        private
+        view
+        returns (address[] memory targets, uint256[] memory values, bytes[] memory datas)
+    {
+        targets = new address[](updates.length);
+        values = new uint256[](updates.length);
+        datas = new bytes[](updates.length);
+
+        for (uint256 i = 0; i < updates.length; i++) {
+            targets[i] = protocolConfig;
+            values[i] = 0;
+            datas[i] = abi.encodeCall(IProtocolConfig.setConfig, (updates[i].key, updates[i].value));
+        }
+    }
+
+    /**
+     * @notice Generate deterministic salt from config updates
+     */
+    function _generateSalt() private view returns (bytes32) {
+        bytes memory packed;
+        for (uint256 i = 0; i < updates.length; i++) {
+            packed = abi.encodePacked(packed, updates[i].key, updates[i].value);
+        }
+        return keccak256(abi.encodePacked("ProtocolConfig Update: ", packed));
+    }
+
+    /**
      * @notice Check if an environment variable is set and add to updates if non-zero
      * @param protocolConfig The protocol config contract address
      * @param envKey The environment variable name
@@ -220,18 +592,13 @@ contract SetProtocolConfigSafe is Script, SafeHelper {
     ) private {
         // Try to read the environment variable
         try vm.envUint(envKey) returns (uint256 value) {
-            if (value > 0 || keccak256(bytes(envKey)) == keccak256("IS_PAUSED")) {
-                // IS_PAUSED can be 0 (unpaused)
-                // Fetch the current value from the protocol config
-                uint256 previousValue = IProtocolConfig(protocolConfig).config(configKey);
+            // Fetch the current value from the protocol config
+            uint256 previousValue = IProtocolConfig(protocolConfig).config(configKey);
 
-                string memory formattedDesc = _formatDescription(envKey, description, value, previousValue, isUSDC);
-                updates.push(
-                    ConfigUpdate({
-                        key: configKey, value: value, previousValue: previousValue, description: formattedDesc
-                    })
-                );
-            }
+            string memory formattedDesc = _formatDescription(envKey, description, value, previousValue, isUSDC);
+            updates.push(
+                ConfigUpdate({key: configKey, value: value, previousValue: previousValue, description: formattedDesc})
+            );
         } catch {
             // Environment variable not set, skip
         }
