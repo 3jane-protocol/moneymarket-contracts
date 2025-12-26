@@ -61,6 +61,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     address public helper;
 
     /// @notice Immutable protocol configuration contract
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     address public immutable protocolConfig;
 
     /// @inheritdoc IMorphoCredit
@@ -592,7 +593,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
         // Check debt cap
         uint256 debtCap = IProtocolConfig(protocolConfig).config(ProtocolConfigLib.DEBT_CAP);
-        if (debtCap > 0 && market[id].totalBorrowAssets + assets > debtCap) {
+        if (debtCap == 0 || market[id].totalBorrowAssets + assets > debtCap) {
             revert ErrorsLib.DebtCapExceeded();
         }
 

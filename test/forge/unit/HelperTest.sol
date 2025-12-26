@@ -593,7 +593,7 @@ contract HelperTest is BaseTest {
     uint256 public constant DEPOSIT_AMOUNT = 1000e6; // 1000 USDC
     uint256 public constant BORROW_AMOUNT = 500e6; // 500 USDC
     uint256 public constant REAL_BORROW_AMOUNT = 2e21; // 2e21 wei (2x minimum) for real MorphoCredit tests to allow
-        // partial repayments
+    // partial repayments
 
     function setUp() public override {
         super.setUp();

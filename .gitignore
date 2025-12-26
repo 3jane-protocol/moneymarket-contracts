@@ -12,6 +12,7 @@ docs/
 
 # Dotenv file
 .env
+.env.*
 
 # Node modules
 /node_modules
@@ -24,3 +25,5 @@ emv-*-certora*
 /types
 /cache_hardhat
 /artifacts
+
+/data

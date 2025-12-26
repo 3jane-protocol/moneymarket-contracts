@@ -11,7 +11,7 @@
   "scripts": {
     "prepare": "husky install && forge install",
     "build:forge": "FOUNDRY_PROFILE=build forge build",
-    "build:forge:size": "yarn test:forge --size",
+    "build:forge:size": "yarn build:forge --sizes",
     "build:hardhat": "npx hardhat compile",
     "test:forge": "FOUNDRY_PROFILE=test forge test",
     "test:forge:irm": "FOUNDRY_PROFILE=test-irm forge test",
@@ -24,6 +24,7 @@
     "test:forge:snapshot": "FOUNDRY_PROFILE=test forge snapshot",
     "test:hardhat": "npx hardhat test",
     "test:halmos": "FOUNDRY_PROFILE=halmos halmos --function check_",
+    "script:forge": "FOUNDRY_PROFILE=script forge script",
     "lint": "yarn lint:forge && yarn lint:hardhat",
     "lint:forge": "forge fmt --check",
     "lint:hardhat": "prettier --check test/hardhat",

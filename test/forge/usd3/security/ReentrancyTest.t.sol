@@ -143,7 +143,7 @@ contract ReentrancyTest is Setup {
         vm.startPrank(management);
         // Set performance fee to distribute yield
         ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(uint16(2000)); // 20%
-            // Set malicious contract as recipient (not as sUSD3 itself)
+        // Set malicious contract as recipient (not as sUSD3 itself)
         ITokenizedStrategy(address(usd3Strategy)).setPerformanceFeeRecipient(address(maliciousSUSD3));
         vm.stopPrank();
 

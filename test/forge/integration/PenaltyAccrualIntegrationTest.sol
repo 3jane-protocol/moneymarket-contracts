@@ -296,7 +296,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         // Move to default status (need to be >30 days past due)
         // Using helper to maintain active cycles during time progression
         _continueMarketCycles(id, block.timestamp + 31 days); // _createPastObligation makes it 1 day old, so total 32
-            // days
+        // days
 
         // Bob is in default
         (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, BOB);
@@ -469,7 +469,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
         // Move to delinquent status (need to be >7 days past due)
         // Using helper to maintain active cycles during time progression
         _continueMarketCycles(id, block.timestamp + 7 days); // _createPastObligation makes it 1 day old, so total 8
-            // days = delinquent
+        // days = delinquent
 
         // Record the timestamp when this cycle was created
         uint256 cycleLength = MorphoCreditLib.getPaymentCycleLength(IMorphoCredit(address(morpho)), id);
@@ -534,7 +534,7 @@ contract PenaltyAccrualIntegrationTest is BaseTest {
             MorphoCreditLib.getCycleDates(IMorphoCredit(address(morpho)), id, newCycleLength - 1);
         uint256 timeSinceCycle2 = block.timestamp - cycle2EndDate;
         uint256 wrongPenalty = uint256(25000e18).wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(timeSinceCycle2)); // Using
-            // Cycle 2's balance
+        // Cycle 2's balance
 
         // The actual penalty should be much higher than if calculated from Cycle 2
         assertGt(expectedPenalty, wrongPenalty * 2, "Penalty from Cycle 1 should be much higher");

@@ -132,9 +132,9 @@ contract DebtCapAndBackingTest is Setup {
         // Debt cap was enforced - test passes if we get here without reverting
     }
 
-    function test_debtCap_zeroDisablesLimit() public {
-        // Set debt cap to 0 (disabled)
-        protocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, 0);
+    function test_debtCap_zeroBlocksBorrowing() public {
+        // First set a valid cap so we can test the transition
+        protocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, type(uint256).max);
 
         // Alice deposits to provide liquidity
         vm.prank(alice);
@@ -143,11 +143,35 @@ contract DebtCapAndBackingTest is Setup {
         // Set MAX_ON_CREDIT to allow borrowing
         setMaxOnCredit(8000); // 80%
 
-        // Should be able to borrow more than previous cap
-        uint256 largeBorrow = DEPOSIT_AMOUNT;
-        createMarketDebt(borrower, largeBorrow);
+        // Deploy funds
+        vm.prank(keeper);
+        strategy.report();
 
-        // Successfully borrowed beyond old cap - test passes
+        // Now set cap to 0 (emergency disable)
+        protocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, 0);
+
+        // Setup borrower
+        Id marketId = USD3(address(strategy)).marketId();
+        MarketParams memory marketParams = USD3(address(strategy)).marketParams();
+        IMorpho morpho = USD3(address(strategy)).morphoCredit();
+
+        // Create payment cycle
+        address[] memory borrowers = new address[](0);
+        uint256[] memory repaymentBps = new uint256[](0);
+        uint256[] memory endingBalances = new uint256[](0);
+
+        vm.prank(marketParams.creditLine);
+        MorphoCredit(address(morpho))
+            .closeCycleAndPostObligations(marketId, block.timestamp, borrowers, repaymentBps, endingBalances);
+
+        // Set credit line
+        vm.prank(marketParams.creditLine);
+        MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, DEPOSIT_AMOUNT, 0);
+
+        // Borrowing should now be blocked
+        vm.expectRevert(ErrorsLib.DebtCapExceeded.selector);
+        vm.prank(borrower);
+        helper.borrow(marketParams, DEPOSIT_AMOUNT / 2, 0, borrower, borrower);
     }
 
     /*//////////////////////////////////////////////////////////////

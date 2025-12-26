@@ -229,17 +229,18 @@ contract BaseTest is Test {
         protocolConfig.setConfig(keccak256("GRACE_PERIOD"), 7 days); // 7 days grace period
         protocolConfig.setConfig(keccak256("DELINQUENCY_PERIOD"), 23 days); // 23 days delinquency period
         protocolConfig.setConfig(keccak256("CYCLE_DURATION"), CYCLE_DURATION); // 30 days cycle duration
+        protocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, type(uint256).max); // Unlimited for testing
 
         // IRM configurations
         protocolConfig.setConfig(keccak256("CURVE_STEEPNESS"), uint256(4 ether)); // 4 curve steepness
         protocolConfig.setConfig(keccak256("ADJUSTMENT_SPEED"), uint256(50 ether / int256(365 days)));
         protocolConfig.setConfig(keccak256("TARGET_UTILIZATION"), uint256(0.9 ether)); // 90% target utilization
         protocolConfig.setConfig(keccak256("INITIAL_RATE_AT_TARGET"), uint256(0.04 ether / int256(365 days))); // 4%
-            // initial rate
+        // initial rate
         protocolConfig.setConfig(keccak256("MIN_RATE_AT_TARGET"), uint256(0.001 ether / int256(365 days))); // 0.1%
-            // minimum rate
+        // minimum rate
         protocolConfig.setConfig(keccak256("MAX_RATE_AT_TARGET"), uint256(2.0 ether / int256(365 days))); // 200%
-            // maximum rate
+        // maximum rate
 
         // USD3 & sUSD3 configurations
         protocolConfig.setConfig(keccak256("TRANCHE_RATIO"), 0.7 ether); // 70% tranche ratio

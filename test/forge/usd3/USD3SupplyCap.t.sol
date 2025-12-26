@@ -78,18 +78,29 @@ contract USD3SupplyCapTest is Setup {
                         BASIC SUPPLY CAP TESTS
     //////////////////////////////////////////////////////////////*/
 
-    function test_supplyCap_zeroCapAllowsUnlimitedDeposits() public {
-        // Default cap is 0 (unlimited)
-        assertEq(usd3Strategy.supplyCap(), 0, "Default cap should be 0");
-        assertEq(usd3Strategy.availableDepositLimit(alice), type(uint256).max, "Should allow unlimited deposits");
+    function test_supplyCap_unlimitedByDefault() public {
+        // Default cap is unlimited (type(uint256).max)
+        assertEq(usd3Strategy.supplyCap(), type(uint256).max, "Default cap should be unlimited");
+        uint256 expectedLimit = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
+        assertEq(usd3Strategy.availableDepositLimit(alice), expectedLimit, "Should allow unlimited deposits");
 
         // Can deposit large amounts
         vm.prank(whale);
         uint256 shares = strategy.deposit(10_000_000e6, whale);
         assertGt(shares, 0, "Should receive shares");
 
-        // Still unlimited
-        assertEq(usd3Strategy.availableDepositLimit(alice), type(uint256).max, "Should still allow unlimited deposits");
+        // Still unlimited (bounded only by maxDeposit)
+        uint256 expectedLimitAfter = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
+        assertEq(usd3Strategy.availableDepositLimit(alice), expectedLimitAfter, "Should still allow unlimited deposits");
+    }
+
+    function test_supplyCap_zeroCapStopsDeposits() public {
+        _setSupplyCap(0);
+        assertEq(usd3Strategy.availableDepositLimit(alice), 0, "Deposits should be halted");
+
+        vm.prank(alice);
+        vm.expectRevert();
+        strategy.deposit(SMALL_AMOUNT, alice);
     }
 
     function test_supplyCap_basicEnforcement() public {
@@ -300,15 +311,20 @@ contract USD3SupplyCapTest is Setup {
         vm.prank(alice);
         strategy.deposit(TEST_CAP, alice);
 
-        // Remove cap (set to 0)
-        _setSupplyCap(0);
+        // Remove cap by setting sentinel value
+        _setSupplyCap(type(uint256).max);
 
-        assertEq(usd3Strategy.availableDepositLimit(bob), type(uint256).max, "Should be unlimited after cap removal");
+        uint256 expectedLimit = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
+        assertEq(
+            usd3Strategy.availableDepositLimit(bob), expectedLimit, "Should be back to unlimited (bounded by vault)"
+        );
 
-        // Can deposit large amounts
+        uint256 depositAmount = expectedLimit > 10_000_000e6 ? 10_000_000e6 : expectedLimit;
+        if (depositAmount == 0) depositAmount = SMALL_AMOUNT;
+
         vm.prank(bob);
-        strategy.deposit(10_000_000e6, bob);
-        assertGt(strategy.totalAssets(), TEST_CAP, "Should exceed previous cap");
+        strategy.deposit(depositAmount, bob);
+        assertEq(strategy.totalAssets(), TEST_CAP + depositAmount, "Should exceed previous cap");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -550,13 +566,12 @@ contract USD3SupplyCapTest is Setup {
         _setSupplyCap(cap);
 
         if (cap == 0) {
-            // Unlimited deposits
-            assertEq(usd3Strategy.availableDepositLimit(alice), type(uint256).max, "Should be unlimited with 0 cap");
+            // Emergency stop
+            assertEq(usd3Strategy.availableDepositLimit(alice), 0, "Should be halted with 0 cap");
 
-            // Can deposit any amount (up to balance)
             vm.prank(alice);
+            vm.expectRevert();
             strategy.deposit(depositAmount, alice);
-            assertEq(strategy.totalAssets(), depositAmount, "Deposit should succeed with no cap");
         } else {
             // Limited by cap
             assertEq(usd3Strategy.availableDepositLimit(alice), cap, "Available should equal cap");

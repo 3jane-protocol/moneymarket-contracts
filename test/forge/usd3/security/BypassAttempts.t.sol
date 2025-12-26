@@ -397,7 +397,7 @@ contract BypassAttempts is Setup {
         // Withdraw partial amount (within cooldown)
         require(withdrawLimit > 0, "No withdrawal available");
         uint256 sharesToRedeem = totalShares / 4; // Redeem a quarter of total shares
-            // Need to approve the strategy to burn shares on behalf of alice
+        // Need to approve the strategy to burn shares on behalf of alice
         vm.startPrank(alice);
         IERC20(address(susd3Strategy)).approve(address(susd3Strategy), sharesToRedeem);
         susd3Strategy.redeem(sharesToRedeem, alice, alice);
