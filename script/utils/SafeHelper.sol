@@ -476,7 +476,7 @@ abstract contract SafeHelper is Script, Test {
 
     function _getNonce(address safe_) private returns (uint256) {
         string memory endpoint = string.concat(_getSafeNonceAPIEndpoint(safe_));
-        (uint256 status, bytes memory data) = endpoint.get();
+        (uint256 status, bytes memory data) = endpoint.get(_getHeaders());
         if (status == 200) {
             string memory resp = string(data);
             return resp.readUint(".nonce");
@@ -493,10 +493,16 @@ abstract contract SafeHelper is Script, Test {
         return string.concat(SAFE_API_BASE_URL, "safes/", vm.toString(safe_), "/");
     }
 
-    function _getHeaders() private pure returns (string[] memory) {
-        string[] memory headers = new string[](1);
-        headers[0] = "Content-Type: application/json";
-        return headers;
+    function _getHeaders() private view returns (string[] memory headers) {
+        string memory apiKey = vm.envOr("SAFE_API_KEY", string(""));
+        if (bytes(apiKey).length > 0) {
+            headers = new string[](2);
+            headers[0] = "Content-Type: application/json";
+            headers[1] = string.concat("Authorization: Bearer ", apiKey);
+        } else {
+            headers = new string[](1);
+            headers[0] = "Content-Type: application/json";
+        }
     }
 
     // Signatures need to be converted to hex strings with 0x prefix

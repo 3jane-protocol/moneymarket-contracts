@@ -122,80 +122,18 @@ contract GetMarketFreezeTime is Script {
     }
 
     /**
-     * @notice Format a Unix timestamp as a human-readable date
+     * @notice Format a Unix timestamp as a human-readable date using system date command
      * @param timestamp The Unix timestamp to format
      * @return A string representation of the date
      */
-    function _formatTimestamp(uint256 timestamp) private pure returns (string memory) {
-        // Basic date calculation (approximate, doesn't handle leap years perfectly)
-        uint256 year = 1970;
-        uint256 month = 1;
-        uint256 day = 1;
+    function _formatTimestamp(uint256 timestamp) private returns (string memory) {
+        string[] memory cmd = new string[](4);
+        cmd[0] = "date";
+        cmd[1] = "-u";
+        cmd[2] = string(abi.encodePacked("-r", vm.toString(timestamp)));
+        cmd[3] = "+%Y-%m-%d %H:%M:%SZ";
 
-        uint256 daysSinceEpoch = timestamp / 86400;
-
-        // Approximate year calculation
-        year += (daysSinceEpoch / 365);
-        uint256 remainingDays = daysSinceEpoch % 365;
-
-        // Approximate month calculation
-        uint256[] memory daysInMonth = new uint256[](12);
-        daysInMonth[0] = 31; // January
-        daysInMonth[1] = 28; // February (not handling leap years)
-        daysInMonth[2] = 31; // March
-        daysInMonth[3] = 30; // April
-        daysInMonth[4] = 31; // May
-        daysInMonth[5] = 30; // June
-        daysInMonth[6] = 31; // July
-        daysInMonth[7] = 31; // August
-        daysInMonth[8] = 30; // September
-        daysInMonth[9] = 31; // October
-        daysInMonth[10] = 30; // November
-        daysInMonth[11] = 31; // December
-
-        for (uint256 i = 0; i < 12; i++) {
-            if (remainingDays >= daysInMonth[i]) {
-                remainingDays -= daysInMonth[i];
-                month++;
-            } else {
-                day = remainingDays + 1;
-                break;
-            }
-        }
-
-        // Get time components
-        uint256 secondsInDay = timestamp % 86400;
-        uint256 hourValue = secondsInDay / 3600;
-        uint256 minuteValue = (secondsInDay % 3600) / 60;
-        uint256 secondValue = secondsInDay % 60;
-
-        // Format as string
-        return string(
-            abi.encodePacked(
-                "~",
-                vm.toString(year),
-                "-",
-                _padZero(month),
-                "-",
-                _padZero(day),
-                " ",
-                _padZero(hourValue),
-                ":",
-                _padZero(minuteValue),
-                ":",
-                _padZero(secondValue),
-                " UTC"
-            )
-        );
-    }
-
-    /**
-     * @notice Pad a number with leading zero if needed
-     */
-    function _padZero(uint256 num) private pure returns (string memory) {
-        if (num < 10) {
-            return string(abi.encodePacked("0", vm.toString(num)));
-        }
-        return vm.toString(num);
+        bytes memory result = vm.ffi(cmd);
+        return string(result);
     }
 }
