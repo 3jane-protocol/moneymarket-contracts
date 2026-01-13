@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.18;
+pragma solidity 0.8.22;
 
 import {Id, IMorpho, IMorphoCredit, MarketParams, Market} from "./interfaces/IMorpho.sol";
 import {ICallableCredit} from "./interfaces/ICallableCredit.sol";

@@ -60,6 +60,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc IMorphoCredit
     address public helper;
 
+    /// @inheritdoc IMorphoCredit
+    address public callableCredit;
+
     /// @notice Immutable protocol configuration contract
     address public immutable protocolConfig;
 
@@ -78,8 +81,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Markdown state for tracking defaulted debt value reduction
     mapping(Id => mapping(address => MarkdownState)) public markdownState;
 
-    /// @dev Storage gap for future upgrades (14 slots).
-    uint256[14] private __gap;
+    /// @dev Storage gap for future upgrades (13 slots).
+    uint256[13] private __gap;
 
     /* CONSTANTS */
 
@@ -111,6 +114,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc IMorphoCredit
     function setHelper(address newHelper) external onlyOwner {
         helper = newHelper;
+    }
+
+    /// @inheritdoc IMorphoCredit
+    function setCallableCredit(address newCallableCredit) external onlyOwner {
+        callableCredit = newCallableCredit;
     }
 
     /// @inheritdoc IMorphoCredit
@@ -580,7 +588,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         virtual
         override
     {
-        if (msg.sender != helper) revert ErrorsLib.NotHelper();
+        bool isCallableCredit = msg.sender == callableCredit;
+        if (msg.sender != helper && !isCallableCredit) revert ErrorsLib.NotHelper();
         if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
         if (_isMarketFrozen(id)) revert ErrorsLib.MarketFrozen();
 
@@ -596,14 +605,16 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             revert ErrorsLib.DebtCapExceeded();
         }
 
-        // Check minimum borrow requirement
-        uint256 minBorrow = IProtocolConfig(protocolConfig).getMarketConfig().minBorrow;
-        if (minBorrow > 0) {
-            Market memory m = market[id];
-            uint256 currentDebt =
-                uint256(position[id][onBehalf].borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
-            uint256 newDebt = currentDebt + assets;
-            if (newDebt < minBorrow) revert ErrorsLib.BelowMinimumBorrow();
+        // Check minimum borrow requirement (skip for callable credit since it manages its own minimums)
+        if (!isCallableCredit) {
+            uint256 minBorrow = IProtocolConfig(protocolConfig).getMarketConfig().minBorrow;
+            if (minBorrow > 0) {
+                Market memory m = market[id];
+                uint256 currentDebt =
+                    uint256(position[id][onBehalf].borrowShares).toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+                uint256 newDebt = currentDebt + assets;
+                if (newDebt < minBorrow) revert ErrorsLib.BelowMinimumBorrow();
+            }
         }
     }
 
