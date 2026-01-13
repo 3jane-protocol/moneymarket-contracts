@@ -115,4 +115,9 @@ interface IProtocolConfig {
     /// @param key The configuration key
     /// @return The configuration value
     function config(bytes32 key) external view returns (uint256);
+
+    // Callable Credit getters
+    /// @dev Get the callable credit frozen status
+    /// @return The frozen status (0 = not frozen, 1 = frozen)
+    function getCcFrozen() external view returns (uint256);
 }

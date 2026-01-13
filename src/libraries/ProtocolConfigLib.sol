@@ -9,6 +9,7 @@ library ProtocolConfigLib {
     bytes32 internal constant IS_PAUSED = keccak256("IS_PAUSED");
     bytes32 internal constant MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
     bytes32 internal constant DEBT_CAP = keccak256("DEBT_CAP");
+    bytes32 internal constant CC_FROZEN = keccak256("CC_FROZEN");
 
     // Credit Line Keys
     bytes32 internal constant MIN_LOAN_DURATION = keccak256("MIN_LOAN_DURATION");
