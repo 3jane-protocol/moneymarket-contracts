@@ -200,7 +200,11 @@ contract CallableCredit is ICallableCredit {
         uint256 shares = borrowerShares[msg.sender][borrower];
         if (shares == 0) revert NoPosition();
 
-        return _close(borrower, shares);
+        // Full close: derive principal from shares
+        Silo memory silo = silos[msg.sender];
+        uint256 usdcPrincipal = shares.toAssetsDown(silo.totalPrincipal, silo.totalShares);
+
+        return _close(borrower, shares, usdcPrincipal);
     }
 
     /// @inheritdoc ICallableCredit
@@ -220,21 +224,24 @@ contract CallableCredit is ICallableCredit {
         uint256 sharesToBurn = usdcAmount.toSharesUp(silo.totalPrincipal, silo.totalShares);
         if (sharesToBurn > shares) revert InsufficientShares();
 
-        return _close(borrower, sharesToBurn);
+        // Partial close: use exact requested USDC amount
+        return _close(borrower, sharesToBurn, usdcAmount);
     }
 
-    /// @notice Internal implementation of close by shares
-    function _close(address borrower, uint256 sharesToBurn) internal returns (uint256 usdcSent, uint256 waUsdcSent) {
-        uint256 usdcPrincipal;
+    /// @notice Internal implementation of close
+    /// @param borrower The borrower whose position to close
+    /// @param sharesToBurn The number of shares to burn
+    /// @param usdcPrincipal The USDC principal amount (for state update and event)
+    function _close(address borrower, uint256 sharesToBurn, uint256 usdcPrincipal)
+        internal
+        returns (uint256 usdcSent, uint256 waUsdcSent)
+    {
         uint256 waUsdcToClose;
 
         // Scoped block to reduce stack pressure
         {
             // Load silo into memory
             Silo memory silo = silos[msg.sender];
-
-            // Calculate USDC principal for the event
-            usdcPrincipal = sharesToBurn.toAssetsDown(silo.totalPrincipal, silo.totalShares);
 
             // Calculate proportional waUSDC for the shares being closed
             waUsdcToClose = (sharesToBurn * silo.totalWaUsdcHeld) / silo.totalShares;
