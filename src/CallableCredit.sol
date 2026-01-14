@@ -200,10 +200,7 @@ contract CallableCredit is ICallableCredit {
         uint256 shares = borrowerShares[msg.sender][borrower];
         if (shares == 0) revert NoPosition();
 
-        Silo memory silo = silos[msg.sender];
-        uint256 usdcPrincipal = shares.toAssetsDown(silo.totalPrincipal, silo.totalShares);
-
-        return _close(borrower, usdcPrincipal);
+        return _closeByShares(borrower, shares);
     }
 
     /// @inheritdoc ICallableCredit
@@ -271,6 +268,59 @@ contract CallableCredit is ICallableCredit {
         }
 
         emit PositionClosed(msg.sender, borrower, usdcAmount, sharesToBurn);
+    }
+
+    /// @notice Internal implementation of close by shares (for full close)
+    function _closeByShares(address borrower, uint256 sharesToBurn)
+        internal
+        returns (uint256 usdcSent, uint256 waUsdcSent)
+    {
+        uint256 usdcPrincipal;
+        uint256 waUsdcToClose;
+
+        // Scoped block to reduce stack pressure
+        {
+            // Load silo into memory
+            Silo memory silo = silos[msg.sender];
+
+            // Calculate USDC principal for the event
+            usdcPrincipal = sharesToBurn.toAssetsDown(silo.totalPrincipal, silo.totalShares);
+
+            // Calculate proportional waUSDC for the shares being closed
+            waUsdcToClose = (sharesToBurn * silo.totalWaUsdcHeld) / silo.totalShares;
+
+            // Update silo state
+            silo.totalPrincipal -= usdcPrincipal.toUint128();
+            silo.totalShares -= sharesToBurn.toUint128();
+            silo.totalWaUsdcHeld -= waUsdcToClose.toUint128();
+            silos[msg.sender] = silo;
+
+            // Clear borrower's shares
+            borrowerShares[msg.sender][borrower] = 0;
+        }
+
+        // Accrue premiums to ensure borrower's debt is current
+        _accruePremiums(borrower);
+
+        // Scoped block for repayment logic
+        {
+            // Query actual debt and calculate repayment
+            uint256 actualDebt = _getBorrowerDebt(borrower);
+            uint256 toRepay = waUsdcToClose < actualDebt ? waUsdcToClose : actualDebt;
+            uint256 excessWaUsdc = waUsdcToClose - toRepay;
+
+            // Repay what's owed to MorphoCredit
+            if (toRepay > 0) {
+                _repayToMorpho(borrower, toRepay);
+            }
+
+            // Return excess to borrower, preferring USDC
+            if (excessWaUsdc > 0) {
+                (usdcSent, waUsdcSent) = _withdrawPreferUsdc(excessWaUsdc, borrower);
+            }
+        }
+
+        emit PositionClosed(msg.sender, borrower, usdcPrincipal, sharesToBurn);
     }
 
     // ============ Draw Functions ============

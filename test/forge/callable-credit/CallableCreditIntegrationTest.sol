@@ -533,4 +533,35 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         assertLt(shares1After, shares1Before, "Borrower 1 shares should decrease");
         assertEq(shares2After, shares2Before, "Borrower 2 shares should be unchanged");
     }
+
+    function testCloseHandlesDustPositionWhenPrincipalRoundsToZero() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        uint256 sharesBefore = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        assertGt(sharesBefore, 0, "Should have shares");
+
+        // Do pro-rata draws to reduce principal to near zero while keeping shares
+        // This simulates a dust position where shares.toAssetsDown() would round to 0
+        (uint128 principalBefore,,) = callableCredit.silos(COUNTER_PROTOCOL);
+
+        // Draw almost all principal
+        uint256 drawAmount = principalBefore - 1; // Leave 1 wei of principal
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(drawAmount, RECIPIENT);
+
+        // Verify we have a dust position: shares exist but principal is tiny
+        uint256 sharesAfterDraw = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        uint256 principalAfterDraw = callableCredit.getBorrowerPrincipal(COUNTER_PROTOCOL, BORROWER_1);
+
+        assertGt(sharesAfterDraw, 0, "Should still have shares");
+        assertLe(principalAfterDraw, 1, "Principal should be dust");
+
+        // Full close should still work and burn all shares
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.close(BORROWER_1);
+
+        uint256 sharesAfterClose = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        assertEq(sharesAfterClose, 0, "Full close should burn all shares even for dust positions");
+    }
 }
