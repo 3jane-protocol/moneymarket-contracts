@@ -23,7 +23,10 @@ interface ICallableCredit {
     /// @param borrower The borrower address
     /// @param usdcAmount The USDC amount requested
     /// @param shares The shares minted to the borrower
-    event PositionOpened(address indexed counterProtocol, address indexed borrower, uint256 usdcAmount, uint256 shares);
+    /// @param feeUsdc The origination fee in USDC (0 if no fee)
+    event PositionOpened(
+        address indexed counterProtocol, address indexed borrower, uint256 usdcAmount, uint256 shares, uint256 feeUsdc
+    );
 
     /// @notice Emitted when a position is closed
     /// @param counterProtocol The counter-protocol address

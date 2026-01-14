@@ -12,6 +12,8 @@ library ProtocolConfigLib {
     bytes32 internal constant CC_FROZEN = keccak256("CC_FROZEN");
     bytes32 internal constant CC_DEBT_CAP_BPS = keccak256("CC_DEBT_CAP_BPS");
     bytes32 internal constant CC_CREDIT_LINE_BPS = keccak256("CC_CREDIT_LINE_BPS");
+    bytes32 internal constant CC_ORIGINATION_FEE_BPS = keccak256("CC_ORIGINATION_FEE_BPS");
+    bytes32 internal constant CC_FEE_RECIPIENT = keccak256("CC_FEE_RECIPIENT");
 
     // Credit Line Keys
     bytes32 internal constant MIN_LOAN_DURATION = keccak256("MIN_LOAN_DURATION");

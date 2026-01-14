@@ -178,7 +178,18 @@ contract CallableCredit is ICallableCredit {
         // Use previewWithdraw (rounds up) to ensure silo always has enough waUSDC for full draws
         uint256 waUsdcAmount = WAUSDC.previewWithdraw(usdcAmount);
 
+        // Calculate origination fee (if both fee rate and recipient are configured)
+        uint256 feeUsdc;
+        uint256 feeWaUsdc;
+        address feeRecipient = address(uint160(protocolConfig.config(ProtocolConfigLib.CC_FEE_RECIPIENT)));
+        uint256 feeBps = protocolConfig.config(ProtocolConfigLib.CC_ORIGINATION_FEE_BPS);
+        if (feeRecipient != address(0) && feeBps != 0) {
+            feeUsdc = (usdcAmount * feeBps) / 10000;
+            feeWaUsdc = WAUSDC.previewWithdraw(feeUsdc);
+        }
+
         // Check global CC cap (% of debt cap) - both in waUSDC terms
+        // Cap checks use position amount only (fee is not tracked since it's sent away immediately)
         // >= 10000 bps (100%) means unlimited, skip check
         uint256 ccDebtCapBps = protocolConfig.config(ProtocolConfigLib.CC_DEBT_CAP_BPS);
         if (ccDebtCapBps < 10000) {
@@ -196,11 +207,17 @@ contract CallableCredit is ICallableCredit {
             if (borrowerTotalCcWaUsdc[borrower] + waUsdcAmount > maxBorrowerCcWaUsdc) revert CcCapExceeded();
         }
 
-        // Borrow waUSDC from MorphoCredit on behalf of the borrower
-        // The borrowed waUSDC stays in this contract (the silo)
-        IMorpho(address(MORPHO)).borrow(_marketParams(), waUsdcAmount, 0, borrower, address(this));
+        // Borrow waUSDC from MorphoCredit on behalf of the borrower (position + fee)
+        // Fee waUSDC is paid out immediately and remains borrower debt in MorphoCredit.
+        IMorpho(address(MORPHO)).borrow(_marketParams(), waUsdcAmount + feeWaUsdc, 0, borrower, address(this));
+
+        // Send fee to recipient (redeem waUSDC to USDC)
+        if (feeWaUsdc > 0) {
+            WAUSDC.redeem(feeWaUsdc, feeRecipient, address(this));
+        }
 
         // Load silo into memory, update, and write back once
+        // Silo only holds position waUSDC (fee was sent to recipient)
         Silo memory silo = silos[msg.sender];
         uint256 shares = usdcAmount.toSharesDown(silo.totalPrincipal, silo.totalShares);
         silo.totalPrincipal += usdcAmount.toUint128();
@@ -211,11 +228,11 @@ contract CallableCredit is ICallableCredit {
         // Record borrower's shares (additive for multiple opens)
         borrowerShares[msg.sender][borrower] += shares;
 
-        // Update CC waUSDC tracking
+        // Update CC waUSDC tracking (position only, fee is not tracked since it's sent away)
         totalCcWaUsdc += waUsdcAmount;
         borrowerTotalCcWaUsdc[borrower] += waUsdcAmount;
 
-        emit PositionOpened(msg.sender, borrower, usdcAmount, shares);
+        emit PositionOpened(msg.sender, borrower, usdcAmount, shares, feeUsdc);
     }
 
     /// @inheritdoc ICallableCredit
@@ -296,8 +313,8 @@ contract CallableCredit is ICallableCredit {
 
         // Scoped block for repayment logic
         {
-            // Query actual debt and calculate repayment. Any accrued interest/premiums beyond escrowed waUSDC remain
-            // owed.
+            // Query actual debt and calculate repayment. Any accrued interest/premiums or fee debt beyond escrowed
+            // waUSDC remain owed in MorphoCredit.
             uint256 actualDebt = _getBorrowerDebt(borrower);
             uint256 toRepay = waUsdcToClose < actualDebt ? waUsdcToClose : actualDebt;
             uint256 excessWaUsdc = waUsdcToClose - toRepay;
