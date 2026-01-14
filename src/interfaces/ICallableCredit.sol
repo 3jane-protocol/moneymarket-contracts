@@ -6,14 +6,16 @@ pragma solidity >=0.5.0;
 /// @custom:contact support@3jane.xyz
 /// @notice Interface for the CallableCredit contract
 /// @dev Enables counter-protocols to draw against borrower credit lines
-/// @dev Interface uses USDC amounts, internal accounting in waUSDC
+/// @dev Principal tracked in USDC (draw cap), waUSDC tracked for close reconciliation
 interface ICallableCredit {
-    /// @notice Silo structure for each counter-protocol (packed into single slot)
-    /// @param totalPrincipal Total waUSDC principal in this silo
+    /// @notice Silo structure for each counter-protocol
+    /// @param totalPrincipal Total USDC principal in this silo (draw cap)
     /// @param totalShares Total shares issued to borrowers in this silo
+    /// @param totalWaUsdcHeld Actual waUSDC held in this silo
     struct Silo {
         uint128 totalPrincipal;
         uint128 totalShares;
+        uint128 totalWaUsdcHeld;
     }
 
     /// @notice Emitted when a position is opened
@@ -26,10 +28,10 @@ interface ICallableCredit {
     /// @notice Emitted when a position is closed
     /// @param counterProtocol The counter-protocol address
     /// @param borrower The borrower address
-    /// @param waUsdcPrincipal The waUSDC principal amount
+    /// @param usdcPrincipal The USDC principal amount
     /// @param shares The shares burned
     event PositionClosed(
-        address indexed counterProtocol, address indexed borrower, uint256 waUsdcPrincipal, uint256 shares
+        address indexed counterProtocol, address indexed borrower, uint256 usdcPrincipal, uint256 shares
     );
 
     /// @notice Emitted when a counter-protocol draws from a specific borrower
@@ -102,9 +104,13 @@ interface ICallableCredit {
 
     /// @notice Get silo data for a counter-protocol
     /// @param counterProtocol The counter-protocol address
-    /// @return totalPrincipal The total waUSDC principal in the silo
+    /// @return totalPrincipal The total USDC principal in the silo (draw cap)
     /// @return totalShares The total shares issued in the silo
-    function silos(address counterProtocol) external view returns (uint128 totalPrincipal, uint128 totalShares);
+    /// @return totalWaUsdcHeld The actual waUSDC held in the silo
+    function silos(address counterProtocol)
+        external
+        view
+        returns (uint128 totalPrincipal, uint128 totalShares, uint128 totalWaUsdcHeld);
 
     /// @notice Get borrower shares in a counter-protocol's silo
     /// @param counterProtocol The counter-protocol address
@@ -112,10 +118,10 @@ interface ICallableCredit {
     /// @return The number of shares held by the borrower
     function borrowerShares(address counterProtocol, address borrower) external view returns (uint256);
 
-    /// @notice Calculate the current principal value of a borrower's shares in waUSDC
+    /// @notice Calculate the current principal value of a borrower's shares in USDC
     /// @param counterProtocol The counter-protocol address
     /// @param borrower The borrower address
-    /// @return The principal value in waUSDC
+    /// @return The principal value in USDC (draw cap)
     function getBorrowerPrincipal(address counterProtocol, address borrower) external view returns (uint256);
 
     /// @notice Check if a counter-protocol is authorized

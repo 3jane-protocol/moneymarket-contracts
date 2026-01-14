@@ -14,13 +14,13 @@ contract CallableCreditSharesTest is CallableCreditBaseTest {
         vm.prank(COUNTER_PROTOCOL);
         callableCredit.open(BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
-        (uint128 totalPrincipal, uint128 totalShares) = callableCredit.silos(COUNTER_PROTOCOL);
+        (uint128 totalPrincipal, uint128 totalShares,) = callableCredit.silos(COUNTER_PROTOCOL);
 
         // SharesMathLib uses virtual shares (1e6) and virtual assets (1) for inflation protection
         // For first deposit: shares = assets * (0 + 1e6) / (0 + 1) = assets * 1e6
         // So shares will be much larger than principal due to virtual shares
         assertGt(totalShares, 0, "Should have shares");
-        assertGt(totalPrincipal, 0, "Should have principal");
+        assertEq(totalPrincipal, DEFAULT_OPEN_AMOUNT, "Principal should match USDC opened");
 
         // Verify the principal can be retrieved correctly
         uint256 borrowerPrincipal = callableCredit.getBorrowerPrincipal(COUNTER_PROTOCOL, BORROWER_1);
@@ -35,14 +35,14 @@ contract CallableCreditSharesTest is CallableCreditBaseTest {
         vm.prank(COUNTER_PROTOCOL);
         callableCredit.open(BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
-        (uint128 principalAfterFirst, uint128 sharesAfterFirst) = callableCredit.silos(COUNTER_PROTOCOL);
+        (uint128 principalAfterFirst, uint128 sharesAfterFirst,) = callableCredit.silos(COUNTER_PROTOCOL);
         uint256 sharePriceAfterFirst = (uint256(principalAfterFirst) * 1e18) / sharesAfterFirst;
 
         // Second deposit of same amount
         vm.prank(COUNTER_PROTOCOL);
         callableCredit.open(BORROWER_2, DEFAULT_OPEN_AMOUNT);
 
-        (uint128 principalAfterSecond, uint128 sharesAfterSecond) = callableCredit.silos(COUNTER_PROTOCOL);
+        (uint128 principalAfterSecond, uint128 sharesAfterSecond,) = callableCredit.silos(COUNTER_PROTOCOL);
         uint256 sharePriceAfterSecond = (uint256(principalAfterSecond) * 1e18) / sharesAfterSecond;
 
         // Share price should remain consistent
@@ -57,14 +57,14 @@ contract CallableCreditSharesTest is CallableCreditBaseTest {
         vm.prank(COUNTER_PROTOCOL);
         callableCredit.open(BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
-        (uint128 principalBefore, uint128 sharesBefore) = callableCredit.silos(COUNTER_PROTOCOL);
+        (uint128 principalBefore, uint128 sharesBefore,) = callableCredit.silos(COUNTER_PROTOCOL);
         uint256 sharePriceBefore = (uint256(principalBefore) * 1e18) / sharesBefore;
 
         // Pro-rata draw reduces principal but not shares
         vm.prank(COUNTER_PROTOCOL);
         callableCredit.draw(DEFAULT_OPEN_AMOUNT / 2, RECIPIENT);
 
-        (uint128 principalAfter, uint128 sharesAfter) = callableCredit.silos(COUNTER_PROTOCOL);
+        (uint128 principalAfter, uint128 sharesAfter,) = callableCredit.silos(COUNTER_PROTOCOL);
         uint256 sharePriceAfter = (uint256(principalAfter) * 1e18) / sharesAfter;
 
         assertEq(sharesAfter, sharesBefore, "Shares should be unchanged after pro-rata draw");
@@ -77,7 +77,7 @@ contract CallableCreditSharesTest is CallableCreditBaseTest {
         vm.prank(COUNTER_PROTOCOL);
         callableCredit.open(BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
-        (, uint128 sharesBeforeDraws) = callableCredit.silos(COUNTER_PROTOCOL);
+        (, uint128 sharesBeforeDraws,) = callableCredit.silos(COUNTER_PROTOCOL);
 
         uint256 drawAmount = DEFAULT_OPEN_AMOUNT / 10;
 
@@ -88,7 +88,7 @@ contract CallableCreditSharesTest is CallableCreditBaseTest {
         }
         vm.stopPrank();
 
-        (uint128 principalAfter, uint128 sharesAfter) = callableCredit.silos(COUNTER_PROTOCOL);
+        (uint128 principalAfter, uint128 sharesAfter,) = callableCredit.silos(COUNTER_PROTOCOL);
 
         // Principal should be reduced by 50%
         uint256 expectedPrincipal = DEFAULT_OPEN_AMOUNT / 2;
@@ -191,7 +191,7 @@ contract CallableCreditSharesTest is CallableCreditBaseTest {
         callableCredit.open(BORROWER_2, DEFAULT_OPEN_AMOUNT / 3);
         vm.stopPrank();
 
-        (, uint128 totalShares) = callableCredit.silos(COUNTER_PROTOCOL);
+        (, uint128 totalShares,) = callableCredit.silos(COUNTER_PROTOCOL);
         uint256 shares1 = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
         uint256 shares2 = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_2);
 
@@ -213,7 +213,7 @@ contract CallableCreditSharesTest is CallableCreditBaseTest {
         vm.prank(COUNTER_PROTOCOL);
         callableCredit.close(BORROWER_1);
 
-        (, uint128 totalSharesAfter) = callableCredit.silos(COUNTER_PROTOCOL);
+        (, uint128 totalSharesAfter,) = callableCredit.silos(COUNTER_PROTOCOL);
         uint256 shares1After = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
 
         assertEq(shares1After, 0, "Borrower 1 should have 0 shares");
@@ -249,10 +249,10 @@ contract CallableCreditSharesTest is CallableCreditBaseTest {
         vm.prank(COUNTER_PROTOCOL);
         callableCredit.open(BORROWER_1, largeAmount);
 
-        (uint128 totalPrincipal, uint128 totalShares) = callableCredit.silos(COUNTER_PROTOCOL);
+        (uint128 totalPrincipal, uint128 totalShares,) = callableCredit.silos(COUNTER_PROTOCOL);
 
         // Should handle large amounts without overflow
-        assertGt(totalPrincipal, 0, "Should have principal");
+        assertEq(totalPrincipal, largeAmount, "Principal should match USDC opened");
         assertGt(totalShares, 0, "Should have shares");
 
         // Verify principal retrieval works correctly

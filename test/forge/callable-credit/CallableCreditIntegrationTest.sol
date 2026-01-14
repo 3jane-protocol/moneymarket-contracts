@@ -17,9 +17,10 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         callableCredit.open(BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
         // Verify silo updated
-        (uint128 totalPrincipal, uint128 totalShares) = callableCredit.silos(COUNTER_PROTOCOL);
-        assertGt(totalPrincipal, 0, "Silo principal should be > 0");
+        (uint128 totalPrincipal, uint128 totalShares, uint128 totalWaUsdcHeld) = callableCredit.silos(COUNTER_PROTOCOL);
+        assertEq(totalPrincipal, DEFAULT_OPEN_AMOUNT, "Silo principal should match USDC opened");
         assertGt(totalShares, 0, "Silo shares should be > 0");
+        assertGt(totalWaUsdcHeld, 0, "Silo should hold waUSDC");
 
         // Verify borrower shares
         uint256 shares = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
@@ -27,7 +28,7 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
 
         // Verify CallableCredit received waUSDC
         uint256 finalSupply = wausdc.balanceOf(address(callableCredit));
-        assertEq(finalSupply - initialSupply, totalPrincipal, "CallableCredit should hold the waUSDC");
+        assertEq(finalSupply - initialSupply, totalWaUsdcHeld, "CallableCredit should hold the waUSDC");
 
         // Verify borrower has debt in MorphoCredit
         uint256 debt = _getBorrowerDebt(BORROWER_1);
@@ -287,14 +288,15 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
-        (uint128 principalBefore,) = callableCredit.silos(COUNTER_PROTOCOL);
+        (uint128 principalBefore,,) = callableCredit.silos(COUNTER_PROTOCOL);
 
         uint256 drawAmount = DEFAULT_OPEN_AMOUNT / 4;
         vm.prank(COUNTER_PROTOCOL);
         callableCredit.draw(drawAmount, RECIPIENT);
 
-        (uint128 principalAfter,) = callableCredit.silos(COUNTER_PROTOCOL);
+        (uint128 principalAfter,,) = callableCredit.silos(COUNTER_PROTOCOL);
         assertLt(principalAfter, principalBefore, "Principal should decrease");
+        assertEq(principalAfter, principalBefore - drawAmount, "Principal should decrease by exact draw amount");
     }
 
     function testProRataDrawAffectsAllBorrowersProportionally() public {

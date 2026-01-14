@@ -28,10 +28,11 @@ contract CallableCreditMultiSiloTest is CallableCreditBaseTest {
         callableCredit.open(BORROWER_2, DEFAULT_OPEN_AMOUNT / 2);
 
         // Verify silos are separate
-        (uint128 principal1, uint128 shares1) = callableCredit.silos(COUNTER_PROTOCOL);
-        (uint128 principal2, uint128 shares2) = callableCredit.silos(COUNTER_PROTOCOL_2);
+        (uint128 principal1, uint128 shares1,) = callableCredit.silos(COUNTER_PROTOCOL);
+        (uint128 principal2, uint128 shares2,) = callableCredit.silos(COUNTER_PROTOCOL_2);
 
-        assertGt(principal1, principal2, "Silo 1 should have more principal");
+        assertEq(principal1, DEFAULT_OPEN_AMOUNT, "Silo 1 principal should match USDC opened");
+        assertEq(principal2, DEFAULT_OPEN_AMOUNT / 2, "Silo 2 principal should match USDC opened");
         assertGt(shares1, shares2, "Silo 1 should have more shares");
 
         // Verify borrower shares are in correct silos
@@ -94,15 +95,15 @@ contract CallableCreditMultiSiloTest is CallableCreditBaseTest {
         vm.prank(COUNTER_PROTOCOL_2);
         callableCredit.open(BORROWER_2, DEFAULT_OPEN_AMOUNT);
 
-        (uint128 principal1Before,) = callableCredit.silos(COUNTER_PROTOCOL);
-        (uint128 principal2Before,) = callableCredit.silos(COUNTER_PROTOCOL_2);
+        (uint128 principal1Before,,) = callableCredit.silos(COUNTER_PROTOCOL);
+        (uint128 principal2Before,,) = callableCredit.silos(COUNTER_PROTOCOL_2);
 
         // Counter-protocol 1 does pro-rata draw
         vm.prank(COUNTER_PROTOCOL);
         callableCredit.draw(DEFAULT_OPEN_AMOUNT / 2, RECIPIENT);
 
-        (uint128 principal1After,) = callableCredit.silos(COUNTER_PROTOCOL);
-        (uint128 principal2After,) = callableCredit.silos(COUNTER_PROTOCOL_2);
+        (uint128 principal1After,,) = callableCredit.silos(COUNTER_PROTOCOL);
+        (uint128 principal2After,,) = callableCredit.silos(COUNTER_PROTOCOL_2);
 
         // Only silo 1 should be affected
         assertLt(principal1After, principal1Before, "Silo 1 principal should decrease");
@@ -144,7 +145,7 @@ contract CallableCreditMultiSiloTest is CallableCreditBaseTest {
         callableCredit.open(BORROWER_2, DEFAULT_OPEN_AMOUNT / 2);
         vm.stopPrank();
 
-        (uint128 totalPrincipal, uint128 totalShares) = callableCredit.silos(COUNTER_PROTOCOL);
+        (uint128 totalPrincipal, uint128 totalShares,) = callableCredit.silos(COUNTER_PROTOCOL);
 
         uint256 shares1 = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
         uint256 shares2 = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_2);

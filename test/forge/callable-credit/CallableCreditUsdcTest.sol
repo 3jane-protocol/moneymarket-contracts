@@ -177,11 +177,14 @@ contract CallableCreditUsdcTest is CallableCreditBaseTest {
         vm.prank(COUNTER_PROTOCOL);
         callableCredit.open(BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
-        // The waUSDC borrowed should be less than the USDC amount due to appreciation
-        (uint128 totalPrincipal,) = callableCredit.silos(COUNTER_PROTOCOL);
+        // Principal is tracked in USDC, waUSDC is tracked separately
+        (uint128 totalPrincipal,, uint128 totalWaUsdcHeld) = callableCredit.silos(COUNTER_PROTOCOL);
+
+        // Principal should be the USDC amount opened
+        assertEq(totalPrincipal, DEFAULT_OPEN_AMOUNT, "Principal should be USDC amount");
 
         // With 1.1 exchange rate, 100,000 USDC should result in ~90,909 waUSDC
         uint256 expectedWaUsdc = (DEFAULT_OPEN_AMOUNT * 1e18) / 1.1e18;
-        assertApproxEqRel(totalPrincipal, expectedWaUsdc, 0.01e18, "waUSDC should reflect exchange rate");
+        assertApproxEqRel(totalWaUsdcHeld, expectedWaUsdc, 0.01e18, "waUSDC should reflect exchange rate");
     }
 }

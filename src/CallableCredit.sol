@@ -16,7 +16,7 @@ import {IERC4626} from "../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 /// @custom:contact support@3jane.xyz
 /// @notice Manages callable credit positions where counter-protocols can draw against borrower credit
 /// @dev Implements a silo + shares model for efficient pro-rata and targeted draws
-/// @dev Interface uses USDC amounts, internal accounting in waUSDC
+/// @dev Principal tracked in USDC (draw cap), waUSDC tracked at silo level for close reconciliation
 contract CallableCredit is ICallableCredit {
     using SharesMathLib for uint256;
     using SafeTransferLib for IERC20;
@@ -38,6 +38,9 @@ contract CallableCredit is ICallableCredit {
 
     /// @notice Thrown when silo has insufficient principal for draw
     error InsufficientPrincipal();
+
+    /// @notice Thrown when silo has insufficient waUSDC for draw
+    error InsufficientWaUsdc();
 
     /// @notice Thrown when borrower has no credit line in MorphoCredit
     error NoCreditLine();
@@ -160,7 +163,7 @@ contract CallableCredit is ICallableCredit {
         if (usdcAmount == 0) revert ErrorsLib.ZeroAssets();
         if (!_hasCreditLine(borrower)) revert NoCreditLine();
 
-        // Convert USDC amount to waUSDC
+        // Convert USDC amount to waUSDC for borrowing
         uint256 waUsdcAmount = WAUSDC.previewDeposit(usdcAmount);
 
         // Accrue premiums to ensure borrower's debt is current
@@ -174,9 +177,10 @@ contract CallableCredit is ICallableCredit {
 
         // Load silo into memory, update, and write back once
         Silo memory silo = silos[msg.sender];
-        uint256 shares = waUsdcAmount.toSharesDown(silo.totalPrincipal, silo.totalShares);
-        silo.totalPrincipal += waUsdcAmount.toUint128();
+        uint256 shares = usdcAmount.toSharesDown(silo.totalPrincipal, silo.totalShares);
+        silo.totalPrincipal += usdcAmount.toUint128();
         silo.totalShares += shares.toUint128();
+        silo.totalWaUsdcHeld += waUsdcAmount.toUint128();
         silos[msg.sender] = silo;
 
         // Record borrower's shares (additive for multiple opens)
@@ -195,11 +199,17 @@ contract CallableCredit is ICallableCredit {
         uint256 shares = borrowerShares[msg.sender][borrower];
         if (shares == 0) revert NoPosition();
 
-        // Load silo into memory, update, and write back once
+        // Load silo into memory
         Silo memory silo = silos[msg.sender];
-        uint256 principal = shares.toAssetsDown(silo.totalPrincipal, silo.totalShares);
-        silo.totalPrincipal -= principal.toUint128();
+
+        // Calculate borrower's USDC principal (draw cap) and proportional waUSDC
+        uint256 usdcPrincipal = shares.toAssetsDown(silo.totalPrincipal, silo.totalShares);
+        uint256 borrowerWaUsdc = (shares * silo.totalWaUsdcHeld) / silo.totalShares;
+
+        // Update silo state
+        silo.totalPrincipal -= usdcPrincipal.toUint128();
         silo.totalShares -= shares.toUint128();
+        silo.totalWaUsdcHeld -= borrowerWaUsdc.toUint128();
         silos[msg.sender] = silo;
 
         // Clear borrower's shares
@@ -212,8 +222,8 @@ contract CallableCredit is ICallableCredit {
 
         // Query actual debt and calculate repayment
         uint256 actualDebt = _getBorrowerDebt(borrower);
-        uint256 toRepay = principal < actualDebt ? principal : actualDebt;
-        uint256 excessWaUsdc = principal - toRepay;
+        uint256 toRepay = borrowerWaUsdc < actualDebt ? borrowerWaUsdc : actualDebt;
+        uint256 excessWaUsdc = borrowerWaUsdc - toRepay;
 
         // Repay what's owed to MorphoCredit
         if (toRepay > 0) {
@@ -226,7 +236,7 @@ contract CallableCredit is ICallableCredit {
             (usdcSent, waUsdcSent) = _withdrawPreferUsdc(excessWaUsdc, borrower);
         }
 
-        emit PositionClosed(msg.sender, borrower, principal, shares);
+        emit PositionClosed(msg.sender, borrower, usdcPrincipal, shares);
     }
 
     // ============ Draw Functions ============
@@ -240,21 +250,27 @@ contract CallableCredit is ICallableCredit {
     {
         if (usdcAmount == 0) revert ErrorsLib.ZeroAssets();
 
-        // Convert USDC amount to waUSDC needed
-        uint256 waUsdcNeeded = WAUSDC.previewWithdraw(usdcAmount);
-
         uint256 shares = borrowerShares[msg.sender][borrower];
         if (shares == 0) revert NoPosition();
 
-        // Load silo into memory, update, and write back once
+        // Load silo into memory
         Silo memory silo = silos[msg.sender];
-        if (waUsdcNeeded > silo.totalPrincipal) revert InsufficientPrincipal();
 
-        uint256 sharesToBurn = waUsdcNeeded.toSharesUp(silo.totalPrincipal, silo.totalShares);
+        // Check against USDC principal (draw cap)
+        if (usdcAmount > silo.totalPrincipal) revert InsufficientPrincipal();
+
+        // Calculate shares to burn based on USDC amount
+        uint256 sharesToBurn = usdcAmount.toSharesUp(silo.totalPrincipal, silo.totalShares);
         if (sharesToBurn > shares) revert InsufficientShares();
 
-        silo.totalPrincipal -= waUsdcNeeded.toUint128();
+        // Convert USDC to waUSDC needed for withdrawal
+        uint256 waUsdcNeeded = WAUSDC.previewWithdraw(usdcAmount);
+        if (waUsdcNeeded > silo.totalWaUsdcHeld) revert InsufficientWaUsdc();
+
+        // Update silo state
+        silo.totalPrincipal -= usdcAmount.toUint128();
         silo.totalShares -= sharesToBurn.toUint128();
+        silo.totalWaUsdcHeld -= waUsdcNeeded.toUint128();
         silos[msg.sender] = silo;
 
         // Update borrower's shares
@@ -275,16 +291,21 @@ contract CallableCredit is ICallableCredit {
     {
         if (usdcAmount == 0) revert ErrorsLib.ZeroAssets();
 
-        // Convert USDC amount to waUSDC needed
-        uint256 waUsdcNeeded = WAUSDC.previewWithdraw(usdcAmount);
-
-        // Load silo into memory, update, and write back once
+        // Load silo into memory
         Silo memory silo = silos[msg.sender];
-        if (waUsdcNeeded > silo.totalPrincipal) revert InsufficientPrincipal();
 
-        // Pro-rata draw only reduces totalPrincipal, shares remain unchanged
+        // Check against USDC principal (draw cap)
+        if (usdcAmount > silo.totalPrincipal) revert InsufficientPrincipal();
+
+        // Convert USDC to waUSDC needed for withdrawal
+        uint256 waUsdcNeeded = WAUSDC.previewWithdraw(usdcAmount);
+        if (waUsdcNeeded > silo.totalWaUsdcHeld) revert InsufficientWaUsdc();
+
+        // Pro-rata draw reduces principal and waUSDC, shares remain unchanged
         // Each borrower's position shrinks proportionally via share price
-        silo.totalPrincipal -= waUsdcNeeded.toUint128();
+        // Reconciliation happens at close
+        silo.totalPrincipal -= usdcAmount.toUint128();
+        silo.totalWaUsdcHeld -= waUsdcNeeded.toUint128();
         silos[msg.sender] = silo;
 
         // Withdraw to recipient, preferring USDC
