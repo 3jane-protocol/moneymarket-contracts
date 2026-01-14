@@ -348,4 +348,189 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         // Allow for small rounding differences
         assertApproxEqRel(reduction1, reduction2, 0.01e18, "Reductions should be approximately equal");
     }
+
+    // ============ Partial Close Tests ============
+
+    function testPartialCloseReducesSharesProportionally() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        uint256 sharesBefore = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        uint256 principalBefore = callableCredit.getBorrowerPrincipal(COUNTER_PROTOCOL, BORROWER_1);
+
+        // Close half the position
+        uint256 closeAmount = DEFAULT_OPEN_AMOUNT / 2;
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.close(BORROWER_1, closeAmount);
+
+        uint256 sharesAfter = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        uint256 principalAfter = callableCredit.getBorrowerPrincipal(COUNTER_PROTOCOL, BORROWER_1);
+
+        // Shares should be approximately half
+        assertApproxEqRel(sharesAfter, sharesBefore / 2, 0.01e18, "Shares should be approximately halved");
+        assertApproxEqRel(principalAfter, principalBefore / 2, 0.01e18, "Principal should be approximately halved");
+    }
+
+    function testPartialCloseLeavesRemainingPosition() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        // Close quarter of the position
+        uint256 closeAmount = DEFAULT_OPEN_AMOUNT / 4;
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.close(BORROWER_1, closeAmount);
+
+        // Should still have shares remaining
+        uint256 sharesAfter = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        assertGt(sharesAfter, 0, "Should have shares remaining");
+
+        // Should still be able to close the remaining position
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.close(BORROWER_1);
+
+        uint256 sharesAfterFull = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        assertEq(sharesAfterFull, 0, "Should have no shares after full close");
+    }
+
+    function testMultiplePartialClosesUntilFullClose() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        // Close in thirds
+        uint256 closeAmount = DEFAULT_OPEN_AMOUNT / 3;
+
+        vm.startPrank(COUNTER_PROTOCOL);
+
+        callableCredit.close(BORROWER_1, closeAmount);
+        uint256 sharesAfter1 = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        assertGt(sharesAfter1, 0, "Should have shares after first partial close");
+
+        callableCredit.close(BORROWER_1, closeAmount);
+        uint256 sharesAfter2 = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        assertGt(sharesAfter2, 0, "Should have shares after second partial close");
+        assertLt(sharesAfter2, sharesAfter1, "Shares should decrease");
+
+        // Close remaining
+        callableCredit.close(BORROWER_1);
+        uint256 sharesAfter3 = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        assertEq(sharesAfter3, 0, "Should have no shares after final close");
+
+        vm.stopPrank();
+    }
+
+    function testPartialCloseRevertsZeroAmount() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        vm.prank(COUNTER_PROTOCOL);
+        vm.expectRevert(ErrorsLib.ZeroAssets.selector);
+        callableCredit.close(BORROWER_1, 0);
+    }
+
+    function testPartialCloseRevertsNoPosition() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        // Don't open a position
+
+        vm.prank(COUNTER_PROTOCOL);
+        vm.expectRevert(CallableCredit.NoPosition.selector);
+        callableCredit.close(BORROWER_1, 10_000e6);
+    }
+
+    function testPartialCloseRevertsInsufficientShares() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        // Try to close more than the position
+        vm.prank(COUNTER_PROTOCOL);
+        vm.expectRevert(CallableCredit.InsufficientShares.selector);
+        callableCredit.close(BORROWER_1, DEFAULT_OPEN_AMOUNT * 2);
+    }
+
+    function testPartialCloseReturnsExcessIfBorrowerRepaid() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        // Borrower repays all debt directly to MorphoCredit
+        uint256 debtBefore = _getBorrowerDebt(BORROWER_1);
+        _repayDirectToMorpho(BORROWER_1, debtBefore);
+
+        uint256 borrowerUsdcBefore = usdc.balanceOf(BORROWER_1);
+
+        // Partial close should return excess to borrower
+        uint256 closeAmount = DEFAULT_OPEN_AMOUNT / 2;
+        vm.prank(COUNTER_PROTOCOL);
+        (uint256 usdcSent, uint256 waUsdcSent) = callableCredit.close(BORROWER_1, closeAmount);
+
+        assertGt(usdcSent + waUsdcSent, 0, "Borrower should receive excess");
+        uint256 borrowerUsdcAfter = usdc.balanceOf(BORROWER_1);
+        assertGt(borrowerUsdcAfter, borrowerUsdcBefore, "Borrower USDC should increase");
+    }
+
+    function testPartialCloseRepaysDebtProportionally() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        uint256 debtBefore = _getBorrowerDebt(BORROWER_1);
+
+        // Close half the position
+        uint256 closeAmount = DEFAULT_OPEN_AMOUNT / 2;
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.close(BORROWER_1, closeAmount);
+
+        uint256 debtAfter = _getBorrowerDebt(BORROWER_1);
+
+        // Debt should be approximately halved
+        assertApproxEqRel(debtAfter, debtBefore / 2, 0.01e18, "Debt should be approximately halved");
+    }
+
+    function testPartialCloseAfterDraw() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        // Draw half
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(BORROWER_1, DEFAULT_OPEN_AMOUNT / 2, RECIPIENT);
+
+        uint256 sharesAfterDraw = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        uint256 principalAfterDraw = callableCredit.getBorrowerPrincipal(COUNTER_PROTOCOL, BORROWER_1);
+
+        // Partial close remaining
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.close(BORROWER_1, principalAfterDraw / 2);
+
+        uint256 sharesAfterClose = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        assertLt(sharesAfterClose, sharesAfterDraw, "Shares should decrease after partial close");
+        assertGt(sharesAfterClose, 0, "Should still have shares");
+
+        // Full close remaining
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.close(BORROWER_1);
+
+        uint256 sharesAfterFull = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        assertEq(sharesAfterFull, 0, "Should have no shares after full close");
+    }
+
+    function testPartialCloseMultipleBorrowersSameCounterProtocol() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _setupBorrowerWithCreditLine(BORROWER_2, CREDIT_LINE_AMOUNT);
+
+        vm.startPrank(COUNTER_PROTOCOL);
+        callableCredit.open(BORROWER_1, DEFAULT_OPEN_AMOUNT);
+        callableCredit.open(BORROWER_2, DEFAULT_OPEN_AMOUNT);
+        vm.stopPrank();
+
+        uint256 shares1Before = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        uint256 shares2Before = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_2);
+
+        // Partial close only borrower 1
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.close(BORROWER_1, DEFAULT_OPEN_AMOUNT / 2);
+
+        uint256 shares1After = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        uint256 shares2After = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_2);
+
+        // Borrower 1 shares should decrease, borrower 2 unchanged
+        assertLt(shares1After, shares1Before, "Borrower 1 shares should decrease");
+        assertEq(shares2After, shares2Before, "Borrower 2 shares should be unchanged");
+    }
 }

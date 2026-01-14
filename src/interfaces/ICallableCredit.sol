@@ -75,13 +75,22 @@ interface ICallableCredit {
     /// @param usdcAmount The USDC amount to borrow and reserve
     function open(address borrower, uint256 usdcAmount) external;
 
-    /// @notice Close a borrower's position and repay to MorphoCredit
+    /// @notice Close a borrower's entire position and repay to MorphoCredit
     /// @dev Only callable by authorized counter-protocols
     /// @dev Returns excess to borrower if they repaid MorphoCredit directly
     /// @param borrower The borrower whose position to close
     /// @return usdcSent USDC amount sent to borrower as excess
     /// @return waUsdcSent waUSDC amount sent to borrower as excess (if USDC redemption limited)
     function close(address borrower) external returns (uint256 usdcSent, uint256 waUsdcSent);
+
+    /// @notice Partially close a borrower's position and repay to MorphoCredit
+    /// @dev Only callable by authorized counter-protocols
+    /// @dev Returns excess to borrower if they repaid MorphoCredit directly
+    /// @param borrower The borrower whose position to partially close
+    /// @param usdcAmount The USDC amount to close
+    /// @return usdcSent USDC amount sent to borrower as excess
+    /// @return waUsdcSent waUSDC amount sent to borrower as excess (if USDC redemption limited)
+    function close(address borrower, uint256 usdcAmount) external returns (uint256 usdcSent, uint256 waUsdcSent);
 
     /// @notice Draw funds from a specific borrower's position (targeted draw)
     /// @dev Only callable by authorized counter-protocols
