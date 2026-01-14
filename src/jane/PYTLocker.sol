@@ -59,6 +59,9 @@ contract PYTLocker is Ownable, ReentrancyGuard {
     /// @notice YT => market config
     mapping(address => Market) public markets;
 
+    /// @notice Tokens that cannot be swept (SY and asset tokens from all markets)
+    mapping(address => bool) internal _protectedToken;
+
     /*//////////////////////////////////////////////////////////////
                               ACCOUNTING
     //////////////////////////////////////////////////////////////*/
@@ -92,7 +95,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
     error UnsupportedYT();
     error ZeroAmount();
     error YTExpired();
-    error CannotSweepYT();
+    error CannotSweepMarketToken();
 
     constructor(address owner_) Ownable(owner_) {}
 
@@ -107,15 +110,18 @@ contract PYTLocker is Ownable, ReentrancyGuard {
     function addMarket(address yt, address sy, address asset) external onlyOwner {
         if (markets[yt].enabled) revert MarketExists();
         markets[yt] = Market({sy: sy, asset: asset, enabled: true});
+        _protectedToken[sy] = true;
+        _protectedToken[asset] = true;
         emit MarketAdded(yt, sy, asset);
     }
 
     /// @notice Sweep accumulated tokens (e.g., reward tokens) for external distribution
+    /// @dev Cannot sweep YT, SY, or asset tokens from any market
     /// @param token The token to sweep
     /// @param to The recipient address
     /// @param amount The amount to sweep
     function sweep(address token, address to, uint256 amount) external onlyOwner {
-        if (markets[token].enabled) revert CannotSweepYT();
+        if (markets[token].enabled || _protectedToken[token]) revert CannotSweepMarketToken();
         IERC20(token).safeTransfer(to, amount);
     }
 

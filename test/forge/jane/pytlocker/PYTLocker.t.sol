@@ -339,6 +339,45 @@ contract PYTLockerTest is Test {
         assertEq(locker.claimable(address(yt2), alice), yield2);
     }
 
+    // ============ Sweep Tests ============
+
+    function test_sweep_allowsUnprotectedTokens() public {
+        MockAsset rewardToken = new MockAsset();
+        rewardToken.mint(address(locker), 100e18);
+
+        vm.prank(owner);
+        locker.sweep(address(rewardToken), owner, 100e18);
+
+        assertEq(rewardToken.balanceOf(owner), 100e18);
+    }
+
+    function test_sweep_revertsForYT() public {
+        vm.prank(owner);
+        vm.expectRevert(PYTLocker.CannotSweepMarketToken.selector);
+        locker.sweep(address(yt), owner, 1e18);
+    }
+
+    function test_sweep_revertsForSY() public {
+        vm.prank(owner);
+        vm.expectRevert(PYTLocker.CannotSweepMarketToken.selector);
+        locker.sweep(address(sy), owner, 1e18);
+    }
+
+    function test_sweep_revertsForAsset() public {
+        vm.prank(owner);
+        vm.expectRevert(PYTLocker.CannotSweepMarketToken.selector);
+        locker.sweep(address(asset), owner, 1e18);
+    }
+
+    function test_sweep_revertsForNonOwner() public {
+        MockAsset rewardToken = new MockAsset();
+        rewardToken.mint(address(locker), 100e18);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        locker.sweep(address(rewardToken), alice, 100e18);
+    }
+
     // ============ Fuzz Tests ============
 
     function testFuzz_depositAndClaim(uint256 depositAmount, uint256 yieldAmount) public {
