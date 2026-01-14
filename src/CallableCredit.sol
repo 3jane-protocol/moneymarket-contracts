@@ -49,6 +49,9 @@ contract CallableCredit is ICallableCredit {
     /// @notice Thrown when callable credit cap is exceeded
     error CcCapExceeded();
 
+    /// @notice Thrown when throttle limit for the period is exceeded
+    error ThrottleLimitExceeded();
+
     // ============ State Variables ============
 
     /// @notice Silo data per counter-protocol
@@ -60,11 +63,17 @@ contract CallableCredit is ICallableCredit {
     /// @notice Authorization status for counter-protocols
     mapping(address => bool) public authorizedCounterProtocols;
 
+    /// @notice Per-borrower total CC waUSDC across all silos
+    mapping(address => uint256) public borrowerTotalCcWaUsdc;
+
     /// @notice Total CC waUSDC across all silos
     uint256 public totalCcWaUsdc;
 
-    /// @notice Per-borrower total CC waUSDC across all silos
-    mapping(address => uint256) public borrowerTotalCcWaUsdc;
+    /// @notice Timestamp when current throttle period started
+    uint64 public throttlePeriodStart;
+
+    /// @notice USDC opened in current throttle period
+    uint128 public throttlePeriodUsdc;
 
     // ============ Immutables ============
 
@@ -173,6 +182,8 @@ contract CallableCredit is ICallableCredit {
     function open(address borrower, uint256 usdcAmount) external whenNotFrozen onlyAuthorizedCounterProtocol {
         if (usdcAmount == 0) revert ErrorsLib.ZeroAssets();
         if (!_hasCreditLine(borrower)) revert NoCreditLine();
+
+        _checkAndUpdateThrottle(usdcAmount);
 
         // Convert USDC amount to waUSDC for borrowing
         // Use previewWithdraw (rounds up) to ensure silo always has enough waUSDC for full draws
@@ -439,6 +450,21 @@ contract CallableCredit is ICallableCredit {
             lltv: LLTV,
             creditLine: CREDIT_LINE
         });
+    }
+
+    /// @notice Check and update throttle state
+    /// @param usdcAmount The USDC amount being opened
+    function _checkAndUpdateThrottle(uint256 usdcAmount) internal {
+        uint256 throttlePeriod = protocolConfig.config(ProtocolConfigLib.CC_THROTTLE_PERIOD);
+        uint256 throttleLimit = protocolConfig.config(ProtocolConfigLib.CC_THROTTLE_LIMIT);
+        if (throttlePeriod != 0 && throttleLimit != 0) {
+            if (block.timestamp >= throttlePeriodStart + throttlePeriod) {
+                throttlePeriodStart = uint64(block.timestamp);
+                throttlePeriodUsdc = 0;
+            }
+            if (throttlePeriodUsdc + usdcAmount > throttleLimit) revert ThrottleLimitExceeded();
+            throttlePeriodUsdc += uint128(usdcAmount);
+        }
     }
 
     /// @notice Check if borrower has a credit line in MorphoCredit

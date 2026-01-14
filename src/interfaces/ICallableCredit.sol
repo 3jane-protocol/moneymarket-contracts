@@ -157,4 +157,12 @@ interface ICallableCredit {
     /// @param borrower The borrower address
     /// @return The borrower's total CC waUSDC
     function borrowerTotalCcWaUsdc(address borrower) external view returns (uint256);
+
+    /// @notice Get the timestamp when current throttle period started
+    /// @return The period start timestamp
+    function throttlePeriodStart() external view returns (uint64);
+
+    /// @notice Get the USDC opened in current throttle period
+    /// @return The USDC amount used in this period
+    function throttlePeriodUsdc() external view returns (uint128);
 }
