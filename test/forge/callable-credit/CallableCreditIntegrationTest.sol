@@ -175,6 +175,25 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         assertGt(borrowerUsdcAfter, borrowerUsdcBefore, "Borrower should receive USDC");
     }
 
+    function testPartialCloseDoesNotZeroSharesWhenPrincipalRemains() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(DEFAULT_OPEN_AMOUNT / 3, RECIPIENT);
+
+        (uint128 principalAfterDraw,,) = callableCredit.silos(COUNTER_PROTOCOL);
+        uint256 closeAmount = uint256(principalAfterDraw) - 1;
+
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.close(BORROWER_1, closeAmount);
+
+        (uint128 principalAfterClose, uint128 sharesAfterClose,) = callableCredit.silos(COUNTER_PROTOCOL);
+        assertGt(principalAfterClose, 0, "Principal should remain after partial close");
+        assertGt(sharesAfterClose, 0, "Shares should remain after partial close");
+        assertGt(callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1), 0, "Borrower shares should remain");
+    }
+
     // ============ Targeted Draw Tests ============
 
     function testDrawSuccess() public {
