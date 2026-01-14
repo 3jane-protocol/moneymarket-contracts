@@ -446,6 +446,39 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         callableCredit.close(BORROWER_1, DEFAULT_OPEN_AMOUNT * 2);
     }
 
+    function testPartialCloseConsumesAllPrincipalWhenAllSharesBurned() public {
+        // Regression test: when toSharesUp rounds up to burn all shares,
+        // the principal should also be fully consumed to prevent orphaned principal
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        // Get initial state
+        uint256 sharesBefore = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        (uint128 principalBefore,,) = callableCredit.silos(COUNTER_PROTOCOL);
+
+        // Partial close nearly all - this may round up to burn all shares
+        uint256 closeAmount = DEFAULT_OPEN_AMOUNT - 1; // Just under full amount
+
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.close(BORROWER_1, closeAmount);
+
+        uint256 sharesAfter = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        (uint128 principalAfter,,) = callableCredit.silos(COUNTER_PROTOCOL);
+
+        // Key invariant: if all shares were burned, all principal must also be removed
+        // (prevents division by zero and orphaned principal)
+        if (sharesAfter == 0) {
+            assertEq(principalAfter, 0, "If all shares burned, all principal must be removed");
+        } else {
+            // If shares remain, principal should also remain
+            assertGt(principalAfter, 0, "If shares remain, principal should remain");
+        }
+
+        // Also verify we actually closed something
+        assertLt(sharesAfter, sharesBefore, "Shares should decrease");
+        assertLt(principalAfter, principalBefore, "Principal should decrease");
+    }
+
     function testPartialCloseReturnsExcessIfBorrowerRepaid() public {
         _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);

@@ -224,8 +224,12 @@ contract CallableCredit is ICallableCredit {
         uint256 sharesToBurn = usdcAmount.toSharesUp(silo.totalPrincipal, silo.totalShares);
         if (sharesToBurn > shares) revert InsufficientShares();
 
-        // Partial close: use exact requested USDC amount
-        return _close(borrower, sharesToBurn, usdcAmount);
+        // If burning all shares, derive principal from shares (like full close)
+        // to prevent orphaned principal with zero shares
+        uint256 usdcPrincipal =
+            sharesToBurn == shares ? shares.toAssetsDown(silo.totalPrincipal, silo.totalShares) : usdcAmount;
+
+        return _close(borrower, sharesToBurn, usdcPrincipal);
     }
 
     /// @notice Internal implementation of close
