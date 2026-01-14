@@ -35,6 +35,26 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         assertGt(debt, 0, "Borrower should have debt");
     }
 
+    function testOpenRoundsUpWaUsdcToAllowFullDrawWithAppreciation() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _setExchangeRate(1.1e18);
+
+        uint256 expectedWaUsdc = wausdc.previewWithdraw(DEFAULT_OPEN_AMOUNT);
+
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.open(BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        (,, uint128 totalWaUsdcHeld) = callableCredit.silos(COUNTER_PROTOCOL);
+        assertEq(totalWaUsdcHeld, expectedWaUsdc, "Silo should hold rounded-up waUSDC");
+
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(BORROWER_1, DEFAULT_OPEN_AMOUNT, RECIPIENT);
+
+        (uint128 totalPrincipalAfter,, uint128 totalWaUsdcHeldAfter) = callableCredit.silos(COUNTER_PROTOCOL);
+        assertEq(totalPrincipalAfter, 0, "Principal should be fully drawn");
+        assertEq(totalWaUsdcHeldAfter, 0, "waUSDC should be fully drawn");
+    }
+
     function testOpenRevertsZeroAmount() public {
         _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
 
