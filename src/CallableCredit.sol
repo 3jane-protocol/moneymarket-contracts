@@ -195,11 +195,6 @@ contract CallableCredit is ICallableCredit {
             if (borrowerTotalCcWaUsdc[borrower] + waUsdcAmount > maxBorrowerCcWaUsdc) revert CcCapExceeded();
         }
 
-        // Accrue premiums to ensure borrower's debt is current
-        address[] memory borrowers = new address[](1);
-        borrowers[0] = borrower;
-        MORPHO.accruePremiumsForBorrowers(marketId, borrowers);
-
         // Borrow waUSDC from MorphoCredit on behalf of the borrower
         // The borrowed waUSDC stays in this contract (the silo)
         IMorpho(address(MORPHO)).borrow(_marketParams(), waUsdcAmount, 0, borrower, address(this));
