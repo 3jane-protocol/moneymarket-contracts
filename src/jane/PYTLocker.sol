@@ -140,7 +140,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
 
         uint256 beforeBal = IERC20(m.asset).balanceOf(address(this));
 
-        // Redeem interest from YT (interest comes as SY)
+        // Redeem interest from YT (interest comes as SY). Reward tokens are handled separately (sweep + merkle drop).
         IPendleYT(yt).redeemDueInterestAndRewards(address(this), true, true);
 
         // SY -> asset
