@@ -109,8 +109,8 @@ contract CallableCredit is ICallableCredit {
     /// @param _morpho Address of the MorphoCredit contract
     /// @param _wausdc Address of the waUSDC token (ERC4626)
     /// @param _protocolConfig Address of the ProtocolConfig contract
-    /// @param params Market parameters for MorphoCredit
-    constructor(address _morpho, address _wausdc, address _protocolConfig, MarketParams memory params) {
+    /// @param _marketId Market ID in MorphoCredit
+    constructor(address _morpho, address _wausdc, address _protocolConfig, Id _marketId) {
         if (_morpho == address(0)) revert ErrorsLib.ZeroAddress();
         if (_wausdc == address(0)) revert ErrorsLib.ZeroAddress();
         if (_protocolConfig == address(0)) revert ErrorsLib.ZeroAddress();
@@ -119,9 +119,10 @@ contract CallableCredit is ICallableCredit {
         WAUSDC = IERC4626(_wausdc);
         USDC = IERC20(IERC4626(_wausdc).asset());
         protocolConfig = IProtocolConfig(_protocolConfig);
-        marketId = Id.wrap(keccak256(abi.encode(params)));
+        marketId = _marketId;
 
-        // Store MarketParams fields as immutables
+        // Retrieve and store MarketParams fields as immutables
+        MarketParams memory params = IMorpho(_morpho).idToMarketParams(_marketId);
         LOAN_TOKEN = params.loanToken;
         COLLATERAL_TOKEN = params.collateralToken;
         ORACLE = params.oracle;

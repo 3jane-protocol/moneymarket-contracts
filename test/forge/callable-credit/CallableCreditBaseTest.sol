@@ -83,7 +83,7 @@ contract CallableCreditBaseTest is BaseTest {
         _initializeMarketCycle();
 
         // Deploy CallableCredit
-        callableCredit = new CallableCredit(address(morpho), address(wausdc), address(protocolConfig), ccMarketParams);
+        callableCredit = new CallableCredit(address(morpho), address(wausdc), address(protocolConfig), ccMarketId);
         vm.label(address(callableCredit), "CallableCredit");
 
         // Authorize CallableCredit in MorphoCredit to borrow on behalf of users
