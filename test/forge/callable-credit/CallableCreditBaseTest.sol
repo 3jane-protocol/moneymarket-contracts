@@ -8,6 +8,7 @@ import {CreditLineMock} from "../../../src/mocks/CreditLineMock.sol";
 import {WaUSDCMock} from "../mocks/WaUSDCMock.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
 import {SharesMathLib} from "../../../src/libraries/SharesMathLib.sol";
+import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 
 /// @title CallableCreditBaseTest
 /// @notice Base test setup for CallableCredit tests

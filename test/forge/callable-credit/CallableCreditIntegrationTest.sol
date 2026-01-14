@@ -38,7 +38,7 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
 
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.ZeroAmount.selector);
+        vm.expectRevert(ErrorsLib.ZeroAssets.selector);
         callableCredit.open(BORROWER_1, 0);
     }
 
@@ -177,7 +177,7 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.ZeroAmount.selector);
+        vm.expectRevert(ErrorsLib.ZeroAssets.selector);
         callableCredit.draw(BORROWER_1, 0, RECIPIENT);
     }
 
@@ -256,7 +256,7 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.ZeroAmount.selector);
+        vm.expectRevert(ErrorsLib.ZeroAssets.selector);
         callableCredit.draw(0, RECIPIENT);
     }
 

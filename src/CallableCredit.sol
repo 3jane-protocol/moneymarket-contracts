@@ -6,6 +6,7 @@ import {ICallableCredit} from "./interfaces/ICallableCredit.sol";
 import {IProtocolConfig} from "./interfaces/IProtocolConfig.sol";
 import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
+import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {UtilsLib} from "./libraries/UtilsLib.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IERC4626} from "../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
@@ -35,20 +36,11 @@ contract CallableCredit is ICallableCredit {
     /// @notice Thrown when borrower has no position to close or draw from
     error NoPosition();
 
-    /// @notice Thrown when amount is zero
-    error ZeroAmount();
-
     /// @notice Thrown when silo has insufficient principal for draw
     error InsufficientPrincipal();
 
     /// @notice Thrown when borrower has no credit line in MorphoCredit
     error NoCreditLine();
-
-    /// @notice Thrown when address is zero
-    error ZeroAddress();
-
-    /// @notice Thrown when caller is not the owner
-    error NotOwner();
 
     // ============ State Variables ============
 
@@ -106,9 +98,9 @@ contract CallableCredit is ICallableCredit {
     /// @param _protocolConfig Address of the ProtocolConfig contract
     /// @param params Market parameters for MorphoCredit
     constructor(address _morpho, address _wausdc, address _protocolConfig, MarketParams memory params) {
-        if (_morpho == address(0)) revert ZeroAddress();
-        if (_wausdc == address(0)) revert ZeroAddress();
-        if (_protocolConfig == address(0)) revert ZeroAddress();
+        if (_morpho == address(0)) revert ErrorsLib.ZeroAddress();
+        if (_wausdc == address(0)) revert ErrorsLib.ZeroAddress();
+        if (_protocolConfig == address(0)) revert ErrorsLib.ZeroAddress();
 
         MORPHO = IMorphoCredit(_morpho);
         WAUSDC = IERC4626(_wausdc);
@@ -135,7 +127,7 @@ contract CallableCredit is ICallableCredit {
 
     /// @dev Reverts if caller is not the owner (inherited from MorphoCredit)
     modifier onlyOwner() {
-        if (msg.sender != owner()) revert NotOwner();
+        if (msg.sender != owner()) revert ErrorsLib.NotOwner();
         _;
     }
 
@@ -165,7 +157,7 @@ contract CallableCredit is ICallableCredit {
 
     /// @inheritdoc ICallableCredit
     function open(address borrower, uint256 usdcAmount) external whenNotFrozen onlyAuthorizedCounterProtocol {
-        if (usdcAmount == 0) revert ZeroAmount();
+        if (usdcAmount == 0) revert ErrorsLib.ZeroAssets();
         if (!_hasCreditLine(borrower)) revert NoCreditLine();
 
         // Convert USDC amount to waUSDC
@@ -246,7 +238,7 @@ contract CallableCredit is ICallableCredit {
         onlyAuthorizedCounterProtocol
         returns (uint256 usdcSent, uint256 waUsdcSent)
     {
-        if (usdcAmount == 0) revert ZeroAmount();
+        if (usdcAmount == 0) revert ErrorsLib.ZeroAssets();
 
         // Convert USDC amount to waUSDC needed
         uint256 waUsdcNeeded = WAUSDC.previewWithdraw(usdcAmount);
@@ -281,7 +273,7 @@ contract CallableCredit is ICallableCredit {
         onlyAuthorizedCounterProtocol
         returns (uint256 usdcSent, uint256 waUsdcSent)
     {
-        if (usdcAmount == 0) revert ZeroAmount();
+        if (usdcAmount == 0) revert ErrorsLib.ZeroAssets();
 
         // Convert USDC amount to waUSDC needed
         uint256 waUsdcNeeded = WAUSDC.previewWithdraw(usdcAmount);

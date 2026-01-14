@@ -9,17 +9,17 @@ contract CallableCreditUnitTest is CallableCreditBaseTest {
     // ============ Constructor Tests ============
 
     function testConstructorRevertsZeroMorpho() public {
-        vm.expectRevert(CallableCredit.ZeroAddress.selector);
+        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
         new CallableCredit(address(0), address(wausdc), address(protocolConfig), ccMarketParams);
     }
 
     function testConstructorRevertsZeroWausdc() public {
-        vm.expectRevert(CallableCredit.ZeroAddress.selector);
+        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
         new CallableCredit(address(morpho), address(0), address(protocolConfig), ccMarketParams);
     }
 
     function testConstructorRevertsZeroProtocolConfig() public {
-        vm.expectRevert(CallableCredit.ZeroAddress.selector);
+        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
         new CallableCredit(address(morpho), address(wausdc), address(0), ccMarketParams);
     }
 
@@ -63,7 +63,7 @@ contract CallableCreditUnitTest is CallableCreditBaseTest {
         address randomUser = makeAddr("RandomUser");
 
         vm.prank(randomUser);
-        vm.expectRevert(CallableCredit.NotOwner.selector);
+        vm.expectRevert(ErrorsLib.NotOwner.selector);
         callableCredit.setAuthorizedCounterProtocol(COUNTER_PROTOCOL_2, true);
     }
 
