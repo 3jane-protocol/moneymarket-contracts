@@ -8,6 +8,7 @@ import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {UtilsLib} from "./libraries/UtilsLib.sol";
+import {ProtocolConfigLib} from "./libraries/ProtocolConfigLib.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IERC4626} from "../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 
@@ -45,6 +46,9 @@ contract CallableCredit is ICallableCredit {
     /// @notice Thrown when borrower has no credit line in MorphoCredit
     error NoCreditLine();
 
+    /// @notice Thrown when callable credit cap is exceeded
+    error CcCapExceeded();
+
     // ============ State Variables ============
 
     /// @notice Silo data per counter-protocol
@@ -55,6 +59,12 @@ contract CallableCredit is ICallableCredit {
 
     /// @notice Authorization status for counter-protocols
     mapping(address => bool) public authorizedCounterProtocols;
+
+    /// @notice Total CC waUSDC across all silos
+    uint256 public totalCcWaUsdc;
+
+    /// @notice Per-borrower total CC waUSDC across all silos
+    mapping(address => uint256) public borrowerTotalCcWaUsdc;
 
     // ============ Immutables ============
 
@@ -167,6 +177,24 @@ contract CallableCredit is ICallableCredit {
         // Use previewWithdraw (rounds up) to ensure silo always has enough waUSDC for full draws
         uint256 waUsdcAmount = WAUSDC.previewWithdraw(usdcAmount);
 
+        // Check global CC cap (% of debt cap) - both in waUSDC terms
+        // >= 10000 bps (100%) means unlimited, skip check
+        uint256 ccDebtCapBps = protocolConfig.config(ProtocolConfigLib.CC_DEBT_CAP_BPS);
+        if (ccDebtCapBps < 10000) {
+            uint256 debtCap = protocolConfig.config(ProtocolConfigLib.DEBT_CAP);
+            uint256 maxCcWaUsdc = (debtCap * ccDebtCapBps) / 10000;
+            if (totalCcWaUsdc + waUsdcAmount > maxCcWaUsdc) revert CcCapExceeded();
+        }
+
+        // Check per-borrower CC cap (% of credit line) - credit line is in waUSDC
+        // >= 10000 bps (100%) means unlimited, skip check
+        uint256 ccCreditLineBps = protocolConfig.config(ProtocolConfigLib.CC_CREDIT_LINE_BPS);
+        if (ccCreditLineBps < 10000) {
+            uint256 creditLine = IMorpho(address(MORPHO)).position(marketId, borrower).collateral;
+            uint256 maxBorrowerCcWaUsdc = (creditLine * ccCreditLineBps) / 10000;
+            if (borrowerTotalCcWaUsdc[borrower] + waUsdcAmount > maxBorrowerCcWaUsdc) revert CcCapExceeded();
+        }
+
         // Accrue premiums to ensure borrower's debt is current
         address[] memory borrowers = new address[](1);
         borrowers[0] = borrower;
@@ -186,6 +214,10 @@ contract CallableCredit is ICallableCredit {
 
         // Record borrower's shares (additive for multiple opens)
         borrowerShares[msg.sender][borrower] += shares;
+
+        // Update CC waUSDC tracking
+        totalCcWaUsdc += waUsdcAmount;
+        borrowerTotalCcWaUsdc[borrower] += waUsdcAmount;
 
         emit PositionOpened(msg.sender, borrower, usdcAmount, shares);
     }
@@ -257,6 +289,10 @@ contract CallableCredit is ICallableCredit {
 
             // Update borrower's shares
             borrowerShares[msg.sender][borrower] -= sharesToBurn;
+
+            // Decrease CC waUSDC tracking
+            totalCcWaUsdc -= waUsdcToClose;
+            borrowerTotalCcWaUsdc[borrower] -= waUsdcToClose;
         }
 
         // Accrue premiums to ensure borrower's debt is current
@@ -264,7 +300,8 @@ contract CallableCredit is ICallableCredit {
 
         // Scoped block for repayment logic
         {
-            // Query actual debt and calculate repayment
+            // Query actual debt and calculate repayment. Any accrued interest/premiums beyond escrowed waUSDC remain
+            // owed.
             uint256 actualDebt = _getBorrowerDebt(borrower);
             uint256 toRepay = waUsdcToClose < actualDebt ? waUsdcToClose : actualDebt;
             uint256 excessWaUsdc = waUsdcToClose - toRepay;

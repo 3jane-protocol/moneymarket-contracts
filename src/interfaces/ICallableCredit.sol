@@ -78,7 +78,8 @@ interface ICallableCredit {
     /// @notice Close a borrower's entire position and repay to MorphoCredit
     /// @dev Only callable by authorized counter-protocols
     /// @dev Returns excess to borrower if they repaid MorphoCredit directly
-    /// @param borrower The borrower whose position to close
+    /// @dev Repayment is capped by the position's escrowed waUSDC; accrued interest/premiums remain owed in
+    /// MorphoCredit @param borrower The borrower whose position to close
     /// @return usdcSent USDC amount sent to borrower as excess
     /// @return waUsdcSent waUSDC amount sent to borrower as excess (if USDC redemption limited)
     function close(address borrower) external returns (uint256 usdcSent, uint256 waUsdcSent);
@@ -86,7 +87,8 @@ interface ICallableCredit {
     /// @notice Partially close a borrower's position and repay to MorphoCredit
     /// @dev Only callable by authorized counter-protocols
     /// @dev Returns excess to borrower if they repaid MorphoCredit directly
-    /// @param borrower The borrower whose position to partially close
+    /// @dev Repayment is capped by the position's escrowed waUSDC; accrued interest/premiums remain owed in
+    /// MorphoCredit @param borrower The borrower whose position to partially close
     /// @param usdcAmount The USDC amount to close
     /// @return usdcSent USDC amount sent to borrower as excess
     /// @return waUsdcSent waUSDC amount sent to borrower as excess (if USDC redemption limited)
@@ -143,4 +145,13 @@ interface ICallableCredit {
     /// @param counterProtocol The counter-protocol address
     /// @param authorized The authorization status
     function setAuthorizedCounterProtocol(address counterProtocol, bool authorized) external;
+
+    /// @notice Get total CC waUSDC across all silos
+    /// @return The total CC waUSDC
+    function totalCcWaUsdc() external view returns (uint256);
+
+    /// @notice Get a borrower's total CC waUSDC across all silos
+    /// @param borrower The borrower address
+    /// @return The borrower's total CC waUSDC
+    function borrowerTotalCcWaUsdc(address borrower) external view returns (uint256);
 }

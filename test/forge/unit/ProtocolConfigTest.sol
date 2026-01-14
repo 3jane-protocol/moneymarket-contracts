@@ -364,6 +364,6 @@ contract ProtocolConfigTest is Test {
         vm.stopPrank();
 
         assertEq(protocolConfig.getUsd3SupplyCap(), testValue1);
-        assertEq(protocolConfig.getDebtCap(), testValue2);
+        assertEq(protocolConfig.config(DEBT_CAP), testValue2);
     }
 }

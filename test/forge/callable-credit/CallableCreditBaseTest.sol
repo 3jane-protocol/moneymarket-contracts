@@ -9,6 +9,7 @@ import {WaUSDCMock} from "../mocks/WaUSDCMock.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
 import {SharesMathLib} from "../../../src/libraries/SharesMathLib.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
+import {ProtocolConfigLib} from "../../../src/libraries/ProtocolConfigLib.sol";
 
 /// @title CallableCreditBaseTest
 /// @notice Base test setup for CallableCredit tests
@@ -92,6 +93,12 @@ contract CallableCreditBaseTest is BaseTest {
         // Authorize counter-protocol
         vm.prank(OWNER);
         callableCredit.setAuthorizedCounterProtocol(COUNTER_PROTOCOL, true);
+
+        // Set default CC caps to unlimited (>= 10000 bps = 100%)
+        vm.startPrank(OWNER);
+        protocolConfig.setConfig(ProtocolConfigLib.CC_DEBT_CAP_BPS, 10000);
+        protocolConfig.setConfig(ProtocolConfigLib.CC_CREDIT_LINE_BPS, 10000);
+        vm.stopPrank();
 
         // Setup approvals
         _setupApprovals();

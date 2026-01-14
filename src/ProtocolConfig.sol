@@ -51,6 +51,8 @@ contract ProtocolConfig is Initializable {
     bytes32 private constant USD3_SUPPLY_CAP = keccak256("USD3_SUPPLY_CAP");
     // Callable Credit
     bytes32 private constant CC_FROZEN = keccak256("CC_FROZEN");
+    bytes32 private constant CC_DEBT_CAP_BPS = keccak256("CC_DEBT_CAP_BPS");
+    bytes32 private constant CC_CREDIT_LINE_BPS = keccak256("CC_CREDIT_LINE_BPS");
 
     /// @dev Configuration storage mapping
     mapping(bytes32 => uint256) public config;
@@ -196,10 +198,6 @@ contract ProtocolConfig is Initializable {
 
     function getUsd3SupplyCap() external view returns (uint256) {
         return config[USD3_SUPPLY_CAP];
-    }
-
-    function getDebtCap() external view returns (uint256) {
-        return config[DEBT_CAP];
     }
 
     // Callable Credit getters
