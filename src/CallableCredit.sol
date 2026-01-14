@@ -164,7 +164,8 @@ contract CallableCredit is ICallableCredit {
         if (!_hasCreditLine(borrower)) revert NoCreditLine();
 
         // Convert USDC amount to waUSDC for borrowing
-        uint256 waUsdcAmount = WAUSDC.previewDeposit(usdcAmount);
+        // Use previewWithdraw (rounds up) to ensure silo always has enough waUSDC for full draws
+        uint256 waUsdcAmount = WAUSDC.previewWithdraw(usdcAmount);
 
         // Accrue premiums to ensure borrower's debt is current
         address[] memory borrowers = new address[](1);
@@ -220,7 +221,8 @@ contract CallableCredit is ICallableCredit {
         borrowers[0] = borrower;
         MORPHO.accruePremiumsForBorrowers(marketId, borrowers);
 
-        // Query actual debt and calculate repayment
+        // Query actual debt and calculate repayment. Any debt above principal remains with the borrower in
+        // MorphoCredit.
         uint256 actualDebt = _getBorrowerDebt(borrower);
         uint256 toRepay = borrowerWaUsdc < actualDebt ? borrowerWaUsdc : actualDebt;
         uint256 excessWaUsdc = borrowerWaUsdc - toRepay;
