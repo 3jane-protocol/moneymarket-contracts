@@ -571,4 +571,60 @@ contract CallableCreditEdgeCasesTest is CallableCreditBaseTest {
         assertEq(shares, 0, "Shares should be zero");
         assertEq(waUsdcHeld, 0, "waUSDC held should be zero");
     }
+
+    // ============ Pro-Rata Draw Tracking ============
+
+    /// @notice Pro-rata draw should update global CC tracking but not per-borrower
+    function testProRataDrawUpdatesGlobalTrackingOnly() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _setupBorrowerWithCreditLine(BORROWER_2, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_2, DEFAULT_OPEN_AMOUNT);
+
+        uint256 totalCcBefore = callableCredit.totalCcWaUsdc();
+        uint256 borrower1CcBefore = callableCredit.borrowerTotalCcWaUsdc(BORROWER_1);
+        uint256 borrower2CcBefore = callableCredit.borrowerTotalCcWaUsdc(BORROWER_2);
+
+        // Pro-rata draw half the silo
+        uint256 drawAmount = DEFAULT_OPEN_AMOUNT;
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(drawAmount, RECIPIENT);
+
+        uint256 totalCcAfter = callableCredit.totalCcWaUsdc();
+        uint256 borrower1CcAfter = callableCredit.borrowerTotalCcWaUsdc(BORROWER_1);
+        uint256 borrower2CcAfter = callableCredit.borrowerTotalCcWaUsdc(BORROWER_2);
+
+        // Global tracking should decrease
+        assertLt(totalCcAfter, totalCcBefore, "Global CC should decrease after pro-rata draw");
+
+        // Per-borrower tracking should remain unchanged (origination-based upper bound)
+        assertEq(borrower1CcAfter, borrower1CcBefore, "Borrower 1 CC should be unchanged");
+        assertEq(borrower2CcAfter, borrower2CcBefore, "Borrower 2 CC should be unchanged");
+    }
+
+    /// @notice After pro-rata draw, new opens should succeed if global cap has room
+    function testCanOpenAfterProRataDrawFreesGlobalCap() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _setupBorrowerWithCreditLine(BORROWER_2, CREDIT_LINE_AMOUNT);
+
+        // Open a position that uses most of the global cap
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        uint256 totalCcAfterOpen = callableCredit.totalCcWaUsdc();
+
+        // Pro-rata draw reduces global tracking
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(DEFAULT_OPEN_AMOUNT / 2, RECIPIENT);
+
+        uint256 totalCcAfterDraw = callableCredit.totalCcWaUsdc();
+        assertLt(totalCcAfterDraw, totalCcAfterOpen, "Global CC should be lower after draw");
+
+        // Should be able to open another position now that global cap has room
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.open(BORROWER_2, DEFAULT_OPEN_AMOUNT / 2);
+
+        // Verify both positions exist
+        assertGt(callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1), 0, "Borrower 1 should have shares");
+        assertGt(callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_2), 0, "Borrower 2 should have shares");
+    }
 }

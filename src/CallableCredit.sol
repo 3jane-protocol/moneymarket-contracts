@@ -465,6 +465,13 @@ contract CallableCredit is ICallableCredit {
         silo.totalWaUsdcHeld -= waUsdcNeeded.toUint128();
         silos[msg.sender] = silo;
 
+        // Update global CC tracking for accurate cap checks
+        // Note: borrowerTotalCcWaUsdc is NOT updated here because we can't iterate over
+        // affected borrowers. Per-borrower tracking remains an upper bound that may permanently
+        // overstate exposure after pro-rata draws (close only decrements by proportional amount).
+        // This is a conservative design: per-borrower caps may be overly restrictive but never exceeded.
+        totalCcWaUsdc -= waUsdcNeeded;
+
         // Withdraw to recipient, preferring USDC
         (usdcSent, waUsdcSent) = _withdrawPreferUsdc(waUsdcNeeded, recipient);
 
