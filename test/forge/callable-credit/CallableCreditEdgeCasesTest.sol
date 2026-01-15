@@ -404,4 +404,171 @@ contract CallableCreditEdgeCasesTest is CallableCreditBaseTest {
         assertEq(principalAfterClose, 0, "Principal should be zero");
         assertEq(sharesAfterClose, 0, "Shares should be zero");
     }
+
+    // ============ Appreciation Excess Handling ============
+
+    /// @notice Full draw with appreciation should repay borrower's debt
+    function testFullDrawWithAppreciationRepaysDebt() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        uint256 debtBefore = _getBorrowerDebt(BORROWER_1);
+        assertGt(debtBefore, 0, "Should have initial debt");
+
+        // Simulate 10% appreciation
+        _setExchangeRate(1.1e18);
+
+        // Full draw - should repay some debt with excess waUSDC
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(BORROWER_1, DEFAULT_OPEN_AMOUNT, RECIPIENT);
+
+        uint256 debtAfter = _getBorrowerDebt(BORROWER_1);
+        assertLt(debtAfter, debtBefore, "Debt should be reduced by excess waUSDC");
+
+        // Silo should be fully empty
+        (uint128 principal, uint128 shares, uint128 waUsdcHeld) = callableCredit.silos(COUNTER_PROTOCOL);
+        assertEq(principal, 0, "Principal should be zero");
+        assertEq(shares, 0, "Shares should be zero");
+        assertEq(waUsdcHeld, 0, "waUSDC held should be zero");
+
+        // CC tracking should also be zero
+        assertEq(callableCredit.totalCcWaUsdc(), 0, "Total CC tracking should be zero");
+        assertEq(callableCredit.borrowerTotalCcWaUsdc(BORROWER_1), 0, "Borrower CC tracking should be zero");
+    }
+
+    /// @notice Full draw with appreciation and zero debt should return excess to borrower
+    function testFullDrawWithAppreciationReturnsExcessWhenNoDebt() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        // Repay all debt first
+        uint256 debt = _getBorrowerDebt(BORROWER_1);
+        _repayDirectToMorpho(BORROWER_1, debt);
+        assertEq(_getBorrowerDebt(BORROWER_1), 0, "Debt should be zero");
+
+        // Simulate 10% appreciation
+        _setExchangeRate(1.1e18);
+
+        uint256 borrowerBalanceBefore = usdc.balanceOf(BORROWER_1);
+
+        // Full draw - excess should go to borrower
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(BORROWER_1, DEFAULT_OPEN_AMOUNT, RECIPIENT);
+
+        uint256 borrowerBalanceAfter = usdc.balanceOf(BORROWER_1);
+        assertGt(borrowerBalanceAfter, borrowerBalanceBefore, "Borrower should receive excess");
+
+        // The excess should be approximately 10% of the USDC value
+        uint256 received = borrowerBalanceAfter - borrowerBalanceBefore;
+        // With 10% appreciation, the excess waUSDC (~9.1% of original) should be worth ~10% of USDC
+        assertGt(received, DEFAULT_OPEN_AMOUNT / 20, "Should receive meaningful excess");
+    }
+
+    /// @notice Partial draw with appreciation should proportionally repay debt
+    function testPartialDrawWithAppreciationRepaysDebt() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        uint256 debtBefore = _getBorrowerDebt(BORROWER_1);
+
+        // Simulate 10% appreciation
+        _setExchangeRate(1.1e18);
+
+        // Draw half the principal
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(BORROWER_1, DEFAULT_OPEN_AMOUNT / 2, RECIPIENT);
+
+        uint256 debtAfter = _getBorrowerDebt(BORROWER_1);
+        assertLt(debtAfter, debtBefore, "Debt should be reduced");
+
+        // Borrower should still have shares for remaining position
+        uint256 remainingShares = callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1);
+        assertGt(remainingShares, 0, "Should have remaining shares");
+
+        // Can still close remaining position
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.close(BORROWER_1);
+        assertEq(callableCredit.borrowerShares(COUNTER_PROTOCOL, BORROWER_1), 0, "Should close fully");
+    }
+
+    /// @notice Draw without appreciation should not affect debt or return excess
+    function testDrawWithoutAppreciationNoExcess() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        uint256 debtBefore = _getBorrowerDebt(BORROWER_1);
+        uint256 borrowerBalanceBefore = usdc.balanceOf(BORROWER_1);
+
+        // No exchange rate change - stays at 1:1
+
+        // Draw half the principal
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(BORROWER_1, DEFAULT_OPEN_AMOUNT / 2, RECIPIENT);
+
+        uint256 debtAfter = _getBorrowerDebt(BORROWER_1);
+        uint256 borrowerBalanceAfter = usdc.balanceOf(BORROWER_1);
+
+        // Debt should be unchanged (or only slightly different due to interest accrual)
+        assertApproxEqRel(debtAfter, debtBefore, 0.001e18, "Debt should be approximately unchanged");
+
+        // Borrower should receive nothing (no excess)
+        assertEq(borrowerBalanceAfter, borrowerBalanceBefore, "Borrower balance unchanged");
+    }
+
+    /// @notice Full draw with appreciation updates CC tracking correctly
+    function testFullDrawWithAppreciationUpdatesTracking() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        uint256 totalCcBefore = callableCredit.totalCcWaUsdc();
+        uint256 borrowerCcBefore = callableCredit.borrowerTotalCcWaUsdc(BORROWER_1);
+        assertGt(totalCcBefore, 0, "Should have initial CC tracking");
+        assertGt(borrowerCcBefore, 0, "Should have initial borrower CC tracking");
+
+        // Simulate 10% appreciation
+        _setExchangeRate(1.1e18);
+
+        // Full draw
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(BORROWER_1, DEFAULT_OPEN_AMOUNT, RECIPIENT);
+
+        // Tracking should be reduced to zero (full position unwound)
+        assertEq(callableCredit.totalCcWaUsdc(), 0, "Total CC should be zero");
+        assertEq(callableCredit.borrowerTotalCcWaUsdc(BORROWER_1), 0, "Borrower CC should be zero");
+    }
+
+    /// @notice Multiple draws with appreciation should handle excess each time
+    function testMultipleDrawsWithAppreciation() public {
+        _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
+        _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
+
+        uint256 debtBefore = _getBorrowerDebt(BORROWER_1);
+
+        // Simulate 20% appreciation
+        _setExchangeRate(1.2e18);
+
+        // First draw: 25% of principal
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(BORROWER_1, DEFAULT_OPEN_AMOUNT / 4, RECIPIENT);
+
+        uint256 debtAfterFirst = _getBorrowerDebt(BORROWER_1);
+        assertLt(debtAfterFirst, debtBefore, "Debt should decrease after first draw");
+
+        // Second draw: another 25% of principal
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(BORROWER_1, DEFAULT_OPEN_AMOUNT / 4, RECIPIENT);
+
+        uint256 debtAfterSecond = _getBorrowerDebt(BORROWER_1);
+        assertLt(debtAfterSecond, debtAfterFirst, "Debt should decrease after second draw");
+
+        // Third draw: remaining 50%
+        vm.prank(COUNTER_PROTOCOL);
+        callableCredit.draw(BORROWER_1, DEFAULT_OPEN_AMOUNT / 2, RECIPIENT);
+
+        // Position should be fully unwound
+        (uint128 principal, uint128 shares, uint128 waUsdcHeld) = callableCredit.silos(COUNTER_PROTOCOL);
+        assertEq(principal, 0, "Principal should be zero");
+        assertEq(shares, 0, "Shares should be zero");
+        assertEq(waUsdcHeld, 0, "waUSDC held should be zero");
+    }
 }

@@ -53,6 +53,22 @@ interface ICallableCredit {
         uint256 waUsdcSent
     );
 
+    /// @notice Emitted when excess waUSDC from appreciation is handled during targeted draw
+    /// @param counterProtocol The counter-protocol address
+    /// @param borrower The borrower whose excess was processed
+    /// @param excessWaUsdc The total excess waUSDC from appreciation
+    /// @param repaidAmount The amount repaid to MorphoCredit
+    /// @param returnedUsdc USDC returned to borrower as remainder
+    /// @param returnedWaUsdc waUSDC returned to borrower as remainder
+    event DrawExcessHandled(
+        address indexed counterProtocol,
+        address indexed borrower,
+        uint256 excessWaUsdc,
+        uint256 repaidAmount,
+        uint256 returnedUsdc,
+        uint256 returnedWaUsdc
+    );
+
     /// @notice Emitted when a counter-protocol performs a pro-rata draw
     /// @param counterProtocol The counter-protocol address
     /// @param recipient The address receiving the drawn funds

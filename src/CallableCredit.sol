@@ -358,31 +358,83 @@ contract CallableCredit is ICallableCredit {
         uint256 shares = borrowerShares[msg.sender][borrower];
         if (shares == 0) revert NoPosition();
 
-        // Load silo into memory
-        Silo memory silo = silos[msg.sender];
+        uint256 waUsdcNeeded;
+        uint256 excessWaUsdc;
 
-        // Check against USDC principal (draw cap)
-        if (usdcAmount > silo.totalPrincipal) revert InsufficientPrincipal();
+        // Scoped block to reduce stack pressure
+        {
+            // Load silo into memory
+            Silo memory silo = silos[msg.sender];
 
-        // Calculate shares to burn based on USDC amount
-        uint256 sharesToBurn = usdcAmount.toSharesUp(silo.totalPrincipal, silo.totalShares);
-        if (sharesToBurn > shares) revert InsufficientShares();
+            // Check against USDC principal (draw cap)
+            if (usdcAmount > silo.totalPrincipal) revert InsufficientPrincipal();
 
-        // Convert USDC to waUSDC needed for withdrawal
-        uint256 waUsdcNeeded = WAUSDC.previewWithdraw(usdcAmount);
-        if (waUsdcNeeded > silo.totalWaUsdcHeld) revert InsufficientWaUsdc();
+            // Calculate shares to burn based on USDC amount
+            uint256 sharesToBurn = usdcAmount.toSharesUp(silo.totalPrincipal, silo.totalShares);
+            if (sharesToBurn > shares) revert InsufficientShares();
 
-        // Update silo state
-        silo.totalPrincipal -= usdcAmount.toUint128();
-        silo.totalShares -= sharesToBurn.toUint128();
-        silo.totalWaUsdcHeld -= waUsdcNeeded.toUint128();
-        silos[msg.sender] = silo;
+            // Calculate proportional waUSDC for shares being burned (like _close does)
+            // If burning all shares, use all waUSDC to avoid rounding dust
+            uint256 waUsdcFromShares = sharesToBurn == silo.totalShares
+                ? silo.totalWaUsdcHeld
+                : (sharesToBurn * silo.totalWaUsdcHeld) / silo.totalShares;
 
-        // Update borrower's shares
-        borrowerShares[msg.sender][borrower] -= sharesToBurn;
+            // Calculate waUSDC needed to fulfill the USDC withdrawal
+            waUsdcNeeded = WAUSDC.previewWithdraw(usdcAmount);
+            if (waUsdcNeeded > silo.totalWaUsdcHeld) revert InsufficientWaUsdc();
 
-        // Withdraw to recipient, preferring USDC
+            // Calculate excess waUSDC from appreciation (belongs to borrower)
+            // Only exists when share-proportional waUSDC exceeds what's needed for the draw
+            excessWaUsdc = waUsdcFromShares > waUsdcNeeded ? waUsdcFromShares - waUsdcNeeded : 0;
+
+            // Use max(waUsdcFromShares, waUsdcNeeded) for consistent accounting
+            // - If appreciation: waUsdcFromShares > waUsdcNeeded, excess goes to borrower
+            // - If no appreciation: waUsdcNeeded >= waUsdcFromShares, no excess, use waUsdcNeeded
+            uint256 waUsdcToDeduct = waUsdcFromShares > waUsdcNeeded ? waUsdcFromShares : waUsdcNeeded;
+
+            // Update silo state
+            silo.totalPrincipal -= usdcAmount.toUint128();
+            silo.totalShares -= sharesToBurn.toUint128();
+            silo.totalWaUsdcHeld -= waUsdcToDeduct.toUint128();
+            silos[msg.sender] = silo;
+
+            // Update borrower's shares
+            borrowerShares[msg.sender][borrower] -= sharesToBurn;
+
+            // Decrease CC waUSDC tracking (position is being unwound)
+            totalCcWaUsdc -= waUsdcToDeduct;
+            borrowerTotalCcWaUsdc[borrower] -= waUsdcToDeduct;
+        }
+
+        // Withdraw waUsdcNeeded to recipient, preferring USDC
         (usdcSent, waUsdcSent) = _withdrawPreferUsdc(waUsdcNeeded, recipient);
+
+        // Handle excess waUSDC: repay borrower's debt first, return remainder
+        if (excessWaUsdc > 0) {
+            _accruePremiums(borrower);
+
+            uint256 repaidAmount;
+            uint256 returnedUsdc;
+            uint256 returnedWaUsdc;
+
+            // Scoped block for excess handling
+            {
+                uint256 actualDebt = _getBorrowerDebt(borrower);
+                uint256 toRepay = excessWaUsdc < actualDebt ? excessWaUsdc : actualDebt;
+                uint256 remainder = excessWaUsdc - toRepay;
+
+                if (toRepay > 0) {
+                    _repayToMorpho(borrower, toRepay);
+                    repaidAmount = toRepay;
+                }
+
+                if (remainder > 0) {
+                    (returnedUsdc, returnedWaUsdc) = _withdrawPreferUsdc(remainder, borrower);
+                }
+            }
+
+            emit DrawExcessHandled(msg.sender, borrower, excessWaUsdc, repaidAmount, returnedUsdc, returnedWaUsdc);
+        }
 
         emit Draw(msg.sender, borrower, recipient, usdcAmount, usdcSent, waUsdcSent);
     }
