@@ -15,11 +15,14 @@ interface IPendleYT {
     function isExpired() external view returns (bool);
     function expiry() external view returns (uint256);
     function balanceOf(address user) external view returns (uint256);
+    function pyIndexCurrent() external returns (uint256);
+    function pyIndexStored() external view returns (uint256);
 }
 
 /// @notice Interface for Pendle SY token
 interface IPendleSY {
     function yieldToken() external view returns (address);
+    function exchangeRate() external view returns (uint256);
 
     function redeem(
         address receiver,
@@ -28,6 +31,13 @@ interface IPendleSY {
         uint256 minTokenOut,
         bool burnFromInternalBalance
     ) external returns (uint256 amountTokenOut);
+}
+
+/// @notice Interface for Ethena sUSDE (ERC4626)
+interface IStakedUSDe {
+    function totalAssets() external view returns (uint256);
+    function totalSupply() external view returns (uint256);
+    function asset() external view returns (address);
 }
 
 /**
@@ -39,17 +49,20 @@ interface IPendleSY {
  * - YT Address: 0xe36c6c271779C080Ba2e68E1E68410291a1b3F7A (YT-sUSDE-5FEB2026)
  * - SY Address: 0x50CBf8837791aB3D8dcfB3cE3d1B0d128e1105d4
  * - Underlying Asset (sUSDE): 0x9D39A5DE30e57443BfF2A8307A4256c8797A3497
+ * - USDe: 0x4c9EDD5852cd905f086C759E8383e09bff1E68B3
  * - Expiry: February 5, 2026
  *
- * NOTE: These tests verify interface compatibility with real Pendle contracts.
- * Yield distribution logic is tested in unit tests with mocks (PYTLocker.t.sol).
- * Simulating yield on a fork requires complex state manipulation of Pendle internals.
+ * Yield Simulation:
+ * Since sUSDE's totalAssets() = USDe.balanceOf(sUSDE) - unvestedAmount,
+ * we simulate yield by dealing USDe to sUSDE and calling pyIndexCurrent()
+ * to force Pendle to read the new exchange rate.
  */
 contract PYTLockerForkTest is Test {
     // Mainnet addresses for YT-sUSDE-5FEB2026
     address constant YT_SUSDE = 0xe36c6c271779C080Ba2e68E1E68410291a1b3F7A;
     address constant SY_SUSDE = 0x50CBf8837791aB3D8dcfB3cE3d1B0d128e1105d4;
     address constant SUSDE = 0x9D39A5DE30e57443BfF2A8307A4256c8797A3497;
+    address constant USDE = 0x4c9EDD5852cd905f086C759E8383e09bff1E68B3;
 
     // Fork configuration - block with mature liquidity, before expiry (Feb 5, 2026)
     uint256 constant FORK_BLOCK = 24200000;
@@ -83,6 +96,7 @@ contract PYTLockerForkTest is Test {
         vm.label(YT_SUSDE, "YT-sUSDE");
         vm.label(SY_SUSDE, "SY-sUSDE");
         vm.label(SUSDE, "sUSDE");
+        vm.label(USDE, "USDe");
         vm.label(alice, "Alice");
         vm.label(bob, "Bob");
         vm.label(owner, "Owner");
@@ -95,6 +109,229 @@ contract PYTLockerForkTest is Test {
         // Add YT-sUSDE market
         vm.prank(owner);
         locker.addMarket(YT_SUSDE, SY_SUSDE, SUSDE);
+    }
+
+    // ============ Yield Simulation Helper ============
+
+    /// @notice Simulates sUSDE yield by dealing USDe and refreshing Pendle's index
+    /// @dev sUSDE's totalAssets() = USDe.balanceOf(sUSDE) - unvestedAmount
+    ///      deal() increases balanceOf directly (no vesting), so yield is immediate
+    ///      Pendle caches pyIndex per block, so we must advance block.number
+    /// @param additionalUSDe Amount of USDe to add as simulated yield
+    function _simulateSusdeYield(uint256 additionalUSDe) internal {
+        // 1. Add USDe to sUSDE contract (increases totalAssets immediately)
+        uint256 currentBalance = IERC20(USDE).balanceOf(SUSDE);
+        deal(USDE, SUSDE, currentBalance + additionalUSDe);
+
+        // 2. Advance block number - Pendle caches pyIndex per block, not timestamp
+        vm.roll(block.number + 1);
+        vm.warp(block.timestamp + 12); // ~1 block time
+
+        // 3. Force Pendle to refresh its pyIndex (reads new SY exchange rate)
+        IPendleYT(YT_SUSDE).pyIndexCurrent();
+    }
+
+    // ============ Yield Accrual Tests ============
+
+    /// @notice Debug test to verify yield simulation actually changes exchange rates
+    function test_fork_debug_yieldSimulationWorks() public {
+        // Get initial rates
+        uint256 syRateBefore = IPendleSY(SY_SUSDE).exchangeRate();
+        uint256 susdeTotalAssetsBefore = IStakedUSDe(SUSDE).totalAssets();
+        uint256 pyIndexBefore = IPendleYT(YT_SUSDE).pyIndexStored();
+
+        console2.log("SY rate before:", syRateBefore);
+        console2.log("sUSDE totalAssets before:", susdeTotalAssetsBefore);
+        console2.log("pyIndex before:", pyIndexBefore);
+
+        // Simulate meaningful yield (1% of current assets)
+        uint256 yieldAmount = susdeTotalAssetsBefore / 100;
+        _simulateSusdeYield(yieldAmount);
+
+        // Verify rates changed
+        uint256 syRateAfter = IPendleSY(SY_SUSDE).exchangeRate();
+        uint256 susdeTotalAssetsAfter = IStakedUSDe(SUSDE).totalAssets();
+        uint256 pyIndexAfter = IPendleYT(YT_SUSDE).pyIndexStored();
+
+        console2.log("SY rate after:", syRateAfter);
+        console2.log("sUSDE totalAssets after:", susdeTotalAssetsAfter);
+        console2.log("pyIndex after:", pyIndexAfter);
+
+        assertGt(susdeTotalAssetsAfter, susdeTotalAssetsBefore, "sUSDE totalAssets should increase");
+        assertGt(syRateAfter, syRateBefore, "SY exchange rate should increase");
+        assertGt(pyIndexAfter, pyIndexBefore, "pyIndex should increase");
+    }
+
+    /// @notice Tests that a single depositor receives yield after harvest
+    function test_fork_yieldAccrual_singleUser() public {
+        uint256 depositAmount = 1000e18;
+
+        // Alice deposits YT
+        vm.startPrank(alice);
+        IERC20(YT_SUSDE).approve(address(locker), depositAmount);
+        locker.deposit(YT_SUSDE, depositAmount);
+        vm.stopPrank();
+
+        // Record initial state
+        uint256 accYieldBefore = locker.accYieldPerToken(YT_SUSDE);
+        uint256 lockerSusdeBefore = IERC20(SUSDE).balanceOf(address(locker));
+
+        // Simulate yield (1% of sUSDE total assets)
+        uint256 yieldAmount = IStakedUSDe(SUSDE).totalAssets() / 100;
+        _simulateSusdeYield(yieldAmount);
+
+        // Harvest
+        locker.harvest(YT_SUSDE);
+
+        // Verify yield was captured
+        uint256 accYieldAfter = locker.accYieldPerToken(YT_SUSDE);
+        uint256 lockerSusdeAfter = IERC20(SUSDE).balanceOf(address(locker));
+
+        assertGt(accYieldAfter, accYieldBefore, "accYieldPerToken should increase");
+        assertGt(lockerSusdeAfter, lockerSusdeBefore, "Locker should have received sUSDE");
+
+        // Verify Alice can claim
+        uint256 claimable = locker.claimable(YT_SUSDE, alice);
+        assertGt(claimable, 0, "Alice should have claimable yield");
+
+        // Alice claims
+        uint256 aliceSusdeBefore = IERC20(SUSDE).balanceOf(alice);
+        vm.prank(alice);
+        locker.claim(YT_SUSDE);
+        uint256 aliceSusdeAfter = IERC20(SUSDE).balanceOf(alice);
+
+        assertEq(aliceSusdeAfter - aliceSusdeBefore, claimable, "Alice should receive claimable amount");
+        assertEq(locker.claimable(YT_SUSDE, alice), 0, "Alice claimable should be zero after claim");
+    }
+
+    /// @notice Tests proportional yield distribution between two users
+    function test_fork_yieldAccrual_multiUser_proportional() public {
+        uint256 aliceDeposit = 300e18;
+        uint256 bobDeposit = 700e18;
+
+        // Transfer YT to Bob
+        vm.prank(alice);
+        IERC20(YT_SUSDE).transfer(bob, bobDeposit);
+
+        // Both deposit (Alice 30%, Bob 70%)
+        vm.startPrank(alice);
+        IERC20(YT_SUSDE).approve(address(locker), aliceDeposit);
+        locker.deposit(YT_SUSDE, aliceDeposit);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        IERC20(YT_SUSDE).approve(address(locker), bobDeposit);
+        locker.deposit(YT_SUSDE, bobDeposit);
+        vm.stopPrank();
+
+        // Simulate yield
+        _simulateSusdeYield(IStakedUSDe(SUSDE).totalAssets() / 100);
+
+        // Harvest
+        locker.harvest(YT_SUSDE);
+
+        // Check proportional distribution
+        uint256 aliceClaimable = locker.claimable(YT_SUSDE, alice);
+        uint256 bobClaimable = locker.claimable(YT_SUSDE, bob);
+        uint256 totalClaimable = aliceClaimable + bobClaimable;
+
+        assertGt(totalClaimable, 0, "Should have yield to distribute");
+
+        // Alice should get ~30%, Bob ~70%
+        assertApproxEqRel(
+            aliceClaimable,
+            (totalClaimable * aliceDeposit) / (aliceDeposit + bobDeposit),
+            1e14, // 0.01% tolerance
+            "Alice should get proportional share"
+        );
+        assertApproxEqRel(
+            bobClaimable,
+            (totalClaimable * bobDeposit) / (aliceDeposit + bobDeposit),
+            1e14,
+            "Bob should get proportional share"
+        );
+    }
+
+    /// @notice Tests that new depositor doesn't dilute existing user's unclaimed yield
+    function test_fork_yieldAccrual_noDilution() public {
+        uint256 aliceDeposit = 500e18;
+        uint256 bobDeposit = 500e18;
+
+        // Transfer YT to Bob for later
+        vm.prank(alice);
+        IERC20(YT_SUSDE).transfer(bob, bobDeposit);
+
+        // Alice deposits first
+        vm.startPrank(alice);
+        IERC20(YT_SUSDE).approve(address(locker), aliceDeposit);
+        locker.deposit(YT_SUSDE, aliceDeposit);
+        vm.stopPrank();
+
+        // Simulate yield round 1 (Alice gets 100%)
+        _simulateSusdeYield(IStakedUSDe(SUSDE).totalAssets() / 100);
+        locker.harvest(YT_SUSDE);
+
+        uint256 aliceClaimableRound1 = locker.claimable(YT_SUSDE, alice);
+        assertGt(aliceClaimableRound1, 0, "Alice should have yield from round 1");
+
+        // Bob deposits (should NOT dilute Alice's round 1 yield)
+        vm.startPrank(bob);
+        IERC20(YT_SUSDE).approve(address(locker), bobDeposit);
+        locker.deposit(YT_SUSDE, bobDeposit);
+        vm.stopPrank();
+
+        // Alice's claimable should NOT decrease
+        assertEq(locker.claimable(YT_SUSDE, alice), aliceClaimableRound1, "Alice's round 1 yield should not be diluted");
+
+        // Bob should have zero claimable (no past yield)
+        assertEq(locker.claimable(YT_SUSDE, bob), 0, "Bob should not receive past yield");
+
+        // Simulate yield round 2 (split 50/50)
+        _simulateSusdeYield(IStakedUSDe(SUSDE).totalAssets() / 100);
+        locker.harvest(YT_SUSDE);
+
+        // Verify both got round 2 equally
+        uint256 aliceClaimableTotal = locker.claimable(YT_SUSDE, alice);
+        uint256 bobClaimableTotal = locker.claimable(YT_SUSDE, bob);
+        uint256 round2Yield = aliceClaimableTotal - aliceClaimableRound1;
+
+        assertApproxEqRel(bobClaimableTotal, round2Yield, 1e14, "Bob should get half of round 2");
+    }
+
+    /// @notice Tests multiple harvest cycles with varying yield amounts
+    function test_fork_yieldAccrual_variableRates() public {
+        uint256 depositAmount = 1000e18;
+
+        vm.startPrank(alice);
+        IERC20(YT_SUSDE).approve(address(locker), depositAmount);
+        locker.deposit(YT_SUSDE, depositAmount);
+        vm.stopPrank();
+
+        // Round 1: Small yield (0.1%)
+        _simulateSusdeYield(IStakedUSDe(SUSDE).totalAssets() / 1000);
+        locker.harvest(YT_SUSDE);
+        uint256 claimable1 = locker.claimable(YT_SUSDE, alice);
+        assertGt(claimable1, 0, "Round 1 should have yield");
+
+        // Round 2: Large yield (2%)
+        _simulateSusdeYield(IStakedUSDe(SUSDE).totalAssets() / 50);
+        locker.harvest(YT_SUSDE);
+        uint256 claimable2 = locker.claimable(YT_SUSDE, alice);
+        assertGt(claimable2, claimable1, "Round 2 should accumulate more");
+
+        // Round 3: Medium yield (0.5%)
+        _simulateSusdeYield(IStakedUSDe(SUSDE).totalAssets() / 200);
+        locker.harvest(YT_SUSDE);
+        uint256 claimable3 = locker.claimable(YT_SUSDE, alice);
+        assertGt(claimable3, claimable2, "Round 3 should accumulate more");
+
+        // Claim all
+        uint256 aliceBefore = IERC20(SUSDE).balanceOf(alice);
+        vm.prank(alice);
+        locker.claim(YT_SUSDE);
+        uint256 aliceAfter = IERC20(SUSDE).balanceOf(alice);
+
+        assertEq(aliceAfter - aliceBefore, claimable3, "Should receive all accumulated yield");
     }
 
     // ============ Setup Verification Tests ============
@@ -156,129 +393,6 @@ contract PYTLockerForkTest is Test {
         assertEq(locker.balanceOf(YT_SUSDE, alice), aliceDeposit);
         assertEq(locker.balanceOf(YT_SUSDE, bob), bobDeposit);
         assertEq(locker.totalSupply(YT_SUSDE), aliceDeposit + bobDeposit);
-    }
-
-    // ============ Full Flow Tests ============
-
-    /// @notice Tests the complete deposit -> harvest -> claim flow
-    /// @dev Verifies interface compatibility - yield distribution tested in unit tests
-    function test_fork_fullFlow_depositHarvestClaim() public {
-        uint256 depositAmount = 1000e18;
-
-        // Alice deposits (using real whale balance)
-        vm.startPrank(alice);
-        IERC20(YT_SUSDE).approve(address(locker), depositAmount);
-        locker.deposit(YT_SUSDE, depositAmount);
-        vm.stopPrank();
-
-        assertEq(locker.balanceOf(YT_SUSDE, alice), depositAmount);
-        assertEq(locker.totalSupply(YT_SUSDE), depositAmount);
-
-        // Harvest should not revert (verifies interface compatibility)
-        locker.harvest(YT_SUSDE);
-
-        // Claim should not revert
-        vm.prank(alice);
-        locker.claim(YT_SUSDE);
-
-        // State should remain consistent
-        assertEq(locker.balanceOf(YT_SUSDE, alice), depositAmount);
-        assertEq(locker.claimable(YT_SUSDE, alice), 0);
-    }
-
-    /// @notice Tests multiple harvests don't break state
-    function test_fork_multipleHarvests() public {
-        uint256 depositAmount = 500e18;
-
-        vm.startPrank(alice);
-        IERC20(YT_SUSDE).approve(address(locker), depositAmount);
-        locker.deposit(YT_SUSDE, depositAmount);
-        vm.stopPrank();
-
-        // Multiple harvests should not revert
-        for (uint256 i = 0; i < 4; i++) {
-            locker.harvest(YT_SUSDE);
-        }
-
-        // State should be consistent
-        assertEq(locker.balanceOf(YT_SUSDE, alice), depositAmount);
-        assertEq(locker.totalSupply(YT_SUSDE), depositAmount);
-    }
-
-    // ============ Multi-User Tests ============
-
-    /// @notice Tests multiple users can deposit and the accounting is correct
-    function test_fork_multiUserDeposits() public {
-        uint256 aliceDeposit = 300e18;
-        uint256 bobDeposit = 700e18;
-
-        // Transfer some YT from whale to bob
-        vm.prank(alice);
-        IERC20(YT_SUSDE).transfer(bob, bobDeposit);
-
-        // Both deposit
-        vm.startPrank(alice);
-        IERC20(YT_SUSDE).approve(address(locker), aliceDeposit);
-        locker.deposit(YT_SUSDE, aliceDeposit);
-        vm.stopPrank();
-
-        vm.startPrank(bob);
-        IERC20(YT_SUSDE).approve(address(locker), bobDeposit);
-        locker.deposit(YT_SUSDE, bobDeposit);
-        vm.stopPrank();
-
-        // Verify accounting
-        assertEq(locker.balanceOf(YT_SUSDE, alice), aliceDeposit);
-        assertEq(locker.balanceOf(YT_SUSDE, bob), bobDeposit);
-        assertEq(locker.totalSupply(YT_SUSDE), aliceDeposit + bobDeposit);
-
-        // Harvest and claim should work for both
-        locker.harvest(YT_SUSDE);
-
-        vm.prank(alice);
-        locker.claim(YT_SUSDE);
-        vm.prank(bob);
-        locker.claim(YT_SUSDE);
-
-        // State should remain consistent
-        assertEq(locker.balanceOf(YT_SUSDE, alice), aliceDeposit);
-        assertEq(locker.balanceOf(YT_SUSDE, bob), bobDeposit);
-    }
-
-    /// @notice Tests new depositors start with zero claimable (no past yield)
-    function test_fork_noDilutionForNewDepositors() public {
-        uint256 aliceDeposit = 500e18;
-        uint256 bobDeposit = 500e18;
-
-        // Transfer some YT from whale to bob
-        vm.prank(alice);
-        IERC20(YT_SUSDE).transfer(bob, bobDeposit);
-
-        // Alice deposits first
-        vm.startPrank(alice);
-        IERC20(YT_SUSDE).approve(address(locker), aliceDeposit);
-        locker.deposit(YT_SUSDE, aliceDeposit);
-        vm.stopPrank();
-
-        // Harvest (even with 0 yield, this updates accYieldPerToken)
-        locker.harvest(YT_SUSDE);
-        uint256 aliceClaimableBefore = locker.claimable(YT_SUSDE, alice);
-
-        // Bob deposits (harvest is called internally)
-        vm.startPrank(bob);
-        IERC20(YT_SUSDE).approve(address(locker), bobDeposit);
-        locker.deposit(YT_SUSDE, bobDeposit);
-        vm.stopPrank();
-
-        // Bob should have zero claimable (new depositor doesn't get past yield)
-        assertEq(locker.claimable(YT_SUSDE, bob), 0, "Bob should not receive past yield");
-
-        // Alice's claimable should not decrease
-        assertGe(
-            locker.claimable(YT_SUSDE, alice),
-            aliceClaimableBefore,
-            "Alice's claimable should not decrease when Bob deposits"
-        );
     }
 
     // ============ Edge Case Tests ============
