@@ -27,8 +27,8 @@ contract CallableCreditUnitTest is CallableCreditBaseTest {
         assertEq(address(callableCredit.MORPHO()), address(morpho));
         assertEq(address(callableCredit.WAUSDC()), address(wausdc));
         assertEq(address(callableCredit.USDC()), address(usdc));
-        assertEq(address(callableCredit.protocolConfig()), address(protocolConfig));
-        assertEq(Id.unwrap(callableCredit.marketId()), Id.unwrap(ccMarketId));
+        assertEq(address(callableCredit.PROTOCOL_CONFIG()), address(protocolConfig));
+        assertEq(Id.unwrap(callableCredit.MARKET_ID()), Id.unwrap(ccMarketId));
     }
 
     function testMarketParamsReconstruction() public view {

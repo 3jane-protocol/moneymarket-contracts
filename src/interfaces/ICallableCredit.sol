@@ -18,6 +18,14 @@ interface ICallableCredit {
         uint128 totalWaUsdcHeld;
     }
 
+    /// @notice Throttle state for rate limiting CC opens
+    /// @param periodStart Timestamp when current throttle period started
+    /// @param periodUsdc USDC opened in current throttle period
+    struct ThrottleState {
+        uint64 periodStart;
+        uint64 periodUsdc;
+    }
+
     /// @notice Emitted when a position is opened
     /// @param counterProtocol The counter-protocol address
     /// @param borrower The borrower address
@@ -167,18 +175,15 @@ interface ICallableCredit {
 
     /// @notice Get total CC waUSDC across all silos
     /// @return The total CC waUSDC
-    function totalCcWaUsdc() external view returns (uint256);
+    function totalCcWaUsdc() external view returns (uint128);
 
     /// @notice Get a borrower's total CC waUSDC across all silos
     /// @param borrower The borrower address
     /// @return The borrower's total CC waUSDC
     function borrowerTotalCcWaUsdc(address borrower) external view returns (uint256);
 
-    /// @notice Get the timestamp when current throttle period started
-    /// @return The period start timestamp
-    function throttlePeriodStart() external view returns (uint64);
-
-    /// @notice Get the USDC opened in current throttle period
-    /// @return The USDC amount used in this period
-    function throttlePeriodUsdc() external view returns (uint128);
+    /// @notice Get the throttle state
+    /// @return periodStart Timestamp when current throttle period started
+    /// @return periodUsdc USDC opened in current throttle period
+    function throttle() external view returns (uint64 periodStart, uint64 periodUsdc);
 }

@@ -99,6 +99,9 @@ library ErrorsLib {
     /// @notice Thrown when the maximum uint128 is exceeded.
     error MaxUint128Exceeded();
 
+    /// @notice Thrown when the maximum uint64 is exceeded.
+    error MaxUint64Exceeded();
+
     /// @notice Thrown when the premium rate exceeds the maximum allowed.
     error MaxDrpExceeded();
 

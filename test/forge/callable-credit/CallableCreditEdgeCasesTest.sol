@@ -324,7 +324,7 @@ contract CallableCreditEdgeCasesTest is CallableCreditBaseTest {
         // Use full throttle
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, throttleLimit);
 
-        uint256 initialPeriodStart = callableCredit.throttlePeriodStart();
+        (uint64 initialPeriodStart,) = callableCredit.throttle();
 
         // Warp to exact period end
         vm.warp(block.timestamp + throttlePeriod);
@@ -332,7 +332,7 @@ contract CallableCreditEdgeCasesTest is CallableCreditBaseTest {
         // Should be able to open again (new period)
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
-        uint256 newPeriodStart = callableCredit.throttlePeriodStart();
+        (uint64 newPeriodStart,) = callableCredit.throttle();
         assertGt(newPeriodStart, initialPeriodStart, "Period should reset");
     }
 

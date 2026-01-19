@@ -576,10 +576,9 @@ contract CallableCreditInvariantTest is Test {
         // Skip if throttle is disabled (either value is 0)
         if (throttlePeriod == 0 || throttleLimit == 0) return;
 
-        uint64 periodStart = cc.throttlePeriodStart();
+        (uint64 periodStart, uint64 periodUsdc) = cc.throttle();
         // Only check if we're within current period
         if (block.timestamp < periodStart + throttlePeriod) {
-            uint128 periodUsdc = cc.throttlePeriodUsdc();
             assertLe(periodUsdc, throttleLimit, "Invariant violated: throttle limit exceeded within period");
         }
     }

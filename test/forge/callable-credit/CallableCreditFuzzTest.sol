@@ -110,7 +110,8 @@ contract CallableCreditFuzzTest is CallableCreditBaseTest {
         vm.prank(COUNTER_PROTOCOL);
         callableCredit.open(BORROWER_1, openAmount);
 
-        assertEq(callableCredit.throttlePeriodUsdc(), openAmount, "Throttle should track usage");
+        (, uint64 periodUsdc) = callableCredit.throttle();
+        assertEq(periodUsdc, openAmount, "Throttle should track usage");
     }
 
     // ============ Close Fuzz Tests ============

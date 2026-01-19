@@ -67,13 +67,10 @@ contract CallableCredit is ICallableCredit {
     mapping(address => uint256) public borrowerTotalCcWaUsdc;
 
     /// @notice Total CC waUSDC across all silos
-    uint256 public totalCcWaUsdc;
+    uint128 public totalCcWaUsdc;
 
-    /// @notice Timestamp when current throttle period started
-    uint64 public throttlePeriodStart;
-
-    /// @notice USDC opened in current throttle period
-    uint128 public throttlePeriodUsdc;
+    /// @notice Throttle state for rate limiting CC opens
+    ThrottleState public throttle;
 
     // ============ Immutables ============
 
@@ -87,10 +84,10 @@ contract CallableCredit is ICallableCredit {
     IERC20 public immutable USDC;
 
     /// @notice Address of the ProtocolConfig contract
-    IProtocolConfig public immutable protocolConfig;
+    IProtocolConfig public immutable PROTOCOL_CONFIG;
 
     /// @notice Precomputed market ID
-    Id public immutable marketId;
+    Id public immutable MARKET_ID;
 
     // ============ Immutable MarketParams ============
 
@@ -127,11 +124,12 @@ contract CallableCredit is ICallableCredit {
         MORPHO = IMorphoCredit(_morpho);
         WAUSDC = IERC4626(_wausdc);
         USDC = IERC20(IERC4626(_wausdc).asset());
-        protocolConfig = IProtocolConfig(_protocolConfig);
-        marketId = _marketId;
+        PROTOCOL_CONFIG = IProtocolConfig(_protocolConfig);
+        MARKET_ID = _marketId;
 
         // Retrieve and store MarketParams fields as immutables
         MarketParams memory params = IMorpho(_morpho).idToMarketParams(_marketId);
+        if (params.loanToken == address(0)) revert ErrorsLib.ZeroAddress();
         LOAN_TOKEN = params.loanToken;
         COLLATERAL_TOKEN = params.collateralToken;
         ORACLE = params.oracle;
@@ -144,7 +142,7 @@ contract CallableCredit is ICallableCredit {
 
     /// @dev Reverts if callable credit is frozen
     modifier whenNotFrozen() {
-        if (protocolConfig.getCcFrozen() != 0) revert CallableCreditFrozen();
+        if (PROTOCOL_CONFIG.getCcFrozen() != 0) revert CallableCreditFrozen();
         _;
     }
 
@@ -192,8 +190,8 @@ contract CallableCredit is ICallableCredit {
         // Calculate origination fee (if both fee rate and recipient are configured)
         uint256 feeUsdc;
         uint256 feeWaUsdc;
-        address feeRecipient = address(uint160(protocolConfig.config(ProtocolConfigLib.CC_FEE_RECIPIENT)));
-        uint256 feeBps = protocolConfig.config(ProtocolConfigLib.CC_ORIGINATION_FEE_BPS);
+        address feeRecipient = address(uint160(PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_FEE_RECIPIENT)));
+        uint256 feeBps = PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_ORIGINATION_FEE_BPS);
         if (feeRecipient != address(0) && feeBps != 0) {
             feeUsdc = (usdcAmount * feeBps) / 10000;
             feeWaUsdc = WAUSDC.previewWithdraw(feeUsdc);
@@ -202,29 +200,20 @@ contract CallableCredit is ICallableCredit {
         // Check global CC cap (% of debt cap) - both in waUSDC terms
         // Cap checks use position amount only (fee is not tracked since it's sent away immediately)
         // >= 10000 bps (100%) means unlimited, skip check
-        uint256 ccDebtCapBps = protocolConfig.config(ProtocolConfigLib.CC_DEBT_CAP_BPS);
+        uint256 ccDebtCapBps = PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_DEBT_CAP_BPS);
         if (ccDebtCapBps < 10000) {
-            uint256 debtCap = protocolConfig.config(ProtocolConfigLib.DEBT_CAP);
+            uint256 debtCap = PROTOCOL_CONFIG.config(ProtocolConfigLib.DEBT_CAP);
             uint256 maxCcWaUsdc = (debtCap * ccDebtCapBps) / 10000;
             if (totalCcWaUsdc + waUsdcAmount > maxCcWaUsdc) revert CcCapExceeded();
         }
 
         // Check per-borrower CC cap (% of credit line) - credit line is in waUSDC
         // >= 10000 bps (100%) means unlimited, skip check
-        uint256 ccCreditLineBps = protocolConfig.config(ProtocolConfigLib.CC_CREDIT_LINE_BPS);
+        uint256 ccCreditLineBps = PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_CREDIT_LINE_BPS);
         if (ccCreditLineBps < 10000) {
-            uint256 creditLine = IMorpho(address(MORPHO)).position(marketId, borrower).collateral;
+            uint256 creditLine = IMorpho(address(MORPHO)).position(MARKET_ID, borrower).collateral;
             uint256 maxBorrowerCcWaUsdc = (creditLine * ccCreditLineBps) / 10000;
             if (borrowerTotalCcWaUsdc[borrower] + waUsdcAmount > maxBorrowerCcWaUsdc) revert CcCapExceeded();
-        }
-
-        // Borrow waUSDC from MorphoCredit on behalf of the borrower (position + fee)
-        // Fee waUSDC is paid out immediately and remains borrower debt in MorphoCredit.
-        IMorpho(address(MORPHO)).borrow(_marketParams(), waUsdcAmount + feeWaUsdc, 0, borrower, address(this));
-
-        // Send fee to recipient (redeem waUSDC to USDC)
-        if (feeWaUsdc > 0) {
-            WAUSDC.redeem(feeWaUsdc, feeRecipient, address(this));
         }
 
         // Load silo into memory, update, and write back once
@@ -240,8 +229,17 @@ contract CallableCredit is ICallableCredit {
         borrowerShares[msg.sender][borrower] += shares;
 
         // Update CC waUSDC tracking (position only, fee is not tracked since it's sent away)
-        totalCcWaUsdc += waUsdcAmount;
+        totalCcWaUsdc += waUsdcAmount.toUint128();
         borrowerTotalCcWaUsdc[borrower] += waUsdcAmount;
+
+        // Borrow waUSDC from MorphoCredit on behalf of the borrower (position + fee)
+        // Fee waUSDC is paid out immediately and remains borrower debt in MorphoCredit.
+        IMorpho(address(MORPHO)).borrow(_marketParams(), waUsdcAmount + feeWaUsdc, 0, borrower, address(this));
+
+        // Send fee to recipient (redeem waUSDC to USDC)
+        if (feeWaUsdc > 0) {
+            WAUSDC.redeem(feeWaUsdc, feeRecipient, address(this));
+        }
 
         emit PositionOpened(msg.sender, borrower, usdcAmount, shares, feeUsdc);
     }
@@ -303,7 +301,10 @@ contract CallableCredit is ICallableCredit {
             Silo memory silo = silos[msg.sender];
 
             // Calculate proportional waUSDC for the shares being closed
-            waUsdcToClose = (sharesToBurn * silo.totalWaUsdcHeld) / silo.totalShares;
+            // If burning all shares, use all waUSDC to avoid rounding dust
+            waUsdcToClose = sharesToBurn == silo.totalShares
+                ? silo.totalWaUsdcHeld
+                : (sharesToBurn * silo.totalWaUsdcHeld) / silo.totalShares;
 
             // Update silo state
             silo.totalPrincipal -= usdcPrincipal.toUint128();
@@ -315,31 +316,12 @@ contract CallableCredit is ICallableCredit {
             borrowerShares[msg.sender][borrower] -= sharesToBurn;
 
             // Decrease CC waUSDC tracking
-            totalCcWaUsdc -= waUsdcToClose;
+            totalCcWaUsdc -= waUsdcToClose.toUint128();
             borrowerTotalCcWaUsdc[borrower] -= waUsdcToClose;
         }
 
-        // Accrue premiums to ensure borrower's debt is current
-        _accruePremiums(borrower);
-
-        // Scoped block for repayment logic
-        {
-            // Query actual debt and calculate repayment. Any accrued interest/premiums or fee debt beyond escrowed
-            // waUSDC remain owed in MorphoCredit.
-            uint256 actualDebt = _getBorrowerDebt(borrower);
-            uint256 toRepay = waUsdcToClose < actualDebt ? waUsdcToClose : actualDebt;
-            uint256 excessWaUsdc = waUsdcToClose - toRepay;
-
-            // Repay what's owed to MorphoCredit
-            if (toRepay > 0) {
-                _repayToMorpho(borrower, toRepay);
-            }
-
-            // Return excess to borrower, preferring USDC
-            if (excessWaUsdc > 0) {
-                (usdcSent, waUsdcSent) = _withdrawPreferUsdc(excessWaUsdc, borrower);
-            }
-        }
+        // Accrue premiums, repay debt, and return any excess to borrower
+        (, usdcSent, waUsdcSent) = _repayAndReturn(borrower, waUsdcToClose);
 
         emit PositionClosed(msg.sender, borrower, usdcPrincipal, sharesToBurn);
     }
@@ -402,7 +384,7 @@ contract CallableCredit is ICallableCredit {
             borrowerShares[msg.sender][borrower] -= sharesToBurn;
 
             // Decrease CC waUSDC tracking (position is being unwound)
-            totalCcWaUsdc -= waUsdcToDeduct;
+            totalCcWaUsdc -= waUsdcToDeduct.toUint128();
             borrowerTotalCcWaUsdc[borrower] -= waUsdcToDeduct;
         }
 
@@ -411,28 +393,8 @@ contract CallableCredit is ICallableCredit {
 
         // Handle excess waUSDC: repay borrower's debt first, return remainder
         if (excessWaUsdc > 0) {
-            _accruePremiums(borrower);
-
-            uint256 repaidAmount;
-            uint256 returnedUsdc;
-            uint256 returnedWaUsdc;
-
-            // Scoped block for excess handling
-            {
-                uint256 actualDebt = _getBorrowerDebt(borrower);
-                uint256 toRepay = excessWaUsdc < actualDebt ? excessWaUsdc : actualDebt;
-                uint256 remainder = excessWaUsdc - toRepay;
-
-                if (toRepay > 0) {
-                    _repayToMorpho(borrower, toRepay);
-                    repaidAmount = toRepay;
-                }
-
-                if (remainder > 0) {
-                    (returnedUsdc, returnedWaUsdc) = _withdrawPreferUsdc(remainder, borrower);
-                }
-            }
-
+            (uint256 repaidAmount, uint256 returnedUsdc, uint256 returnedWaUsdc) =
+                _repayAndReturn(borrower, excessWaUsdc);
             emit DrawExcessHandled(msg.sender, borrower, excessWaUsdc, repaidAmount, returnedUsdc, returnedWaUsdc);
         }
 
@@ -470,7 +432,7 @@ contract CallableCredit is ICallableCredit {
         // affected borrowers. Per-borrower tracking remains an upper bound that may permanently
         // overstate exposure after pro-rata draws (close only decrements by proportional amount).
         // This is a conservative design: per-borrower caps may be overly restrictive but never exceeded.
-        totalCcWaUsdc -= waUsdcNeeded;
+        totalCcWaUsdc -= waUsdcNeeded.toUint128();
 
         // Withdraw to recipient, preferring USDC
         (usdcSent, waUsdcSent) = _withdrawPreferUsdc(waUsdcNeeded, recipient);
@@ -514,15 +476,17 @@ contract CallableCredit is ICallableCredit {
     /// @notice Check and update throttle state
     /// @param usdcAmount The USDC amount being opened
     function _checkAndUpdateThrottle(uint256 usdcAmount) internal {
-        uint256 throttlePeriod = protocolConfig.config(ProtocolConfigLib.CC_THROTTLE_PERIOD);
-        uint256 throttleLimit = protocolConfig.config(ProtocolConfigLib.CC_THROTTLE_LIMIT);
+        uint256 throttlePeriod = PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_THROTTLE_PERIOD);
+        uint256 throttleLimit = PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_THROTTLE_LIMIT);
         if (throttlePeriod != 0 && throttleLimit != 0) {
-            if (block.timestamp >= throttlePeriodStart + throttlePeriod) {
-                throttlePeriodStart = uint64(block.timestamp);
-                throttlePeriodUsdc = 0;
+            ThrottleState memory t = throttle;
+            if (block.timestamp >= t.periodStart + throttlePeriod) {
+                t.periodStart = uint64(block.timestamp);
+                t.periodUsdc = 0;
             }
-            if (throttlePeriodUsdc + usdcAmount > throttleLimit) revert ThrottleLimitExceeded();
-            throttlePeriodUsdc += uint128(usdcAmount);
+            if (t.periodUsdc + usdcAmount > throttleLimit) revert ThrottleLimitExceeded();
+            t.periodUsdc += usdcAmount.toUint64();
+            throttle = t;
         }
     }
 
@@ -530,7 +494,7 @@ contract CallableCredit is ICallableCredit {
     /// @param borrower The borrower address
     /// @return True if borrower has collateral (credit line) in MorphoCredit
     function _hasCreditLine(address borrower) internal view returns (bool) {
-        return IMorpho(address(MORPHO)).position(marketId, borrower).collateral > 0;
+        return IMorpho(address(MORPHO)).position(MARKET_ID, borrower).collateral != 0;
     }
 
     /// @notice Get borrower's current debt in MorphoCredit
@@ -538,11 +502,11 @@ contract CallableCredit is ICallableCredit {
     /// @return The borrower's debt in waUSDC terms
     function _getBorrowerDebt(address borrower) internal view returns (uint256) {
         // Get borrower's borrow shares
-        uint128 borrowShares = IMorpho(address(MORPHO)).position(marketId, borrower).borrowShares;
+        uint128 borrowShares = IMorpho(address(MORPHO)).position(MARKET_ID, borrower).borrowShares;
         if (borrowShares == 0) return 0;
 
         // Get market totals to convert shares to assets
-        Market memory m = IMorpho(address(MORPHO)).market(marketId);
+        Market memory m = IMorpho(address(MORPHO)).market(MARKET_ID);
         if (m.totalBorrowShares == 0) return 0;
 
         // Convert shares to assets (round up for debt)
@@ -574,12 +538,37 @@ contract CallableCredit is ICallableCredit {
         }
     }
 
+    /// @notice Accrue premiums, repay debt, and return any excess to borrower
+    /// @param borrower The borrower address
+    /// @param waUsdcAmount The waUSDC amount to process
+    /// @return repaidAmount Amount repaid to MorphoCredit
+    /// @return usdcReturned USDC returned to borrower
+    /// @return waUsdcReturned waUSDC returned to borrower
+    function _repayAndReturn(address borrower, uint256 waUsdcAmount)
+        internal
+        returns (uint256 repaidAmount, uint256 usdcReturned, uint256 waUsdcReturned)
+    {
+        _accruePremiums(borrower);
+
+        uint256 actualDebt = _getBorrowerDebt(borrower);
+        repaidAmount = waUsdcAmount < actualDebt ? waUsdcAmount : actualDebt;
+        uint256 remainder = waUsdcAmount - repaidAmount;
+
+        if (repaidAmount > 0) {
+            _repayToMorpho(borrower, repaidAmount);
+        }
+
+        if (remainder > 0) {
+            (usdcReturned, waUsdcReturned) = _withdrawPreferUsdc(remainder, borrower);
+        }
+    }
+
     /// @notice Accrue premiums for a borrower
     /// @param borrower The borrower address
     function _accruePremiums(address borrower) internal {
         address[] memory borrowers = new address[](1);
         borrowers[0] = borrower;
-        MORPHO.accruePremiumsForBorrowers(marketId, borrowers);
+        MORPHO.accruePremiumsForBorrowers(MARKET_ID, borrowers);
     }
 
     /// @notice Repay waUSDC to MorphoCredit on behalf of a borrower

@@ -29,8 +29,9 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, THROTTLE_LIMIT + 100_000e6);
 
         // Throttle state should not be updated
-        assertEq(callableCredit.throttlePeriodStart(), 0);
-        assertEq(callableCredit.throttlePeriodUsdc(), 0);
+        (uint64 periodStart, uint64 periodUsdc) = callableCredit.throttle();
+        assertEq(periodStart, 0);
+        assertEq(periodUsdc, 0);
     }
 
     function testNoThrottleWhenLimitIsZero() public {
@@ -41,8 +42,9 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, 600_000e6);
 
         // Throttle state should not be updated
-        assertEq(callableCredit.throttlePeriodStart(), 0);
-        assertEq(callableCredit.throttlePeriodUsdc(), 0);
+        (uint64 periodStart, uint64 periodUsdc) = callableCredit.throttle();
+        assertEq(periodStart, 0);
+        assertEq(periodUsdc, 0);
     }
 
     function testNoThrottleByDefault() public {
@@ -52,8 +54,9 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
         // Throttle state should not be updated
-        assertEq(callableCredit.throttlePeriodStart(), 0);
-        assertEq(callableCredit.throttlePeriodUsdc(), 0);
+        (uint64 periodStart, uint64 periodUsdc) = callableCredit.throttle();
+        assertEq(periodStart, 0);
+        assertEq(periodUsdc, 0);
     }
 
     // ============ Basic Throttle Tests ============
@@ -64,8 +67,9 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
 
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
-        assertEq(callableCredit.throttlePeriodStart(), block.timestamp);
-        assertEq(callableCredit.throttlePeriodUsdc(), DEFAULT_OPEN_AMOUNT);
+        (uint64 periodStart, uint64 periodUsdc) = callableCredit.throttle();
+        assertEq(periodStart, block.timestamp);
+        assertEq(periodUsdc, DEFAULT_OPEN_AMOUNT);
     }
 
     function testThrottleAccumulatesAcrossOpens() public {
@@ -75,7 +79,8 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, 100_000e6);
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, 100_000e6);
 
-        assertEq(callableCredit.throttlePeriodUsdc(), 200_000e6);
+        (, uint64 periodUsdc) = callableCredit.throttle();
+        assertEq(periodUsdc, 200_000e6);
     }
 
     function testThrottleRevertsWhenLimitExceeded() public {
@@ -98,7 +103,8 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
         // Should succeed at exactly the limit
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, THROTTLE_LIMIT);
 
-        assertEq(callableCredit.throttlePeriodUsdc(), THROTTLE_LIMIT);
+        (, uint64 periodUsdc) = callableCredit.throttle();
+        assertEq(periodUsdc, THROTTLE_LIMIT);
     }
 
     // ============ Period Reset Tests ============
@@ -117,8 +123,9 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
         // Period should be reset
-        assertEq(callableCredit.throttlePeriodStart(), block.timestamp);
-        assertEq(callableCredit.throttlePeriodUsdc(), DEFAULT_OPEN_AMOUNT);
+        (uint64 periodStart, uint64 periodUsdc) = callableCredit.throttle();
+        assertEq(periodStart, block.timestamp);
+        assertEq(periodUsdc, DEFAULT_OPEN_AMOUNT);
     }
 
     function testThrottleDoesNotResetBeforePeriodEnds() public {
@@ -127,7 +134,7 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
 
         // Use full limit
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, THROTTLE_LIMIT);
-        uint256 periodStart = callableCredit.throttlePeriodStart();
+        (uint64 initialPeriodStart,) = callableCredit.throttle();
 
         // Warp almost to the end but not past
         vm.warp(block.timestamp + THROTTLE_PERIOD - 1);
@@ -138,7 +145,8 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
         callableCredit.open(BORROWER_1, 1e6);
 
         // Period start should be unchanged
-        assertEq(callableCredit.throttlePeriodStart(), periodStart);
+        (uint64 periodStart,) = callableCredit.throttle();
+        assertEq(periodStart, initialPeriodStart);
     }
 
     function testThrottleResetsExactlyAtPeriodEnd() public {
@@ -173,7 +181,8 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
         // Borrower 2 can use 200k (bringing total to 500k)
         _openPosition(COUNTER_PROTOCOL, BORROWER_2, 200_000e6);
 
-        assertEq(callableCredit.throttlePeriodUsdc(), 500_000e6);
+        (, uint64 periodUsdc) = callableCredit.throttle();
+        assertEq(periodUsdc, 500_000e6);
     }
 
     // ============ Multi-Silo Tests ============
@@ -202,11 +211,13 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
         _setupBorrowerWithCreditLine(BORROWER_1, CREDIT_LINE_AMOUNT);
 
         // Initially zero
-        assertEq(callableCredit.throttlePeriodStart(), 0);
+        (uint64 periodStart,) = callableCredit.throttle();
+        assertEq(periodStart, 0);
 
         // First open initializes period
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
-        assertEq(callableCredit.throttlePeriodStart(), block.timestamp);
+        (periodStart,) = callableCredit.throttle();
+        assertEq(periodStart, block.timestamp);
     }
 }
