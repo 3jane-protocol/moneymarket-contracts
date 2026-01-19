@@ -11,6 +11,7 @@ import {UtilsLib} from "./libraries/UtilsLib.sol";
 import {ProtocolConfigLib} from "./libraries/ProtocolConfigLib.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IERC4626} from "../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
+import {Initializable} from "../lib/openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 /// @title CallableCredit
 /// @author 3Jane
@@ -18,7 +19,7 @@ import {IERC4626} from "../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 /// @notice Manages callable credit positions where counter-protocols can draw against borrower credit
 /// @dev Implements a silo + shares model for efficient pro-rata and targeted draws
 /// @dev Principal tracked in USDC (draw cap), waUSDC tracked at silo level for close reconciliation
-contract CallableCredit is ICallableCredit {
+contract CallableCredit is ICallableCredit, Initializable {
     using SharesMathLib for uint256;
     using SafeTransferLib for IERC20;
     using UtilsLib for uint256;
@@ -72,6 +73,9 @@ contract CallableCredit is ICallableCredit {
     /// @notice Throttle state for rate limiting CC opens
     ThrottleState public throttle;
 
+    /// @dev Storage gap for future upgrades
+    uint256[50] private __gap;
+
     // ============ Immutables ============
 
     /// @notice Address of the MorphoCredit contract
@@ -111,11 +115,12 @@ contract CallableCredit is ICallableCredit {
 
     // ============ Constructor ============
 
-    /// @notice Initialize the CallableCredit contract
+    /// @notice Initialize the CallableCredit implementation contract
     /// @param _morpho Address of the MorphoCredit contract
     /// @param _wausdc Address of the waUSDC token (ERC4626)
     /// @param _protocolConfig Address of the ProtocolConfig contract
     /// @param _marketId Market ID in MorphoCredit
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address _morpho, address _wausdc, address _protocolConfig, Id _marketId) {
         if (_morpho == address(0)) revert ErrorsLib.ZeroAddress();
         if (_wausdc == address(0)) revert ErrorsLib.ZeroAddress();
@@ -136,6 +141,14 @@ contract CallableCredit is ICallableCredit {
         IRM = params.irm;
         LLTV = params.lltv;
         CREDIT_LINE = params.creditLine;
+
+        _disableInitializers();
+    }
+
+    /// @notice Initialize the CallableCredit proxy
+    /// @dev Called once during proxy deployment
+    function initialize() external initializer {
+        // No state initialization needed - owner delegated to MORPHO, mappings start empty
     }
 
     // ============ Modifiers ============

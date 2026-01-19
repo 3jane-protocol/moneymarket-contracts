@@ -96,6 +96,10 @@ interface ICallableCredit {
     /// @param authorized The new authorization status
     event CounterProtocolAuthorized(address indexed counterProtocol, bool authorized);
 
+    /// @notice Initialize the CallableCredit proxy
+    /// @dev Called once during proxy deployment
+    function initialize() external;
+
     /// @notice Open a callable credit position by borrowing from MorphoCredit
     /// @dev Only callable by authorized counter-protocols
     /// @param borrower The 3Jane borrower whose credit line will be used
