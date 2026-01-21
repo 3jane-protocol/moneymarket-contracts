@@ -100,7 +100,7 @@ contract CallableCreditUnitTest is CallableCreditBaseTest {
         _freezeCallableCredit();
 
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.CallableCreditFrozen.selector);
+        vm.expectRevert(ErrorsLib.CallableCreditFrozen.selector);
         callableCredit.open(BORROWER_1, DEFAULT_OPEN_AMOUNT);
     }
 
@@ -113,7 +113,7 @@ contract CallableCreditUnitTest is CallableCreditBaseTest {
         _freezeCallableCredit();
 
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.CallableCreditFrozen.selector);
+        vm.expectRevert(ErrorsLib.CallableCreditFrozen.selector);
         callableCredit.close(BORROWER_1);
     }
 
@@ -126,7 +126,7 @@ contract CallableCreditUnitTest is CallableCreditBaseTest {
         _freezeCallableCredit();
 
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.CallableCreditFrozen.selector);
+        vm.expectRevert(ErrorsLib.CallableCreditFrozen.selector);
         callableCredit.draw(BORROWER_1, 10_000e6, RECIPIENT);
     }
 
@@ -139,7 +139,7 @@ contract CallableCreditUnitTest is CallableCreditBaseTest {
         _freezeCallableCredit();
 
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.CallableCreditFrozen.selector);
+        vm.expectRevert(ErrorsLib.CallableCreditFrozen.selector);
         callableCredit.draw(10_000e6, RECIPIENT);
     }
 
@@ -150,7 +150,7 @@ contract CallableCreditUnitTest is CallableCreditBaseTest {
 
         address unauthorized = makeAddr("Unauthorized");
         vm.prank(unauthorized);
-        vm.expectRevert(CallableCredit.NotAuthorizedCounterProtocol.selector);
+        vm.expectRevert(ErrorsLib.NotAuthorizedCounterProtocol.selector);
         callableCredit.open(BORROWER_1, DEFAULT_OPEN_AMOUNT);
     }
 
@@ -160,7 +160,7 @@ contract CallableCreditUnitTest is CallableCreditBaseTest {
 
         address unauthorized = makeAddr("Unauthorized");
         vm.prank(unauthorized);
-        vm.expectRevert(CallableCredit.NotAuthorizedCounterProtocol.selector);
+        vm.expectRevert(ErrorsLib.NotAuthorizedCounterProtocol.selector);
         callableCredit.close(BORROWER_1);
     }
 
@@ -170,7 +170,7 @@ contract CallableCreditUnitTest is CallableCreditBaseTest {
 
         address unauthorized = makeAddr("Unauthorized");
         vm.prank(unauthorized);
-        vm.expectRevert(CallableCredit.NotAuthorizedCounterProtocol.selector);
+        vm.expectRevert(ErrorsLib.NotAuthorizedCounterProtocol.selector);
         callableCredit.draw(BORROWER_1, 10_000e6, RECIPIENT);
     }
 
@@ -180,7 +180,7 @@ contract CallableCreditUnitTest is CallableCreditBaseTest {
 
         address unauthorized = makeAddr("Unauthorized");
         vm.prank(unauthorized);
-        vm.expectRevert(CallableCredit.NotAuthorizedCounterProtocol.selector);
+        vm.expectRevert(ErrorsLib.NotAuthorizedCounterProtocol.selector);
         callableCredit.draw(10_000e6, RECIPIENT);
     }
 }

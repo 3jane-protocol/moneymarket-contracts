@@ -67,7 +67,7 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         // BORROWER_1 has no credit line set up
 
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.NoCreditLine.selector);
+        vm.expectRevert(ErrorsLib.NoCreditLine.selector);
         callableCredit.open(BORROWER_1, DEFAULT_OPEN_AMOUNT);
     }
 
@@ -127,7 +127,7 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         // Don't open a position
 
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.NoPosition.selector);
+        vm.expectRevert(ErrorsLib.NoPosition.selector);
         callableCredit.close(BORROWER_1);
     }
 
@@ -226,7 +226,7 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         // Don't open a position
 
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.NoPosition.selector);
+        vm.expectRevert(ErrorsLib.NoPosition.selector);
         callableCredit.draw(BORROWER_1, 10_000e6, RECIPIENT);
     }
 
@@ -236,7 +236,7 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
 
         // Try to draw more than the position
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.InsufficientPrincipal.selector);
+        vm.expectRevert(ErrorsLib.InsufficientPrincipal.selector);
         callableCredit.draw(BORROWER_1, DEFAULT_OPEN_AMOUNT * 2, RECIPIENT);
     }
 
@@ -305,7 +305,7 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         _openPosition(COUNTER_PROTOCOL, BORROWER_1, DEFAULT_OPEN_AMOUNT);
 
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.InsufficientPrincipal.selector);
+        vm.expectRevert(ErrorsLib.InsufficientPrincipal.selector);
         callableCredit.draw(DEFAULT_OPEN_AMOUNT * 2, RECIPIENT);
     }
 
@@ -451,7 +451,7 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
         // Don't open a position
 
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.NoPosition.selector);
+        vm.expectRevert(ErrorsLib.NoPosition.selector);
         callableCredit.close(BORROWER_1, 10_000e6);
     }
 
@@ -461,7 +461,7 @@ contract CallableCreditIntegrationTest is CallableCreditBaseTest {
 
         // Try to close more than the position
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.InsufficientShares.selector);
+        vm.expectRevert(ErrorsLib.InsufficientShares.selector);
         callableCredit.close(BORROWER_1, DEFAULT_OPEN_AMOUNT * 2);
     }
 

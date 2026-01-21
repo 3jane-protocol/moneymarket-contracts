@@ -92,7 +92,7 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
 
         // Second open tries to use 200k more, exceeds 500k limit
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.ThrottleLimitExceeded.selector);
+        vm.expectRevert(ErrorsLib.ThrottleLimitExceeded.selector);
         callableCredit.open(BORROWER_1, 200_000e6);
     }
 
@@ -141,7 +141,7 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
 
         // Should still revert - period not ended
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.ThrottleLimitExceeded.selector);
+        vm.expectRevert(ErrorsLib.ThrottleLimitExceeded.selector);
         callableCredit.open(BORROWER_1, 1e6);
 
         // Period start should be unchanged
@@ -175,7 +175,7 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
 
         // Borrower 2 tries to use 300k more, exceeds 500k global limit
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.ThrottleLimitExceeded.selector);
+        vm.expectRevert(ErrorsLib.ThrottleLimitExceeded.selector);
         callableCredit.open(BORROWER_2, 300_000e6);
 
         // Borrower 2 can use 200k (bringing total to 500k)
@@ -200,7 +200,7 @@ contract CallableCreditThrottleTest is CallableCreditBaseTest {
 
         // Counter-protocol 2 tries to use 300k more, exceeds global limit
         vm.prank(COUNTER_PROTOCOL_2);
-        vm.expectRevert(CallableCredit.ThrottleLimitExceeded.selector);
+        vm.expectRevert(ErrorsLib.ThrottleLimitExceeded.selector);
         callableCredit.open(BORROWER_1, 300_000e6);
     }
 

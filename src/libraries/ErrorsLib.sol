@@ -146,4 +146,33 @@ library ErrorsLib {
 
     /// @notice Thrown when borrow or repay would result in debt below minimum borrow amount.
     error BelowMinimumBorrow();
+
+    // ============ CallableCredit Errors ============
+
+    /// @notice Thrown when callable credit operations are frozen.
+    error CallableCreditFrozen();
+
+    /// @notice Thrown when caller is not an authorized counter-protocol.
+    error NotAuthorizedCounterProtocol();
+
+    /// @notice Thrown when borrower has insufficient shares.
+    error InsufficientShares();
+
+    /// @notice Thrown when borrower has no position to close or draw from.
+    error NoPosition();
+
+    /// @notice Thrown when silo has insufficient principal for draw.
+    error InsufficientPrincipal();
+
+    /// @notice Thrown when silo has insufficient waUSDC for draw.
+    error InsufficientWaUsdc();
+
+    /// @notice Thrown when borrower has no credit line in MorphoCredit.
+    error NoCreditLine();
+
+    /// @notice Thrown when callable credit cap is exceeded.
+    error CcCapExceeded();
+
+    /// @notice Thrown when throttle limit for the period is exceeded.
+    error ThrottleLimitExceeded();
 }

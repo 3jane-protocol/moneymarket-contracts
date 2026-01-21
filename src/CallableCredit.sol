@@ -24,35 +24,6 @@ contract CallableCredit is ICallableCredit, Initializable {
     using SafeTransferLib for IERC20;
     using UtilsLib for uint256;
 
-    // ============ Errors ============
-
-    /// @notice Thrown when callable credit operations are frozen
-    error CallableCreditFrozen();
-
-    /// @notice Thrown when caller is not an authorized counter-protocol
-    error NotAuthorizedCounterProtocol();
-
-    /// @notice Thrown when borrower has insufficient shares
-    error InsufficientShares();
-
-    /// @notice Thrown when borrower has no position to close or draw from
-    error NoPosition();
-
-    /// @notice Thrown when silo has insufficient principal for draw
-    error InsufficientPrincipal();
-
-    /// @notice Thrown when silo has insufficient waUSDC for draw
-    error InsufficientWaUsdc();
-
-    /// @notice Thrown when borrower has no credit line in MorphoCredit
-    error NoCreditLine();
-
-    /// @notice Thrown when callable credit cap is exceeded
-    error CcCapExceeded();
-
-    /// @notice Thrown when throttle limit for the period is exceeded
-    error ThrottleLimitExceeded();
-
     // ============ State Variables ============
 
     /// @notice Silo data per counter-protocol
@@ -155,7 +126,7 @@ contract CallableCredit is ICallableCredit, Initializable {
 
     /// @dev Reverts if callable credit is frozen
     modifier whenNotFrozen() {
-        if (PROTOCOL_CONFIG.getCcFrozen() != 0) revert CallableCreditFrozen();
+        if (PROTOCOL_CONFIG.getCcFrozen() != 0) revert ErrorsLib.CallableCreditFrozen();
         _;
     }
 
@@ -167,7 +138,7 @@ contract CallableCredit is ICallableCredit, Initializable {
 
     /// @dev Reverts if caller is not an authorized counter-protocol
     modifier onlyAuthorizedCounterProtocol() {
-        if (!authorizedCounterProtocols[msg.sender]) revert NotAuthorizedCounterProtocol();
+        if (!authorizedCounterProtocols[msg.sender]) revert ErrorsLib.NotAuthorizedCounterProtocol();
         _;
     }
 
@@ -192,7 +163,7 @@ contract CallableCredit is ICallableCredit, Initializable {
     /// @inheritdoc ICallableCredit
     function open(address borrower, uint256 usdcAmount) external whenNotFrozen onlyAuthorizedCounterProtocol {
         if (usdcAmount == 0) revert ErrorsLib.ZeroAssets();
-        if (!_hasCreditLine(borrower)) revert NoCreditLine();
+        if (!_hasCreditLine(borrower)) revert ErrorsLib.NoCreditLine();
 
         _checkAndUpdateThrottle(usdcAmount);
 
@@ -217,7 +188,7 @@ contract CallableCredit is ICallableCredit, Initializable {
         if (ccDebtCapBps < 10000) {
             uint256 debtCap = PROTOCOL_CONFIG.config(ProtocolConfigLib.DEBT_CAP);
             uint256 maxCcWaUsdc = (debtCap * ccDebtCapBps) / 10000;
-            if (totalCcWaUsdc + waUsdcAmount > maxCcWaUsdc) revert CcCapExceeded();
+            if (totalCcWaUsdc + waUsdcAmount > maxCcWaUsdc) revert ErrorsLib.CcCapExceeded();
         }
 
         // Check per-borrower CC cap (% of credit line) - credit line is in waUSDC
@@ -226,7 +197,7 @@ contract CallableCredit is ICallableCredit, Initializable {
         if (ccCreditLineBps < 10000) {
             uint256 creditLine = IMorpho(address(MORPHO)).position(MARKET_ID, borrower).collateral;
             uint256 maxBorrowerCcWaUsdc = (creditLine * ccCreditLineBps) / 10000;
-            if (borrowerTotalCcWaUsdc[borrower] + waUsdcAmount > maxBorrowerCcWaUsdc) revert CcCapExceeded();
+            if (borrowerTotalCcWaUsdc[borrower] + waUsdcAmount > maxBorrowerCcWaUsdc) revert ErrorsLib.CcCapExceeded();
         }
 
         // Load silo into memory, update, and write back once
@@ -265,7 +236,7 @@ contract CallableCredit is ICallableCredit, Initializable {
         returns (uint256 usdcSent, uint256 waUsdcSent)
     {
         uint256 shares = borrowerShares[msg.sender][borrower];
-        if (shares == 0) revert NoPosition();
+        if (shares == 0) revert ErrorsLib.NoPosition();
 
         // Full close: derive principal from shares
         Silo memory silo = silos[msg.sender];
@@ -284,12 +255,12 @@ contract CallableCredit is ICallableCredit, Initializable {
         if (usdcAmount == 0) revert ErrorsLib.ZeroAssets();
 
         uint256 shares = borrowerShares[msg.sender][borrower];
-        if (shares == 0) revert NoPosition();
+        if (shares == 0) revert ErrorsLib.NoPosition();
 
         // Calculate shares to burn from USDC amount
         Silo memory silo = silos[msg.sender];
         uint256 sharesToBurn = usdcAmount.toSharesUp(silo.totalPrincipal, silo.totalShares);
-        if (sharesToBurn > shares) revert InsufficientShares();
+        if (sharesToBurn > shares) revert ErrorsLib.InsufficientShares();
 
         // If burning all silo shares, use all silo principal directly
         // (avoids virtual share math that rounds to zero with small numbers)
@@ -351,7 +322,7 @@ contract CallableCredit is ICallableCredit, Initializable {
         if (usdcAmount == 0) revert ErrorsLib.ZeroAssets();
 
         uint256 shares = borrowerShares[msg.sender][borrower];
-        if (shares == 0) revert NoPosition();
+        if (shares == 0) revert ErrorsLib.NoPosition();
 
         uint256 waUsdcNeeded;
         uint256 excessWaUsdc;
@@ -362,11 +333,11 @@ contract CallableCredit is ICallableCredit, Initializable {
             Silo memory silo = silos[msg.sender];
 
             // Check against USDC principal (draw cap)
-            if (usdcAmount > silo.totalPrincipal) revert InsufficientPrincipal();
+            if (usdcAmount > silo.totalPrincipal) revert ErrorsLib.InsufficientPrincipal();
 
             // Calculate shares to burn based on USDC amount
             uint256 sharesToBurn = usdcAmount.toSharesUp(silo.totalPrincipal, silo.totalShares);
-            if (sharesToBurn > shares) revert InsufficientShares();
+            if (sharesToBurn > shares) revert ErrorsLib.InsufficientShares();
 
             // Calculate proportional waUSDC for shares being burned (like _close does)
             // If burning all shares, use all waUSDC to avoid rounding dust
@@ -376,7 +347,7 @@ contract CallableCredit is ICallableCredit, Initializable {
 
             // Calculate waUSDC needed to fulfill the USDC withdrawal
             waUsdcNeeded = WAUSDC.previewWithdraw(usdcAmount);
-            if (waUsdcNeeded > silo.totalWaUsdcHeld) revert InsufficientWaUsdc();
+            if (waUsdcNeeded > silo.totalWaUsdcHeld) revert ErrorsLib.InsufficientWaUsdc();
 
             // Calculate excess waUSDC from appreciation (belongs to borrower)
             // Only exists when share-proportional waUSDC exceeds what's needed for the draw
@@ -427,11 +398,11 @@ contract CallableCredit is ICallableCredit, Initializable {
         Silo memory silo = silos[msg.sender];
 
         // Check against USDC principal (draw cap)
-        if (usdcAmount > silo.totalPrincipal) revert InsufficientPrincipal();
+        if (usdcAmount > silo.totalPrincipal) revert ErrorsLib.InsufficientPrincipal();
 
         // Convert USDC to waUSDC needed for withdrawal
         uint256 waUsdcNeeded = WAUSDC.previewWithdraw(usdcAmount);
-        if (waUsdcNeeded > silo.totalWaUsdcHeld) revert InsufficientWaUsdc();
+        if (waUsdcNeeded > silo.totalWaUsdcHeld) revert ErrorsLib.InsufficientWaUsdc();
 
         // Pro-rata draw reduces principal and waUSDC, shares remain unchanged
         // Each borrower's position shrinks proportionally via share price
@@ -497,7 +468,7 @@ contract CallableCredit is ICallableCredit, Initializable {
                 t.periodStart = uint64(block.timestamp);
                 t.periodUsdc = 0;
             }
-            if (t.periodUsdc + usdcAmount > throttleLimit) revert ThrottleLimitExceeded();
+            if (t.periodUsdc + usdcAmount > throttleLimit) revert ErrorsLib.ThrottleLimitExceeded();
             t.periodUsdc += usdcAmount.toUint64();
             throttle = t;
         }

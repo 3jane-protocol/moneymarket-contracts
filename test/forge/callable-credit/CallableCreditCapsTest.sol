@@ -43,7 +43,7 @@ contract CallableCreditCapsTest is CallableCreditBaseTest {
 
         // Second open should fail (50k + 60k > 100k cap)
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.CcCapExceeded.selector);
+        vm.expectRevert(ErrorsLib.CcCapExceeded.selector);
         callableCredit.open(BORROWER_2, 60_000e6);
 
         // Third open at limit should succeed (50k + 50k = 100k)
@@ -60,7 +60,7 @@ contract CallableCreditCapsTest is CallableCreditBaseTest {
 
         // Should fail - cap is 0, so no CC is allowed
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.CcCapExceeded.selector);
+        vm.expectRevert(ErrorsLib.CcCapExceeded.selector);
         callableCredit.open(BORROWER_1, 1e6);
     }
 
@@ -91,7 +91,7 @@ contract CallableCreditCapsTest is CallableCreditBaseTest {
 
         // Second open should fail (30k + 25k > 50k)
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.CcCapExceeded.selector);
+        vm.expectRevert(ErrorsLib.CcCapExceeded.selector);
         callableCredit.open(BORROWER_1, 25_000e6);
 
         // Third open at limit should succeed (30k + 20k = 50k)
@@ -108,7 +108,7 @@ contract CallableCreditCapsTest is CallableCreditBaseTest {
 
         // Should fail - cap is 0, so no CC is allowed
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.CcCapExceeded.selector);
+        vm.expectRevert(ErrorsLib.CcCapExceeded.selector);
         callableCredit.open(BORROWER_1, 1e6);
     }
 
@@ -195,7 +195,7 @@ contract CallableCreditCapsTest is CallableCreditBaseTest {
 
         // Can't open more
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.CcCapExceeded.selector);
+        vm.expectRevert(ErrorsLib.CcCapExceeded.selector);
         callableCredit.open(BORROWER_2, 1e6);
 
         // Close 50k
@@ -223,7 +223,7 @@ contract CallableCreditCapsTest is CallableCreditBaseTest {
 
         // Try to open 250k (exceeds borrower cap of 200k)
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.CcCapExceeded.selector);
+        vm.expectRevert(ErrorsLib.CcCapExceeded.selector);
         callableCredit.open(BORROWER_1, 250_000e6);
 
         // Open 200k (at borrower cap)
@@ -245,7 +245,7 @@ contract CallableCreditCapsTest is CallableCreditBaseTest {
 
         // Try to open 60k (exceeds global cap of 50k)
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.CcCapExceeded.selector);
+        vm.expectRevert(ErrorsLib.CcCapExceeded.selector);
         callableCredit.open(BORROWER_1, 60_000e6);
 
         // Open 50k (at global cap)
@@ -271,7 +271,7 @@ contract CallableCreditCapsTest is CallableCreditBaseTest {
 
         // Try to open 15k in silo 2 (20k + 15k > 30k cap)
         vm.prank(COUNTER_PROTOCOL_2);
-        vm.expectRevert(CallableCredit.CcCapExceeded.selector);
+        vm.expectRevert(ErrorsLib.CcCapExceeded.selector);
         callableCredit.open(BORROWER_1, 15_000e6);
 
         // Open 10k in silo 2 (20k + 10k = 30k)

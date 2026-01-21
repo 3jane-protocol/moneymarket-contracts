@@ -357,7 +357,7 @@ contract CallableCreditEdgeCasesTest is CallableCreditBaseTest {
 
         // Any more should fail
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.CcCapExceeded.selector);
+        vm.expectRevert(ErrorsLib.CcCapExceeded.selector);
         callableCredit.open(BORROWER_1, 1e6);
     }
 
@@ -378,7 +378,7 @@ contract CallableCreditEdgeCasesTest is CallableCreditBaseTest {
 
         // Any more should fail
         vm.prank(COUNTER_PROTOCOL);
-        vm.expectRevert(CallableCredit.CcCapExceeded.selector);
+        vm.expectRevert(ErrorsLib.CcCapExceeded.selector);
         callableCredit.open(BORROWER_1, 1e6);
     }
 

@@ -75,12 +75,12 @@ contract CallableCreditMultiSiloTest is CallableCreditBaseTest {
 
         // Counter-protocol 2 tries to close borrower 1's position (should fail - no position)
         vm.prank(COUNTER_PROTOCOL_2);
-        vm.expectRevert(CallableCredit.NoPosition.selector);
+        vm.expectRevert(ErrorsLib.NoPosition.selector);
         callableCredit.close(BORROWER_1);
 
         // Counter-protocol 2 tries to draw from borrower 1 (should fail - no position)
         vm.prank(COUNTER_PROTOCOL_2);
-        vm.expectRevert(CallableCredit.NoPosition.selector);
+        vm.expectRevert(ErrorsLib.NoPosition.selector);
         callableCredit.draw(BORROWER_1, 1000e6, RECIPIENT);
     }
 
