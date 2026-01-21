@@ -339,12 +339,12 @@ contract CallableCredit is ICallableCredit, Initializable, ReentrancyGuard {
 
             // Calculate excess waUSDC from appreciation (belongs to borrower)
             // Only exists when share-proportional waUSDC exceeds what's needed for the draw
-            excessWaUsdc = waUsdcFromShares > waUsdcNeeded ? waUsdcFromShares - waUsdcNeeded : 0;
+            excessWaUsdc = UtilsLib.zeroFloorSub(waUsdcFromShares, waUsdcNeeded);
 
             // Use max(waUsdcFromShares, waUsdcNeeded) for consistent accounting
             // - If appreciation: waUsdcFromShares > waUsdcNeeded, excess goes to borrower
             // - If no appreciation: waUsdcNeeded >= waUsdcFromShares, no excess, use waUsdcNeeded
-            uint256 waUsdcToDeduct = waUsdcFromShares > waUsdcNeeded ? waUsdcFromShares : waUsdcNeeded;
+            uint256 waUsdcToDeduct = UtilsLib.max(waUsdcFromShares, waUsdcNeeded);
 
             // Update silo state
             silo.totalPrincipal -= usdcAmount.toUint128();
@@ -575,7 +575,7 @@ contract CallableCredit is ICallableCredit, Initializable, ReentrancyGuard {
         _accruePremiums(borrower);
 
         uint256 actualDebt = _getBorrowerDebt(borrower);
-        repaidAmount = waUsdcAmount < actualDebt ? waUsdcAmount : actualDebt;
+        repaidAmount = UtilsLib.min(waUsdcAmount, actualDebt);
         uint256 remainder = waUsdcAmount - repaidAmount;
 
         if (repaidAmount > 0) {
