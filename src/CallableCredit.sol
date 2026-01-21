@@ -46,6 +46,9 @@ contract CallableCredit is ICallableCredit, Initializable, ReentrancyGuard {
     /// @notice Throttle state for rate limiting CC opens
     ThrottleState public throttle;
 
+    /// @notice Borrower allowance per counter-protocol in USDC
+    mapping(address borrower => mapping(address counterProtocol => uint256)) public borrowerAllowance;
+
     /// @dev Storage gap for future upgrades
     uint256[50] private __gap;
 
@@ -160,6 +163,14 @@ contract CallableCredit is ICallableCredit, Initializable, ReentrancyGuard {
         emit CounterProtocolAuthorized(counterProtocol, authorized);
     }
 
+    // ============ Borrower Functions ============
+
+    /// @inheritdoc ICallableCredit
+    function approve(address counterProtocol, uint256 amount) external {
+        borrowerAllowance[msg.sender][counterProtocol] = amount;
+        emit Approval(msg.sender, counterProtocol, amount);
+    }
+
     // ============ Position Management ============
 
     /// @inheritdoc ICallableCredit
@@ -175,8 +186,8 @@ contract CallableCredit is ICallableCredit, Initializable, ReentrancyGuard {
         // Convert USDC to waUSDC (rounds up to ensure silo has enough for draws)
         uint256 waUsdcAmount = WAUSDC.previewWithdraw(usdcAmount);
 
-        _beforeOpen(borrower, usdcAmount, waUsdcAmount);
         (uint256 feeUsdc, uint256 feeWaUsdc, address feeRecipient) = _calculateOriginationFee(usdcAmount);
+        _beforeOpen(borrower, usdcAmount, waUsdcAmount, feeUsdc);
 
         // Load silo, update shares/principal/waUSDC, write back
         Silo memory silo = silos[msg.sender];
@@ -435,11 +446,19 @@ contract CallableCredit is ICallableCredit, Initializable, ReentrancyGuard {
         });
     }
 
-    /// @notice Check throttle and enforce caps before open
+    /// @notice Check allowance, throttle, and enforce caps before open
     /// @param borrower The borrower address
     /// @param usdcAmount The USDC amount to open
     /// @param waUsdcAmount The waUSDC amount (pre-calculated by caller)
-    function _beforeOpen(address borrower, uint256 usdcAmount, uint256 waUsdcAmount) internal {
+    /// @param feeUsdc The origination fee in USDC
+    function _beforeOpen(address borrower, uint256 usdcAmount, uint256 waUsdcAmount, uint256 feeUsdc) internal {
+        uint256 totalCost = usdcAmount + feeUsdc;
+        uint256 allowed = borrowerAllowance[borrower][msg.sender];
+        if (allowed != type(uint256).max) {
+            if (allowed < totalCost) revert ErrorsLib.InsufficientBorrowerAllowance();
+            borrowerAllowance[borrower][msg.sender] = allowed - totalCost;
+        }
+
         _checkAndUpdateThrottle(usdcAmount);
 
         // Check global CC cap (% of debt cap)

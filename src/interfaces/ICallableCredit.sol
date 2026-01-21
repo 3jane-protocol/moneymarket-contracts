@@ -96,9 +96,20 @@ interface ICallableCredit {
     /// @param authorized The new authorization status
     event CounterProtocolAuthorized(address indexed counterProtocol, bool authorized);
 
+    /// @notice Emitted when a borrower approves a counter-protocol
+    /// @param borrower The borrower granting approval
+    /// @param counterProtocol The counter-protocol address
+    /// @param amount The approved USDC amount
+    event Approval(address indexed borrower, address indexed counterProtocol, uint256 amount);
+
     /// @notice Initialize the CallableCredit proxy
     /// @dev Called once during proxy deployment
     function initialize() external;
+
+    /// @notice Approve a counter-protocol to open CC positions on caller's behalf
+    /// @param counterProtocol The counter-protocol address
+    /// @param amount The USDC amount to approve
+    function approve(address counterProtocol, uint256 amount) external;
 
     /// @notice Open a callable credit position by borrowing from MorphoCredit
     /// @dev Only callable by authorized counter-protocols
@@ -190,4 +201,10 @@ interface ICallableCredit {
     /// @return periodStart Timestamp when current throttle period started
     /// @return periodUsdc USDC opened in current throttle period
     function throttle() external view returns (uint64 periodStart, uint64 periodUsdc);
+
+    /// @notice Get borrower's allowance for a counter-protocol
+    /// @param borrower The borrower address
+    /// @param counterProtocol The counter-protocol address
+    /// @return The remaining USDC allowance
+    function borrowerAllowance(address borrower, address counterProtocol) external view returns (uint256);
 }

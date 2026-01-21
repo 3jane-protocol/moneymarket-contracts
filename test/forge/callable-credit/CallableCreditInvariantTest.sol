@@ -50,7 +50,7 @@ contract CallableCreditInvariantHandler is CallableCreditBaseTest {
         // Authorize second counter-protocol
         _authorizeCounterProtocol(COUNTER_PROTOCOL_2);
 
-        // Setup all borrowers with credit lines
+        // Setup all borrowers with credit lines (grants max allowance to both COUNTER_PROTOCOLs)
         _setupBorrowerWithCreditLine(HANDLER_BORROWER_1, MAX_AMOUNT * CREDIT_LINE_MULTIPLIER);
         _setupBorrowerWithCreditLine(HANDLER_BORROWER_2, MAX_AMOUNT * CREDIT_LINE_MULTIPLIER);
         _setupBorrowerWithCreditLine(HANDLER_BORROWER_3, MAX_AMOUNT * CREDIT_LINE_MULTIPLIER);

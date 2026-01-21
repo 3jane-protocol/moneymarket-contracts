@@ -148,8 +148,20 @@ contract CallableCreditBaseTest is BaseTest {
     // ============ Test Helpers ============
 
     /// @notice Set up a borrower with a credit line in MorphoCredit
+    /// @dev Also grants max allowance to COUNTER_PROTOCOL and COUNTER_PROTOCOL_2 for convenience
     function _setupBorrowerWithCreditLine(address borrower, uint256 creditAmount) internal {
         creditLine.setCreditLine(ccMarketId, borrower, creditAmount, 0);
+        // Grant max allowance to both counter-protocols for convenience in existing tests
+        vm.startPrank(borrower);
+        callableCredit.approve(COUNTER_PROTOCOL, type(uint256).max);
+        callableCredit.approve(COUNTER_PROTOCOL_2, type(uint256).max);
+        vm.stopPrank();
+    }
+
+    /// @notice Approve counter-protocol allowance for a borrower
+    function _approveBorrowerAllowance(address borrower, address counterProtocol, uint256 amount) internal {
+        vm.prank(borrower);
+        callableCredit.approve(counterProtocol, amount);
     }
 
     /// @notice Authorize a counter-protocol

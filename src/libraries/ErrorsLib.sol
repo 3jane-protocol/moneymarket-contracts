@@ -175,4 +175,7 @@ library ErrorsLib {
 
     /// @notice Thrown when throttle limit for the period is exceeded.
     error ThrottleLimitExceeded();
+
+    /// @notice Thrown when borrower has not approved sufficient allowance.
+    error InsufficientBorrowerAllowance();
 }
