@@ -12,6 +12,8 @@ import {ProtocolConfigLib} from "./libraries/ProtocolConfigLib.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IERC4626} from "../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Initializable} from "../lib/openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {ReentrancyGuard} from "../lib/openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {SafeERC20, IERC20 as IERC20OZ} from "../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title CallableCredit
 /// @author 3Jane
@@ -19,7 +21,7 @@ import {Initializable} from "../lib/openzeppelin/contracts/proxy/utils/Initializ
 /// @notice Manages callable credit positions where counter-protocols can draw against borrower credit
 /// @dev Implements a silo + shares model for efficient pro-rata and targeted draws
 /// @dev Principal tracked in USDC (draw cap), waUSDC tracked at silo level for close reconciliation
-contract CallableCredit is ICallableCredit, Initializable {
+contract CallableCredit is ICallableCredit, Initializable, ReentrancyGuard {
     using SharesMathLib for uint256;
     using SafeTransferLib for IERC20;
     using UtilsLib for uint256;
@@ -119,7 +121,7 @@ contract CallableCredit is ICallableCredit, Initializable {
     /// @notice Initialize the CallableCredit proxy
     /// @dev Called once during proxy deployment
     function initialize() external initializer {
-        // No state initialization needed - owner delegated to MORPHO, mappings start empty
+        SafeERC20.forceApprove(IERC20OZ(address(WAUSDC)), address(MORPHO), type(uint256).max);
     }
 
     // ============ Modifiers ============
@@ -161,7 +163,12 @@ contract CallableCredit is ICallableCredit, Initializable {
     // ============ Position Management ============
 
     /// @inheritdoc ICallableCredit
-    function open(address borrower, uint256 usdcAmount) external whenNotFrozen onlyAuthorizedCounterProtocol {
+    function open(address borrower, uint256 usdcAmount)
+        external
+        nonReentrant
+        whenNotFrozen
+        onlyAuthorizedCounterProtocol
+    {
         if (usdcAmount == 0) revert ErrorsLib.ZeroAssets();
         if (!_hasCreditLine(borrower)) revert ErrorsLib.NoCreditLine();
 
@@ -231,6 +238,7 @@ contract CallableCredit is ICallableCredit, Initializable {
     /// @inheritdoc ICallableCredit
     function close(address borrower)
         external
+        nonReentrant
         whenNotFrozen
         onlyAuthorizedCounterProtocol
         returns (uint256 usdcSent, uint256 waUsdcSent)
@@ -248,6 +256,7 @@ contract CallableCredit is ICallableCredit, Initializable {
     /// @inheritdoc ICallableCredit
     function close(address borrower, uint256 usdcAmount)
         external
+        nonReentrant
         whenNotFrozen
         onlyAuthorizedCounterProtocol
         returns (uint256 usdcSent, uint256 waUsdcSent)
@@ -315,6 +324,7 @@ contract CallableCredit is ICallableCredit, Initializable {
     /// @inheritdoc ICallableCredit
     function draw(address borrower, uint256 usdcAmount, address recipient)
         external
+        nonReentrant
         whenNotFrozen
         onlyAuthorizedCounterProtocol
         returns (uint256 usdcSent, uint256 waUsdcSent)
@@ -388,6 +398,7 @@ contract CallableCredit is ICallableCredit, Initializable {
     /// @inheritdoc ICallableCredit
     function draw(uint256 usdcAmount, address recipient)
         external
+        nonReentrant
         whenNotFrozen
         onlyAuthorizedCounterProtocol
         returns (uint256 usdcSent, uint256 waUsdcSent)
@@ -539,7 +550,7 @@ contract CallableCredit is ICallableCredit, Initializable {
         uint256 remainder = waUsdcAmount - repaidAmount;
 
         if (repaidAmount > 0) {
-            _repayToMorpho(borrower, repaidAmount);
+            IMorpho(address(MORPHO)).repay(_marketParams(), repaidAmount, 0, borrower, "");
         }
 
         if (remainder > 0) {
@@ -553,13 +564,5 @@ contract CallableCredit is ICallableCredit, Initializable {
         address[] memory borrowers = new address[](1);
         borrowers[0] = borrower;
         MORPHO.accruePremiumsForBorrowers(MARKET_ID, borrowers);
-    }
-
-    /// @notice Repay waUSDC to MorphoCredit on behalf of a borrower
-    /// @param borrower The borrower address
-    /// @param amount The waUSDC amount to repay
-    function _repayToMorpho(address borrower, uint256 amount) internal {
-        IERC20(address(WAUSDC)).approve(address(MORPHO), amount);
-        IMorpho(address(MORPHO)).repay(_marketParams(), amount, 0, borrower, "");
     }
 }
