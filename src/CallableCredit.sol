@@ -172,43 +172,13 @@ contract CallableCredit is ICallableCredit, Initializable, ReentrancyGuard {
         if (usdcAmount == 0) revert ErrorsLib.ZeroAssets();
         if (!_hasCreditLine(borrower)) revert ErrorsLib.NoCreditLine();
 
-        _checkAndUpdateThrottle(usdcAmount);
-
-        // Convert USDC amount to waUSDC for borrowing
-        // Use previewWithdraw (rounds up) to ensure silo always has enough waUSDC for full draws
+        // Convert USDC to waUSDC (rounds up to ensure silo has enough for draws)
         uint256 waUsdcAmount = WAUSDC.previewWithdraw(usdcAmount);
 
-        // Calculate origination fee (if both fee rate and recipient are configured)
-        uint256 feeUsdc;
-        uint256 feeWaUsdc;
-        address feeRecipient = address(uint160(PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_FEE_RECIPIENT)));
-        uint256 feeBps = PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_ORIGINATION_FEE_BPS);
-        if (feeRecipient != address(0) && feeBps != 0) {
-            feeUsdc = (usdcAmount * feeBps) / 10000;
-            feeWaUsdc = WAUSDC.previewWithdraw(feeUsdc);
-        }
+        _beforeOpen(borrower, usdcAmount, waUsdcAmount);
+        (uint256 feeUsdc, uint256 feeWaUsdc, address feeRecipient) = _calculateOriginationFee(usdcAmount);
 
-        // Check global CC cap (% of debt cap) - both in waUSDC terms
-        // Cap checks use position amount only (fee is not tracked since it's sent away immediately)
-        // >= 10000 bps (100%) means unlimited, skip check
-        uint256 ccDebtCapBps = PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_DEBT_CAP_BPS);
-        if (ccDebtCapBps < 10000) {
-            uint256 debtCap = PROTOCOL_CONFIG.config(ProtocolConfigLib.DEBT_CAP);
-            uint256 maxCcWaUsdc = (debtCap * ccDebtCapBps) / 10000;
-            if (totalCcWaUsdc + waUsdcAmount > maxCcWaUsdc) revert ErrorsLib.CcCapExceeded();
-        }
-
-        // Check per-borrower CC cap (% of credit line) - credit line is in waUSDC
-        // >= 10000 bps (100%) means unlimited, skip check
-        uint256 ccCreditLineBps = PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_CREDIT_LINE_BPS);
-        if (ccCreditLineBps < 10000) {
-            uint256 creditLine = IMorpho(address(MORPHO)).position(MARKET_ID, borrower).collateral;
-            uint256 maxBorrowerCcWaUsdc = (creditLine * ccCreditLineBps) / 10000;
-            if (borrowerTotalCcWaUsdc[borrower] + waUsdcAmount > maxBorrowerCcWaUsdc) revert ErrorsLib.CcCapExceeded();
-        }
-
-        // Load silo into memory, update, and write back once
-        // Silo only holds position waUSDC (fee was sent to recipient)
+        // Load silo, update shares/principal/waUSDC, write back
         Silo memory silo = silos[msg.sender];
         uint256 shares = usdcAmount.toSharesDown(silo.totalPrincipal, silo.totalShares);
         silo.totalPrincipal += usdcAmount.toUint128();
@@ -216,18 +186,15 @@ contract CallableCredit is ICallableCredit, Initializable, ReentrancyGuard {
         silo.totalWaUsdcHeld += waUsdcAmount.toUint128();
         silos[msg.sender] = silo;
 
-        // Record borrower's shares (additive for multiple opens)
+        // Update borrower shares and CC tracking
         borrowerShares[msg.sender][borrower] += shares;
-
-        // Update CC waUSDC tracking (position only, fee is not tracked since it's sent away)
         totalCcWaUsdc += waUsdcAmount.toUint128();
         borrowerTotalCcWaUsdc[borrower] += waUsdcAmount;
 
-        // Borrow waUSDC from MorphoCredit on behalf of the borrower (position + fee)
-        // Fee waUSDC is paid out immediately and remains borrower debt in MorphoCredit.
+        // Borrow from MorphoCredit (position + fee)
         IMorpho(address(MORPHO)).borrow(_marketParams(), waUsdcAmount + feeWaUsdc, 0, borrower, address(this));
 
-        // Send fee to recipient (redeem waUSDC to USDC)
+        // Send fee to recipient
         if (feeWaUsdc > 0) {
             WAUSDC.redeem(feeWaUsdc, feeRecipient, address(this));
         }
@@ -466,6 +433,49 @@ contract CallableCredit is ICallableCredit, Initializable, ReentrancyGuard {
             lltv: LLTV,
             creditLine: CREDIT_LINE
         });
+    }
+
+    /// @notice Check throttle and enforce caps before open
+    /// @param borrower The borrower address
+    /// @param usdcAmount The USDC amount to open
+    /// @param waUsdcAmount The waUSDC amount (pre-calculated by caller)
+    function _beforeOpen(address borrower, uint256 usdcAmount, uint256 waUsdcAmount) internal {
+        _checkAndUpdateThrottle(usdcAmount);
+
+        // Check global CC cap (% of debt cap)
+        uint256 ccDebtCapBps = PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_DEBT_CAP_BPS);
+        if (ccDebtCapBps < 10000) {
+            uint256 debtCap = PROTOCOL_CONFIG.config(ProtocolConfigLib.DEBT_CAP);
+            uint256 maxCcWaUsdc = (debtCap * ccDebtCapBps) / 10000;
+            if (totalCcWaUsdc + waUsdcAmount > maxCcWaUsdc) revert ErrorsLib.CcCapExceeded();
+        }
+
+        // Check per-borrower CC cap (% of credit line)
+        uint256 ccCreditLineBps = PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_CREDIT_LINE_BPS);
+        if (ccCreditLineBps < 10000) {
+            uint256 creditLine = IMorpho(address(MORPHO)).position(MARKET_ID, borrower).collateral;
+            uint256 maxBorrowerCcWaUsdc = (creditLine * ccCreditLineBps) / 10000;
+            if (borrowerTotalCcWaUsdc[borrower] + waUsdcAmount > maxBorrowerCcWaUsdc) revert ErrorsLib.CcCapExceeded();
+        }
+    }
+
+    /// @notice Calculate origination fee for an open operation
+    /// @param usdcAmount The USDC principal amount
+    /// @return feeUsdc The fee in USDC
+    /// @return feeWaUsdc The fee in waUSDC
+    /// @return feeRecipient The fee recipient address
+    function _calculateOriginationFee(uint256 usdcAmount)
+        internal
+        view
+        returns (uint256 feeUsdc, uint256 feeWaUsdc, address feeRecipient)
+    {
+        feeRecipient = address(uint160(PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_FEE_RECIPIENT)));
+        uint256 feeBps = PROTOCOL_CONFIG.config(ProtocolConfigLib.CC_ORIGINATION_FEE_BPS);
+
+        if (feeRecipient != address(0) && feeBps != 0) {
+            feeUsdc = (usdcAmount * feeBps) / 10000;
+            feeWaUsdc = WAUSDC.previewWithdraw(feeUsdc);
+        }
     }
 
     /// @notice Check and update throttle state
