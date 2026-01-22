@@ -131,7 +131,11 @@ contract PYTLocker is Ownable, ReentrancyGuard {
 
     /// @notice Harvest yield from a YT market (callable by anyone)
     /// @param yt The YT token address
-    function harvest(address yt) public {
+    function harvest(address yt) public nonReentrant {
+        _harvest(yt);
+    }
+
+    function _harvest(address yt) internal {
         Market memory m = markets[yt];
         if (!m.enabled) revert UnsupportedYT();
 
@@ -192,7 +196,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
         if (IPendleYT(yt).isExpired()) revert YTExpired();
 
         // Harvest FIRST so new depositor never gets old yield
-        harvest(yt);
+        _harvest(yt);
 
         // Settle existing yield (auto-transfers to user)
         _updateUser(yt, msg.sender);
@@ -214,7 +218,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
     /// @notice Claim accumulated yield for a YT
     /// @param yt The YT token address
     function claim(address yt) external nonReentrant {
-        harvest(yt);
+        _harvest(yt);
         _updateUser(yt, msg.sender);
     }
 
