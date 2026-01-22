@@ -29,7 +29,7 @@ contract PYTLockerTest is Test {
         locker = new PYTLocker(owner);
 
         vm.prank(owner);
-        locker.addMarket(address(yt), address(sy), address(asset));
+        locker.addMarket(address(yt));
 
         yt.mint(alice, INITIAL_YT_BALANCE);
         yt.mint(bob, INITIAL_YT_BALANCE);
@@ -57,7 +57,7 @@ contract PYTLockerTest is Test {
         MockYT yt2 = new MockYT(address(sy2), block.timestamp + YT_EXPIRY);
 
         vm.prank(owner);
-        locker.addMarket(address(yt2), address(sy2), address(asset2));
+        locker.addMarket(address(yt2));
 
         (address configSy, address configAsset, bool enabled) = locker.markets(address(yt2));
         assertEq(configSy, address(sy2));
@@ -70,13 +70,13 @@ contract PYTLockerTest is Test {
 
         vm.prank(alice);
         vm.expectRevert();
-        locker.addMarket(address(yt2), address(sy), address(asset));
+        locker.addMarket(address(yt2));
     }
 
     function test_addMarket_revertIfAlreadyExists() public {
         vm.prank(owner);
         vm.expectRevert(PYTLocker.MarketExists.selector);
-        locker.addMarket(address(yt), address(sy), address(asset));
+        locker.addMarket(address(yt));
     }
 
     // ============ Deposit Tests ============
@@ -310,7 +310,7 @@ contract PYTLockerTest is Test {
         MockYT yt2 = new MockYT(address(sy2), block.timestamp + YT_EXPIRY);
 
         vm.prank(owner);
-        locker.addMarket(address(yt2), address(sy2), address(asset2));
+        locker.addMarket(address(yt2));
 
         yt2.mint(alice, 500e18);
         vm.prank(alice);

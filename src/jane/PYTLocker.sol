@@ -105,10 +105,10 @@ contract PYTLocker is Ownable, ReentrancyGuard {
 
     /// @notice Add a new YT market to the locker
     /// @param yt The YT token address
-    /// @param sy The SY token address (for redeeming to asset)
-    /// @param asset The accounting/payout token
-    function addMarket(address yt, address sy, address asset) external onlyOwner {
+    function addMarket(address yt) external onlyOwner {
         if (markets[yt].enabled) revert MarketExists();
+        address sy = IPendleYT(yt).SY();
+        address asset = IPendleSY(sy).yieldToken();
         markets[yt] = Market({sy: sy, asset: asset, enabled: true});
         _protectedToken[sy] = true;
         _protectedToken[asset] = true;

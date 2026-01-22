@@ -108,7 +108,7 @@ contract PYTLockerForkTest is Test {
 
         // Add YT-sUSDE market
         vm.prank(owner);
-        locker.addMarket(YT_SUSDE, SY_SUSDE, SUSDE);
+        locker.addMarket(YT_SUSDE);
     }
 
     // ============ Yield Simulation Helper ============

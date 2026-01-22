@@ -27,7 +27,7 @@ contract PYTLockerInvariantTest is Test {
         locker = new PYTLocker(owner);
 
         vm.prank(owner);
-        locker.addMarket(address(yt), address(sy), address(asset));
+        locker.addMarket(address(yt));
 
         // Deploy handler
         handler = new PYTLockerHandler(locker, yt, sy, asset);
