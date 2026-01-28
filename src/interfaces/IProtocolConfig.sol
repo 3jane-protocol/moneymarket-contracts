@@ -51,7 +51,7 @@ interface IProtocolConfig {
     function setConfig(bytes32 key, uint256 value) external;
 
     /// @dev Set emergency configuration with binary constraints
-    /// @param key The configuration key (IS_PAUSED, DEBT_CAP, MAX_ON_CREDIT, USD3_SUPPLY_CAP)
+    /// @param key The configuration key (IS_PAUSED, CC_FROZEN, DEBT_CAP, MAX_ON_CREDIT, USD3_SUPPLY_CAP)
     /// @param value The configuration value (binary constraints enforced)
     function setEmergencyConfig(bytes32 key, uint256 value) external;
 
@@ -115,4 +115,9 @@ interface IProtocolConfig {
     /// @param key The configuration key
     /// @return The configuration value
     function config(bytes32 key) external view returns (uint256);
+
+    // Callable Credit getters
+    /// @dev Get the callable credit frozen status
+    /// @return The frozen status (0 = not frozen, 1 = frozen)
+    function getCcFrozen() external view returns (uint256);
 }

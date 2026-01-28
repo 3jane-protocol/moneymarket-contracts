@@ -17,6 +17,7 @@ import {ProtocolConfigLib} from "./libraries/ProtocolConfigLib.sol";
 /// @dev Provides binary stop controls via setConfig() and credit line revocation
 /// @dev setConfig() enforces binary constraints through ProtocolConfig.setEmergencyConfig():
 /// - IS_PAUSED: Can only be set to 1 (pause protocol)
+/// - CC_FROZEN: Can only be set to 1 (freeze callable credit operations)
 /// - DEBT_CAP: Can only be set to 0 (stop new borrowing)
 /// - MAX_ON_CREDIT: Can only be set to 0 (stop USD3 deployments to MorphoCredit)
 /// - USD3_SUPPLY_CAP: Can only be set to 0 (stop new deposits)

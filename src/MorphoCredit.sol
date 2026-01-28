@@ -78,8 +78,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Markdown state for tracking defaulted debt value reduction
     mapping(Id => mapping(address => MarkdownState)) public markdownState;
 
-    /// @dev Storage gap for future upgrades (14 slots).
-    uint256[14] private __gap;
+    /// @inheritdoc IMorphoCredit
+    address public callableCredit;
+
+    /// @dev Storage gap for future upgrades (13 slots).
+    uint256[13] private __gap;
 
     /* CONSTANTS */
 
@@ -111,6 +114,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc IMorphoCredit
     function setHelper(address newHelper) external onlyOwner {
         helper = newHelper;
+    }
+
+    /// @inheritdoc IMorphoCredit
+    function setCallableCredit(address newCallableCredit) external onlyOwner {
+        callableCredit = newCallableCredit;
     }
 
     /// @inheritdoc IMorphoCredit
@@ -580,7 +588,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         virtual
         override
     {
-        if (msg.sender != helper) revert ErrorsLib.NotHelper();
+        if (msg.sender != helper && msg.sender != callableCredit) revert ErrorsLib.NotHelper();
         if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
         if (_isMarketFrozen(id)) revert ErrorsLib.MarketFrozen();
 

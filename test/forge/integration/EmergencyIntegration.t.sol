@@ -103,6 +103,7 @@ contract EmergencyIntegration is Test {
 
     // Configuration keys
     bytes32 private constant IS_PAUSED = keccak256("IS_PAUSED");
+    bytes32 private constant CC_FROZEN = keccak256("CC_FROZEN");
     bytes32 private constant DEBT_CAP = keccak256("DEBT_CAP");
     bytes32 private constant MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
     bytes32 private constant USD3_SUPPLY_CAP = keccak256("USD3_SUPPLY_CAP");
@@ -379,5 +380,70 @@ contract EmergencyIntegration is Test {
 
         // Protocol team can queue a fix through timelock
         // (In reality, would need to address the malicious transaction first)
+    }
+
+    // ============ Scenario 6: Callable Credit Emergency Freeze ============
+
+    function test_Scenario_CallableCreditFreeze() public {
+        // Initial state: CC is not frozen
+        assertEq(protocolConfig.config(CC_FROZEN), 0);
+        assertEq(protocolConfig.getCcFrozen(), 0);
+
+        // Emergency: Freeze callable credit operations
+        vm.prank(emergencyMultisig);
+        emergencyController.setConfig(CC_FROZEN, 1);
+
+        // Verify freeze
+        assertEq(protocolConfig.config(CC_FROZEN), 1);
+        assertEq(protocolConfig.getCcFrozen(), 1);
+
+        // Protocol owner can unfreeze through timelock
+        bytes memory unfreezeData = abi.encodeWithSelector(ProtocolConfig.setConfig.selector, CC_FROZEN, 0);
+        bytes32 unfreezeTxHash = timelock.queueTransaction(address(protocolConfig), unfreezeData);
+
+        // Wait for timelock
+        vm.warp(block.timestamp + 2 days + 1);
+
+        // Execute unfreeze
+        timelock.executeTransaction(unfreezeTxHash);
+
+        // Verify unfreeze
+        assertEq(protocolConfig.getCcFrozen(), 0);
+    }
+
+    function test_Scenario_CallableCreditFreezeCanOnlySetToOne() public {
+        // Emergency controller can only freeze (set to 1), not set arbitrary values
+        vm.startPrank(emergencyMultisig);
+
+        // Can freeze
+        emergencyController.setConfig(CC_FROZEN, 1);
+        assertEq(protocolConfig.getCcFrozen(), 1);
+
+        // Cannot set to other values (would revert with EmergencyCanOnlyPause)
+        vm.expectRevert(ProtocolConfig.EmergencyCanOnlyPause.selector);
+        emergencyController.setConfig(CC_FROZEN, 0);
+
+        vm.expectRevert(ProtocolConfig.EmergencyCanOnlyPause.selector);
+        emergencyController.setConfig(CC_FROZEN, 2);
+
+        vm.stopPrank();
+    }
+
+    function test_Scenario_CallableCreditFreezeWithAttackResponse() public {
+        // Scenario: Attack on callable credit detected
+        assertEq(protocolConfig.config(CC_FROZEN), 0);
+        assertEq(protocolConfig.config(IS_PAUSED), 0);
+
+        // Emergency multisig freezes CC immediately, but keeps rest of protocol running
+        vm.prank(emergencyMultisig);
+        emergencyController.setConfig(CC_FROZEN, 1);
+
+        // CC is frozen but protocol is not paused
+        assertEq(protocolConfig.getCcFrozen(), 1);
+        assertEq(protocolConfig.getIsPaused(), 0);
+
+        // Normal lending operations can continue (simulated by checking other params)
+        assertGt(protocolConfig.config(DEBT_CAP), 0);
+        assertGt(protocolConfig.config(USD3_SUPPLY_CAP), 0);
     }
 }
