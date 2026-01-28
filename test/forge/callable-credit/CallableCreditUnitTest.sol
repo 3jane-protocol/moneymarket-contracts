@@ -10,17 +10,14 @@ contract CallableCreditUnitTest is CallableCreditBaseTest {
 
     function testConstructorRevertsZeroMorpho() public {
         vm.expectRevert(ErrorsLib.ZeroAddress.selector);
-        new CallableCredit(address(0), address(wausdc), address(protocolConfig), ccMarketId);
+        new CallableCredit(address(0), ccMarketId);
     }
 
-    function testConstructorRevertsZeroWausdc() public {
-        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
-        new CallableCredit(address(morpho), address(0), address(protocolConfig), ccMarketId);
-    }
-
-    function testConstructorRevertsZeroProtocolConfig() public {
-        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
-        new CallableCredit(address(morpho), address(wausdc), address(0), ccMarketId);
+    function testConstructorRevertsMarketNotCreated() public {
+        // Use a non-existent market ID
+        Id fakeMarketId = Id.wrap(keccak256("fake-market"));
+        vm.expectRevert(ErrorsLib.MarketNotCreated.selector);
+        new CallableCredit(address(morpho), fakeMarketId);
     }
 
     function testImmutablesSetCorrectly() public view {

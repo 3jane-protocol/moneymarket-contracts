@@ -93,24 +93,27 @@ contract CallableCredit is ICallableCredit, Initializable, ReentrancyGuard {
 
     /// @notice Initialize the CallableCredit implementation contract
     /// @param _morpho Address of the MorphoCredit contract
-    /// @param _wausdc Address of the waUSDC token (ERC4626)
-    /// @param _protocolConfig Address of the ProtocolConfig contract
     /// @param _marketId Market ID in MorphoCredit
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address _morpho, address _wausdc, address _protocolConfig, Id _marketId) {
+    constructor(address _morpho, Id _marketId) {
         if (_morpho == address(0)) revert ErrorsLib.ZeroAddress();
-        if (_wausdc == address(0)) revert ErrorsLib.ZeroAddress();
-        if (_protocolConfig == address(0)) revert ErrorsLib.ZeroAddress();
 
         MORPHO = IMorphoCredit(_morpho);
-        WAUSDC = IERC4626(_wausdc);
-        USDC = IERC20(IERC4626(_wausdc).asset());
-        PROTOCOL_CONFIG = IProtocolConfig(_protocolConfig);
         MARKET_ID = _marketId;
 
-        // Retrieve and store MarketParams fields as immutables
+        // Derive protocolConfig from morpho
+        address _protocolConfig = IMorphoCredit(_morpho).protocolConfig();
+        if (_protocolConfig == address(0)) revert ErrorsLib.ZeroAddress();
+        PROTOCOL_CONFIG = IProtocolConfig(_protocolConfig);
+
+        // Retrieve MarketParams and derive waUSDC from loanToken
         MarketParams memory params = IMorpho(_morpho).idToMarketParams(_marketId);
-        if (params.loanToken == address(0)) revert ErrorsLib.ZeroAddress();
+        if (params.loanToken == address(0)) revert ErrorsLib.MarketNotCreated();
+
+        WAUSDC = IERC4626(params.loanToken);
+        USDC = IERC20(IERC4626(params.loanToken).asset());
+
+        // Cache MarketParams fields as immutables
         LOAN_TOKEN = params.loanToken;
         COLLATERAL_TOKEN = params.collateralToken;
         ORACLE = params.oracle;
