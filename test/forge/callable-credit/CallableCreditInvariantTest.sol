@@ -31,11 +31,16 @@ contract CallableCreditInvariantHandler is CallableCreditBaseTest {
     uint256 public appreciationOps;
     uint256 public directRepays;
 
+    // Track which borrowers have had direct repays (for granular invariant skip)
+    mapping(address => bool) public borrowerHadDirectRepay;
+
     // Pre-created borrowers for testing
     address internal constant HANDLER_BORROWER_1 = address(0x1001);
     address internal constant HANDLER_BORROWER_2 = address(0x1002);
     address internal constant HANDLER_BORROWER_3 = address(0x1003);
     address internal constant HANDLER_BORROWER_4 = address(0x1004);
+    address internal constant HANDLER_BORROWER_5 = address(0x1005);
+    address internal constant HANDLER_BORROWER_6 = address(0x1006);
 
     uint256 constant MIN_AMOUNT = 1e6;
     uint256 constant MAX_AMOUNT = 100_000e6;
@@ -47,20 +52,25 @@ contract CallableCreditInvariantHandler is CallableCreditBaseTest {
         // Supply more liquidity
         _supplyLiquidity(1_000_000_000e6);
 
-        // Authorize second counter-protocol
+        // Authorize additional counter-protocols
         _authorizeCounterProtocol(COUNTER_PROTOCOL_2);
+        _authorizeCounterProtocol(COUNTER_PROTOCOL_3);
 
-        // Setup all borrowers with credit lines (grants max allowance to both COUNTER_PROTOCOLs)
+        // Setup all borrowers with credit lines (grants max allowance to all counter-protocols)
         _setupBorrowerWithCreditLine(HANDLER_BORROWER_1, MAX_AMOUNT * CREDIT_LINE_MULTIPLIER);
         _setupBorrowerWithCreditLine(HANDLER_BORROWER_2, MAX_AMOUNT * CREDIT_LINE_MULTIPLIER);
         _setupBorrowerWithCreditLine(HANDLER_BORROWER_3, MAX_AMOUNT * CREDIT_LINE_MULTIPLIER);
         _setupBorrowerWithCreditLine(HANDLER_BORROWER_4, MAX_AMOUNT * CREDIT_LINE_MULTIPLIER);
+        _setupBorrowerWithCreditLine(HANDLER_BORROWER_5, MAX_AMOUNT * CREDIT_LINE_MULTIPLIER);
+        _setupBorrowerWithCreditLine(HANDLER_BORROWER_6, MAX_AMOUNT * CREDIT_LINE_MULTIPLIER);
 
         // Initialize counter-protocol list
         activeCounterProtocols.push(COUNTER_PROTOCOL);
         activeCounterProtocols.push(COUNTER_PROTOCOL_2);
+        activeCounterProtocols.push(COUNTER_PROTOCOL_3);
         isCounterProtocolActive[COUNTER_PROTOCOL] = true;
         isCounterProtocolActive[COUNTER_PROTOCOL_2] = true;
+        isCounterProtocolActive[COUNTER_PROTOCOL_3] = true;
     }
 
     // ============ Handler Functions ============
@@ -226,14 +236,23 @@ contract CallableCreditInvariantHandler is CallableCreditBaseTest {
         IERC20(address(wausdc)).approve(address(morpho), waUsdcReceived);
         try morpho.repay(ccMarketParams, waUsdcReceived, 0, borrower, "") {
             directRepays++;
+            // Track this specific borrower for granular invariant skip
+            borrowerHadDirectRepay[borrower] = true;
         } catch {}
     }
 
     // ============ Selection Helpers ============
 
     function _selectBorrower(uint256 seed) internal pure returns (address) {
-        address[4] memory borrowers = [HANDLER_BORROWER_1, HANDLER_BORROWER_2, HANDLER_BORROWER_3, HANDLER_BORROWER_4];
-        return borrowers[seed % 4];
+        address[6] memory borrowers = [
+            HANDLER_BORROWER_1,
+            HANDLER_BORROWER_2,
+            HANDLER_BORROWER_3,
+            HANDLER_BORROWER_4,
+            HANDLER_BORROWER_5,
+            HANDLER_BORROWER_6
+        ];
+        return borrowers[seed % 6];
     }
 
     function _selectActiveBorrower(uint256 seed) internal view returns (address) {
@@ -285,6 +304,10 @@ contract CallableCreditInvariantHandler is CallableCreditBaseTest {
 
     function getMorphoBorrowerDebt(address borrower) external view returns (uint256) {
         return _getBorrowerDebt(borrower);
+    }
+
+    function getBorrowerHadDirectRepay(address borrower) external view returns (bool) {
+        return borrowerHadDirectRepay[borrower];
     }
 
     function getProtocolConfig() external view returns (IProtocolConfig) {
@@ -548,7 +571,8 @@ contract CallableCreditInvariantTest is Test {
     // ============ Invariant: Borrower Tracking Upper Bound ============
 
     /// @notice Sum of per-borrower CC tracking should be >= global tracking
-    /// @dev Per-borrower tracking is an upper bound that may overstate after pro-rata draws
+    /// @dev Per-borrower tracking is an upper bound that may overstate after pro-rata draws.
+    ///      When no pro-rata draws have occurred, sum should approximately equal global.
     function invariant_borrowerTrackingUpperBound() public view {
         CallableCredit cc = handler.getCallableCredit();
         uint256 borrowerCount = handler.getActiveBorrowersCount();
@@ -560,7 +584,75 @@ contract CallableCreditInvariantTest is Test {
         }
 
         uint256 globalTracking = cc.totalCcWaUsdc();
+
+        // Upper bound check (always valid)
         assertGe(sumBorrowerTracking, globalTracking, "Invariant violated: sum of borrower tracking < global tracking");
+
+        // When no pro-rata draws, should be approximately equal
+        (,,,, uint256 proRataDraws,,) = handler.getCallStats();
+        if (proRataDraws == 0 && globalTracking > 0) {
+            // Allow tolerance for rounding across many operations
+            uint256 tolerance = globalTracking / 1000; // 0.1%
+            if (tolerance < 1e6) tolerance = 1e6;
+
+            assertApproxEqAbs(
+                sumBorrowerTracking,
+                globalTracking,
+                tolerance,
+                "Without pro-rata draws, borrower tracking should approximately equal global"
+            );
+        }
+    }
+
+    // ============ Invariant: Multi-Silo Borrower Tracking ============
+
+    /// @notice For borrowers with positions in multiple silos, verify their tracking is consistent
+    /// @dev borrowerTotalCcWaUsdc should be >= sum of their proportional waUSDC across all silos
+    ///      (>= because pro-rata draws reduce silo holdings but not borrower tracking)
+    ///      NOTE: Skipped when appreciation occurs because the share-to-waUSDC relationship diverges
+    ///      when positions are opened at different exchange rates.
+    function invariant_multiSiloBorrowerTracking() public view {
+        // Skip when appreciation has occurred (tracked amounts diverge from proportional)
+        (,,,,, uint256 appreciationOps,) = handler.getCallStats();
+        if (appreciationOps > 0) return;
+
+        CallableCredit cc = handler.getCallableCredit();
+        uint256 borrowerCount = handler.getActiveBorrowersCount();
+        uint256 counterProtocolCount = handler.getActiveCounterProtocolsCount();
+
+        for (uint256 i = 0; i < borrowerCount; i++) {
+            address borrower = handler.getActiveBorrowerAt(i);
+
+            // Count how many silos this borrower has positions in
+            uint256 siloCount = 0;
+            uint256 totalProportionalWaUsdc = 0;
+
+            for (uint256 j = 0; j < counterProtocolCount; j++) {
+                address cp = handler.getActiveCounterProtocolAt(j);
+                uint256 borrowerSharesAmt = cc.borrowerShares(cp, borrower);
+
+                if (borrowerSharesAmt > 0) {
+                    siloCount++;
+                    (, uint128 totalShares, uint128 totalWaUsdcHeld) = cc.silos(cp);
+                    if (totalShares > 0) {
+                        totalProportionalWaUsdc += (borrowerSharesAmt * uint256(totalWaUsdcHeld)) / uint256(totalShares);
+                    }
+                }
+            }
+
+            // Only check borrowers with positions in multiple silos
+            if (siloCount > 1) {
+                uint256 trackedWaUsdc = cc.borrowerTotalCcWaUsdc(borrower);
+                // Tracked should be >= proportional (due to pro-rata draw behavior)
+                // Allow small tolerance for rounding
+                uint256 tolerance = totalProportionalWaUsdc / 10000; // 0.01%
+                if (tolerance < 1e6) tolerance = 1e6;
+
+                assertGe(
+                    trackedWaUsdc + tolerance, totalProportionalWaUsdc, "Multi-silo borrower tracking inconsistent"
+                );
+            }
+        }
     }
 
     // ============ Invariant: Throttle Within Limit ============
@@ -590,18 +682,17 @@ contract CallableCreditInvariantTest is Test {
     ///      1. External parties repay borrower debt directly to Morpho (handler_directMorphoRepay)
     ///      2. Borrower repays their own debt outside CC
     ///      In these cases, CC shares can exist without corresponding Morpho debt.
-    ///      We skip this check when directRepays > 0 since we know debt was externally reduced.
+    ///      We skip this check only for specific borrowers who have had direct repays.
     function invariant_borrowerWithCcHasMorphoDebt() public view {
-        // Skip this check if any direct repays have occurred (debt may be externally reduced)
-        (,,,,,, uint256 directRepays) = handler.getCallStats();
-        if (directRepays > 0) return;
-
         CallableCredit cc = handler.getCallableCredit();
         uint256 borrowerCount = handler.getActiveBorrowersCount();
         uint256 counterProtocolCount = handler.getActiveCounterProtocolsCount();
 
         for (uint256 i = 0; i < borrowerCount; i++) {
             address borrower = handler.getActiveBorrowerAt(i);
+
+            // Skip only this specific borrower if they had a direct repay
+            if (handler.getBorrowerHadDirectRepay(borrower)) continue;
 
             // Sum up shares across all counter-protocols
             uint256 totalBorrowerShares = 0;

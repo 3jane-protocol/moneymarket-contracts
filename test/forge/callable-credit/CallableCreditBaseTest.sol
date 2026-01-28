@@ -20,6 +20,7 @@ contract CallableCreditBaseTest is BaseTest {
     // Callable Credit specific actors
     address internal COUNTER_PROTOCOL;
     address internal COUNTER_PROTOCOL_2;
+    address internal COUNTER_PROTOCOL_3;
     address internal BORROWER_1;
     address internal BORROWER_2;
     address internal RECIPIENT;
@@ -45,6 +46,7 @@ contract CallableCreditBaseTest is BaseTest {
         // Create additional actors
         COUNTER_PROTOCOL = makeAddr("CounterProtocol");
         COUNTER_PROTOCOL_2 = makeAddr("CounterProtocol2");
+        COUNTER_PROTOCOL_3 = makeAddr("CounterProtocol3");
         BORROWER_1 = makeAddr("Borrower1");
         BORROWER_2 = makeAddr("Borrower2");
         RECIPIENT = makeAddr("Recipient");
@@ -148,13 +150,16 @@ contract CallableCreditBaseTest is BaseTest {
     // ============ Test Helpers ============
 
     /// @notice Set up a borrower with a credit line in MorphoCredit
-    /// @dev Also grants max allowance to COUNTER_PROTOCOL and COUNTER_PROTOCOL_2 for convenience
+    /// @dev Also grants max allowance to all counter-protocols for convenience
     function _setupBorrowerWithCreditLine(address borrower, uint256 creditAmount) internal {
         creditLine.setCreditLine(ccMarketId, borrower, creditAmount, 0);
-        // Grant max allowance to both counter-protocols for convenience in existing tests
+        // Grant max allowance to all counter-protocols for convenience in existing tests
         vm.startPrank(borrower);
         callableCredit.approve(COUNTER_PROTOCOL, type(uint256).max);
         callableCredit.approve(COUNTER_PROTOCOL_2, type(uint256).max);
+        if (COUNTER_PROTOCOL_3 != address(0)) {
+            callableCredit.approve(COUNTER_PROTOCOL_3, type(uint256).max);
+        }
         vm.stopPrank();
     }
 
