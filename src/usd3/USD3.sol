@@ -11,7 +11,6 @@ import {SharesMathLib} from "../libraries/SharesMathLib.sol";
 import {IERC4626} from "../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Pausable} from "../../lib/openzeppelin/contracts/utils/Pausable.sol";
 import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
-import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 
@@ -501,12 +500,11 @@ contract USD3 is BaseHooksUpgradeable {
 
         _preReportHook();
         (profit, loss) = _reportInternal();
-
-        _postReportHookWithPre(profit, loss, preAssets, preSupply);
+        _postReportHook(profit, loss, preAssets, preSupply);
     }
 
     /// @dev Post-report hook to handle loss absorption by burning sUSD3's shares
-    function _postReportHookWithPre(uint256 _profit, uint256 loss, uint256 preAssets, uint256 preSupply) internal {
+    function _postReportHook(uint256 _profit, uint256 loss, uint256 preAssets, uint256 preSupply) internal {
         if (loss == 0 || sUSD3 == address(0)) return;
 
         // Get sUSD3's current USD3 balance
