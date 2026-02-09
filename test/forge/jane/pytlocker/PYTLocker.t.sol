@@ -211,6 +211,24 @@ contract PYTLockerTest is Test {
         assertEq(asset.balanceOf(alice), yield1 + yield2);
     }
 
+    function test_claim_onBehalf() public {
+        vm.prank(alice);
+        locker.deposit(address(yt), 100e18);
+
+        uint256 yieldAmount = 10e18;
+        _accrueYield(yieldAmount);
+        locker.harvest(address(yt));
+
+        uint256 bobBalanceBefore = asset.balanceOf(bob);
+
+        vm.prank(bob);
+        locker.claim(address(yt), alice);
+
+        assertEq(asset.balanceOf(alice), yieldAmount);
+        assertEq(asset.balanceOf(bob), bobBalanceBefore);
+        assertEq(locker.claimable(address(yt), alice), 0);
+    }
+
     // ============ No Dilution Tests (Critical) ============
 
     function test_noDilution_newDepositorDoesNotGetPastYield() public {

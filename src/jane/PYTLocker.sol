@@ -217,9 +217,16 @@ contract PYTLocker is Ownable, ReentrancyGuard {
 
     /// @notice Claim accumulated yield for a YT
     /// @param yt The YT token address
-    function claim(address yt) external nonReentrant {
+    function claim(address yt) external {
+        claim(yt, msg.sender);
+    }
+
+    /// @notice Claim accumulated yield for a YT on behalf of a user
+    /// @param yt The YT token address
+    /// @param onBehalf The user receiving claimed yield
+    function claim(address yt, address onBehalf) public nonReentrant {
         _harvest(yt);
-        _updateUser(yt, msg.sender);
+        _updateUser(yt, onBehalf);
     }
 
     /*//////////////////////////////////////////////////////////////
