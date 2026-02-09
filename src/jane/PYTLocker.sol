@@ -94,6 +94,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
     error MarketExists();
     error UnsupportedYT();
     error ZeroAmount();
+    error ZeroAddress();
     error YTExpired();
     error CannotSweepMarketToken();
 
@@ -190,25 +191,34 @@ contract PYTLocker is Ownable, ReentrancyGuard {
     /// @notice Permanently lock YTs and earn future yield
     /// @param yt The YT token address
     /// @param amount Amount of YT to deposit
-    function deposit(address yt, uint256 amount) external nonReentrant {
+    function deposit(address yt, uint256 amount) external {
+        deposit(yt, amount, msg.sender);
+    }
+
+    /// @notice Permanently lock YTs and earn future yield on behalf of a user
+    /// @param yt The YT token address
+    /// @param amount Amount of YT to deposit
+    /// @param receiver The user credited with locked YT balance and rewards
+    function deposit(address yt, uint256 amount, address receiver) public nonReentrant {
         if (amount == 0) revert ZeroAmount();
+        if (receiver == address(0)) revert ZeroAddress();
         if (!markets[yt].enabled) revert UnsupportedYT();
         if (IPendleYT(yt).isExpired()) revert YTExpired();
 
         // Harvest FIRST so new depositor never gets old yield
         _harvest(yt);
 
-        // Settle existing yield (auto-transfers to user)
-        _updateUser(yt, msg.sender);
+        // Settle existing yield for beneficiary before increasing their balance
+        _updateUser(yt, receiver);
 
         IERC20(yt).safeTransferFrom(msg.sender, address(this), amount);
 
-        balanceOf[yt][msg.sender] += amount;
+        balanceOf[yt][receiver] += amount;
         totalSupply[yt] += amount;
 
-        rewardDebt[yt][msg.sender] = (balanceOf[yt][msg.sender] * accYieldPerToken[yt]) / ACC_PRECISION;
+        rewardDebt[yt][receiver] = (balanceOf[yt][receiver] * accYieldPerToken[yt]) / ACC_PRECISION;
 
-        emit Deposit(msg.sender, yt, amount);
+        emit Deposit(receiver, yt, amount);
     }
 
     /*//////////////////////////////////////////////////////////////

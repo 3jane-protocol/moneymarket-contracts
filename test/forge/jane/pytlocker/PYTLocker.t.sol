@@ -93,6 +93,23 @@ contract PYTLockerTest is Test {
         assertEq(yt.balanceOf(address(locker)), depositAmount);
     }
 
+    function test_deposit_receiver_thirdPartyPays_receiverCredited() public {
+        uint256 depositAmount = 100e18;
+
+        uint256 bobBalanceBefore = yt.balanceOf(bob);
+        uint256 aliceBalanceBefore = yt.balanceOf(alice);
+
+        vm.prank(bob);
+        locker.deposit(address(yt), depositAmount, alice);
+
+        assertEq(locker.balanceOf(address(yt), alice), depositAmount);
+        assertEq(locker.balanceOf(address(yt), bob), 0);
+        assertEq(locker.totalSupply(address(yt)), depositAmount);
+        assertEq(yt.balanceOf(bob), bobBalanceBefore - depositAmount);
+        assertEq(yt.balanceOf(alice), aliceBalanceBefore);
+        assertEq(yt.balanceOf(address(locker)), depositAmount);
+    }
+
     function test_deposit_revertIfNotSupported() public {
         MockYT yt2 = new MockYT(address(sy), block.timestamp + YT_EXPIRY);
 
@@ -101,10 +118,30 @@ contract PYTLockerTest is Test {
         locker.deposit(address(yt2), 100e18);
     }
 
+    function test_deposit_receiver_revertIfNotSupported() public {
+        MockYT yt2 = new MockYT(address(sy), block.timestamp + YT_EXPIRY);
+
+        vm.prank(bob);
+        vm.expectRevert(PYTLocker.UnsupportedYT.selector);
+        locker.deposit(address(yt2), 100e18, alice);
+    }
+
     function test_deposit_revertIfZeroAmount() public {
         vm.prank(alice);
         vm.expectRevert(PYTLocker.ZeroAmount.selector);
         locker.deposit(address(yt), 0);
+    }
+
+    function test_deposit_receiver_revertIfZeroAmount() public {
+        vm.prank(bob);
+        vm.expectRevert(PYTLocker.ZeroAmount.selector);
+        locker.deposit(address(yt), 0, alice);
+    }
+
+    function test_deposit_receiver_revertIfZeroAddress() public {
+        vm.prank(bob);
+        vm.expectRevert(PYTLocker.ZeroAddress.selector);
+        locker.deposit(address(yt), 100e18, address(0));
     }
 
     function test_deposit_revertIfExpired() public {
@@ -113,6 +150,14 @@ contract PYTLockerTest is Test {
         vm.prank(alice);
         vm.expectRevert(PYTLocker.YTExpired.selector);
         locker.deposit(address(yt), 100e18);
+    }
+
+    function test_deposit_receiver_revertIfExpired() public {
+        vm.warp(block.timestamp + YT_EXPIRY + 1);
+
+        vm.prank(bob);
+        vm.expectRevert(PYTLocker.YTExpired.selector);
+        locker.deposit(address(yt), 100e18, alice);
     }
 
     function test_deposit_multipleUsers() public {
@@ -297,6 +342,26 @@ contract PYTLockerTest is Test {
         assertEq(asset.balanceOf(alice), yield1);
         assertEq(locker.claimable(address(yt), alice), 0);
         assertEq(locker.balanceOf(address(yt), alice), 150e18);
+    }
+
+    function test_deposit_receiver_autoClaimsPendingYield() public {
+        vm.prank(alice);
+        locker.deposit(address(yt), 100e18);
+
+        uint256 yield1 = 10e18;
+        _accrueYield(yield1);
+        locker.harvest(address(yt));
+
+        assertEq(locker.claimable(address(yt), alice), yield1);
+
+        vm.prank(bob);
+        locker.deposit(address(yt), 50e18, alice);
+
+        assertEq(asset.balanceOf(alice), yield1);
+        assertEq(asset.balanceOf(bob), 0);
+        assertEq(locker.claimable(address(yt), alice), 0);
+        assertEq(locker.balanceOf(address(yt), alice), 150e18);
+        assertEq(locker.balanceOf(address(yt), bob), 0);
     }
 
     // ============ Edge Cases ============
