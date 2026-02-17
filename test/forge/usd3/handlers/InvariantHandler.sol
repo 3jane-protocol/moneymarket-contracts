@@ -46,6 +46,7 @@ contract InvariantHandler is Test {
     uint256 public successfulLossReports;
     uint256 public observedLossReportsWithLocked;
     uint256 public maxPpsIncreaseOnLossWithLocked;
+    bool public fuzzerPerturbedMarketSupply;
 
     constructor(
         address _usd3Strategy,
@@ -225,20 +226,7 @@ contract InvariantHandler is Test {
 
     function simulateProfitAndReport(uint256 profitSeed) external {
         ++attemptedProfitReports;
-
-        (uint256 totalSupplyAssets, uint256 upperSlotBits) = _marketSupplyAssetsAndUpper();
-        if (totalSupplyAssets == 0) return;
-
-        uint256 maxProfit = totalSupplyAssets / 5;
-        if (maxProfit < 1e6) maxProfit = 1e6;
-        uint256 profit = bound(profitSeed, 1e6, maxProfit);
-        uint256 newTotalSupplyAssets = totalSupplyAssets + profit;
-
-        _writeMarketSupplyAssets(upperSlotBits, newTotalSupplyAssets);
-        vm.prank(keeper);
-        try usd3Strategy.report() returns (uint256, uint256) {
-            ++successfulProfitReports;
-        } catch {}
+        if (_applySyntheticProfit(profitSeed, true)) ++successfulProfitReports;
     }
 
     function simulateLossAndReport(uint256 lossSeed) external {
@@ -256,6 +244,7 @@ contract InvariantHandler is Test {
         uint256 lockedSharesBefore = ERC20(address(usd3Strategy)).balanceOf(address(usd3Strategy));
         uint256 susd3SharesBefore = ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
 
+        fuzzerPerturbedMarketSupply = true;
         _writeMarketSupplyAssets(upperSlotBits, totalSupplyAssets - loss);
         vm.prank(keeper);
         try usd3Strategy.report() returns (uint256, uint256 reportedLoss) {
@@ -271,6 +260,10 @@ contract InvariantHandler is Test {
         } catch {}
     }
 
+    function seedLockedShares(uint256 profitSeed) external {
+        _applySyntheticProfit(profitSeed, false);
+    }
+
     function actorCount() external view returns (uint256) {
         return actors.length;
     }
@@ -282,12 +275,16 @@ contract InvariantHandler is Test {
 
     function _marketSupplySlot() internal view returns (bytes32 marketSlot) {
         bytes32 marketId = keccak256(abi.encode(usd3Strategy.marketParams()));
+        // Morpho maps `Id => Market` at storage slot 3 in this codebase.
+        // If that layout changes, the sanity check in `_marketSupplyAssetsAndUpper` will fail.
         marketSlot = keccak256(abi.encode(marketId, uint256(3)));
     }
 
     function _marketSupplyAssetsAndUpper() internal view returns (uint256 totalSupplyAssets, uint256 upperSlotBits) {
         uint256 slotValue = uint256(vm.load(address(usd3Strategy.morphoCredit()), _marketSupplySlot()));
         totalSupplyAssets = uint256(uint128(slotValue));
+        uint256 canonicalSupplyAssets = usd3Strategy.morphoCredit().market(usd3Strategy.marketId()).totalSupplyAssets;
+        require(totalSupplyAssets == canonicalSupplyAssets, "slot mismatch");
         upperSlotBits = slotValue & (~uint256(type(uint128).max));
     }
 
@@ -303,5 +300,24 @@ contract InvariantHandler is Test {
         uint256 supply = ITokenizedStrategy(address(usd3Strategy)).totalSupply();
         if (supply == 0) return 0;
         return ITokenizedStrategy(address(usd3Strategy)).totalAssets() * 1e18 / supply;
+    }
+
+    function _applySyntheticProfit(uint256 profitSeed, bool markFuzzerPerturbation) internal returns (bool) {
+        (uint256 totalSupplyAssets, uint256 upperSlotBits) = _marketSupplyAssetsAndUpper();
+        if (totalSupplyAssets == 0) return false;
+
+        uint256 maxProfit = totalSupplyAssets / 5;
+        if (maxProfit < 1e6) maxProfit = 1e6;
+        uint256 profit = bound(profitSeed, 1e6, maxProfit);
+        uint256 newTotalSupplyAssets = totalSupplyAssets + profit;
+
+        if (markFuzzerPerturbation) fuzzerPerturbedMarketSupply = true;
+        _writeMarketSupplyAssets(upperSlotBits, newTotalSupplyAssets);
+        vm.prank(keeper);
+        try usd3Strategy.report() returns (uint256, uint256) {
+            return true;
+        } catch {
+            return false;
+        }
     }
 }
