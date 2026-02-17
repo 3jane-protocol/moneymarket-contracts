@@ -37,6 +37,8 @@ contract CoreLiquidityHandler is Test {
     uint256 public successfulWithdrawAssets;
     uint256 public successfulWithdrawShares;
     uint256 public successfulAccrueInterest;
+    uint256 public attemptedSupplyAssets;
+    uint256 public attemptedSupplyShares;
 
     constructor(address _morpho, address _loanToken, Id[] memory _marketIds, address[] memory _actors) {
         morpho = IMorpho(_morpho);
@@ -51,6 +53,7 @@ contract CoreLiquidityHandler is Test {
     }
 
     function supplyAssets(uint256 marketSeed, uint256 callerSeed, uint256 onBehalfSeed, uint256 assetsSeed) external {
+        attemptedSupplyAssets++;
         Id id = _marketId(marketSeed);
         MarketParams memory marketParams = morpho.idToMarketParams(id);
         address caller = _actor(callerSeed);
@@ -71,6 +74,7 @@ contract CoreLiquidityHandler is Test {
     }
 
     function supplyShares(uint256 marketSeed, uint256 callerSeed, uint256 onBehalfSeed, uint256 sharesSeed) external {
+        attemptedSupplyShares++;
         Id id = _marketId(marketSeed);
         MarketParams memory marketParams = morpho.idToMarketParams(id);
         address caller = _actor(callerSeed);

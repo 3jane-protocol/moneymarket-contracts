@@ -131,11 +131,17 @@ contract CoreInvariantHarness is BaseTest {
     function invariant_supplySharesMatchKnownActors() public view {
         for (uint256 i; i < marketIds.length; ++i) {
             Id id = marketIds[i];
-            uint256 totalKnownSupplyShares = morpho.supplyShares(id, FEE_RECIPIENT);
+            address feeRecipient = morpho.feeRecipient();
+            uint256 totalKnownSupplyShares;
+            bool feeRecipientCounted;
 
             for (uint256 j; j < actors.length; ++j) {
-                totalKnownSupplyShares += morpho.supplyShares(id, actors[j]);
+                address actor = actors[j];
+                totalKnownSupplyShares += morpho.supplyShares(id, actor);
+                if (actor == feeRecipient) feeRecipientCounted = true;
             }
+
+            if (!feeRecipientCounted) totalKnownSupplyShares += morpho.supplyShares(id, feeRecipient);
 
             assertEq(totalKnownSupplyShares, morpho.totalSupplyShares(id), vm.toString(Id.unwrap(id)));
         }
@@ -272,6 +278,24 @@ contract CoreInvariantHarness is BaseTest {
     function invariant_unauthorizedActionsNeverSucceed() public view {
         assertEq(governanceHandler.unauthorizedSuccesses(), 0, "unauthorized governance action succeeded");
         assertEq(creditLifecycleHandler.unauthorizedSuccesses(), 0, "unauthorized credit-line action succeeded");
+    }
+
+    function invariant_handlersAreEffective() public view {
+        if (liquidityHandler.attemptedSupplyAssets() + liquidityHandler.attemptedSupplyShares() > 32) {
+            assertGt(
+                liquidityHandler.successfulSupplyAssets() + liquidityHandler.successfulSupplyShares(),
+                0,
+                "no successful supply actions"
+            );
+        }
+
+        if (creditLifecycleHandler.attemptedSetCreditLines() > 32) {
+            assertGt(creditLifecycleHandler.successfulSetCreditLines(), 0, "no successful credit-line updates");
+        }
+
+        if (creditLifecycleHandler.attemptedBorrows() > 128) {
+            assertGt(creditLifecycleHandler.successfulBorrows(), 0, "no successful borrows");
+        }
     }
 
     function _setupActors() internal {

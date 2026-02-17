@@ -8,7 +8,7 @@ import {IMorpho, IMorphoCredit, Id, MarketParams, RepaymentStatus} from "../../.
 import {IProtocolConfig} from "../../../../../src/interfaces/IProtocolConfig.sol";
 import {MorphoCreditLib} from "../../../../../src/libraries/periphery/MorphoCreditLib.sol";
 import {MorphoLib} from "../../../../../src/libraries/periphery/MorphoLib.sol";
-import {SharesMathLib} from "../../../../../src/libraries/SharesMathLib.sol";
+import {MorphoBalancesLib} from "../../../../../src/libraries/periphery/MorphoBalancesLib.sol";
 
 contract CoreCreditLifecycleHandler is Test {
     bytes4 internal constant BORROW_SELECTOR =
@@ -23,7 +23,7 @@ contract CoreCreditLifecycleHandler is Test {
         bytes4(keccak256("settleAccount((address,address,address,address,uint256,address),address)"));
 
     using MorphoLib for IMorpho;
-    using SharesMathLib for uint256;
+    using MorphoBalancesLib for IMorpho;
 
     uint256 internal constant MAX_CREDIT = 1e24;
     uint256 internal constant MAX_PREMIUM_RATE = uint256(500000000000000000) / uint256(31_536_000);
@@ -53,6 +53,10 @@ contract CoreCreditLifecycleHandler is Test {
     uint256 public successfulCyclePosts;
     uint256 public successfulPremiumAccruals;
     uint256 public successfulSettlements;
+    uint256 public attemptedSetCreditLines;
+    uint256 public attemptedBorrows;
+    uint256 public attemptedRepays;
+    uint256 public attemptedCyclePosts;
 
     constructor(
         address _morpho,
@@ -89,6 +93,7 @@ contract CoreCreditLifecycleHandler is Test {
     function setCreditLine(uint256 marketSeed, uint256 borrowerSeed, uint256 creditSeed, uint256 premiumRateSeed)
         external
     {
+        attemptedSetCreditLines++;
         uint256 marketIndex = marketSeed % marketIds.length;
         Id id = marketIds[marketIndex];
         address borrower = _actor(borrowerSeed);
@@ -105,6 +110,7 @@ contract CoreCreditLifecycleHandler is Test {
     }
 
     function borrow(uint256 marketSeed, uint256 borrowerSeed, uint256 assetsSeed) external {
+        attemptedBorrows++;
         uint256 marketIndex = marketSeed % marketIds.length;
         Id id = marketIds[marketIndex];
         address borrower = _actor(borrowerSeed);
@@ -140,6 +146,7 @@ contract CoreCreditLifecycleHandler is Test {
     }
 
     function repay(uint256 marketSeed, uint256 payerSeed, uint256 borrowerSeed, uint256 amountSeed) external {
+        attemptedRepays++;
         uint256 marketIndex = marketSeed % marketIds.length;
         Id id = marketIds[marketIndex];
         MarketParams memory marketParams = morpho.idToMarketParams(id);
@@ -154,19 +161,32 @@ contract CoreCreditLifecycleHandler is Test {
 
         (, uint128 amountDue,) = morphoCredit.repaymentObligation(id, borrower);
         if (amountDue != 0 && amountDue > currentDebt) return;
-        uint256 amount = amountDue != 0 ? amountDue : bound(amountSeed, 1, currentDebt);
 
-        loanToken.setBalance(payer, amount);
+        uint256 assets;
+        uint256 shares;
+        if (amountDue != 0) {
+            assets = 0;
+            shares = morpho.borrowShares(id, borrower);
+            if (shares == 0) return;
+            uint256 obligationFunding = currentDebt + currentDebt / 2 + 1;
+            loanToken.setBalance(payer, obligationFunding);
+        } else {
+            assets = bound(amountSeed, 1, currentDebt);
+            shares = 0;
+            loanToken.setBalance(payer, assets);
+        }
+
         vm.startPrank(payer);
         loanToken.approve(address(morpho), type(uint256).max);
         (bool ok,) =
-            address(morpho).call(abi.encodeWithSelector(REPAY_SELECTOR, marketParams, amount, uint256(0), borrower, ""));
+            address(morpho).call(abi.encodeWithSelector(REPAY_SELECTOR, marketParams, assets, shares, borrower, ""));
         vm.stopPrank();
 
         if (ok) successfulRepays++;
     }
 
     function postObligationCycle(uint256 marketSeed, uint256 borrowerSeed, uint256 repaymentBpsSeed) external {
+        attemptedCyclePosts++;
         uint256 marketIndex = marketSeed % marketIds.length;
         Id id = marketIds[marketIndex];
         address borrower = _actor(borrowerSeed);
@@ -190,6 +210,7 @@ contract CoreCreditLifecycleHandler is Test {
     }
 
     function postEmptyCycle(uint256 marketSeed) external {
+        attemptedCyclePosts++;
         uint256 marketIndex = marketSeed % marketIds.length;
         address[] memory borrowers = new address[](0);
         uint256[] memory repaymentBpsList = new uint256[](0);
@@ -346,9 +367,8 @@ contract CoreCreditLifecycleHandler is Test {
     }
 
     function _borrowerDebtAssets(Id id, address borrower) internal view returns (uint256) {
-        uint256 borrowerShares = morpho.borrowShares(id, borrower);
-        if (borrowerShares == 0) return 0;
-        return borrowerShares.toAssetsUp(morpho.totalBorrowAssets(id), morpho.totalBorrowShares(id));
+        if (morpho.borrowShares(id, borrower) == 0) return 0;
+        return morpho.expectedBorrowAssets(morpho.idToMarketParams(id), borrower);
     }
 
     function _actor(uint256 seed) internal view returns (address) {
