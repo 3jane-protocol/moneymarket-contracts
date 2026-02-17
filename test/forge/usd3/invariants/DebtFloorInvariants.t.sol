@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {Setup} from "../utils/Setup.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
+import {Setup} from "../utils/Setup.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
-import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {
     TransparentUpgradeableProxy
 } from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {DebtFloorHandler} from "./DebtFloorHandler.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
- * @title Debt Floor Invariant Tests
- * @notice Ensures critical invariants always hold for the debt floor mechanism
+ * @title DebtFloorInvariantsTest
+ * @notice Invariant tests specific to sUSD3 debt-floor behavior
  */
 contract DebtFloorInvariantsTest is StdInvariant, Setup {
     USD3 public usd3Strategy;
@@ -25,22 +25,12 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
     MockProtocolConfig public protocolConfig;
     DebtFloorHandler public handler;
 
-    // Invariant tracking
-    uint256 public minBackingRatio;
-    uint256 public lastDebtAmount;
-    uint256 public lastFloorAmount;
-    bool public isShutdown;
-
     function setUp() public override {
         super.setUp();
 
         usd3Strategy = USD3(address(strategy));
+        protocolConfig = MockProtocolConfig(MorphoCredit(address(usd3Strategy.morphoCredit())).protocolConfig());
 
-        // Get protocol config
-        address morphoAddress = address(usd3Strategy.morphoCredit());
-        protocolConfig = MockProtocolConfig(MorphoCredit(morphoAddress).protocolConfig());
-
-        // Deploy and link sUSD3
         sUSD3 susd3Implementation = new sUSD3();
         ProxyAdmin susd3ProxyAdmin = new ProxyAdmin(management);
         TransparentUpgradeableProxy susd3Proxy = new TransparentUpgradeableProxy(
@@ -53,142 +43,127 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         vm.prank(management);
         usd3Strategy.setSUSD3(address(susd3Strategy));
 
-        // Set initial backing ratio
-        minBackingRatio = 3000; // 30%
-        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, minBackingRatio);
-
-        // Setup initial liquidity
-        address alice = makeAddr("alice");
-        deal(address(underlyingAsset), alice, 10_000_000e6);
-        vm.prank(alice);
-        asset.approve(address(strategy), type(uint256).max);
-        vm.prank(alice);
-        strategy.deposit(5_000_000e6, alice);
-
-        // Enable borrowing
+        // Configure floor/cap environment.
         setMaxOnCredit(8000);
+        setMorphoDebtCap(20_000_000e6);
+        protocolConfig.setConfig(keccak256("MIN_SUSD3_BACKING_RATIO"), 3000); // 30%
 
-        // Create some initial debt for more interesting invariant testing
-        address borrower = makeAddr("borrower");
-        createMarketDebt(borrower, 1_000_000e6); // 1M debt
+        // Seed liquidity and debt.
+        address alice = makeAddr("debt-floor-alice");
+        deal(address(underlyingAsset), alice, 10_000_000e6);
+        vm.startPrank(alice);
+        underlyingAsset.approve(address(usd3Strategy), type(uint256).max);
+        usd3Strategy.deposit(5_000_000e6, alice);
+        vm.stopPrank();
 
-        // Setup initial sUSD3 position
-        vm.prank(alice);
-        strategy.approve(address(susd3Strategy), 500_000e6);
-        vm.prank(alice);
+        createMarketDebt(makeAddr("debt-floor-borrower"), 1_000_000e6);
+
+        vm.startPrank(alice);
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 500_000e6);
         susd3Strategy.deposit(500_000e6, alice);
+        vm.stopPrank();
 
-        // Create and configure handler contract for invariant testing
-        handler = new DebtFloorHandler(address(usd3Strategy), address(susd3Strategy), address(underlyingAsset));
+        handler = new DebtFloorHandler(address(usd3Strategy), address(susd3Strategy), address(underlyingAsset), keeper);
+        _configureTargets();
 
-        // Target only the handler contract
-        targetContract(address(handler));
-
-        // Exclude admin functions from invariant testing
         excludeSender(address(0));
         excludeSender(address(this));
         excludeSender(management);
         excludeSender(emergencyAdmin);
     }
 
-    /**
-     * @notice Invariant: sUSD3 assets >= debt floor when debt > 0 and not shutdown
-     */
-    function invariant_assetsAboveFloorWhenDebtExists() public view {
-        if (isShutdown) return; // Skip during shutdown
+    function _configureTargets() internal {
+        targetContract(address(handler));
 
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
-        // Get sUSD3's USD3 holdings and convert to USDC value
-        uint256 currentAssetsUSDC =
-            ITokenizedStrategy(address(usd3Strategy)).convertToAssets(asset.balanceOf(address(susd3Strategy)));
+        bytes4[] memory selectors = new bytes4[](8);
+        selectors[0] = DebtFloorHandler.depositUSD3.selector;
+        selectors[1] = DebtFloorHandler.withdrawUSD3.selector;
+        selectors[2] = DebtFloorHandler.depositSUSD3.selector;
+        selectors[3] = DebtFloorHandler.startCooldown.selector;
+        selectors[4] = DebtFloorHandler.cancelCooldown.selector;
+        selectors[5] = DebtFloorHandler.withdrawSUSD3.selector;
+        selectors[6] = DebtFloorHandler.reportUSD3.selector;
+        selectors[7] = DebtFloorHandler.skipTime.selector;
 
-        // Get current debt
-        (,, uint256 totalBorrowAssetsWaUSDC,) = usd3Strategy.getMarketLiquidity();
-        uint256 currentDebtUSDC = ITokenizedStrategy(address(usd3Strategy))
-            .convertToAssets(usd3Strategy.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC));
-
-        // If there's debt and a backing requirement, assets should meet floor
-        if (currentDebtUSDC > 0 && minBackingRatio > 0) {
-            assert(
-                currentAssetsUSDC >= debtFloor || currentAssetsUSDC == 0 // Allow zero if no deposits yet
-            );
-        }
+        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
 
-    /**
-     * @notice Invariant: Debt floor calculation is always correct
-     */
-    function invariant_debtFloorCalculationCorrect() public view {
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
-
-        // Get current debt
+    function invariant_debtFloorMatchesExpectedFormula() public view {
         (,, uint256 totalBorrowAssetsWaUSDC,) = usd3Strategy.getMarketLiquidity();
-        uint256 currentDebtUSDC = ITokenizedStrategy(address(usd3Strategy))
-            .convertToAssets(usd3Strategy.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC));
+        uint256 debtUsdc = usd3Strategy.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
+        uint256 backingRatio = susd3Strategy.minBackingRatio();
+        uint256 expectedFloor = (debtUsdc * backingRatio) / 10_000;
 
-        uint256 expectedFloor;
-        if (minBackingRatio == 0) {
-            expectedFloor = 0;
-        } else {
-            expectedFloor = (currentDebtUSDC * minBackingRatio) / 10000;
-        }
-
-        assertEq(debtFloor, expectedFloor, "Floor calculation mismatch");
+        assertEq(susd3Strategy.getSubordinatedDebtFloorInUSDC(), expectedFloor, "debt floor formula mismatch");
     }
 
-    /**
-     * @notice Invariant: Available withdrawal never exceeds allowed amount
-     */
-    function invariant_withdrawalLimitRespected() public view {
-        // For any actor that might have sUSD3 positions
-        // their withdrawal limit should respect the debt floor
+    function invariant_depositLimitTracksSubordinationCap() public view {
+        uint256 capUsdc = susd3Strategy.getSubordinatedDebtCapInUSDC();
+        uint256 holdingsUsdc = ITokenizedStrategy(address(usd3Strategy))
+            .convertToAssets(IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)));
 
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
-        uint256 currentAssetsUSDC =
-            ITokenizedStrategy(address(usd3Strategy)).convertToAssets(asset.balanceOf(address(susd3Strategy)));
+        uint256 expectedLimit;
+        if (capUsdc > holdingsUsdc) {
+            expectedLimit = ITokenizedStrategy(address(usd3Strategy)).convertToShares(capUsdc - holdingsUsdc);
+        }
 
-        // If there's a floor and assets are below it, no withdrawals should be allowed
-        // (unless in shutdown mode)
-        if (!ITokenizedStrategy(address(susd3Strategy)).isShutdown()) {
-            if (debtFloor > 0 && currentAssetsUSDC <= debtFloor) {
-                // In this case, availableWithdrawLimit for any user should be 0
-                // We can't check specific users here but can assert the general condition
-                assert(currentAssetsUSDC >= debtFloor || currentAssetsUSDC == 0);
+        uint256 actorCount = handler.actorCount();
+        for (uint256 i; i < actorCount; ++i) {
+            address actor = handler.actorAt(i);
+            uint256 limit = susd3Strategy.availableDepositLimit(actor);
+            if (expectedLimit == 0) {
+                assertLe(limit, 1, "deposit limit should be blocked at cap");
+            } else {
+                assertApproxEqAbs(limit, expectedLimit, 2, "deposit limit mismatch");
             }
         }
     }
 
-    /**
-     * @notice Invariant: Floor changes proportionally with debt
-     */
-    function invariant_floorScalesWithDebt() public view {
-        uint256 debtFloor = susd3Strategy.getSubordinatedDebtFloorInUSDC();
+    function invariant_withdrawBlockedWhenAtOrBelowFloor() public view {
+        if (ITokenizedStrategy(address(susd3Strategy)).isShutdown()) return;
 
-        (,, uint256 totalBorrowAssetsWaUSDC,) = usd3Strategy.getMarketLiquidity();
-        uint256 currentDebtUSDC = ITokenizedStrategy(address(usd3Strategy))
-            .convertToAssets(usd3Strategy.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC));
+        uint256 floorUsdc = susd3Strategy.getSubordinatedDebtFloorInUSDC();
+        uint256 holdingsUsdc = ITokenizedStrategy(address(usd3Strategy))
+            .convertToAssets(IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)));
 
-        // Floor should be proportional to debt based on backing ratio
-        if (minBackingRatio > 0 && currentDebtUSDC > 0) {
-            uint256 expectedFloor = (currentDebtUSDC * minBackingRatio) / 10000;
-            assertEq(debtFloor, expectedFloor, "Floor should be proportional to debt");
-        } else if (minBackingRatio == 0) {
-            assertEq(debtFloor, 0, "Floor should be 0 when backing ratio is 0");
+        if (floorUsdc == 0 || holdingsUsdc > floorUsdc) return;
+
+        uint256 actorCount = handler.actorCount();
+        for (uint256 i; i < actorCount; ++i) {
+            assertEq(
+                susd3Strategy.availableWithdrawLimit(handler.actorAt(i)), 0, "withdraw must be blocked below floor"
+            );
         }
     }
 
-    /**
-     * @notice Invariant: Emergency shutdown bypasses floor requirements
-     */
-    function invariant_shutdownBypassesFloor() public view {
-        // If strategy is shutdown, withdrawals should be allowed regardless of floor
-        if (ITokenizedStrategy(address(susd3Strategy)).isShutdown()) {
-            // During shutdown, available assets should be withdrawable
-            uint256 availableAssets = asset.balanceOf(address(susd3Strategy));
+    function invariant_cooldownSharesNeverExceedBalance() public view {
+        uint256 actorCount = handler.actorCount();
+        for (uint256 i; i < actorCount; ++i) {
+            address actor = handler.actorAt(i);
+            (,, uint256 cooldownShares) = susd3Strategy.getCooldownStatus(actor);
+            uint256 balance = IERC20(address(susd3Strategy)).balanceOf(actor);
+            assertLe(cooldownShares, balance, "cooldown shares exceed balance");
+        }
+    }
 
-            // The availableWithdrawLimit should return the available assets during shutdown
-            // This is just an assertion that shutdown mode allows withdrawals
-            assert(availableAssets == 0 || susd3Strategy.availableWithdrawLimit(address(this)) >= 0);
+    function invariant_handlersAreEffective() public view {
+        if (handler.attemptedDepositUSD3() > 16) {
+            assertGt(handler.successfulDepositUSD3(), 0, "usd3 deposit handler no-op");
+        }
+
+        uint256 capUsdc = susd3Strategy.getSubordinatedDebtCapInUSDC();
+        uint256 holdingsUsdc = ITokenizedStrategy(address(usd3Strategy))
+            .convertToAssets(IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)));
+        if (handler.attemptedDepositSUSD3() > 24 && capUsdc > holdingsUsdc) {
+            assertGt(handler.successfulDepositSUSD3(), 0, "susd3 deposit handler no-op");
+        }
+
+        if (handler.attemptedReport() > 8) {
+            assertGt(handler.successfulReport(), 0, "report never succeeds");
+        }
+
+        if (handler.attemptedSkipTime() > 8) {
+            assertGt(handler.successfulSkipTime(), 0, "time never advances");
         }
     }
 }
