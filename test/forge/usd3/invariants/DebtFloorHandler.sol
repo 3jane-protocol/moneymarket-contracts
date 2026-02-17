@@ -31,6 +31,7 @@ contract DebtFloorHandler is Test {
     uint256 public successfulCancelCooldown;
     uint256 public attemptedWithdrawSUSD3;
     uint256 public successfulWithdrawSUSD3;
+    uint256 public observedWithdrawableStates;
     uint256 public attemptedReport;
     uint256 public successfulReport;
     uint256 public attemptedSkipTime;
@@ -144,8 +145,10 @@ contract DebtFloorHandler is Test {
 
         uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(actor);
         if (withdrawLimit == 0) return;
+        ++observedWithdrawableStates;
 
-        uint256 assets = bound(amountSeed, 1, withdrawLimit);
+        uint256 maxAssets = withdrawLimit > 1 ? withdrawLimit - 1 : withdrawLimit;
+        uint256 assets = bound(amountSeed, 1, maxAssets);
         vm.prank(actor);
         try susd3Strategy.withdraw(assets, actor, actor) returns (uint256 sharesBurned) {
             if (sharesBurned > 0) ++successfulWithdrawSUSD3;

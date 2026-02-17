@@ -177,7 +177,7 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
             assertGt(handler.successfulStartCooldown(), 0, "cooldown starts are no-op");
         }
 
-        if (handler.attemptedWithdrawSUSD3() > 64 && handler.successfulStartCooldown() > 0) {
+        if (handler.attemptedWithdrawSUSD3() > 64 && handler.observedWithdrawableStates() > 0) {
             assertGt(handler.successfulWithdrawSUSD3(), 0, "susd3 withdrawals are no-op");
         }
     }
