@@ -32,6 +32,11 @@ contract CoreLiquidityHandler is Test {
 
     Id[] public marketIds;
     address[] public actors;
+    uint256 public successfulSupplyAssets;
+    uint256 public successfulSupplyShares;
+    uint256 public successfulWithdrawAssets;
+    uint256 public successfulWithdrawShares;
+    uint256 public successfulAccrueInterest;
 
     constructor(address _morpho, address _loanToken, Id[] memory _marketIds, address[] memory _actors) {
         morpho = IMorpho(_morpho);
@@ -59,8 +64,10 @@ contract CoreLiquidityHandler is Test {
 
         vm.startPrank(caller);
         loanToken.approve(address(morpho), type(uint256).max);
-        address(morpho).call(abi.encodeWithSelector(SUPPLY_SELECTOR, marketParams, assets, uint256(0), onBehalf, ""));
+        (bool ok,) = address(morpho)
+            .call(abi.encodeWithSelector(SUPPLY_SELECTOR, marketParams, assets, uint256(0), onBehalf, ""));
         vm.stopPrank();
+        if (ok) successfulSupplyAssets++;
     }
 
     function supplyShares(uint256 marketSeed, uint256 callerSeed, uint256 onBehalfSeed, uint256 sharesSeed) external {
@@ -81,8 +88,10 @@ contract CoreLiquidityHandler is Test {
 
         vm.startPrank(caller);
         loanToken.approve(address(morpho), type(uint256).max);
-        address(morpho).call(abi.encodeWithSelector(SUPPLY_SELECTOR, marketParams, uint256(0), shares, onBehalf, ""));
+        (bool ok,) = address(morpho)
+            .call(abi.encodeWithSelector(SUPPLY_SELECTOR, marketParams, uint256(0), shares, onBehalf, ""));
         vm.stopPrank();
+        if (ok) successfulSupplyShares++;
     }
 
     function withdrawAssets(
@@ -108,8 +117,9 @@ contract CoreLiquidityHandler is Test {
         uint256 assets = bound(assetsSeed, 1, maxAssets);
 
         vm.prank(caller);
-        address(morpho)
+        (bool ok,) = address(morpho)
             .call(abi.encodeWithSelector(WITHDRAW_SELECTOR, marketParams, assets, uint256(0), onBehalf, receiver));
+        if (ok) successfulWithdrawAssets++;
     }
 
     function withdrawShares(
@@ -140,13 +150,15 @@ contract CoreLiquidityHandler is Test {
         uint256 shares = bound(sharesSeed, 1, maxShares);
 
         vm.prank(caller);
-        address(morpho)
+        (bool ok,) = address(morpho)
             .call(abi.encodeWithSelector(WITHDRAW_SELECTOR, marketParams, uint256(0), shares, onBehalf, receiver));
+        if (ok) successfulWithdrawShares++;
     }
 
     function accrueInterest(uint256 marketSeed) external {
         Id id = _marketId(marketSeed);
-        address(morpho).call(abi.encodeWithSelector(ACCRUE_INTEREST_SELECTOR, morpho.idToMarketParams(id)));
+        (bool ok,) = address(morpho).call(abi.encodeWithSelector(ACCRUE_INTEREST_SELECTOR, morpho.idToMarketParams(id)));
+        if (ok) successfulAccrueInterest++;
     }
 
     function _marketId(uint256 seed) internal view returns (Id) {

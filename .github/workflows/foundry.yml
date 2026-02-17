@@ -68,7 +68,7 @@ jobs:
         run: 'echo "Core invariant seed: 0x${{ github.event.pull_request.base.sha || github.sha }}"'
 
       - name: Run Core Invariants (fast)
-        run: forge test --match-contract CoreInvariantHarness --offline -vv
+        run: yarn -s test:forge:invariant:core
         env:
           FOUNDRY_PROFILE: test
           FOUNDRY_INVARIANT_RUNS: 32
@@ -91,7 +91,7 @@ jobs:
         run: 'echo "Core invariant seed: 0x${{ github.sha }}"'
 
       - name: Run Core Invariants (deep)
-        run: forge test --match-contract CoreInvariantHarness --offline -vv
+        run: yarn -s test:forge:invariant:core:deep
         env:
           FOUNDRY_PROFILE: test
           FOUNDRY_INVARIANT_RUNS: 256

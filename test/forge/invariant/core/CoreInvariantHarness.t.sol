@@ -116,14 +116,16 @@ contract CoreInvariantHarness is BaseTest {
     }
 
     function invariant_morphoBalanceCoversSupply() public view {
+        uint256 totalSupplyAssets;
+        uint256 totalBorrowAssets;
+
         for (uint256 i; i < marketIds.length; ++i) {
             Market memory market = morpho.market(marketIds[i]);
-            assertGe(
-                loanToken.balanceOf(address(morpho)) + uint256(market.totalBorrowAssets),
-                uint256(market.totalSupplyAssets),
-                vm.toString(Id.unwrap(marketIds[i]))
-            );
+            totalSupplyAssets += uint256(market.totalSupplyAssets);
+            totalBorrowAssets += uint256(market.totalBorrowAssets);
         }
+
+        assertGe(loanToken.balanceOf(address(morpho)) + totalBorrowAssets, totalSupplyAssets, "aggregate-liquidity");
     }
 
     function invariant_supplySharesMatchKnownActors() public view {
