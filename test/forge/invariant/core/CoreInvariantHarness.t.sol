@@ -31,6 +31,7 @@ contract CoreInvariantHarness is BaseTest {
 
     address[] internal actors;
     Id[] internal marketIds;
+    address internal initialFeeRecipient;
 
     CoreLiquidityHandler internal liquidityHandler;
     CoreCreditLifecycleHandler internal creditLifecycleHandler;
@@ -41,6 +42,7 @@ contract CoreInvariantHarness is BaseTest {
 
         morphoCredit = IMorphoCredit(address(morpho));
         markdownManager = new MarkdownManagerMock(address(protocolConfig), OWNER);
+        initialFeeRecipient = morpho.feeRecipient();
 
         _setupActors();
 
@@ -134,14 +136,19 @@ contract CoreInvariantHarness is BaseTest {
             address feeRecipient = morpho.feeRecipient();
             uint256 totalKnownSupplyShares;
             bool feeRecipientCounted;
+            bool initialFeeRecipientCounted;
 
             for (uint256 j; j < actors.length; ++j) {
                 address actor = actors[j];
                 totalKnownSupplyShares += morpho.supplyShares(id, actor);
                 if (actor == feeRecipient) feeRecipientCounted = true;
+                if (actor == initialFeeRecipient) initialFeeRecipientCounted = true;
             }
 
             if (!feeRecipientCounted) totalKnownSupplyShares += morpho.supplyShares(id, feeRecipient);
+            if (!initialFeeRecipientCounted && initialFeeRecipient != feeRecipient) {
+                totalKnownSupplyShares += morpho.supplyShares(id, initialFeeRecipient);
+            }
 
             assertEq(totalKnownSupplyShares, morpho.totalSupplyShares(id), vm.toString(Id.unwrap(id)));
         }
