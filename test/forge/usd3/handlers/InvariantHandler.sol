@@ -215,7 +215,9 @@ contract InvariantHandler is Test {
 
     function warpTime(uint256 secondsSeed) external {
         ++attemptedWarpTime;
-        uint256 delta = bound(secondsSeed, 1 hours, 120 days);
+        // Bias half the warps to shorter jumps so cooldown windows are exercised.
+        uint256 delta =
+            secondsSeed % 2 == 0 ? bound(secondsSeed, 1 hours, 14 days) : bound(secondsSeed, 1 hours, 120 days);
         vm.warp(block.timestamp + delta);
         vm.roll(block.number + 1);
         ++successfulWarpTime;
@@ -267,15 +269,6 @@ contract InvariantHandler is Test {
                 }
             }
         } catch {}
-    }
-
-    // Backwards-compatible entrypoints retained for old selector names.
-    function deposit(uint256 actorSeed, uint256 amount) external {
-        this.depositUSD3(actorSeed, amount);
-    }
-
-    function withdraw(uint256 actorSeed, uint256 shares) external {
-        this.redeemUSD3(actorSeed, shares);
     }
 
     function actorCount() external view returns (uint256) {

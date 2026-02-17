@@ -36,15 +36,18 @@ contract DebtFloorHandler is Test {
     uint256 public attemptedSkipTime;
     uint256 public successfulSkipTime;
 
-    constructor(address _usd3Strategy, address _susd3Strategy, address _underlyingAsset, address _keeper) {
+    constructor(
+        address _usd3Strategy,
+        address _susd3Strategy,
+        address _underlyingAsset,
+        address _keeper,
+        address[] memory _actors
+    ) {
         usd3Strategy = USD3(_usd3Strategy);
         susd3Strategy = sUSD3(_susd3Strategy);
         underlyingAsset = IERC20(_underlyingAsset);
         keeper = _keeper;
-
-        for (uint256 i; i < 3; ++i) {
-            actors.push(address(uint160(uint256(keccak256(abi.encode("debt-floor-actor", i))))));
-        }
+        actors = _actors;
     }
 
     function depositUSD3(uint256 actorSeed, uint256 amountSeed) public {
@@ -159,7 +162,8 @@ contract DebtFloorHandler is Test {
 
     function skipTime(uint256 timeSeed) public {
         ++attemptedSkipTime;
-        uint256 timeToSkip = bound(timeSeed, 1 days, 120 days);
+        // Bias half the warps to shorter jumps so cooldown windows are exercised.
+        uint256 timeToSkip = timeSeed % 2 == 0 ? bound(timeSeed, 1 hours, 14 days) : bound(timeSeed, 1 days, 120 days);
         skip(timeToSkip);
         ++successfulSkipTime;
     }

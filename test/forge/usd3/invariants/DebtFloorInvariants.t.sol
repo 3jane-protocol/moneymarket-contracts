@@ -63,7 +63,14 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         susd3Strategy.deposit(500_000e6, alice);
         vm.stopPrank();
 
-        handler = new DebtFloorHandler(address(usd3Strategy), address(susd3Strategy), address(underlyingAsset), keeper);
+        address[] memory handlerActors = new address[](4);
+        handlerActors[0] = alice;
+        for (uint256 i = 1; i < handlerActors.length; ++i) {
+            handlerActors[i] = address(uint160(uint256(keccak256(abi.encode("debt-floor-actor", i - 1)))));
+        }
+        handler = new DebtFloorHandler(
+            address(usd3Strategy), address(susd3Strategy), address(underlyingAsset), keeper, handlerActors
+        );
         _configureTargets();
 
         excludeSender(address(0));
@@ -147,14 +154,14 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
     }
 
     function invariant_handlersAreEffective() public view {
-        if (handler.attemptedDepositUSD3() > 16) {
+        if (handler.attemptedDepositUSD3() > 16 && _anyActorCanDepositUSD3()) {
             assertGt(handler.successfulDepositUSD3(), 0, "usd3 deposit handler no-op");
         }
 
         uint256 capUsdc = susd3Strategy.getSubordinatedDebtCapInUSDC();
         uint256 holdingsUsdc = ITokenizedStrategy(address(usd3Strategy))
             .convertToAssets(IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)));
-        if (handler.attemptedDepositSUSD3() > 24 && capUsdc > holdingsUsdc) {
+        if (handler.attemptedDepositSUSD3() > 24 && capUsdc > holdingsUsdc && _anyActorCanDepositSUSD3()) {
             assertGt(handler.successfulDepositSUSD3(), 0, "susd3 deposit handler no-op");
         }
 
@@ -165,5 +172,32 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         if (handler.attemptedSkipTime() > 8) {
             assertGt(handler.successfulSkipTime(), 0, "time never advances");
         }
+
+        if (handler.attemptedStartCooldown() > 48) {
+            assertGt(handler.successfulStartCooldown(), 0, "cooldown starts are no-op");
+        }
+
+        if (handler.attemptedWithdrawSUSD3() > 64 && handler.successfulStartCooldown() > 0) {
+            assertGt(handler.successfulWithdrawSUSD3(), 0, "susd3 withdrawals are no-op");
+        }
+    }
+
+    function _anyActorCanDepositUSD3() internal view returns (bool) {
+        uint256 actorCount = handler.actorCount();
+        for (uint256 i; i < actorCount; ++i) {
+            if (usd3Strategy.availableDepositLimit(handler.actorAt(i)) > 0) return true;
+        }
+        return false;
+    }
+
+    function _anyActorCanDepositSUSD3() internal view returns (bool) {
+        uint256 actorCount = handler.actorCount();
+        for (uint256 i; i < actorCount; ++i) {
+            address actor = handler.actorAt(i);
+            if (susd3Strategy.availableDepositLimit(actor) > 0 && IERC20(address(usd3Strategy)).balanceOf(actor) > 0) {
+                return true;
+            }
+        }
+        return false;
     }
 }

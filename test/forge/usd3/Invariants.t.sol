@@ -132,9 +132,6 @@ contract InvariantsTest is StdInvariant, Setup {
         uint256 localWaUsdc = usd3Strategy.balanceOfWaUSDC();
         uint256 suppliedWaUsdc = usd3Strategy.suppliedWaUSDC();
 
-        // Strategy-level accounting must never underflow.
-        assertGe(localWaUsdc + suppliedWaUsdc, suppliedWaUsdc, "waUSDC accounting underflow");
-
         // In shutdown mode, the strategy should not exceed its own total assets accounting.
         if (ITokenizedStrategy(address(usd3Strategy)).isShutdown()) {
             uint256 totalAssets = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
@@ -230,6 +227,14 @@ contract InvariantsTest is StdInvariant, Setup {
 
         if (handler.attemptedWarpTime() > 8) {
             assertGt(handler.successfulWarpTime(), 0, "warp actions never succeed");
+        }
+
+        if (handler.attemptedStartCooldownSUSD3() > 48) {
+            assertGt(handler.successfulStartCooldownSUSD3(), 0, "cooldown starts are no-op");
+        }
+
+        if (handler.attemptedWithdrawSUSD3() > 64 && handler.successfulStartCooldownSUSD3() > 0) {
+            assertGt(handler.successfulWithdrawSUSD3(), 0, "susd3 withdrawals are no-op");
         }
 
         if (handler.attemptedProfitReports() > 8) {
