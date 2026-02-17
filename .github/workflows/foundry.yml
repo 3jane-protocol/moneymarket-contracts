@@ -67,6 +67,9 @@ jobs:
       - name: Log Invariant Seed
         run: 'echo "Core invariant seed: 0x${{ github.event.pull_request.base.sha || github.sha }}"'
 
+      - name: Warm Solc Cache
+        run: yarn -s build:forge
+
       - name: Run Core Invariants (fast)
         run: yarn -s test:forge:invariant:core
         env:
@@ -89,6 +92,9 @@ jobs:
 
       - name: Log Invariant Seed
         run: 'echo "Core invariant seed: 0x${{ github.sha }}"'
+
+      - name: Warm Solc Cache
+        run: yarn -s build:forge
 
       - name: Run Core Invariants (deep)
         run: yarn -s test:forge:invariant:core:deep
