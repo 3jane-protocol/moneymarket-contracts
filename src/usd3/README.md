@@ -165,11 +165,12 @@ Fork tests are automatically skipped when `ETH_RPC_URL` is not set, ensuring nor
 
 ### CI Fork Workflow
 
-Fork tests run in CI in the `Foundry` workflow as schedule/manual jobs:
+Fork tests run in CI in the `Foundry` workflow:
 
+- PRs: add label `ci/run-fork-tests` to trigger fork suites on demand.
 - Nightly: runs automatically at `07:00 UTC`.
 - Manual: available via `workflow_dispatch`.
-- PRs: fork tests are not part of the normal PR gate.
+- PRs without the label: fork tests are not part of the normal PR gate.
 
 ### Coverage
 
