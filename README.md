@@ -29,6 +29,10 @@ Install dependencies: `yarn`
 
 Run forge tests: `yarn test:forge`
 
+Run core forge tests (non-invariant, non-fuzz, non-IRM): `yarn test:forge:core`
+
+Run forge fuzz tests: `yarn test:forge:fuzz`
+
 Run hardhat tests: `yarn test:hardhat`
 
 You will find other useful commands in the [`package.json`](./package.json) file.
