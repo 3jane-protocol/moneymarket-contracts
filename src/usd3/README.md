@@ -163,6 +163,15 @@ ETH_RPC_URL=$ETH_RPC_URL yarn test:forge:fork:upgrade
 
 Fork tests are automatically skipped when `ETH_RPC_URL` is not set, ensuring normal test runs are not affected.
 
+### CI Fork Workflow
+
+Fork tests run in CI in the `Foundry` workflow:
+
+- PRs: add label `ci/run-fork-tests` to trigger fork suites on demand.
+- Nightly: runs automatically at `07:00 UTC`.
+- Manual: available via `workflow_dispatch`.
+- PRs without the label: fork tests are not part of the normal PR gate.
+
 ### Coverage
 
 ```bash
