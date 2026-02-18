@@ -489,31 +489,47 @@ contract USD3 is BaseHooksUpgradeable {
         }
     }
 
+    /**
+     * @notice Report profit and loss with pre-report context for accurate loss absorption
+     * @return profit Amount of profit generated
+     * @return loss Amount of loss incurred
+     */
+    function report() external override returns (uint256 profit, uint256 loss) {
+        uint256 preSupply = TokenizedStrategy.totalSupply();
+        uint256 preAssets = TokenizedStrategy.totalAssets();
+
+        _preReportHook();
+        (profit, loss) = _reportInternal();
+        _postReportHook(profit, loss, preAssets, preSupply);
+    }
+
     /// @dev Post-report hook to handle loss absorption by burning sUSD3's shares
-    function _postReportHook(uint256 profit, uint256 loss) internal override {
-        if (loss > 0 && sUSD3 != address(0)) {
-            // Get sUSD3's current USD3 balance
-            uint256 susd3Balance = TokenizedStrategy.balanceOf(sUSD3);
+    function _postReportHook(uint256 _profit, uint256 loss, uint256 preAssets, uint256 preSupply) internal {
+        if (loss == 0 || sUSD3 == address(0)) return;
 
-            if (susd3Balance > 0) {
-                // Calculate how many shares are needed to cover the loss
-                // IMPORTANT: We must use pre-report values to calculate the correct share amount
-                // The report has already reduced totalAssets, so we add the loss back
-                uint256 totalSupply = TokenizedStrategy.totalSupply();
-                uint256 totalAssets = TokenizedStrategy.totalAssets();
+        // Get sUSD3's current USD3 balance
+        uint256 susd3Balance = TokenizedStrategy.balanceOf(sUSD3);
+        if (susd3Balance == 0) return;
 
-                // Calculate shares to burn using pre-loss exchange rate
-                uint256 sharesToBurn = loss.mulDiv(totalSupply, totalAssets + loss, Math.Rounding.Floor);
+        if (preAssets == 0 || preSupply == 0) return;
 
-                // Cap at sUSD3's actual balance - they can't lose more than they have
-                if (sharesToBurn > susd3Balance) {
-                    sharesToBurn = susd3Balance;
-                }
+        // Total shares required to cover the loss at the pre-report PPS
+        uint256 totalBurnNeeded = loss.mulDiv(preSupply, preAssets, Math.Rounding.Floor);
 
-                if (sharesToBurn > 0) {
-                    _burnSharesFromSusd3(sharesToBurn);
-                }
-            }
+        // Internal burn from locked shares is reflected in the post-report totalSupply
+        uint256 postSupply = TokenizedStrategy.totalSupply();
+        uint256 lockedBurn = preSupply > postSupply ? preSupply - postSupply : 0;
+
+        // Burn only the remaining shares from sUSD3
+        uint256 sharesToBurn = totalBurnNeeded > lockedBurn ? totalBurnNeeded - lockedBurn : 0;
+
+        // Cap at sUSD3's actual balance - they can't lose more than they have
+        if (sharesToBurn > susd3Balance) {
+            sharesToBurn = susd3Balance;
+        }
+
+        if (sharesToBurn > 0) {
+            _burnSharesFromSusd3(sharesToBurn);
         }
     }
 
