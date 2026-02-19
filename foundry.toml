@@ -16,11 +16,9 @@ fail_on_revert = true
 [profile.default.fmt]
 wrap_comments = true
 
-
 [profile.build]
 test = "/dev/null"
 script = "/dev/null"
-
 
 [profile.test]
 via-ir = false
@@ -41,9 +39,6 @@ match_path = "**/irm/**"
 via-ir = false
 script = "/dev/null"
 test = "test/halmos"
-
-
-
 
 [profile.fork]
 # Fork tests configuration

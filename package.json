@@ -14,7 +14,7 @@
     "build:forge:size": "yarn build:forge --sizes",
     "build:hardhat": "npx hardhat compile",
     "test:forge": "FOUNDRY_PROFILE=test forge test",
-    "test:forge:noninvariant": "FOUNDRY_PROFILE=test forge test --no-match-contract 'CoreInvariantHarness|InvariantsTest|DebtFloorInvariantsTest'",
+    "test:forge:noninvariant": "FOUNDRY_PROFILE=test forge test --no-match-contract 'CoreInvariantHarness|InvariantsTest|DebtFloorInvariantsTest|USD3UpgradeForkTest'",
     "test:forge:irm": "FOUNDRY_PROFILE=test-irm forge test",
     "test:forge:all": "yarn test:forge && yarn test:forge:irm",
     "test:forge:invariant": "FOUNDRY_MATCH_CONTRACT=InvariantTest yarn test:forge",

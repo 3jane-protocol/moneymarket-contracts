@@ -29,6 +29,8 @@ Install dependencies: `yarn`
 
 Run forge tests: `yarn test:forge`
 
+Run non-invariant forge tests: `yarn test:forge:noninvariant`
+
 Run hardhat tests: `yarn test:hardhat`
 
 You will find other useful commands in the [`package.json`](./package.json) file.
