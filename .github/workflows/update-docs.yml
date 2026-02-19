@@ -15,7 +15,6 @@ concurrency:
 
 jobs:
   update-docs:
-    if: ${{ secrets.ANTHROPIC_API_KEY != null }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -32,7 +31,7 @@ jobs:
           echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: Run doc update command
-        uses: anthropics/claude-code-action@beta
+        uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: "/3jane:update-docs"
@@ -69,16 +68,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cat > pr-body.md <<'PRBODY'
-          ## Summary
-          - synchronize README/AGENTS/docs with current code and CI workflow behavior
-          - refresh stale command, workflow, and path references
-
-          ## Validation
-          - command names verified against package.json
-          - workflow names and triggers verified against .github/workflows
-          - docs index and cross-links refreshed
-          PRBODY
+          printf '%s\n' \
+            '## Summary' \
+            '- synchronize README/AGENTS/docs with current code and CI workflow behavior' \
+            '- refresh stale command, workflow, and path references' \
+            '' \
+            '## Validation' \
+            '- command names verified against package.json' \
+            '- workflow names and triggers verified against .github/workflows' \
+            '- docs index and cross-links refreshed' > pr-body.md
 
           gh pr create \
             --base main \
