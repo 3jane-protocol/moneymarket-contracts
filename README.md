@@ -33,6 +33,12 @@ Run hardhat tests: `yarn test:hardhat`
 
 You will find other useful commands in the [`package.json`](./package.json) file.
 
+## Documentation
+
+- Agent operational guide: [`AGENTS.md`](./AGENTS.md)
+- Deep technical docs: [`docs/index.md`](./docs/index.md)
+- Claude compatibility loader: [`CLAUDE.md`](./CLAUDE.md)
+
 ## Audits
 
 All audits are stored in the [audits](./audits/)' folder.

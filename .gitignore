@@ -7,11 +7,13 @@ out/
 /broadcast/*/31337/
 /broadcast/**/dry-run/
 
-# Docs
-docs/
-
 # Dotenv file
 .env
+
+# Force-track agent docs/commands even when globally ignored.
+!CLAUDE.md
+!.claude/
+!.claude/**
 
 # Node modules
 /node_modules

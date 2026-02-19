@@ -1,0 +1,87 @@
+name: Update Docs
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 9 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-docs
+  cancel-in-progress: false
+
+jobs:
+  update-docs:
+    if: ${{ secrets.ANTHROPIC_API_KEY != null }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create branch
+        id: branch
+        run: |
+          BRANCH="docs/doc-gardening-$(date -u +%Y-%m-%d)-${GITHUB_RUN_ID}"
+          git switch -c "$BRANCH"
+          echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Run doc update command
+        uses: anthropics/claude-code-action@beta
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: "/3jane:update-docs"
+
+      - name: Commit changes if present
+        id: commit
+        run: |
+          if git diff --quiet; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          git commit -m "docs: weekly doc gardening"
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push branch
+        if: steps.commit.outputs.has_changes == 'true'
+        run: git push --set-upstream origin "${{ steps.branch.outputs.name }}"
+
+      - name: Check ahead of main
+        if: steps.commit.outputs.has_changes == 'true'
+        id: ahead
+        run: |
+          git fetch origin main
+          AHEAD_COUNT=$(git rev-list --count origin/main..HEAD)
+          echo "count=$AHEAD_COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Open PR
+        if: steps.commit.outputs.has_changes == 'true' && steps.ahead.outputs.count != '0'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > pr-body.md <<'PRBODY'
+          ## Summary
+          - synchronize README/AGENTS/docs with current code and CI workflow behavior
+          - refresh stale command, workflow, and path references
+
+          ## Validation
+          - command names verified against package.json
+          - workflow names and triggers verified against .github/workflows
+          - docs index and cross-links refreshed
+          PRBODY
+
+          gh pr create \
+            --base main \
+            --head "${{ steps.branch.outputs.name }}" \
+            --title "docs: weekly doc gardening" \
+            --body-file pr-body.md
