@@ -27,11 +27,24 @@
 - Halmos for symbolic checks
 - Certora configuration present, workflow currently disabled by triggers
 
+### Jane-focused test entrypoints
+
+- Jane token tests: `test/forge/jane/JaneToken*.t.sol`
+- Jane rewards tests: `test/forge/jane/rewards/*.t.sol`
+- Markdown + Jane integration: `test/forge/integration/markdown/MarkdownControllerJaneTest.sol`
+
+Useful targeted invocations:
+
+- `yarn run test:forge --match-path 'test/forge/jane/**/*.t.sol' -vvv`
+- `yarn run test:forge --match-contract MarkdownControllerJaneTest -vvv`
+- `yarn run test:forge --match-contract RewardsDistributorIntegrationTest -vvv`
+
 ## CI Tooling
 
 - GitHub Actions workflows under `.github/workflows/`
 - Foundry workflow includes baseline, IRM, invariants, and fork jobs
 - Formatting and Hardhat workflows run separately
+- Fork upgrade tests remain in CI as historical regression checks for the completed USD3 migration.
 
 ## Environment Requirements
 

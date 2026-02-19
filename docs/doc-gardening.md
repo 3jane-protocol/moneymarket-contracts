@@ -21,9 +21,11 @@ Keep operational and architectural documentation synchronized with code, tests, 
 - Verify command names match `package.json`
 - Verify workflow/job names match `.github/workflows/`
 - Verify test-suite references match current paths
+- Verify `src/jane/` references and Jane test paths stay in sync with code
 - Remove stale files/modules and dead references
 - Ensure README links resolve
 - Ensure docs index points to existing files
+- Keep USD3 migration guidance labeled as completed/deprecated historical context
 
 ## Guardrails
 

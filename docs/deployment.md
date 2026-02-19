@@ -8,10 +8,11 @@ This repository is a contracts codebase. "Deployment" here primarily means CI ex
 
 - `foundry.yml`
   - Baseline tests: `forge-baseline-fast`, `forge-baseline-deep`
+    - Includes Jane token/rewards suites under `test/forge/jane/**`
   - IRM tests: `irm-tests`
   - Core invariants: `core-invariant-fast`, `core-invariant-deep`
   - USD3 invariants: `usd3-invariant-fast`, `usd3-invariant-deep`
-  - Fork tests: `fork-tests`
+  - Fork tests (including legacy USD3 migration regression tests): `fork-tests`
 - `formatting.yml`: formatter/lint checks
 - `hardhat.yml`: hardhat test execution
 - `halmos.yml`: halmos symbolic checks
@@ -26,6 +27,7 @@ This repository is a contracts codebase. "Deployment" here primarily means CI ex
 - PR/push: fast baseline + IRM + fast invariants
 - Schedule/manual dispatch: deep baseline + deep invariants
 - Fork tests run on schedule/manual or PR label `ci/run-fork-tests`
+- The `fork-tests` job still runs `test:forge:fork:upgrade` as a historical regression suite for the completed waUSDC -> USDC migration.
 
 ### Doc Gardening
 

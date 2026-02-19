@@ -8,6 +8,7 @@ This repository contains Morpho Blue plus 3Jane-specific credit extensions for u
 
 - Core money market logic in `src/`.
 - Credit-line and borrower-premium logic in `src/` and `src/libraries/`.
+- JANE token and rewards distribution modules in `src/jane/`.
 - USD3/sUSD3 strategy and lifecycle tests in `test/forge/usd3/`.
 - Formal and symbolic test suites in `test/halmos/` and `certora/`.
 
@@ -18,9 +19,9 @@ This repository contains Morpho Blue plus 3Jane-specific credit extensions for u
 - Keep comments descriptive of current code behavior, not change-history narrative.
 - Do not commit planning markdown files.
 
-## Critical Runbook: USD3 waUSDC -> USDC Upgrade
+## USD3 Migration Status (Completed / Deprecated Runbook)
 
-When upgrading USD3 from waUSDC to USDC, execute the upgrade as one atomic multisig batch.
+The USD3 waUSDC -> USDC migration has been completed. The sequence below is retained for historical and regression context and should not be treated as a pending operational task.
 
 ### Required Atomic Sequence
 
@@ -56,7 +57,7 @@ Use these scripts exactly as defined in `package.json`:
 - Core invariants: `yarn test:forge:invariant:core`
 - USD3 invariants: `yarn test:forge:invariant:usd3`
 - Fork tests: `yarn test:forge:fork`
-- Fork upgrade tests: `yarn test:forge:fork:upgrade`
+- Fork upgrade regression tests (historical migration safety): `yarn test:forge:fork:upgrade`
 - Hardhat tests: `yarn test:hardhat`
 - Halmos checks: `yarn test:halmos`
 
@@ -90,6 +91,27 @@ Foundry CI jobs seed fuzz/invariant runs from base SHA or commit SHA for determi
 - Halmos: `test/halmos/`
 - Certora specs/config: `certora/`
 
+## Jane Module Guide (`src/jane/`)
+
+- `src/jane/Jane.sol`: ERC20 + permit token with role-based minting/transfer gates and MarkdownController-driven redistribution from delinquent borrowers.
+- `src/jane/RewardsDistributor.sol`: merkle-based cumulative rewards claims with epoch emission caps and transfer/mint distribution modes.
+- Integration point: `src/MarkdownController.sol` freezes borrower transferability and can slash/redistribute JANE during delinquency/default transitions.
+
+Primary Jane tests:
+
+- `test/forge/jane/JaneTokenAccessControl.t.sol`
+- `test/forge/jane/JaneTokenTransfer.t.sol`
+- `test/forge/jane/JaneTokenMintFinalization.t.sol`
+- `test/forge/jane/rewards/RewardsDistributorUnit.t.sol`
+- `test/forge/jane/rewards/RewardsDistributorSecurity.t.sol`
+- `test/forge/jane/rewards/RewardsDistributorIntegration.t.sol`
+- `test/forge/integration/markdown/MarkdownControllerJaneTest.sol`
+
+Targeted local command patterns for Jane changes:
+
+- `yarn run test:forge --match-path 'test/forge/jane/**/*.t.sol' -vvv`
+- `yarn run test:forge --match-contract MarkdownControllerJaneTest -vvv`
+
 ## Architecture Notes
 
 - Primary contract: `src/Morpho.sol`.
@@ -97,17 +119,17 @@ Foundry CI jobs seed fuzz/invariant runs from base SHA or commit SHA for determi
 - Share-based accounting via `SharesMathLib` and market/position state.
 - Hook points (`_before*`, `_after*`) are used to integrate borrower-premium accrual behavior.
 - 3Jane model introduces unsecured credit-line behavior and borrower-specific pricing.
+- JANE token behavior is enforced through role controls plus borrower freeze/redistribution interactions with `MarkdownController`.
 
-## Settlement + JANE Burn Flow
+## Markdown + JANE Redistribution Flow
 
-Settlement uses helper-controller architecture so bad-debt settlement and JANE burn execute atomically.
+JANE redistribution is driven by markdown/default logic rather than a separate burner-controller stack.
 
-- `CreditLine.sol`: credit operations and settlement orchestration.
-- `SettlementController.sol`: wraps settlement and burn call sequence.
-- `JaneBurner.sol`: authorization-gated burn helper.
-- `JaneToken.sol`: token with burner role control.
+- `src/MarkdownController.sol`: tracks borrower markdown state, freeze status, and proportional/full JANE slashing.
+- `src/jane/Jane.sol`: enforces transfer restrictions and only allows redistribution through the configured markdown controller.
+- `src/jane/RewardsDistributor.sol`: handles protocol rewards independently of markdown redistribution.
 
-Owner and authorization boundaries should be validated whenever settlement logic changes.
+Owner and authorization boundaries across `Jane`, `RewardsDistributor`, and `MarkdownController` should be validated whenever JANE flows are modified.
 
 ## Documentation Index
 

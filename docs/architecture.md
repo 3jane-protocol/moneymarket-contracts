@@ -23,17 +23,28 @@ This repository extends Morpho Blue with 3Jane credit primitives and USD3/sUSD3 
 
 - Unsecured lending path via credit-line controls.
 - Per-borrower premium model layered on top of base IRM rate.
-- Settlement paths include write-off handling and JANE burn integration.
+- Settlement paths include write-off handling and JANE markdown/redistribution integration.
+
+## Jane Domain (Token + Rewards)
+
+- `src/jane/Jane.sol` implements the JANE token with role-based mint/transfer controls and `MarkdownController` integration for borrower freezes and redistribution.
+- `src/jane/RewardsDistributor.sol` implements cumulative merkle-based rewards claims, optional mint-vs-transfer payout mode, and global emissions caps.
+- `src/MarkdownController.sol` orchestrates markdown-driven borrower freezing and proportional/full redistribution calls into `Jane`.
+- Security boundaries center on:
+  - role ownership and minter finalization in `Jane`
+  - owner-only root/emission updates in `RewardsDistributor`
+  - `onlyMorphoCredit` and markdown enablement gates in `MarkdownController`
 
 ## USD3 / sUSD3 Domain
 
 - USD3 and sUSD3 behavior is exercised in `test/forge/usd3/`.
-- Upgrade behavior (waUSDC -> USDC) requires an atomic multisig batch for safety.
-- See `test/forge/usd3/integration/USD3UpgradeMultisigBatch.t.sol` for expected flow validation.
+- The waUSDC -> USDC migration is complete; upgrade docs/tests are retained as historical regression context.
+- See `test/forge/usd3/integration/USD3UpgradeMultisigBatch.t.sol` and `test/forge/usd3/fork/USD3UpgradeForkTest.t.sol`.
 
 ## Test Architecture
 
 - Forge unit/integration/fuzz tests: `test/forge/`
+- Jane token/rewards suites: `test/forge/jane/` and `test/forge/integration/markdown/MarkdownControllerJaneTest.sol`
 - Forge invariants:
   - Core harness: `CoreInvariantHarness`
   - USD3 harnesses: `InvariantsTest`, `DebtFloorInvariantsTest`
