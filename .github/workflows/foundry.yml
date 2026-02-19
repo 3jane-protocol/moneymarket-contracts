@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  forge-noninvariant-fast:
+  forge-baseline-fast:
     if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.action != 'labeled')
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -34,7 +34,7 @@ jobs:
           FOUNDRY_FUZZ_MAX_TEST_REJECTS: 65536
           FOUNDRY_FUZZ_SEED: 0x${{ github.event.pull_request.base.sha || github.sha }}
 
-  forge-noninvariant-deep:
+  forge-baseline-deep:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 120
