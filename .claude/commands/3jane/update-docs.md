@@ -9,6 +9,7 @@ Scope:
 - `docs/tech-stack.md`
 - `docs/deployment.md`
 - `docs/doc-gardening.md`
+- `src/usd3/README.md`
 - `CLAUDE.md` (wrapper only)
 
 Required process:
@@ -18,6 +19,7 @@ Required process:
 3. Update docs where references drifted.
 4. Keep `CLAUDE.md` as a thin include wrapper.
 5. Keep `AGENTS.md` as the operational quick-reference.
+6. Keep USD3 waUSDC -> USDC migration text marked as completed/deprecated historical context.
 
 Guardrails:
 
