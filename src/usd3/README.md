@@ -239,7 +239,7 @@ test/forge/usd3/
 │   ├── ReinitializeTest.t.sol
 │   └── LocalBufferTest.t.sol
 ├── integration/            # Integration tests
-│   ├── USD3IntegrationTest.t.sol
+│   ├── USD3MorphoIntegration.t.sol
 │   ├── USD3SimplifiedUpgradeTest.t.sol
 │   └── USD3UpgradeMultisigBatch.t.sol
 ├── fuzz/                   # Fuzz tests
@@ -247,8 +247,10 @@ test/forge/usd3/
 ├── fork/                   # Mainnet fork tests (opt-in)
 │   ├── MainnetForkBase.t.sol
 │   └── USD3UpgradeForkTest.t.sol
-├── invariant/              # Property-based tests
-│   └── USD3InvariantTest.t.sol
+├── Invariants.t.sol        # USD3 invariant test (top-level)
+├── invariants/             # Additional invariant suites
+│   ├── DebtFloorInvariants.t.sol
+│   └── DebtFloorHandler.sol
 └── utils/                  # Test utilities
     └── Setup.sol
 ```

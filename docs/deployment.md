@@ -7,7 +7,7 @@ This repository is a contracts codebase. "Deployment" here primarily means CI ex
 ## GitHub Actions Workflows
 
 - `foundry.yml`
-  - Baseline tests: `forge-baseline-fast`, `forge-baseline-deep`
+  - Non-invariant tests: `forge-test` (matrix: slow + fast fuzz budgets)
     - Includes Jane token/rewards suites under `test/forge/jane/**`
   - IRM tests: `irm-tests`
   - Core invariants: `core-invariant-fast`, `core-invariant-deep`
@@ -24,9 +24,10 @@ This repository is a contracts codebase. "Deployment" here primarily means CI ex
 
 ### Foundry
 
-- PR/push: fast baseline + IRM + fast invariants
-- Schedule/manual dispatch: deep baseline + deep invariants
-- Fork tests run on schedule/manual or PR label `ci/run-fork-tests`
+- PR/push: `forge-test` (both slow + fast matrix) + IRM + fast invariants (core + usd3)
+- Schedule: deep invariants (core + usd3) + fork tests
+- Manual dispatch: all jobs (non-invariant + IRM + fast/deep invariants + fork tests)
+- Fork tests also triggered by PR label `ci/run-fork-tests`
 - The `fork-tests` job still runs `test:forge:fork:upgrade` as a historical regression suite for the completed waUSDC -> USDC migration.
 
 ### Doc Gardening

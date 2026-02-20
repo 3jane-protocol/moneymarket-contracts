@@ -42,7 +42,7 @@ Useful targeted invocations:
 ## CI Tooling
 
 - GitHub Actions workflows under `.github/workflows/`
-- Foundry workflow includes baseline, IRM, invariants, and fork jobs
+- Foundry workflow includes non-invariant (matrix), IRM, invariant, and fork jobs
 - Formatting and Hardhat workflows run separately
 - Fork upgrade tests remain in CI as historical regression checks for the completed USD3 migration.
 

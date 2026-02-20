@@ -26,6 +26,7 @@ Guardrails:
 - Do not change protocol/security semantics without explicit code evidence.
 - Do not rewrite invariant intent unless matched by concrete contract/test changes.
 - Prefer minimal factual edits over stylistic rewrites.
+- Verify any `.t.sol` filenames referenced in docs resolve to real files before committing doc updates.
 
 Output:
 

@@ -66,8 +66,7 @@ Use these scripts exactly as defined in `package.json`:
 GitHub Actions in `.github/workflows/`:
 
 - `foundry.yml`
-  - `forge-baseline-fast`: non-invariant suite on PR/push
-  - `forge-baseline-deep`: non-invariant deep run on schedule/manual
+  - `forge-test`: non-invariant suite (matrix: slow + fast fuzz budgets) on PR/push/dispatch
   - `irm-tests`: IRM-only profile
   - `core-invariant-fast` / `core-invariant-deep`
   - `usd3-invariant-fast` / `usd3-invariant-deep` (currently expected-failure gated)
