@@ -7,11 +7,14 @@ out/
 /broadcast/*/31337/
 /broadcast/**/dry-run/
 
-# Docs
-docs/
-
 # Dotenv file
 .env
+
+# Force-track agent docs/commands even when globally ignored.
+!CLAUDE.md
+!.claude/
+!.claude/**
+.claude/settings.local.json
 
 # Node modules
 /node_modules
@@ -24,3 +27,6 @@ emv-*-certora*
 /types
 /cache_hardhat
 /artifacts
+
+# Local foundry install artifact (submodules are source of truth).
+foundry.lock

@@ -23,7 +23,7 @@ USD3 and sUSD3 are tokenized yield strategies built on Yearn V3's architecture f
 - Protected from losses through sUSD3 first-loss absorption
 - Whitelist support for permissioned access (locally managed)
 - Emergency withdrawal capabilities
-- Seamless upgrade path from waUSDC-based to USDC-based implementation via `reinitialize()`
+- One-time migration path from waUSDC-based to USDC-based implementation via `reinitialize()` (completed)
 
 #### sUSD3 Strategy
 
@@ -56,18 +56,20 @@ The protocol implements multiple risk controls:
 - **Dynamic Parameters**: Key risk parameters centrally managed via ProtocolConfig, operational parameters locally managed
 - **Wrapping Precision**: Careful handling of USDC/waUSDC conversions to prevent rounding losses
 
-## Upgrade Process
+## Historical Migration Notes (Completed)
 
 ### Migrating from waUSDC to USDC
 
-For existing deployments using waUSDC directly, the upgrade process is:
+The waUSDC -> USDC migration has already been completed. The sequence below is kept for historical/audit context and regression testing.
+
+For the original migration, the process was:
 
 1. **Deploy New Implementation**: Deploy the new USD3 contract that accepts USDC
 2. **Upgrade Proxy**: Point the proxy to the new implementation
 3. **Reinitialize**: Call `reinitialize()` to switch the asset from waUSDC to USDC
 4. **Critical**: Execute as atomic multisig batch with `report()` to prevent user losses
 
-**Important**: The upgrade MUST be executed as an atomic multisig batch transaction:
+**Historical critical requirement**: The upgrade had to be executed as an atomic multisig batch transaction:
 
 ```solidity
 // Multisig Batch Transaction
@@ -78,7 +80,8 @@ For existing deployments using waUSDC directly, the upgrade process is:
 5. strategy.setProfitMaxUnlockTime(previous)  // Restore profit unlock schedule
 ```
 
-See `test/forge/usd3/integration/USD3UpgradeMultisigBatch.t.sol` for comprehensive tests.
+See `test/forge/usd3/integration/USD3UpgradeMultisigBatch.t.sol` and
+`test/forge/usd3/fork/USD3UpgradeForkTest.t.sol` for regression coverage.
 
 ## Installation
 
@@ -157,7 +160,7 @@ Fork tests are opt-in and require `ETH_RPC_URL` to be set:
 # Run all fork tests
 ETH_RPC_URL=$ETH_RPC_URL yarn test:forge:fork
 
-# Run USD3 upgrade fork tests specifically
+# Run legacy USD3 migration regression fork tests
 ETH_RPC_URL=$ETH_RPC_URL yarn test:forge:fork:upgrade
 ```
 
@@ -236,7 +239,7 @@ test/forge/usd3/
 │   ├── ReinitializeTest.t.sol
 │   └── LocalBufferTest.t.sol
 ├── integration/            # Integration tests
-│   ├── USD3IntegrationTest.t.sol
+│   ├── USD3MorphoIntegration.t.sol
 │   ├── USD3SimplifiedUpgradeTest.t.sol
 │   └── USD3UpgradeMultisigBatch.t.sol
 ├── fuzz/                   # Fuzz tests
@@ -244,8 +247,10 @@ test/forge/usd3/
 ├── fork/                   # Mainnet fork tests (opt-in)
 │   ├── MainnetForkBase.t.sol
 │   └── USD3UpgradeForkTest.t.sol
-├── invariant/              # Property-based tests
-│   └── USD3InvariantTest.t.sol
+├── Invariants.t.sol        # USD3 invariant test (top-level)
+├── invariants/             # Additional invariant suites
+│   ├── DebtFloorInvariants.t.sol
+│   └── DebtFloorHandler.sol
 └── utils/                  # Test utilities
     └── Setup.sol
 ```
