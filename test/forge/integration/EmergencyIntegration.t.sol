@@ -139,7 +139,11 @@ contract EmergencyIntegration is Test {
         );
 
         // Deploy EmergencyController
-        emergencyController = new EmergencyController(address(protocolConfig), address(creditLine), emergencyMultisig);
+        address[] memory emergencyAuthorized = new address[](1);
+        emergencyAuthorized[0] = emergencyMultisig;
+        emergencyController = new EmergencyController(
+            address(protocolConfig), address(creditLine), emergencyMultisig, emergencyAuthorized
+        );
 
         // Initial configuration (simulating post-deployment setup)
         _setupInitialConfiguration();
