@@ -40,8 +40,11 @@ contract EmergencyControlRegressionTest is Setup {
         MarketParams memory marketParams = usd3Strategy.marketParams();
 
         // Deploy EmergencyController
-        emergencyController =
-            new EmergencyController(address(protocolConfig), marketParams.creditLine, emergencyMultisig);
+        address[] memory emergencyAuthorized = new address[](1);
+        emergencyAuthorized[0] = emergencyMultisig;
+        emergencyController = new EmergencyController(
+            address(protocolConfig), marketParams.creditLine, emergencyMultisig, emergencyAuthorized
+        );
 
         // Set EmergencyController as emergencyAdmin
         protocolConfig.setEmergencyAdmin(address(emergencyController));

@@ -11,6 +11,8 @@ import {
     TransparentUpgradeableProxy
 } from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
+import {EventsLib} from "../../../src/libraries/EventsLib.sol";
+import {IAccessControl} from "../../../lib/openzeppelin/contracts/access/IAccessControl.sol";
 
 // Mock contracts for testing
 contract MockMorphoCredit {
@@ -95,7 +97,11 @@ contract EmergencyControllerTest is Test {
         creditLine.setInsuranceFund(address(mockInsuranceFund));
 
         // Deploy EmergencyController
-        emergencyController = new EmergencyController(address(protocolConfig), address(creditLine), emergencyMultisig);
+        address[] memory emergencyAuthorized = new address[](1);
+        emergencyAuthorized[0] = emergencyMultisig;
+        emergencyController = new EmergencyController(
+            address(protocolConfig), address(creditLine), emergencyMultisig, emergencyAuthorized
+        );
 
         // Setup protocol config values for CreditLine validation
         vm.startPrank(protocolOwner);
@@ -116,39 +122,50 @@ contract EmergencyControllerTest is Test {
     // ============ Constructor Tests ============
 
     function test_Constructor_InvalidAddress() public {
+        address[] memory emergencyAuthorized = new address[](1);
+        emergencyAuthorized[0] = emergencyMultisig;
+
         // Test zero protocol config
         vm.expectRevert(ErrorsLib.ZeroAddress.selector);
-        new EmergencyController(address(0), address(creditLine), emergencyMultisig);
+        new EmergencyController(address(0), address(creditLine), emergencyMultisig, emergencyAuthorized);
 
         // Test zero credit line
         vm.expectRevert(ErrorsLib.ZeroAddress.selector);
-        new EmergencyController(address(protocolConfig), address(0), emergencyMultisig);
+        new EmergencyController(address(protocolConfig), address(0), emergencyMultisig, emergencyAuthorized);
 
-        // Test zero owner - Ownable throws OwnableInvalidOwner
-        vm.expectRevert(abi.encodeWithSignature("OwnableInvalidOwner(address)", address(0)));
-        new EmergencyController(address(protocolConfig), address(creditLine), address(0));
+        // Test zero owner
+        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
+        new EmergencyController(address(protocolConfig), address(creditLine), address(0), emergencyAuthorized);
     }
 
     function test_Constructor_SetsCorrectValues() public {
-        EmergencyController controller =
-            new EmergencyController(address(protocolConfig), address(creditLine), emergencyMultisig);
+        address[] memory emergencyAuthorized = new address[](1);
+        emergencyAuthorized[0] = emergencyMultisig;
+
+        EmergencyController controller = new EmergencyController(
+            address(protocolConfig), address(creditLine), emergencyMultisig, emergencyAuthorized
+        );
 
         assertEq(address(controller.protocolConfig()), address(protocolConfig));
         assertEq(address(controller.creditLine()), address(creditLine));
         assertEq(controller.owner(), emergencyMultisig);
+        assertTrue(controller.hasRole(controller.EMERGENCY_AUTHORIZED_ROLE(), emergencyMultisig));
     }
 
     // ============ setConfig Tests ============
 
-    function test_SetConfig_Pause_OnlyOwner() public {
+    function test_SetConfig_Pause_OnlyEmergencyAuthorized() public {
         // Emergency multisig can pause
         vm.prank(emergencyMultisig);
         emergencyController.setConfig(IS_PAUSED, 1);
         assertEq(protocolConfig.config(IS_PAUSED), 1);
 
         // Random user cannot pause
+        bytes32 emergencyRole = emergencyController.EMERGENCY_AUTHORIZED_ROLE();
+        vm.expectRevert(
+            abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", randomUser, emergencyRole)
+        );
         vm.prank(randomUser);
-        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", randomUser));
         emergencyController.setConfig(IS_PAUSED, 1);
     }
 
@@ -215,15 +232,18 @@ contract EmergencyControllerTest is Test {
 
     // ============ Credit Line Revocation Tests ============
 
-    function test_EmergencyRevokeCreditLine_OnlyOwner() public {
+    function test_EmergencyRevokeCreditLine_OnlyEmergencyAuthorized() public {
         Id marketId = Id.wrap(bytes32(uint256(1)));
         address borrower = makeAddr("Borrower");
 
         vm.prank(emergencyMultisig);
         emergencyController.emergencyRevokeCreditLine(marketId, borrower);
 
+        bytes32 emergencyRole = emergencyController.EMERGENCY_AUTHORIZED_ROLE();
+        vm.expectRevert(
+            abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", randomUser, emergencyRole)
+        );
         vm.prank(randomUser);
-        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", randomUser));
         emergencyController.emergencyRevokeCreditLine(marketId, borrower);
     }
 
@@ -278,6 +298,166 @@ contract EmergencyControllerTest is Test {
         // Verify DRP is preserved after revocation
         (, uint128 drpAfterRevoke,) = mockMorpho.borrowerPremium(marketId, borrower);
         assertEq(drpAfterRevoke, originalDrp, "DRP should be preserved after credit revocation");
+    }
+
+    // ============ Access Control Tests ============
+
+    function test_Constructor_ZeroAddressInEmergencyAuthorized() public {
+        address[] memory emergencyAuthorized = new address[](2);
+        emergencyAuthorized[0] = emergencyMultisig;
+        emergencyAuthorized[1] = address(0);
+
+        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
+        new EmergencyController(address(protocolConfig), address(creditLine), emergencyMultisig, emergencyAuthorized);
+    }
+
+    function test_Constructor_MultipleEmergencyAuthorized() public {
+        address operator1 = makeAddr("Operator1");
+        address operator2 = makeAddr("Operator2");
+
+        address[] memory emergencyAuthorized = new address[](2);
+        emergencyAuthorized[0] = operator1;
+        emergencyAuthorized[1] = operator2;
+
+        EmergencyController controller = new EmergencyController(
+            address(protocolConfig), address(creditLine), emergencyMultisig, emergencyAuthorized
+        );
+
+        assertTrue(controller.hasRole(controller.EMERGENCY_AUTHORIZED_ROLE(), operator1));
+        assertTrue(controller.hasRole(controller.EMERGENCY_AUTHORIZED_ROLE(), operator2));
+        assertEq(controller.getRoleMemberCount(controller.EMERGENCY_AUTHORIZED_ROLE()), 2);
+    }
+
+    function test_TransferOwnership_Success() public {
+        address newOwner = makeAddr("NewOwner");
+
+        vm.expectEmit(true, false, false, true);
+        emit EventsLib.SetOwner(newOwner);
+
+        vm.prank(emergencyMultisig);
+        emergencyController.transferOwnership(newOwner);
+
+        assertEq(emergencyController.owner(), newOwner);
+        assertFalse(emergencyController.hasRole(emergencyController.OWNER_ROLE(), emergencyMultisig));
+        assertTrue(emergencyController.hasRole(emergencyController.OWNER_ROLE(), newOwner));
+    }
+
+    function test_TransferOwnership_ZeroAddress() public {
+        vm.prank(emergencyMultisig);
+        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
+        emergencyController.transferOwnership(address(0));
+    }
+
+    function test_TransferOwnership_SelfTransfer() public {
+        vm.prank(emergencyMultisig);
+        vm.expectRevert(ErrorsLib.AlreadySet.selector);
+        emergencyController.transferOwnership(emergencyMultisig);
+    }
+
+    function test_TransferOwnership_OnlyOwner() public {
+        address newOwner = makeAddr("NewOwner");
+        bytes32 ownerRole = emergencyController.OWNER_ROLE();
+
+        vm.expectRevert(
+            abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", randomUser, ownerRole)
+        );
+        vm.prank(randomUser);
+        emergencyController.transferOwnership(newOwner);
+    }
+
+    function test_TransferOwnership_EmergencyAuthorizedCannotTransfer() public {
+        address operator = makeAddr("Operator");
+        address newOwner = makeAddr("NewOwner");
+        bytes32 emergencyRole = emergencyController.EMERGENCY_AUTHORIZED_ROLE();
+        bytes32 ownerRole = emergencyController.OWNER_ROLE();
+
+        vm.prank(emergencyMultisig);
+        emergencyController.grantRole(emergencyRole, operator);
+
+        vm.expectRevert(
+            abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", operator, ownerRole)
+        );
+        vm.prank(operator);
+        emergencyController.transferOwnership(newOwner);
+    }
+
+    function test_TransferOwnership_NewOwnerCanManageRoles() public {
+        address newOwner = makeAddr("NewOwner");
+        address newOperator = makeAddr("NewOperator");
+        bytes32 emergencyRole = emergencyController.EMERGENCY_AUTHORIZED_ROLE();
+
+        vm.prank(emergencyMultisig);
+        emergencyController.transferOwnership(newOwner);
+
+        vm.prank(newOwner);
+        emergencyController.grantRole(emergencyRole, newOperator);
+        assertTrue(emergencyController.hasRole(emergencyRole, newOperator));
+    }
+
+    function test_RenounceRole_BlockedForOwnerRole() public {
+        bytes32 ownerRole = emergencyController.OWNER_ROLE();
+
+        vm.prank(emergencyMultisig);
+        vm.expectRevert(ErrorsLib.CannotRenounceOwnerRole.selector);
+        emergencyController.renounceRole(ownerRole, emergencyMultisig);
+
+        assertEq(emergencyController.owner(), emergencyMultisig);
+    }
+
+    function test_RenounceRole_AllowedForEmergencyRole() public {
+        bytes32 emergencyRole = emergencyController.EMERGENCY_AUTHORIZED_ROLE();
+
+        vm.prank(emergencyMultisig);
+        emergencyController.renounceRole(emergencyRole, emergencyMultisig);
+
+        assertFalse(emergencyController.hasRole(emergencyRole, emergencyMultisig));
+    }
+
+    function test_GrantRevokeEmergencyRole() public {
+        address newOperator = makeAddr("NewOperator");
+        bytes32 emergencyRole = emergencyController.EMERGENCY_AUTHORIZED_ROLE();
+
+        vm.startPrank(emergencyMultisig);
+        emergencyController.grantRole(emergencyRole, newOperator);
+        assertTrue(emergencyController.hasRole(emergencyRole, newOperator));
+
+        emergencyController.revokeRole(emergencyRole, newOperator);
+        assertFalse(emergencyController.hasRole(emergencyRole, newOperator));
+        vm.stopPrank();
+    }
+
+    function test_EmergencyAuthorizedCannotManageRoles() public {
+        address operator = makeAddr("Operator");
+        address anotherAddr = makeAddr("Another");
+        bytes32 emergencyRole = emergencyController.EMERGENCY_AUTHORIZED_ROLE();
+        bytes32 ownerRole = emergencyController.OWNER_ROLE();
+
+        vm.prank(emergencyMultisig);
+        emergencyController.grantRole(emergencyRole, operator);
+
+        vm.expectRevert(
+            abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", operator, ownerRole)
+        );
+        vm.prank(operator);
+        emergencyController.grantRole(emergencyRole, anotherAddr);
+    }
+
+    function test_OwnerWithoutEmergencyRole_CannotCallSetConfig() public {
+        address ownerOnly = makeAddr("OwnerOnly");
+        address[] memory empty = new address[](0);
+
+        EmergencyController controller =
+            new EmergencyController(address(protocolConfig), address(creditLine), ownerOnly, empty);
+
+        vm.prank(protocolOwner);
+        protocolConfig.setEmergencyAdmin(address(controller));
+
+        bytes32 emergencyRole = controller.EMERGENCY_AUTHORIZED_ROLE();
+        vm.expectRevert(
+            abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", ownerOnly, emergencyRole)
+        );
+        vm.prank(ownerOnly);
+        controller.setConfig(IS_PAUSED, 1);
     }
 
     // ============ Integration Tests ============
