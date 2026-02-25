@@ -572,6 +572,10 @@ contract SetProtocolConfigSafe is Script, SafeHelper, TimelockHelper {
         for (uint256 i = 0; i < updates.length; i++) {
             packed = abi.encodePacked(packed, updates[i].key, updates[i].value);
         }
+        uint256 nonce = vm.envOr("SALT_NONCE", uint256(0));
+        if (nonce > 0) {
+            return keccak256(abi.encodePacked("ProtocolConfig Update: ", packed, nonce));
+        }
         return keccak256(abi.encodePacked("ProtocolConfig Update: ", packed));
     }
 
