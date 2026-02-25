@@ -286,30 +286,37 @@ contract sUSD3 is BaseHooksUpgradeable {
             return 0;
         }
 
-        UserCooldown memory cooldown = cooldowns[_owner];
+        // Determine withdrawal limit based on cooldown state
+        uint256 userWithdrawLimit;
+        if (cooldownDuration() == 0) {
+            // No cooldown required
+            userWithdrawLimit = type(uint256).max;
+        } else {
+            UserCooldown memory cooldown = cooldowns[_owner];
 
-        // No cooldown started - cannot withdraw
-        if (cooldown.shares == 0) {
-            return 0;
+            // No cooldown started - cannot withdraw
+            if (cooldown.shares == 0) {
+                return 0;
+            }
+
+            // Still in cooldown period
+            if (block.timestamp < cooldown.cooldownEnd) {
+                return 0;
+            }
+
+            // Window expired - must restart cooldown
+            if (block.timestamp > cooldown.windowEnd) {
+                return 0;
+            }
+
+            userWithdrawLimit = TokenizedStrategy.convertToAssets(cooldown.shares);
         }
 
-        // Still in cooldown period
-        if (block.timestamp < cooldown.cooldownEnd) {
-            return 0;
-        }
-
-        // Window expired - must restart cooldown
-        if (block.timestamp > cooldown.windowEnd) {
-            return 0;
-        }
-
-        // Within valid withdrawal window - check backing requirement
-        uint256 cooldownAmount = TokenizedStrategy.convertToAssets(cooldown.shares);
-
+        // Check backing requirement
         uint256 subordinatedDebtFloorUSDC = getSubordinatedDebtFloorInUSDC();
 
         if (subordinatedDebtFloorUSDC == 0) {
-            return cooldownAmount;
+            return userWithdrawLimit;
         }
 
         uint256 currentUSD3Holdings = asset.balanceOf(address(this));
@@ -326,8 +333,8 @@ contract sUSD3 is BaseHooksUpgradeable {
         // Convert back to USD3 shares for withdrawal
         uint256 maxWithdrawableUSD3 = IStrategy(address(asset)).convertToShares(maxWithdrawable);
 
-        // Return minimum of cooldown amount and max withdrawable
-        return Math.min(cooldownAmount, maxWithdrawableUSD3);
+        // Return minimum of withdrawal limit and max withdrawable
+        return Math.min(userWithdrawLimit, maxWithdrawableUSD3);
     }
 
     /**
@@ -367,9 +374,7 @@ contract sUSD3 is BaseHooksUpgradeable {
      */
     function cooldownDuration() public view returns (uint256) {
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
-
-        uint256 duration = config.getSusd3CooldownPeriod();
-        return duration > 0 ? duration : 7 days; // Default to 7 days if not set
+        return config.getSusd3CooldownPeriod();
     }
 
     /**
