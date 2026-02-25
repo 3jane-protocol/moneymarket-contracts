@@ -136,8 +136,8 @@ contract USD3 is BaseHooksUpgradeable {
 
     /**
      * @notice Reinitialize the USD3 strategy to switch asset from waUSDC to USDC
-     * @dev This function is called during the upgrade from the previous USD3 implementation.
-     *      The upgrade process MUST follow this sequence to prevent user losses:
+     * @dev This function was used during the one-time migration from the previous USD3 implementation.
+     *      Historical migration sequence (already completed in production):
      *      1. Set performance fee to 0 (via setPerformanceFee)
      *      2. Set profit unlock time to 0 (via setProfitMaxUnlockTime)
      *      3. Call report() on OLD implementation to finalize state before upgrade
