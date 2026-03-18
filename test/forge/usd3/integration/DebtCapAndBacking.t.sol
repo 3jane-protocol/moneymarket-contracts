@@ -179,9 +179,6 @@ contract DebtCapAndBackingTest is Setup {
     //////////////////////////////////////////////////////////////*/
 
     function test_backingRequirement_preventsWithdrawals() public {
-        // Set minimum backing ratio
-        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, MIN_BACKING_RATIO);
-
         // Alice deposits to USD3
         vm.prank(alice);
         uint256 aliceShares = strategy.deposit(DEPOSIT_AMOUNT, alice);
@@ -193,6 +190,9 @@ contract DebtCapAndBackingTest is Setup {
         // Create debt first to enable sUSD3 deposits (debt-based subordination)
         setMaxOnCredit(8000);
         createMarketDebt(borrower, DEPOSIT_AMOUNT / 2); // 500K debt
+
+        // Set minimum backing ratio AFTER debt creation to avoid blocking deployment
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, MIN_BACKING_RATIO);
 
         // Now Bob can deposit USD3 to sUSD3 (after debt exists)
         uint256 bobUSD3 = strategy.balanceOf(bob);
@@ -235,9 +235,6 @@ contract DebtCapAndBackingTest is Setup {
     }
 
     function test_backingRequirement_allowsPartialWithdrawals() public {
-        // Set minimum backing ratio to 25%
-        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 2500);
-
         // Alice deposits to USD3
         vm.prank(alice);
         strategy.deposit(DEPOSIT_AMOUNT, alice);
@@ -249,6 +246,9 @@ contract DebtCapAndBackingTest is Setup {
         // Create debt first to enable sUSD3 deposits
         setMaxOnCredit(8000);
         createMarketDebt(borrower, 200_000e6); // 200K debt needs 50K backing at 25%
+
+        // Set minimum backing ratio AFTER debt creation to avoid blocking deployment
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 2500);
 
         // Now Bob can deposit USD3 to sUSD3 (after debt exists)
         uint256 bobUSD3 = strategy.balanceOf(bob);
@@ -316,9 +316,6 @@ contract DebtCapAndBackingTest is Setup {
     }
 
     function test_emergencyShutdownBypassesChecks() public {
-        // Set strict backing requirement
-        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 10000); // 100%
-
         // Setup positions
         vm.prank(alice);
         strategy.deposit(DEPOSIT_AMOUNT, alice);
@@ -329,6 +326,9 @@ contract DebtCapAndBackingTest is Setup {
         // Create debt first to enable sUSD3 deposits
         setMaxOnCredit(8000);
         createMarketDebt(borrower, DEPOSIT_AMOUNT / 2);
+
+        // Set strict backing requirement AFTER debt creation to avoid blocking deployment
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 10000); // 100%
 
         // Now Bob can deposit USD3 to sUSD3 (after debt exists)
         uint256 bobUSD3 = strategy.balanceOf(bob);
