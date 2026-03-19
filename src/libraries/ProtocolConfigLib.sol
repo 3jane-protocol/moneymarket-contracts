@@ -38,6 +38,9 @@ library ProtocolConfigLib {
     // Supply Cap Keys
     bytes32 internal constant USD3_SUPPLY_CAP = keccak256("USD3_SUPPLY_CAP");
 
+    // Tend Keys
+    bytes32 internal constant TEND_DRIFT_THRESHOLD = keccak256("TEND_DRIFT_THRESHOLD");
+
     // Markdown Keys
     bytes32 internal constant FULL_MARKDOWN_DURATION = keccak256("FULL_MARKDOWN_DURATION");
 }

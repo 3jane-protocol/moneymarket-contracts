@@ -219,9 +219,14 @@ contract SubordinationDeployCapTest is Setup {
         ITokenizedStrategy(address(strategy)).tend();
         uint256 suppliedBefore = usd3Strategy.suppliedWaUSDC();
 
-        // Increase sUSD3 backing by dealing more USD3 tokens
-        uint256 susd3USD3Balance = strategy.balanceOf(address(susd3Strategy));
-        deal(address(strategy), address(susd3Strategy), susd3USD3Balance * 3);
+        // Increase sUSD3 backing via actual deposit flow (preserves ERC20 invariants)
+        address charlie = makeAddr("charlie");
+        deal(address(underlyingAsset), charlie, 400_000e6);
+        vm.prank(charlie);
+        asset.approve(address(strategy), type(uint256).max);
+        vm.prank(charlie);
+        strategy.deposit(400_000e6, charlie);
+        _depositToSUSD3(charlie, strategy.balanceOf(charlie));
 
         // Tend should redeploy idle funds
         vm.prank(keeper);
@@ -256,9 +261,14 @@ contract SubordinationDeployCapTest is Setup {
         vm.prank(keeper);
         ITokenizedStrategy(address(strategy)).tend();
 
-        // Increase sUSD3 backing significantly
-        uint256 susd3USD3Balance = strategy.balanceOf(address(susd3Strategy));
-        deal(address(strategy), address(susd3Strategy), susd3USD3Balance * 5);
+        // Increase sUSD3 backing via actual deposit flow (preserves ERC20 invariants)
+        address charlie = makeAddr("charlie");
+        deal(address(underlyingAsset), charlie, 800_000e6);
+        vm.prank(charlie);
+        asset.approve(address(strategy), type(uint256).max);
+        vm.prank(charlie);
+        strategy.deposit(800_000e6, charlie);
+        _depositToSUSD3(charlie, strategy.balanceOf(charlie));
 
         (bool shouldTend,) = usd3Strategy.tendTrigger();
         assertTrue(shouldTend, "Should trigger tend when under-deployed with headroom");
@@ -273,6 +283,46 @@ contract SubordinationDeployCapTest is Setup {
 
         (bool shouldTend,) = usd3Strategy.tendTrigger();
         assertFalse(shouldTend, "Should not trigger tend at equilibrium");
+    }
+
+    function test_tendTrigger_configurableDriftThreshold() public {
+        _bootstrapDebtAndBacking(2_000_000e6, 500_000e6, 500_000e6, 10_000);
+
+        // Tend to reach equilibrium
+        vm.prank(keeper);
+        ITokenizedStrategy(address(strategy)).tend();
+
+        // Drop sUSD3 backing slightly (~5%) to create moderate drift
+        uint256 susd3USD3Balance = strategy.balanceOf(address(susd3Strategy));
+        deal(address(strategy), address(susd3Strategy), (susd3USD3Balance * 95) / 100);
+
+        // With default 10 bps (0.1%), ~5% drift should trigger
+        (bool shouldTendDefault,) = usd3Strategy.tendTrigger();
+        assertTrue(shouldTendDefault, "Should trigger with default 0.1% threshold");
+
+        // Set large threshold (50%) — ~5% drift should NOT trigger
+        protocolConfig.setConfig(ProtocolConfigLib.TEND_DRIFT_THRESHOLD, 5000);
+        (bool shouldTendLarge,) = usd3Strategy.tendTrigger();
+        assertFalse(shouldTendLarge, "Should not trigger with 50% threshold");
+
+        // Set small threshold (1 bp = 0.01%) — should trigger again
+        protocolConfig.setConfig(ProtocolConfigLib.TEND_DRIFT_THRESHOLD, 1);
+        (bool shouldTendSmall,) = usd3Strategy.tendTrigger();
+        assertTrue(shouldTendSmall, "Should trigger with 0.01% threshold");
+    }
+
+    function test_tendTrigger_revertsWhenDriftThresholdTooHigh() public {
+        _bootstrapDebtAndBacking(1_000_000e6, 200_000e6, 500_000e6, 10_000);
+
+        // 100% threshold should revert
+        protocolConfig.setConfig(ProtocolConfigLib.TEND_DRIFT_THRESHOLD, 10_000);
+        vm.expectRevert("Invalid drift threshold");
+        usd3Strategy.tendTrigger();
+
+        // Above 100% should also revert
+        protocolConfig.setConfig(ProtocolConfigLib.TEND_DRIFT_THRESHOLD, 15_000);
+        vm.expectRevert("Invalid drift threshold");
+        usd3Strategy.tendTrigger();
     }
 
     /*//////////////////////////////////////////////////////////////

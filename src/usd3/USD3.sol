@@ -366,11 +366,17 @@ contract USD3 is BaseHooksUpgradeable {
 
         if (target == 0) return deployed > 0;
 
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        uint256 driftBps = config.config(ProtocolConfigLib.TEND_DRIFT_THRESHOLD);
+        if (driftBps == 0) driftBps = 10;
+        require(driftBps < 10_000, "Invalid drift threshold");
+        uint256 threshold = (target * driftBps) / 10_000;
+
         if (deployed > target) {
-            return (deployed - target) > target / 1000;
+            return (deployed - target) > threshold;
         }
         if (target > deployed && localWaUSDC > 0) {
-            return (target - deployed) > target / 1000;
+            return (target - deployed) > threshold;
         }
         return false;
     }
