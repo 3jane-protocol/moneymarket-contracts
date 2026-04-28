@@ -135,9 +135,10 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Reinitialize the USD3 strategy to switch asset from waUSDC to USDC
+     * @notice Legacy v2 migration hook that switched the strategy asset from waUSDC to USDC.
      * @dev This function was used during the one-time migration from the previous USD3 implementation.
-     *      Historical migration sequence (already completed in production):
+     *      The migration is complete and this reinitializer is already consumed in production.
+     *      Historical migration sequence:
      *      1. Set performance fee to 0 (via setPerformanceFee)
      *      2. Set profit unlock time to 0 (via setProfitMaxUnlockTime)
      *      3. Call report() on OLD implementation to finalize state before upgrade
@@ -156,6 +157,14 @@ contract USD3 is BaseHooksUpgradeable {
         TokenizedStrategyStorageLib.StrategyData storage strategyData = TokenizedStrategyStorageLib.getStrategyStorage();
         strategyData.asset = ERC20(usdc);
         IERC20(usdc).forceApprove(address(WAUSDC), type(uint256).max);
+    }
+
+    /**
+     * @notice Restart the strategy after an emergency shutdown.
+     * @dev Intended to be consumed atomically through ProxyAdmin.upgradeAndCall during the v3 restart upgrade.
+     */
+    function restartStrategy() external reinitializer(3) {
+        TokenizedStrategyStorageLib.getStrategyStorage().shutdown = false;
     }
 
     /*//////////////////////////////////////////////////////////////
