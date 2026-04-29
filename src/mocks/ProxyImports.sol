@@ -9,5 +9,4 @@ import {ProxyAdmin} from "lib/openzeppelin/contracts/proxy/transparent/ProxyAdmi
 // Dummy contract to force Hardhat to generate types for OpenZeppelin proxy contracts
 contract ProxyImports {
     // Empty contract - exists only to ensure proxy contract ABIs are included in compilation
-
-    }
+}
