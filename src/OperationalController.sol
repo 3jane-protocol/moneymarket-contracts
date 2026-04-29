@@ -16,6 +16,10 @@ import {EventsLib} from "./libraries/EventsLib.sol";
 /// @notice Role-gated proxy for CreditLine and ProtocolConfig that provides tiered access:
 /// OPERATOR_ROLE for routine credit operations, EMERGENCY_AUTHORIZED_ROLE for protocol safety actions.
 /// @dev Deployed as both the CreditLine `ozd` and the ProtocolConfig `emergencyAdmin`.
+/// @dev OPERATOR_ROLE is a trusted operational role. It can grant, resize, or revoke credit lines within
+/// CreditLine validation; post repayment cycles and borrower obligations used by penalty accounting; and call
+/// settle(), including the insurance-fund cover path. This controller does not add per-call caps or rate limits;
+/// operator constraints come from multisig policy, CreditLine validation, and ProtocolConfig limits.
 /// @dev OWNER_ROLE intentionally keeps DEFAULT_ADMIN_ROLE as its admin, and no account is granted
 /// DEFAULT_ADMIN_ROLE. This preserves a single-owner invariant by making transferOwnership() the only owner
 /// transition path.
@@ -95,9 +99,9 @@ contract OperationalController is AccessControlEnumerable {
 
         ids[0] = id;
         borrowers[0] = borrower;
-        vv[0] = 1;
-        credit[0] = 0;
-        drp[0] = currentDrp;
+        vv[0] = 1; // Set minimal vv to avoid division by zero in LTV check.
+        credit[0] = 0; // Revoke credit.
+        drp[0] = currentDrp; // Preserve existing DRP rate.
 
         creditLine.setCreditLines(ids, borrowers, vv, credit, drp);
         emit CreditLineRevoked(borrower, msg.sender);

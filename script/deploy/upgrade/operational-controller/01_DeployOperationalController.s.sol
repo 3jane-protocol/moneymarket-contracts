@@ -85,7 +85,7 @@ contract DeployOperationalController is Script {
     }
 
     function _logAddresses(string memory label, address[] memory addrs) internal pure {
-        console2.log("%s:", label, addrs.length);
+        console2.log("%s (count=%d):", label, addrs.length);
         for (uint256 i = 0; i < addrs.length; i++) {
             console2.log("  [%d]:", i, addrs[i]);
         }
