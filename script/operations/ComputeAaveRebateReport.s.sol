@@ -5,16 +5,16 @@ import {Script, console2} from "forge-std/Script.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {IERC4626} from "forge-std/interfaces/IERC4626.sol";
 
-import {IMorpho, Id, Market, Position} from "../../src/interfaces/IMorpho.sol";
+import {IMorpho, IMorphoCredit, Id, Position} from "../../src/interfaces/IMorpho.sol";
 import {IAaveMarket} from "../../src/irm/adaptive-curve-irm/interfaces/IAaveMarket.sol";
 import {AaveRebateEventsLib} from "../../src/libraries/AaveRebateEventsLib.sol";
 import {AaveRebateMathLib} from "../../src/libraries/AaveRebateMathLib.sol";
-import {SharesMathLib} from "../../src/libraries/SharesMathLib.sol";
+import {MorphoCreditBalancesLib} from "../../src/libraries/periphery/MorphoCreditBalancesLib.sol";
 
 /// @title ComputeAaveRebateReport
 /// @notice Computes report-only USDC rebates for Aave borrow-index growth above 5% APR.
 contract ComputeAaveRebateReport is Script {
-    using SharesMathLib for uint256;
+    using MorphoCreditBalancesLib for IMorphoCredit;
 
     address private constant MORPHO_CREDIT = 0xDe6e08ac208088cc62812Ba30608D852c6B0EcBc;
     address private constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
@@ -203,13 +203,11 @@ contract ComputeAaveRebateReport is Script {
     {
         if (toBlock <= fromBlock) return (0, 0, 0, 0, false);
 
-        vm.rollFork(fromBlock);
-        uint256 fromTimestamp = vm.getBlockTimestamp();
+        uint256 fromTimestamp = _rollForkAndWarp(fromBlock);
         startDebtUsdc = _borrowerDebtUsdc(borrower);
         uint256 startIndex = IAaveMarket(AAVE_POOL).getReserveNormalizedVariableDebt(USDC);
 
-        vm.rollFork(toBlock);
-        uint256 toTimestamp = vm.getBlockTimestamp();
+        uint256 toTimestamp = _rollForkAndWarp(toBlock);
         endDebtUsdc = _borrowerDebtUsdc(borrower);
         uint256 endIndex = IAaveMarket(AAVE_POOL).getReserveNormalizedVariableDebt(USDC);
 
@@ -223,7 +221,7 @@ contract ComputeAaveRebateReport is Script {
     }
 
     function _borrowerDebtUsdcAt(uint256 blockNumber, address borrower) internal returns (uint256) {
-        vm.rollFork(blockNumber);
+        _rollForkAndWarp(blockNumber);
         return _borrowerDebtUsdc(borrower);
     }
 
@@ -232,9 +230,7 @@ contract ComputeAaveRebateReport is Script {
         Position memory position = morpho.position(MARKET_ID, borrower);
         if (position.borrowShares == 0) return 0;
 
-        Market memory market = morpho.market(MARKET_ID);
-        uint256 debtWaUsdc =
-            uint256(position.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
+        uint256 debtWaUsdc = IMorphoCredit(MORPHO_CREDIT).expectedBorrowAssetsWithPremium(MARKET_ID, borrower);
 
         return IERC4626(WAUSDC).convertToAssets(debtWaUsdc);
     }
@@ -344,8 +340,7 @@ contract ComputeAaveRebateReport is Script {
     }
 
     function _findBlockForTimestamp(uint256 targetTimestamp, uint256 highBlock) internal returns (uint256 targetBlock) {
-        vm.rollFork(highBlock);
-        require(vm.getBlockTimestamp() >= targetTimestamp, "fork before target");
+        require(_rollForkAndWarp(highBlock) >= targetTimestamp, "fork before target");
 
         uint256 low = 1;
         uint256 high = highBlock;
@@ -353,9 +348,8 @@ contract ComputeAaveRebateReport is Script {
 
         while (low <= high) {
             uint256 mid = (low + high) / 2;
-            vm.rollFork(mid);
 
-            if (vm.getBlockTimestamp() >= targetTimestamp) {
+            if (_rollForkAndWarp(mid) >= targetTimestamp) {
                 targetBlock = mid;
                 if (mid == 0) break;
                 high = mid - 1;
@@ -364,7 +358,13 @@ contract ComputeAaveRebateReport is Script {
             }
         }
 
-        vm.rollFork(targetBlock);
+        _rollForkAndWarp(targetBlock);
+    }
+
+    function _rollForkAndWarp(uint256 blockNumber) internal returns (uint256 timestamp) {
+        vm.rollFork(blockNumber);
+        timestamp = vm.getBlockTimestamp();
+        vm.warp(timestamp);
     }
 
     function _writeReport(
@@ -392,7 +392,13 @@ contract ComputeAaveRebateReport is Script {
         json =
             string.concat(json, '    "rateMethod": "Aave normalized variable debt index growth vs 5% APR baseline",\n');
         json = string.concat(json, '    "baselineCompoundingMethod": "repo_wTaylorCompounded",\n');
-        json = string.concat(json, '    "debtExposureMethod": "arithmetic_mean_start_end",\n');
+        json = string.concat(
+            json, '    "debtExposureMethod": "arithmetic_mean_start_end_expected_debt_with_pending_premium",\n'
+        );
+        json = string.concat(
+            json, '    "pendingPremiumMethod": "MorphoCreditBalancesLib.expectedBorrowAssetsWithPremium",\n'
+        );
+        json = string.concat(json, '    "penaltyTreatment": "excluded; no penalties in report period",\n');
         json = string.concat(json, '    "configuredStartReason": "rsETH rate spike boundary selected by operators",\n');
         json = string.concat(json, '    "aaveFreezeTimestamp": ', vm.toString(AAVE_FREEZE_TIMESTAMP), ",\n");
         json = string.concat(
