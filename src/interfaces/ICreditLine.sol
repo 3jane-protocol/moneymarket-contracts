@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0;
 
-import {Id} from "./IMorpho.sol";
+import {Id, MarketParams} from "./IMorpho.sol";
 
 /// @title ICreditLine
 /// @author Morpho Labs
@@ -48,4 +48,26 @@ interface ICreditLine {
     /// @notice Sets the insurance fund address
     /// @param newInsuranceFund The new insurance fund address
     function setInsuranceFund(address newInsuranceFund) external;
+
+    /// @notice Close a payment cycle and create repayment obligations.
+    function closeCycleAndPostObligations(
+        Id id,
+        uint256 endDate,
+        address[] calldata borrowers,
+        uint256[] calldata repaymentBps,
+        uint256[] calldata endingBalances
+    ) external;
+
+    /// @notice Add obligations to the most recently closed cycle.
+    function addObligationsToLatestCycle(
+        Id id,
+        address[] calldata borrowers,
+        uint256[] calldata repaymentBps,
+        uint256[] calldata endingBalances
+    ) external;
+
+    /// @notice Settle a borrower position.
+    function settle(MarketParams memory marketParams, address borrower, uint256 assets, uint256 cover)
+        external
+        returns (uint256 writtenOffAssets, uint256 writtenOffShares);
 }
