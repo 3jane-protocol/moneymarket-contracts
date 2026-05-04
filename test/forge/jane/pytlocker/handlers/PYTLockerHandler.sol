@@ -9,6 +9,8 @@ import {MockAsset, MockSY, MockYT} from "../mocks/MockPendle.sol";
 import {IERC20} from "../../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
+    uint256 internal constant ACC_PRECISION = 1e18;
+
     PYTLocker public locker;
     MockYT public yt;
     MockSY public sy;
@@ -19,6 +21,7 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
     uint256 public ghost_totalYieldHarvested;
     uint256 public ghost_totalClaimed;
     uint256 public ghost_lastAccYieldPerToken;
+    uint256 public ghost_yieldRemainder;
 
     // Track per-user state for proportional distribution checks
     mapping(address => uint256) public ghost_userDeposits;
@@ -67,14 +70,20 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
         // Mint YT to actor and approve
         yt.mint(actor, amount);
 
+        uint256 beforeBal = asset.balanceOf(actor);
+
         vm.startPrank(actor);
         yt.approve(address(locker), amount);
         locker.deposit(address(yt), amount);
         vm.stopPrank();
 
+        uint256 claimed = asset.balanceOf(actor) - beforeBal;
+
         // Update ghost state
         ghost_totalDeposited += amount;
         ghost_userDeposits[actor] += amount;
+        ghost_totalClaimed += claimed;
+        ghost_userClaimed[actor] += claimed;
         ghost_userHasDeposited[actor] = true;
 
         // Track yield at time of first deposit (for no-dilution check)
@@ -94,6 +103,7 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
 
         // Store previous accYieldPerToken for monotonicity check
         ghost_lastAccYieldPerToken = locker.accYieldPerToken(address(yt));
+        uint256 supply = locker.totalSupply(address(yt));
 
         // Simulate yield accrual
         sy.mint(address(yt), yieldAmount);
@@ -101,6 +111,16 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
         yt.accrueInterest(address(locker), yieldAmount);
 
         locker.harvest(address(yt));
+
+        // Mirror of PYTLocker._harvest carry math. Kept independent on purpose so
+        // invariant_yieldRemainderMatchesGhostAccounting cross-checks it.
+        uint256 newRemainder = (yieldAmount * ACC_PRECISION) % supply;
+        uint256 remainderToIncrement = supply - ghost_yieldRemainder;
+        if (newRemainder >= remainderToIncrement) {
+            ghost_yieldRemainder = newRemainder - remainderToIncrement;
+        } else {
+            ghost_yieldRemainder += newRemainder;
+        }
 
         ghost_totalYieldHarvested += yieldAmount;
         harvestCalls++;

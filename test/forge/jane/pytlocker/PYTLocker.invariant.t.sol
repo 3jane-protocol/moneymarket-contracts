@@ -51,17 +51,13 @@ contract PYTLockerInvariantTest is Test {
         assertEq(totalSupply, sumOfBalances, "Supply conservation violated");
     }
 
-    /// @notice Sum of claimable + claimed must not exceed total yield harvested
+    /// @notice Harvested assets must either remain in the locker or have been claimed
     function invariant_yieldConservation() public view {
-        uint256 sumClaimable = handler.getSumOfClaimable();
         uint256 sumClaimed = handler.getTotalClaimedByUsers();
         uint256 totalYield = handler.ghost_totalYieldHarvested();
+        uint256 lockerAssetBalance = asset.balanceOf(address(locker));
 
-        assertLe(
-            sumClaimable + sumClaimed,
-            totalYield + 1, // +1 for rounding tolerance
-            "Yield conservation violated: distributed more than harvested"
-        );
+        assertEq(lockerAssetBalance + sumClaimed, totalYield, "Yield conservation violated");
     }
 
     /// @notice accYieldPerToken should only increase (never decrease)
@@ -91,12 +87,27 @@ contract PYTLockerInvariantTest is Test {
         assertEq(lockerYTBalance, totalSupply, "Locker YT balance != totalSupply");
     }
 
-    /// @notice Asset balance of locker should be >= sum of all claimable
-    function invariant_lockerSolvent() public view {
+    /// @notice Asset balance of locker should cover summed claimable, modulo bounded per-user rounding dust
+    function invariant_lockerSolventWithinRoundingDust() public view {
         uint256 lockerAssetBalance = asset.balanceOf(address(locker));
         uint256 sumClaimable = handler.getSumOfClaimable();
+        uint256 roundingDust = handler.getActorCount();
 
-        assertGe(lockerAssetBalance, sumClaimable, "Locker insolvent: can't pay all claims");
+        assertLe(sumClaimable, lockerAssetBalance + roundingDust, "Locker insolvent beyond rounding dust");
+    }
+
+    /// @notice Scaled harvest remainder must stay below the current market supply
+    function invariant_yieldRemainderBelowSupply() public view {
+        uint256 totalSupply = locker.totalSupply(address(yt));
+
+        if (totalSupply > 0) {
+            assertLt(locker.yieldRemainder(address(yt)), totalSupply, "Yield remainder >= totalSupply");
+        }
+    }
+
+    /// @notice Contract remainder must match the handler's independent carry model
+    function invariant_yieldRemainderMatchesGhostAccounting() public view {
+        assertEq(locker.yieldRemainder(address(yt)), handler.ghost_yieldRemainder(), "Yield remainder mismatch");
     }
 
     /// @notice Debug helper - called after each invariant run
@@ -108,5 +119,7 @@ contract PYTLockerInvariantTest is Test {
         console2.log("Total Yield:", handler.ghost_totalYieldHarvested());
         console2.log("Total Claimed:", handler.ghost_totalClaimed());
         console2.log("accYieldPerToken:", locker.accYieldPerToken(address(yt)));
+        console2.log("yieldRemainder:", locker.yieldRemainder(address(yt)));
+        console2.log("ghost_yieldRemainder:", handler.ghost_yieldRemainder());
     }
 }

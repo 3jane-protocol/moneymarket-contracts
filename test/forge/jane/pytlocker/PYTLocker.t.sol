@@ -187,6 +187,142 @@ contract PYTLockerTest is Test {
         assertEq(locker.claimable(address(yt), alice), yieldAmount);
     }
 
+    function test_harvest_carriesRoundingRemainderAcrossHarvests() public {
+        uint256 depositAmount = 1_000_000e18;
+        uint256 smallYield = 500_000;
+
+        yt.mint(alice, depositAmount);
+
+        vm.prank(alice);
+        locker.deposit(address(yt), depositAmount);
+
+        _accrueYield(smallYield);
+        locker.harvest(address(yt));
+
+        assertEq(locker.accYieldPerToken(address(yt)), 0);
+        assertEq(locker.claimable(address(yt), alice), 0);
+
+        _accrueYield(smallYield);
+        locker.harvest(address(yt));
+
+        assertEq(locker.accYieldPerToken(address(yt)), 1);
+        assertEq(locker.claimable(address(yt), alice), smallYield * 2);
+
+        vm.prank(alice);
+        locker.claim(address(yt));
+
+        assertEq(asset.balanceOf(alice), smallYield * 2);
+        assertEq(asset.balanceOf(address(locker)), 0);
+    }
+
+    function test_harvest_manySubThresholdHarvestsCumulateToIncrement() public {
+        uint256 depositAmount = 1_000_000e18;
+        uint256 smallYield = 250_000;
+
+        yt.mint(alice, depositAmount);
+
+        vm.prank(alice);
+        locker.deposit(address(yt), depositAmount);
+
+        for (uint256 i = 0; i < 4; i++) {
+            _accrueYield(smallYield);
+            locker.harvest(address(yt));
+
+            assertLt(locker.yieldRemainder(address(yt)), locker.totalSupply(address(yt)));
+            if (i < 3) {
+                assertEq(locker.accYieldPerToken(address(yt)), 0);
+            }
+        }
+
+        assertEq(locker.accYieldPerToken(address(yt)), 1);
+        assertEq(locker.yieldRemainder(address(yt)), 0);
+        assertEq(locker.claimable(address(yt), alice), smallYield * 4);
+    }
+
+    function test_harvest_remainderNeverExceedsSupply() public {
+        uint256 depositAmount = 1_000_000e18;
+        uint256 smallYield = 333_333;
+
+        yt.mint(alice, depositAmount);
+
+        vm.prank(alice);
+        locker.deposit(address(yt), depositAmount);
+
+        for (uint256 i = 0; i < 20; i++) {
+            _accrueYield(smallYield);
+            locker.harvest(address(yt));
+
+            assertLt(locker.yieldRemainder(address(yt)), locker.totalSupply(address(yt)));
+        }
+    }
+
+    function test_harvest_carriesRemainderAcrossDepositBoundary() public {
+        uint256 aliceDeposit = 1_000_000e18;
+        uint256 bobDeposit = 1_000_000e18;
+        uint256 firstYield = 500_000;
+        uint256 secondYield = 1_500_000;
+
+        yt.mint(alice, aliceDeposit);
+        yt.mint(bob, bobDeposit);
+
+        vm.prank(alice);
+        locker.deposit(address(yt), aliceDeposit);
+
+        _accrueYield(firstYield);
+        locker.harvest(address(yt));
+
+        uint256 firstRemainder = locker.yieldRemainder(address(yt));
+        assertEq(locker.accYieldPerToken(address(yt)), 0);
+        assertEq(firstRemainder, firstYield * 1e18);
+
+        vm.prank(bob);
+        locker.deposit(address(yt), bobDeposit);
+
+        assertEq(locker.accYieldPerToken(address(yt)), 0);
+        assertEq(locker.yieldRemainder(address(yt)), firstRemainder);
+
+        _accrueYield(secondYield);
+        locker.harvest(address(yt));
+
+        // Market-level carry intentionally shares sub-precision dust across the updated supply.
+        assertEq(locker.accYieldPerToken(address(yt)), 1);
+        assertEq(locker.yieldRemainder(address(yt)), 0);
+        assertEq(locker.claimable(address(yt), alice), 1_000_000);
+        assertEq(locker.claimable(address(yt), bob), 1_000_000);
+
+        vm.prank(alice);
+        locker.claim(address(yt));
+        vm.prank(bob);
+        locker.claim(address(yt));
+
+        assertEq(asset.balanceOf(alice), 1_000_000);
+        assertEq(asset.balanceOf(bob), 1_000_000);
+        assertEq(asset.balanceOf(address(locker)), 0);
+    }
+
+    function test_harvest_zeroGainDoesNotFlushRemainder() public {
+        uint256 depositAmount = 1_000_000e18;
+        uint256 smallYield = 500_000;
+
+        yt.mint(alice, depositAmount);
+
+        vm.prank(alice);
+        locker.deposit(address(yt), depositAmount);
+
+        _accrueYield(smallYield);
+        locker.harvest(address(yt));
+
+        uint256 remainder = locker.yieldRemainder(address(yt));
+        assertEq(locker.accYieldPerToken(address(yt)), 0);
+        assertGt(remainder, 0);
+
+        locker.harvest(address(yt));
+
+        assertEq(locker.accYieldPerToken(address(yt)), 0);
+        assertEq(locker.yieldRemainder(address(yt)), remainder);
+        assertEq(asset.balanceOf(address(locker)), smallYield);
+    }
+
     function test_harvest_noYieldIfNoDepositors() public {
         locker.harvest(address(yt));
         assertEq(locker.accYieldPerToken(address(yt)), 0);

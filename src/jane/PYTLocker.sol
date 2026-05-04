@@ -3,6 +3,7 @@ pragma solidity ^0.8.22;
 
 import {Ownable} from "../../lib/openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {SafeERC20} from "../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "../../lib/openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
@@ -74,6 +75,11 @@ contract PYTLocker is Ownable, ReentrancyGuard {
 
     /// @notice YT => accumulated asset per locked YT
     mapping(address => uint256) public accYieldPerToken;
+
+    /// @notice YT => carried numerator remainder from prior harvest divisions
+    /// @dev Units are scaled numerator (asset wei * ACC_PRECISION). After harvest this is always < totalSupply[YT].
+    /// @dev Market-level carry may share sub-precision yield across deposit boundaries; YT supply never decreases.
+    mapping(address => uint256) public yieldRemainder;
 
     /// @notice YT => user => reward debt
     mapping(address => mapping(address => uint256)) public rewardDebt;
@@ -158,7 +164,21 @@ contract PYTLocker is Ownable, ReentrancyGuard {
 
         if (gained == 0) return;
 
-        accYieldPerToken[yt] += (gained * ACC_PRECISION) / supply;
+        uint256 increment = Math.mulDiv(gained, ACC_PRECISION, supply);
+        uint256 newRemainder = mulmod(gained, ACC_PRECISION, supply);
+        uint256 remainder = yieldRemainder[yt];
+
+        // At most one carry: prior remainder < old supply <= current supply (no withdraws),
+        // and newRemainder < current supply, so the sum is < 2 * current supply.
+        uint256 spaceBeforeCarry = supply - remainder;
+        if (newRemainder >= spaceBeforeCarry) {
+            increment += 1;
+            yieldRemainder[yt] = newRemainder - spaceBeforeCarry;
+        } else {
+            yieldRemainder[yt] = remainder + newRemainder;
+        }
+
+        accYieldPerToken[yt] += increment;
 
         emit Harvest(yt, gained);
     }
@@ -171,7 +191,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
         uint256 bal = balanceOf[yt][user];
         if (bal == 0) return;
 
-        uint256 accrued = (bal * accYieldPerToken[yt]) / ACC_PRECISION;
+        uint256 accrued = Math.mulDiv(bal, accYieldPerToken[yt], ACC_PRECISION);
 
         uint256 pending = accrued - rewardDebt[yt][user];
         if (pending == 0) return;
@@ -216,7 +236,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
         balanceOf[yt][receiver] += amount;
         totalSupply[yt] += amount;
 
-        rewardDebt[yt][receiver] = (balanceOf[yt][receiver] * accYieldPerToken[yt]) / ACC_PRECISION;
+        rewardDebt[yt][receiver] = Math.mulDiv(balanceOf[yt][receiver], accYieldPerToken[yt], ACC_PRECISION);
 
         emit Deposit(receiver, yt, amount);
     }
@@ -251,7 +271,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
         uint256 bal = balanceOf[yt][user];
         if (bal == 0) return 0;
 
-        uint256 accrued = (bal * accYieldPerToken[yt]) / ACC_PRECISION;
+        uint256 accrued = Math.mulDiv(bal, accYieldPerToken[yt], ACC_PRECISION);
         pending = accrued - rewardDebt[yt][user];
     }
 
