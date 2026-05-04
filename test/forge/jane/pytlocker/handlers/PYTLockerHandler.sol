@@ -15,6 +15,7 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
     MockYT public yt;
     MockSY public sy;
     MockAsset public asset;
+    address public owner;
 
     // Ghost variables for invariant checking
     uint256 public ghost_totalDeposited;
@@ -37,12 +38,14 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
     uint256 public depositCalls;
     uint256 public harvestCalls;
     uint256 public claimCalls;
+    uint256 public setCapCalls;
 
-    constructor(PYTLocker _locker, MockYT _yt, MockSY _sy, MockAsset _asset) {
+    constructor(PYTLocker _locker, MockYT _yt, MockSY _sy, MockAsset _asset, address _owner) {
         locker = _locker;
         yt = _yt;
         sy = _sy;
         asset = _asset;
+        owner = _owner;
 
         // Initialize actor pool
         actors.push(address(0x1001));
@@ -62,7 +65,10 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
 
     function deposit(uint256 actorSeed, uint256 amount) external {
         address actor = _getActor(actorSeed);
-        amount = bound(amount, 1e18, 100e18);
+        uint256 capacity = locker.maxDeposit(address(yt));
+        if (capacity < 1e18) return;
+        uint256 maxAmount = capacity < 100e18 ? capacity : 100e18;
+        amount = bound(amount, 1e18, maxAmount);
 
         // Track if this is user's first deposit
         bool isFirstDeposit = !ghost_userHasDeposited[actor];
@@ -92,6 +98,27 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
         }
 
         depositCalls++;
+    }
+
+    function setMarketMaxSupply(uint256 seed) external {
+        uint256 supply = locker.totalSupply(address(yt));
+        uint256 mode = seed % 4;
+        uint256 cap;
+
+        if (mode == 0) {
+            cap = 0;
+        } else if (mode == 1) {
+            cap = supply;
+        } else if (mode == 2) {
+            cap = supply + bound(seed, 1e18, 100e18);
+        } else {
+            cap = supply == 0 ? 0 : supply - 1;
+        }
+
+        vm.prank(owner);
+        locker.setMarketMaxSupply(address(yt), cap);
+
+        setCapCalls++;
     }
 
     function harvest(uint256 yieldAmount) external {

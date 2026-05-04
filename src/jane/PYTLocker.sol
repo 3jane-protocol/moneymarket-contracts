@@ -60,6 +60,9 @@ contract PYTLocker is Ownable, ReentrancyGuard {
     /// @notice YT => market config
     mapping(address => Market) public markets;
 
+    /// @notice YT => max locked supply (deposit-time cap; default type(uint256).max)
+    mapping(address => uint256) public marketMaxSupply;
+
     /// @notice Tokens that cannot be swept (SY and asset tokens from all markets)
     mapping(address => bool) internal _protectedToken;
 
@@ -89,6 +92,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     event MarketAdded(address indexed yt, address indexed sy, address indexed asset);
+    event MarketMaxSupplyUpdated(address indexed yt, uint256 oldMaxSupply, uint256 newMaxSupply);
     event Deposit(address indexed user, address indexed yt, uint256 amount);
     event Harvest(address indexed yt, uint256 assetAmount);
     event Claim(address indexed user, address indexed yt, uint256 amount);
@@ -103,6 +107,7 @@ contract PYTLocker is Ownable, ReentrancyGuard {
     error ZeroAddress();
     error YTExpired();
     error CannotSweepMarketToken();
+    error MarketMaxSupplyExceeded();
 
     constructor(address owner_) Ownable(owner_) {}
 
@@ -117,9 +122,22 @@ contract PYTLocker is Ownable, ReentrancyGuard {
         address sy = IPendleYT(yt).SY();
         address asset = IPendleSY(sy).yieldToken();
         markets[yt] = Market({sy: sy, asset: asset, enabled: true});
+        marketMaxSupply[yt] = type(uint256).max;
         _protectedToken[sy] = true;
         _protectedToken[asset] = true;
         emit MarketAdded(yt, sy, asset);
+    }
+
+    /// @notice Set the max locked supply cap for a market
+    /// @dev Cap is a deposit-time guard only; existing locked balances are unaffected.
+    ///      Setting below current totalSupply blocks future deposits until the cap is raised.
+    /// @param yt The YT token address
+    /// @param maxSupply The new cap (use type(uint256).max for unlimited)
+    function setMarketMaxSupply(address yt, uint256 maxSupply) external onlyOwner {
+        if (!markets[yt].enabled) revert UnsupportedYT();
+        uint256 oldMaxSupply = marketMaxSupply[yt];
+        marketMaxSupply[yt] = maxSupply;
+        emit MarketMaxSupplyUpdated(yt, oldMaxSupply, maxSupply);
     }
 
     /// @notice Sweep accumulated tokens (e.g., reward tokens) for external distribution
@@ -225,6 +243,10 @@ contract PYTLocker is Ownable, ReentrancyGuard {
         if (!markets[yt].enabled) revert UnsupportedYT();
         if (IPendleYT(yt).isExpired()) revert YTExpired();
 
+        uint256 supply = totalSupply[yt];
+        uint256 cap = marketMaxSupply[yt];
+        if (supply >= cap || amount > cap - supply) revert MarketMaxSupplyExceeded();
+
         // Harvest FIRST so new depositor never gets old yield
         _harvest(yt);
 
@@ -280,5 +302,16 @@ contract PYTLocker is Ownable, ReentrancyGuard {
     /// @return True if the market is enabled
     function isSupported(address yt) external view returns (bool) {
         return markets[yt].enabled;
+    }
+
+    /// @notice Maximum amount that can currently be deposited into a market
+    /// @param yt The YT token address
+    /// @return Remaining capacity, or 0 if the market is unsupported, expired, or at/over the cap
+    function maxDeposit(address yt) external view returns (uint256) {
+        if (!markets[yt].enabled) return 0;
+        if (IPendleYT(yt).isExpired()) return 0;
+        uint256 supply = totalSupply[yt];
+        uint256 cap = marketMaxSupply[yt];
+        return supply >= cap ? 0 : cap - supply;
     }
 }

@@ -5,6 +5,7 @@ import {Test, console2} from "forge-std/Test.sol";
 import {PYTLocker} from "../../../../src/jane/PYTLocker.sol";
 import {MockAsset, MockSY, MockYT} from "./mocks/MockPendle.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Ownable} from "../../../../lib/openzeppelin/contracts/access/Ownable.sol";
 
 contract PYTLockerTest is Test {
     PYTLocker public locker;
@@ -19,6 +20,8 @@ contract PYTLockerTest is Test {
 
     uint256 public constant INITIAL_YT_BALANCE = 1000e18;
     uint256 public constant YT_EXPIRY = 365 days;
+
+    event MarketMaxSupplyUpdated(address indexed yt, uint256 oldMaxSupply, uint256 newMaxSupply);
 
     function setUp() public {
         asset = new MockAsset();
@@ -49,6 +52,11 @@ contract PYTLockerTest is Test {
         yt.accrueInterest(address(locker), amount);
     }
 
+    function _setMarketMaxSupply(uint256 maxSupply) internal {
+        vm.prank(owner);
+        locker.setMarketMaxSupply(address(yt), maxSupply);
+    }
+
     // ============ Admin Tests ============
 
     function test_addMarket() public {
@@ -65,6 +73,11 @@ contract PYTLockerTest is Test {
         assertTrue(enabled);
     }
 
+    function test_addMarket_initializesUnlimitedCap() public view {
+        assertEq(locker.marketMaxSupply(address(yt)), type(uint256).max);
+        assertEq(locker.maxDeposit(address(yt)), type(uint256).max);
+    }
+
     function test_addMarket_revertIfNotOwner() public {
         MockYT yt2 = new MockYT(address(sy), block.timestamp + YT_EXPIRY);
 
@@ -77,6 +90,72 @@ contract PYTLockerTest is Test {
         vm.prank(owner);
         vm.expectRevert(PYTLocker.MarketExists.selector);
         locker.addMarket(address(yt));
+    }
+
+    function test_setMarketMaxSupply_owner_emitsUpdate() public {
+        uint256 newCap = 500e18;
+
+        vm.prank(owner);
+        vm.expectEmit(true, false, false, true, address(locker));
+        emit MarketMaxSupplyUpdated(address(yt), type(uint256).max, newCap);
+        locker.setMarketMaxSupply(address(yt), newCap);
+
+        assertEq(locker.marketMaxSupply(address(yt)), newCap);
+    }
+
+    function test_setMarketMaxSupply_revertsForNonOwner() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        locker.setMarketMaxSupply(address(yt), 500e18);
+    }
+
+    function test_setMarketMaxSupply_revertsForUnsupported() public {
+        MockYT yt2 = new MockYT(address(sy), block.timestamp + YT_EXPIRY);
+
+        vm.prank(owner);
+        vm.expectRevert(PYTLocker.UnsupportedYT.selector);
+        locker.setMarketMaxSupply(address(yt2), 500e18);
+    }
+
+    function test_maxDeposit_unsupported() public {
+        MockYT yt2 = new MockYT(address(sy), block.timestamp + YT_EXPIRY);
+
+        assertEq(locker.maxDeposit(address(yt2)), 0);
+    }
+
+    function test_maxDeposit_expired() public {
+        vm.warp(block.timestamp + YT_EXPIRY + 1);
+
+        assertEq(locker.maxDeposit(address(yt)), 0);
+    }
+
+    function test_maxDeposit_returnsRemainingCapacity() public {
+        uint256 cap = 250e18;
+        _setMarketMaxSupply(cap);
+
+        vm.prank(alice);
+        locker.deposit(address(yt), 100e18);
+
+        assertEq(locker.maxDeposit(address(yt)), cap - 100e18);
+    }
+
+    function test_maxDeposit_returnsZeroWhenAtCap() public {
+        uint256 cap = 100e18;
+        _setMarketMaxSupply(cap);
+
+        vm.prank(alice);
+        locker.deposit(address(yt), cap);
+
+        assertEq(locker.maxDeposit(address(yt)), 0);
+    }
+
+    function test_maxDeposit_returnsZeroWhenOverCap() public {
+        vm.prank(alice);
+        locker.deposit(address(yt), 100e18);
+
+        _setMarketMaxSupply(50e18);
+
+        assertEq(locker.maxDeposit(address(yt)), 0);
     }
 
     // ============ Deposit Tests ============
@@ -170,6 +249,114 @@ contract PYTLockerTest is Test {
         assertEq(locker.balanceOf(address(yt), alice), 100e18);
         assertEq(locker.balanceOf(address(yt), bob), 200e18);
         assertEq(locker.totalSupply(address(yt)), 300e18);
+    }
+
+    function test_deposit_succeedsAtExactCap() public {
+        uint256 cap = 150e18;
+        _setMarketMaxSupply(cap);
+
+        vm.prank(alice);
+        locker.deposit(address(yt), 100e18);
+
+        vm.prank(bob);
+        locker.deposit(address(yt), 50e18);
+
+        assertEq(locker.totalSupply(address(yt)), cap);
+        assertEq(locker.maxDeposit(address(yt)), 0);
+    }
+
+    function test_deposit_revertsWhenExceedingCap() public {
+        uint256 cap = 150e18;
+        _setMarketMaxSupply(cap);
+
+        vm.prank(alice);
+        locker.deposit(address(yt), 100e18);
+
+        vm.prank(bob);
+        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
+        locker.deposit(address(yt), 50e18 + 1);
+    }
+
+    function test_deposit_atCapThenAnyMoreReverts() public {
+        uint256 cap = 100e18;
+        _setMarketMaxSupply(cap);
+
+        vm.prank(alice);
+        locker.deposit(address(yt), cap);
+
+        vm.prank(bob);
+        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
+        locker.deposit(address(yt), 1);
+    }
+
+    function test_deposit_revertsWhenCapBelowSupply() public {
+        vm.prank(alice);
+        locker.deposit(address(yt), 100e18);
+
+        _setMarketMaxSupply(50e18);
+
+        vm.prank(bob);
+        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
+        locker.deposit(address(yt), 1);
+    }
+
+    function test_deposit_succeedsAfterCapRaisedFromZero() public {
+        vm.prank(alice);
+        locker.deposit(address(yt), 100e18);
+
+        _setMarketMaxSupply(0);
+
+        assertEq(locker.maxDeposit(address(yt)), 0);
+
+        vm.prank(bob);
+        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
+        locker.deposit(address(yt), 1);
+
+        _setMarketMaxSupply(150e18);
+
+        assertEq(locker.maxDeposit(address(yt)), 50e18);
+
+        vm.prank(bob);
+        locker.deposit(address(yt), 50e18);
+
+        assertEq(locker.totalSupply(address(yt)), 150e18);
+        assertEq(locker.maxDeposit(address(yt)), 0);
+    }
+
+    function test_deposit_receiverForm_honorsCap() public {
+        uint256 cap = 125e18;
+        _setMarketMaxSupply(cap);
+
+        vm.prank(bob);
+        locker.deposit(address(yt), 100e18, alice);
+
+        vm.prank(charlie);
+        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
+        locker.deposit(address(yt), 25e18 + 1, alice);
+
+        vm.prank(charlie);
+        locker.deposit(address(yt), 25e18, alice);
+
+        assertEq(locker.balanceOf(address(yt), alice), cap);
+        assertEq(locker.totalSupply(address(yt)), cap);
+    }
+
+    function test_deposit_capRevertSkipsHarvest() public {
+        uint256 cap = 100e18;
+        _setMarketMaxSupply(cap);
+
+        vm.prank(alice);
+        locker.deposit(address(yt), cap);
+
+        _accrueYield(10e18);
+
+        vm.prank(bob);
+        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
+        locker.deposit(address(yt), 1);
+
+        assertEq(locker.accYieldPerToken(address(yt)), 0);
+        assertEq(locker.claimable(address(yt), alice), 0);
+        assertEq(asset.balanceOf(address(locker)), 0);
     }
 
     // ============ Harvest Tests ============
@@ -556,6 +743,42 @@ contract PYTLockerTest is Test {
 
         assertEq(locker.claimable(address(yt), alice), yield1);
         assertEq(locker.claimable(address(yt2), alice), yield2);
+    }
+
+    function test_multipleMarkets_independentCaps() public {
+        MockAsset asset2 = new MockAsset();
+        MockSY sy2 = new MockSY(address(asset2));
+        MockYT yt2 = new MockYT(address(sy2), block.timestamp + YT_EXPIRY);
+
+        vm.prank(owner);
+        locker.addMarket(address(yt2));
+
+        yt2.mint(alice, 500e18);
+        vm.prank(alice);
+        yt2.approve(address(locker), type(uint256).max);
+
+        vm.startPrank(owner);
+        locker.setMarketMaxSupply(address(yt), 100e18);
+        locker.setMarketMaxSupply(address(yt2), 200e18);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        locker.deposit(address(yt), 100e18);
+
+        vm.prank(alice);
+        locker.deposit(address(yt2), 150e18);
+
+        vm.prank(bob);
+        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
+        locker.deposit(address(yt), 1);
+
+        vm.prank(alice);
+        locker.deposit(address(yt2), 50e18);
+
+        assertEq(locker.totalSupply(address(yt)), 100e18);
+        assertEq(locker.maxDeposit(address(yt)), 0);
+        assertEq(locker.totalSupply(address(yt2)), 200e18);
+        assertEq(locker.maxDeposit(address(yt2)), 0);
     }
 
     // ============ Sweep Tests ============

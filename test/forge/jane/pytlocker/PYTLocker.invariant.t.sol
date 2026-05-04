@@ -30,16 +30,17 @@ contract PYTLockerInvariantTest is Test {
         locker.addMarket(address(yt));
 
         // Deploy handler
-        handler = new PYTLockerHandler(locker, yt, sy, asset);
+        handler = new PYTLockerHandler(locker, yt, sy, asset, owner);
 
         // Target only the handler for fuzzing
         targetContract(address(handler));
 
         // Only target the main actions
-        bytes4[] memory selectors = new bytes4[](3);
+        bytes4[] memory selectors = new bytes4[](4);
         selectors[0] = PYTLockerHandler.deposit.selector;
         selectors[1] = PYTLockerHandler.harvest.selector;
         selectors[2] = PYTLockerHandler.claim.selector;
+        selectors[3] = PYTLockerHandler.setMarketMaxSupply.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
 
@@ -110,14 +111,30 @@ contract PYTLockerInvariantTest is Test {
         assertEq(locker.yieldRemainder(address(yt)), handler.ghost_yieldRemainder(), "Yield remainder mismatch");
     }
 
+    /// @notice maxDeposit must reflect expiry, current supply, and the mutable market cap
+    function invariant_maxDepositMatchesCapState() public view {
+        uint256 expected;
+
+        if (!yt.isExpired()) {
+            uint256 supply = locker.totalSupply(address(yt));
+            uint256 cap = locker.marketMaxSupply(address(yt));
+            expected = supply >= cap ? 0 : cap - supply;
+        }
+
+        assertEq(locker.maxDeposit(address(yt)), expected, "maxDeposit mismatch");
+    }
+
     /// @notice Debug helper - called after each invariant run
     function invariant_callSummary() public view {
         console2.log("--- Call Summary ---");
         console2.log("Deposits:", handler.depositCalls());
         console2.log("Harvests:", handler.harvestCalls());
         console2.log("Claims:", handler.claimCalls());
+        console2.log("Set caps:", handler.setCapCalls());
         console2.log("Total Yield:", handler.ghost_totalYieldHarvested());
         console2.log("Total Claimed:", handler.ghost_totalClaimed());
+        console2.log("marketMaxSupply:", locker.marketMaxSupply(address(yt)));
+        console2.log("maxDeposit:", locker.maxDeposit(address(yt)));
         console2.log("accYieldPerToken:", locker.accYieldPerToken(address(yt)));
         console2.log("yieldRemainder:", locker.yieldRemainder(address(yt)));
         console2.log("ghost_yieldRemainder:", handler.ghost_yieldRemainder());
