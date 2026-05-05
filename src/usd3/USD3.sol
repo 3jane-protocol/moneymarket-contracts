@@ -13,6 +13,7 @@ import {Pausable} from "../../lib/openzeppelin/contracts/utils/Pausable.sol";
 import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
+import {UtilsLib} from "../libraries/UtilsLib.sol";
 
 /**
  * @title USD3
@@ -400,6 +401,7 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         uint256 availableLiquidity = idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
+        availableLiquidity = UtilsLib.zeroFloorSub(availableLiquidity, committedLiquidity());
 
         // During shutdown, bypass all checks
         if (TokenizedStrategy.isShutdown()) {
@@ -640,6 +642,15 @@ contract USD3 is BaseHooksUpgradeable {
     function supplyCap() public view returns (uint256) {
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
         return config.config(ProtocolConfigLib.USD3_SUPPLY_CAP);
+    }
+
+    /**
+     * @notice Get the liquidity reserved from USD3 withdrawals to back committed future loans
+     * @return Reserved amount in asset (USDC) units
+     */
+    function committedLiquidity() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        return config.config(ProtocolConfigLib.COMMITTED_LIQUIDITY);
     }
 
     /*//////////////////////////////////////////////////////////////
