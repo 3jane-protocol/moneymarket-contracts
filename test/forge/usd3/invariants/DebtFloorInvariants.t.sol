@@ -48,7 +48,7 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         setMaxOnCredit(8000);
         setMorphoDebtCap(20_000_000e6);
         protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 3000); // 30%
-        protocolConfig.setConfig(ProtocolConfigLib.NOMINAL_SUBORDINATION_FLOOR, 400_000e6);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 400_000e6);
 
         // Seed liquidity and debt.
         address alice = makeAddr("debt-floor-alice");
@@ -102,7 +102,7 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         uint256 debtUsdc = usd3Strategy.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
         uint256 backingRatio = susd3Strategy.minBackingRatio();
         uint256 ratioFloor = (debtUsdc * backingRatio) / 10_000;
-        uint256 nominalFloor = susd3Strategy.nominalSubordinationFloor();
+        uint256 nominalFloor = susd3Strategy.nominalBackingFloor();
         uint256 expectedFloor = ratioFloor > nominalFloor ? ratioFloor : nominalFloor;
 
         assertEq(susd3Strategy.getSubordinatedDebtFloorInUSDC(), expectedFloor, "debt floor formula mismatch");

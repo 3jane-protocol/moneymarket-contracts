@@ -176,9 +176,9 @@ contract DebtFloorComprehensiveTest is Setup {
         assertLt(withdrawLimit2, bobAssets, "Withdrawal should be limited after backing ratio change");
     }
 
-    function test_debtFloor_zeroBackingRatio_usesNominalSubordinationFloor() public {
+    function test_debtFloor_zeroBackingRatio_usesNominalBackingFloor() public {
         protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
-        protocolConfig.setConfig(ProtocolConfigLib.NOMINAL_SUBORDINATION_FLOOR, 100_000e6);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 100_000e6);
 
         vm.prank(alice);
         strategy.deposit(DEPOSIT_AMOUNT, alice);
@@ -186,20 +186,20 @@ contract DebtFloorComprehensiveTest is Setup {
         setMaxOnCredit(8000);
         createMarketDebt(borrower, 500_000e6);
 
-        assertEq(susd3Strategy.nominalSubordinationFloor(), 100_000e6, "nominal floor mismatch");
+        assertEq(susd3Strategy.nominalBackingFloor(), 100_000e6, "nominal floor mismatch");
         assertEq(susd3Strategy.getSubordinatedDebtFloorInUSDC(), 100_000e6, "should use nominal floor");
     }
 
-    function test_debtFloor_zeroDebt_usesNominalSubordinationFloor() public {
+    function test_debtFloor_zeroDebt_usesNominalBackingFloor() public {
         protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 5000);
-        protocolConfig.setConfig(ProtocolConfigLib.NOMINAL_SUBORDINATION_FLOOR, 75_000e6);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 75_000e6);
 
         assertEq(susd3Strategy.getSubordinatedDebtFloorInUSDC(), 75_000e6, "should use nominal floor without debt");
     }
 
     function test_debtFloor_nominalFloorDominatesRatioFloor() public {
         protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 1000); // 10%
-        protocolConfig.setConfig(ProtocolConfigLib.NOMINAL_SUBORDINATION_FLOOR, 50_000e6);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 50_000e6);
 
         vm.prank(alice);
         strategy.deposit(DEPOSIT_AMOUNT, alice);
@@ -212,7 +212,7 @@ contract DebtFloorComprehensiveTest is Setup {
 
     function test_debtFloor_ratioFloorDominatesNominalFloor() public {
         protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 5000); // 50%
-        protocolConfig.setConfig(ProtocolConfigLib.NOMINAL_SUBORDINATION_FLOOR, 10_000e6);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 10_000e6);
 
         vm.prank(alice);
         strategy.deposit(DEPOSIT_AMOUNT, alice);
@@ -449,7 +449,7 @@ contract DebtFloorComprehensiveTest is Setup {
 
     function test_debtFloor_nominalFloorLimitsWithdrawalsToExcessAboveFloor() public {
         protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
-        protocolConfig.setConfig(ProtocolConfigLib.NOMINAL_SUBORDINATION_FLOOR, 100_000e6);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 100_000e6);
 
         vm.prank(alice);
         strategy.deposit(DEPOSIT_AMOUNT, alice);
@@ -483,7 +483,7 @@ contract DebtFloorComprehensiveTest is Setup {
 
     function test_debtFloor_nominalFloorChangeDuringCooldown() public {
         protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
-        protocolConfig.setConfig(ProtocolConfigLib.NOMINAL_SUBORDINATION_FLOOR, 50_000e6);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 50_000e6);
 
         vm.prank(alice);
         strategy.deposit(DEPOSIT_AMOUNT, alice);
@@ -507,7 +507,7 @@ contract DebtFloorComprehensiveTest is Setup {
 
         uint256 withdrawLimitBefore = susd3Strategy.availableWithdrawLimit(bob);
 
-        protocolConfig.setConfig(ProtocolConfigLib.NOMINAL_SUBORDINATION_FLOOR, 150_000e6);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 150_000e6);
 
         uint256 withdrawLimitAfter = susd3Strategy.availableWithdrawLimit(bob);
         uint256 holdingsUSDC =
@@ -524,7 +524,7 @@ contract DebtFloorComprehensiveTest is Setup {
 
         uint256 depositLimitBefore = susd3Strategy.availableDepositLimit(alice);
 
-        protocolConfig.setConfig(ProtocolConfigLib.NOMINAL_SUBORDINATION_FLOOR, 1_000_000e6);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 1_000_000e6);
 
         uint256 depositLimitAfter = susd3Strategy.availableDepositLimit(alice);
 

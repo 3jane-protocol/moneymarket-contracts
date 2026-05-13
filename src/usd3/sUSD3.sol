@@ -421,12 +421,12 @@ contract sUSD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Get the nominal subordination floor from ProtocolConfig
-     * @return Nominal subordination floor, expressed in USDC
+     * @notice Get the nominal backing floor from ProtocolConfig
+     * @return Nominal backing floor, expressed in USDC
      */
-    function nominalSubordinationFloor() public view returns (uint256) {
+    function nominalBackingFloor() public view returns (uint256) {
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
-        return config.config(ProtocolConfigLib.NOMINAL_SUBORDINATION_FLOOR);
+        return config.config(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR);
     }
 
     /**
@@ -463,11 +463,11 @@ contract sUSD3 is BaseHooksUpgradeable {
 
     /**
      * @notice Calculate minimum sUSD3 backing required for current market debt
-     * @dev Returns the greater of the ratio-based floor and nominal subordination floor
+     * @dev Returns the greater of the ratio-based floor and nominal backing floor
      * @return Minimum backing amount required, expressed in USDC
      */
     function getSubordinatedDebtFloorInUSDC() public view returns (uint256) {
-        uint256 nominalFloor = nominalSubordinationFloor();
+        uint256 nominalFloor = nominalBackingFloor();
         uint256 backingRatio = minBackingRatio();
 
         uint256 ratioFloor;
