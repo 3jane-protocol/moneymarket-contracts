@@ -754,19 +754,19 @@ contract USD3 is BaseHooksUpgradeable {
      * @param assets Amount of USDC to draw
      */
     function drawCommittedLiquidity(uint256 assets) external {
-        require(assets > 0, "USD3/zero-draw");
+        require(assets > 0, "Invalid draw amount");
         address facility = committedLiquidityFacility();
-        require(facility != address(0) && msg.sender == facility, "USD3/not-facility");
-        require(!TokenizedStrategy.isShutdown(), "USD3/shutdown");
+        require(facility != address(0) && msg.sender == facility, "Unauthorized facility");
+        require(!TokenizedStrategy.isShutdown(), "Strategy shutdown");
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
-        require(config.getIsPaused() == 0, "USD3/paused");
-        require(assets <= availableCommittedLiquidity(), "USD3/exceeds-commitment");
+        require(config.getIsPaused() == 0, "Protocol paused");
+        require(assets <= availableCommittedLiquidity(), "Exceeds commitment");
 
         uint256 idleAssets = asset.balanceOf(address(this));
-        if (idleAssets < assets) {
+        if (assets > idleAssets) {
             _freeFunds(assets - idleAssets);
         }
-        require(asset.balanceOf(address(this)) >= assets, "USD3/insufficient-liquid");
+        require(asset.balanceOf(address(this)) >= assets, "Insufficient liquidity");
 
         committedLiquidityDrawn += assets;
         IERC20(asset).safeTransfer(facility, assets);
@@ -780,8 +780,8 @@ contract USD3 is BaseHooksUpgradeable {
     function repayCommittedLiquidity(uint256 assets) external {
         uint256 drawn = committedLiquidityDrawn;
         if (assets == type(uint256).max) assets = drawn;
-        require(assets > 0, "USD3/zero-repay");
-        require(assets <= drawn, "USD3/overpayment");
+        require(assets > 0, "Invalid repay amount");
+        require(assets <= drawn, "Repay exceeds drawn");
 
         committedLiquidityDrawn = drawn - assets;
         IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
@@ -794,7 +794,7 @@ contract USD3 is BaseHooksUpgradeable {
      */
     function writeDownCommittedLiquidity(uint256 assets) external onlyManagement {
         uint256 drawn = committedLiquidityDrawn;
-        require(assets > 0 && assets <= drawn, "USD3/bad-writedown");
+        require(assets > 0 && assets <= drawn, "Invalid writedown amount");
 
         committedLiquidityDrawn = drawn - assets;
         emit CommittedLiquidityWrittenDown(assets, committedLiquidityDrawn);

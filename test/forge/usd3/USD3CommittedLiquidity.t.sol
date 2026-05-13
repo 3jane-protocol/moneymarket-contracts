@@ -176,7 +176,7 @@ contract USD3CommittedLiquidityTest is Setup {
         _setCommittedLiquidity(RESERVE);
 
         vm.prank(facility);
-        vm.expectRevert("USD3/not-facility");
+        vm.expectRevert("Unauthorized facility");
         usd3Strategy.drawCommittedLiquidity(1);
     }
 
@@ -186,7 +186,7 @@ contract USD3CommittedLiquidityTest is Setup {
         _setFacility(facility);
 
         vm.prank(bob);
-        vm.expectRevert("USD3/not-facility");
+        vm.expectRevert("Unauthorized facility");
         usd3Strategy.drawCommittedLiquidity(1);
     }
 
@@ -242,7 +242,7 @@ contract USD3CommittedLiquidityTest is Setup {
         _setFacility(facility);
 
         vm.prank(facility);
-        vm.expectRevert("USD3/exceeds-commitment");
+        vm.expectRevert("Exceeds commitment");
         usd3Strategy.drawCommittedLiquidity(RESERVE + 1);
     }
 
@@ -255,7 +255,7 @@ contract USD3CommittedLiquidityTest is Setup {
         assertLt(usd3Strategy.maxCommittedLiquidityDraw(), RESERVE, "liquidity should be below commitment");
 
         vm.prank(facility);
-        vm.expectRevert("USD3/insufficient-liquid");
+        vm.expectRevert("Insufficient liquidity");
         usd3Strategy.drawCommittedLiquidity(RESERVE);
     }
 
@@ -268,7 +268,7 @@ contract USD3CommittedLiquidityTest is Setup {
         strategy.shutdownStrategy();
 
         vm.prank(facility);
-        vm.expectRevert("USD3/shutdown");
+        vm.expectRevert("Strategy shutdown");
         usd3Strategy.drawCommittedLiquidity(1);
     }
 
@@ -279,7 +279,7 @@ contract USD3CommittedLiquidityTest is Setup {
         _setProtocolPause(1);
 
         vm.prank(facility);
-        vm.expectRevert("USD3/paused");
+        vm.expectRevert("Protocol paused");
         usd3Strategy.drawCommittedLiquidity(1);
     }
 
@@ -321,7 +321,7 @@ contract USD3CommittedLiquidityTest is Setup {
         assertEq(usd3Strategy.maxCommittedLiquidityDraw(), 0, "draw limit should clamp to zero");
 
         vm.prank(facility);
-        vm.expectRevert("USD3/exceeds-commitment");
+        vm.expectRevert("Exceeds commitment");
         usd3Strategy.drawCommittedLiquidity(1);
     }
 
@@ -375,7 +375,7 @@ contract USD3CommittedLiquidityTest is Setup {
         airdrop(underlyingAsset, payer, 1_001e6);
         vm.startPrank(payer);
         underlyingAsset.approve(address(usd3Strategy), 1_001e6);
-        vm.expectRevert("USD3/overpayment");
+        vm.expectRevert("Repay exceeds drawn");
         usd3Strategy.repayCommittedLiquidity(1_001e6);
         vm.stopPrank();
     }
@@ -496,7 +496,7 @@ contract USD3CommittedLiquidityTest is Setup {
         _draw(1_000e6);
 
         vm.prank(management);
-        vm.expectRevert("USD3/bad-writedown");
+        vm.expectRevert("Invalid writedown amount");
         usd3Strategy.writeDownCommittedLiquidity(1_001e6);
     }
 
