@@ -481,6 +481,31 @@ contract DebtFloorComprehensiveTest is Setup {
         );
     }
 
+    function test_debtFloor_nominalFloorBlocksWithdrawalAtExactFloor() public {
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 100_000e6);
+
+        vm.prank(bob);
+        strategy.deposit(100_000e6, bob);
+
+        vm.prank(bob);
+        strategy.approve(address(susd3Strategy), 100_000e6);
+
+        vm.prank(bob);
+        uint256 bobSUSD3Shares = susd3Strategy.deposit(100_000e6, bob);
+
+        skip(91 days);
+        vm.prank(bob);
+        susd3Strategy.startCooldown(bobSUSD3Shares);
+        skip(8 days);
+
+        uint256 holdingsUSDC =
+            ITokenizedStrategy(address(usd3Strategy)).convertToAssets(strategy.balanceOf(address(susd3Strategy)));
+
+        assertEq(holdingsUSDC, 100_000e6, "holdings should equal nominal floor");
+        assertEq(susd3Strategy.availableWithdrawLimit(bob), 0, "withdrawal should be blocked at exact floor");
+    }
+
     function test_debtFloor_nominalFloorChangeDuringCooldown() public {
         protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
         protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 50_000e6);

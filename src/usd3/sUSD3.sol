@@ -422,6 +422,7 @@ contract sUSD3 is BaseHooksUpgradeable {
 
     /**
      * @notice Get the nominal backing floor from ProtocolConfig
+     * @dev If set above achievable sUSD3 backing capacity, withdrawals can remain blocked.
      * @return Nominal backing floor, expressed in USDC
      */
     function nominalBackingFloor() public view returns (uint256) {
@@ -474,11 +475,9 @@ contract sUSD3 is BaseHooksUpgradeable {
         if (backingRatio > 0) {
             USD3 usd3 = USD3(address(asset));
 
-            // Get actual borrowed amount
             (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
             uint256 debtUSDC = usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
 
-            // Calculate minimum required backing
             ratioFloor = (debtUSDC * backingRatio) / MAX_BPS;
         }
 
