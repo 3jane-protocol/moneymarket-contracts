@@ -7,12 +7,14 @@ import {USD3} from "../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../src/usd3/sUSD3.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {Pausable} from "../../../lib/openzeppelin/contracts/utils/Pausable.sol";
+import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {
     TransparentUpgradeableProxy
 } from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {InvariantHandler} from "./handlers/InvariantHandler.sol";
 import {SharesMathLib} from "../../../src/libraries/SharesMathLib.sol";
+import {UtilsLib} from "../../../src/libraries/UtilsLib.sol";
 
 /**
  * @title InvariantsTest
@@ -135,7 +137,7 @@ contract InvariantsTest is StdInvariant, Setup {
 
     function invariant_usd3WithdrawLimitRespectsCommittedLiquidity() public view {
         uint256 reserveAdjustedLiquidity =
-            _zeroFloorSub(_grossUsd3LiquidAssets(), usd3Strategy.availableCommittedLiquidity());
+            UtilsLib.zeroFloorSub(_grossUsd3LiquidAssets(), usd3Strategy.availableCommittedLiquidity());
 
         for (uint256 i; i < actors.length; ++i) {
             assertLe(
@@ -285,18 +287,10 @@ contract InvariantsTest is StdInvariant, Setup {
         uint256 waUsdcMax = supplyShares.toAssetsDown(totalSupplyAssets, totalShares);
 
         uint256 localWaUsdc =
-            _min(usd3Strategy.balanceOfWaUSDC(), usd3Strategy.WAUSDC().maxRedeem(address(usd3Strategy)));
-        uint256 morphoWaUsdc = _min(waUsdcMax, waUsdcLiquidity);
-        morphoWaUsdc = _min(morphoWaUsdc, usd3Strategy.WAUSDC().maxRedeem(address(usd3Strategy.morphoCredit())));
+            Math.min(usd3Strategy.balanceOfWaUSDC(), usd3Strategy.WAUSDC().maxRedeem(address(usd3Strategy)));
+        uint256 morphoWaUsdc = Math.min(waUsdcMax, waUsdcLiquidity);
+        morphoWaUsdc = Math.min(morphoWaUsdc, usd3Strategy.WAUSDC().maxRedeem(address(usd3Strategy.morphoCredit())));
 
         return idleUsdc + usd3Strategy.WAUSDC().convertToAssets(localWaUsdc + morphoWaUsdc);
-    }
-
-    function _zeroFloorSub(uint256 a, uint256 b) internal pure returns (uint256) {
-        return a > b ? a - b : 0;
-    }
-
-    function _min(uint256 a, uint256 b) internal pure returns (uint256) {
-        return a < b ? a : b;
     }
 }

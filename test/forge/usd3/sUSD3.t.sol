@@ -14,6 +14,7 @@ import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
 import {MorphoCredit} from "../../../src/MorphoCredit.sol";
 import {MarketParams, Id} from "../../../src/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "../../../src/libraries/MarketParamsLib.sol";
+import {ProtocolConfigLib} from "../../../src/libraries/ProtocolConfigLib.sol";
 
 contract sUSD3Test is Setup {
     using MarketParamsLib for MarketParams;
@@ -27,6 +28,7 @@ contract sUSD3Test is Setup {
     // Test users
     address public alice = makeAddr("alice");
     address public bob = makeAddr("bob");
+    address public facility = makeAddr("facility");
 
     function setUp() public override {
         super.setUp();
@@ -77,6 +79,24 @@ contract sUSD3Test is Setup {
         vm.label(address(susd3Strategy), "sUSD3");
         vm.label(alice, "alice");
         vm.label(bob, "bob");
+        vm.label(facility, "facility");
+    }
+
+    function _setCommittedLiquidity(uint256 amount) internal {
+        testProtocolConfig.setConfig(ProtocolConfigLib.COMMITTED_LIQUIDITY, amount);
+    }
+
+    function _setCommittedLiquidityFacility(address facility_) internal {
+        testProtocolConfig.setConfig(ProtocolConfigLib.COMMITTED_LIQUIDITY_FACILITY, uint256(uint160(facility_)));
+    }
+
+    function _setMinBackingRatio(uint256 ratio) internal {
+        testProtocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, ratio);
+    }
+
+    function _drawCommittedLiquidity(uint256 amount) internal {
+        vm.prank(facility);
+        usd3.drawCommittedLiquidity(amount);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -352,6 +372,51 @@ contract sUSD3Test is Setup {
 
         // The exact limit depends on share price conversion, but it should be much less than the initial max
         assertLt(remainingLimit, maxDeposit / 5); // Less than 20% of initial max
+    }
+
+    function test_committedLiquidityIncreasesSubordinatedDebtCap() public {
+        setMorphoDebtCap(0);
+        _setCommittedLiquidity(2_000e6);
+
+        assertEq(susd3Strategy.getSubordinatedDebtCapInUSDC(), 300e6, "full commitment should set cap exposure");
+        assertApproxEqAbs(susd3Strategy.availableDepositLimit(bob), 300e6, 2, "deposit cap should use commitment");
+    }
+
+    function test_committedLiquidityDrawnPreservesActualExposureWhenCommitmentLowered() public {
+        setMorphoDebtCap(0);
+        _setCommittedLiquidity(2_000e6);
+        _setCommittedLiquidityFacility(facility);
+
+        _drawCommittedLiquidity(1_000e6);
+        _setCommittedLiquidity(500e6);
+
+        assertEq(usd3.committedLiquidityDrawn(), 1_000e6, "setup should leave drawn exposure");
+        assertEq(susd3Strategy.getSubordinatedDebtCapInUSDC(), 150e6, "cap should not drop below drawn exposure");
+    }
+
+    function test_committedLiquidityDrawnCountsTowardSusd3WithdrawFloor() public {
+        _setCommittedLiquidity(2_000e6);
+        _setCommittedLiquidityFacility(facility);
+        _setMinBackingRatio(10_000);
+
+        vm.startPrank(bob);
+        ERC20(address(usd3)).approve(address(susd3Strategy), 1_500e6);
+        uint256 shares = susd3Strategy.deposit(1_500e6, bob);
+        vm.stopPrank();
+
+        _drawCommittedLiquidity(1_000e6);
+
+        skip(90 days + 1);
+        vm.prank(bob);
+        susd3Strategy.startCooldown(shares);
+        skip(7 days + 1);
+
+        uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
+        assertApproxEqAbs(withdrawLimit, 500e6, 2, "floor should reserve backing for drawn liquidity");
+
+        vm.prank(bob);
+        vm.expectRevert("ERC4626: redeem more than max");
+        susd3Strategy.redeem(shares, bob, bob);
     }
 
     /*//////////////////////////////////////////////////////////////

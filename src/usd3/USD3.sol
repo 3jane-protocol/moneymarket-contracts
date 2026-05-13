@@ -231,21 +231,14 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Get the strategy's currently liquid assets, including local and Morpho-redeemable waUSDC.
     function _liquidAssets() internal view returns (uint256) {
         uint256 idleAsset = asset.balanceOf(address(this));
+        if (Pausable(address(WAUSDC)).paused()) return idleAsset;
 
         (, uint256 waUSDCMax, uint256 waUSDCLiquidity) = getPosition();
+        uint256 localWaUSDC = Math.min(balanceOfWaUSDC(), WAUSDC.maxRedeem(address(this)));
+        uint256 morphoWaUSDC = Math.min(waUSDCMax, waUSDCLiquidity);
+        morphoWaUSDC = Math.min(morphoWaUSDC, WAUSDC.maxRedeem(address(morphoCredit)));
 
-        uint256 availableWaUSDC;
-
-        if (Pausable(address(WAUSDC)).paused()) {
-            availableWaUSDC = 0;
-        } else {
-            uint256 localWaUSDC = Math.min(balanceOfWaUSDC(), WAUSDC.maxRedeem(address(this)));
-            uint256 morphoWaUSDC = Math.min(waUSDCMax, waUSDCLiquidity);
-            morphoWaUSDC = Math.min(morphoWaUSDC, WAUSDC.maxRedeem(address(morphoCredit)));
-            availableWaUSDC = localWaUSDC + morphoWaUSDC;
-        }
-
-        return idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
+        return idleAsset + WAUSDC.convertToAssets(localWaUSDC + morphoWaUSDC);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -762,10 +755,7 @@ contract USD3 is BaseHooksUpgradeable {
         require(config.getIsPaused() == 0, "Protocol paused");
         require(assets <= availableCommittedLiquidity(), "Exceeds commitment");
 
-        uint256 idleAssets = asset.balanceOf(address(this));
-        if (assets > idleAssets) {
-            _freeFunds(assets - idleAssets);
-        }
+        _freeFunds(UtilsLib.zeroFloorSub(assets, asset.balanceOf(address(this))));
         require(asset.balanceOf(address(this)) >= assets, "Insufficient liquidity");
 
         committedLiquidityDrawn += assets;

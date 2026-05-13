@@ -420,27 +420,36 @@ contract sUSD3 is BaseHooksUpgradeable {
         return config.config(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO);
     }
 
+    /// @dev Returns Morpho market debt converted to USDC, plus drawn committed liquidity.
+    function _actualExposureInUSDC(USD3 usd3) internal view returns (uint256) {
+        (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
+        return usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC) + usd3.committedLiquidityDrawn();
+    }
+
+    /// @dev Returns Morpho debt cap converted to USDC, plus full committed liquidity.
+    function _potentialExposureInUSDC(USD3 usd3) internal view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
+        uint256 debtCap = config.config(ProtocolConfigLib.DEBT_CAP);
+
+        uint256 potentialExposureUSDC = usd3.committedLiquidity();
+        if (debtCap > 0) {
+            potentialExposureUSDC += usd3.WAUSDC().convertToAssets(debtCap);
+        }
+
+        return potentialExposureUSDC;
+    }
+
     /**
-     * @notice Calculate maximum sUSD3 deposits allowed based on debt and subordination ratio
-     * @dev Returns the cap amount for subordinated debt based on actual or potential market debt
+     * @notice Calculate maximum sUSD3 deposits allowed based on exposure and subordination ratio
+     * @dev Returns the cap amount based on actual exposure or potential debt plus committed liquidity
      * @return Maximum subordinated debt cap, expressed in USDC
      */
     function getSubordinatedDebtCapInUSDC() public view returns (uint256) {
         USD3 usd3 = USD3(address(asset));
 
-        // Get actual borrowed amount
-        (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
-        uint256 actualDebtUSDC = usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
-
-        // Get potential debt based on debt ceiling
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
-        uint256 debtCap = config.config(ProtocolConfigLib.DEBT_CAP);
-
-        uint256 potentialDebtUSDC;
-        if (debtCap > 0) {
-            potentialDebtUSDC = usd3.WAUSDC().convertToAssets(debtCap);
-        }
-        uint256 maxDebtUSDC = Math.max(actualDebtUSDC, potentialDebtUSDC);
+        uint256 actualExposureUSDC = _actualExposureInUSDC(usd3);
+        uint256 potentialExposureUSDC = _potentialExposureInUSDC(usd3);
+        uint256 maxDebtUSDC = Math.max(actualExposureUSDC, potentialExposureUSDC);
 
         if (maxDebtUSDC == 0) {
             return 0; // No debt to subordinate
@@ -453,7 +462,7 @@ contract sUSD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Calculate minimum sUSD3 backing required for current market debt
+     * @notice Calculate minimum sUSD3 backing required for current exposure
      * @dev Returns the floor amount of sUSD3 assets needed based on MIN_SUSD3_BACKING_RATIO
      * @return Minimum backing amount required, expressed in USDC
      */
@@ -466,9 +475,7 @@ contract sUSD3 is BaseHooksUpgradeable {
 
         USD3 usd3 = USD3(address(asset));
 
-        // Get actual borrowed amount
-        (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
-        uint256 debtUSDC = usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
+        uint256 debtUSDC = _actualExposureInUSDC(usd3);
 
         // Calculate minimum required backing
         return (debtUSDC * backingRatio) / MAX_BPS;

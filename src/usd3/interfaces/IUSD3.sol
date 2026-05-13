@@ -52,9 +52,14 @@ interface IUSD3 is IStrategy {
     function setWhitelist(address _user, bool _allowed) external;
     function setDepositorWhitelist(address _depositor, bool _allowed) external;
     function setMinDeposit(uint256 _minDeposit) external;
+    function writeDownCommittedLiquidity(uint256 assets) external;
+
+    /*//////////////////////////////////////////////////////////////
+                        FACILITY FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
     function drawCommittedLiquidity(uint256 assets) external;
     function repayCommittedLiquidity(uint256 assets) external;
-    function writeDownCommittedLiquidity(uint256 assets) external;
 
     /*//////////////////////////////////////////////////////////////
                         KEEPER FUNCTIONS

@@ -58,6 +58,20 @@ contract USD3CommittedLiquidityTest is Setup {
         usd3Strategy.drawCommittedLiquidity(amount);
     }
 
+    function _seedFacilitySetup() internal {
+        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
+        _setCommittedLiquidity(RESERVE);
+        _setFacility(facility);
+    }
+
+    function _repay(address from, uint256 fundAmount, uint256 repayArg) internal {
+        airdrop(underlyingAsset, from, fundAmount);
+        vm.startPrank(from);
+        underlyingAsset.approve(address(usd3Strategy), fundAmount);
+        usd3Strategy.repayCommittedLiquidity(repayArg);
+        vm.stopPrank();
+    }
+
     function _pricePerShare() internal view returns (uint256) {
         uint256 totalSupply = strategy.totalSupply();
         if (totalSupply == 0) return 0;
@@ -181,9 +195,7 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_unauthorizedCallerReverts() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
 
         vm.prank(bob);
         vm.expectRevert("Unauthorized facility");
@@ -191,9 +203,7 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_drawTransfersUsdcAndIncrementsDrawn() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
 
         uint256 facilityBalanceBefore = underlyingAsset.balanceOf(facility);
 
@@ -209,9 +219,7 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_drawUsesIdleUsdcBeforeUnwindingMorpho() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
 
         airdrop(underlyingAsset, address(usd3Strategy), 1_000e6);
         uint256 suppliedBefore = usd3Strategy.suppliedWaUSDC();
@@ -223,9 +231,7 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_drawUnwindsFromMorpho() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
 
         uint256 suppliedBefore = usd3Strategy.suppliedWaUSDC();
         assertGt(suppliedBefore, 0, "setup should deploy to Morpho");
@@ -237,9 +243,7 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_drawExceedingCommitmentReverts() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
 
         vm.prank(facility);
         vm.expectRevert("Exceeds commitment");
@@ -260,9 +264,7 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_drawBlockedDuringShutdown() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
 
         vm.prank(emergencyAdmin);
         strategy.shutdownStrategy();
@@ -273,9 +275,7 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_drawBlockedWhenPaused() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
         _setProtocolPause(1);
 
         vm.prank(facility);
@@ -285,9 +285,7 @@ contract USD3CommittedLiquidityTest is Setup {
 
     function test_facility_drawBypassesCommitmentTime() public {
         _setCommitmentTime(COMMITMENT_TIME);
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
 
         assertEq(usd3Strategy.availableWithdrawLimit(alice), 0, "alice should be locked by commitment time");
 
@@ -297,9 +295,7 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_withdrawLimitUsesUndrawnOnly() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
 
         uint256 beforeDrawLimit = usd3Strategy.availableWithdrawLimit(alice);
 
@@ -310,9 +306,7 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_loweredCommitmentBelowDrawnBlocksFurtherDraws() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
 
         _draw(RESERVE);
         _setCommittedLiquidity(RESERVE - 1);
@@ -335,14 +329,14 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_repayDecreasesDrawn() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
         _draw(RESERVE);
 
         airdrop(underlyingAsset, payer, 1_000e6);
         vm.startPrank(payer);
         underlyingAsset.approve(address(usd3Strategy), 1_000e6);
+        vm.expectEmit(true, true, true, true);
+        emit USD3.CommittedLiquidityRepaid(payer, 1_000e6, RESERVE - 1_000e6);
         usd3Strategy.repayCommittedLiquidity(1_000e6);
         vm.stopPrank();
 
@@ -351,25 +345,17 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_repayMaxRepaysFull() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
         _draw(RESERVE);
 
-        airdrop(underlyingAsset, payer, RESERVE);
-        vm.startPrank(payer);
-        underlyingAsset.approve(address(usd3Strategy), RESERVE);
-        usd3Strategy.repayCommittedLiquidity(type(uint256).max);
-        vm.stopPrank();
+        _repay(payer, RESERVE, type(uint256).max);
 
         assertEq(usd3Strategy.committedLiquidityDrawn(), 0, "max sentinel should repay full drawn amount");
         assertEq(usd3Strategy.availableCommittedLiquidity(), RESERVE, "full capacity should reopen");
     }
 
     function test_facility_repayOverpaymentReverts() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
         _draw(1_000e6);
 
         airdrop(underlyingAsset, payer, 1_001e6);
@@ -381,31 +367,32 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_repayByAnyoneAllowed() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
         _draw(1_000e6);
 
-        airdrop(underlyingAsset, bob, 1_000e6);
-        vm.startPrank(bob);
-        underlyingAsset.approve(address(usd3Strategy), 1_000e6);
-        usd3Strategy.repayCommittedLiquidity(1_000e6);
-        vm.stopPrank();
+        _repay(bob, 1_000e6, 1_000e6);
 
         assertEq(usd3Strategy.committedLiquidityDrawn(), 0, "third-party repayment should clear drawn amount");
     }
 
+    function test_facility_repayAllowedDuringShutdownAndPause() public {
+        _seedFacilitySetup();
+        _draw(1_000e6);
+
+        vm.prank(emergencyAdmin);
+        strategy.shutdownStrategy();
+        _setProtocolPause(1);
+
+        _repay(payer, 1_000e6, 1_000e6);
+
+        assertEq(usd3Strategy.committedLiquidityDrawn(), 0, "repay should remain available during shutdown and pause");
+    }
+
     function test_facility_repaidCapacityCanBeRedrawn() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
         _draw(RESERVE);
 
-        airdrop(underlyingAsset, payer, RESERVE);
-        vm.startPrank(payer);
-        underlyingAsset.approve(address(usd3Strategy), RESERVE);
-        usd3Strategy.repayCommittedLiquidity(RESERVE);
-        vm.stopPrank();
+        _repay(payer, RESERVE, RESERVE);
 
         _draw(RESERVE);
 
@@ -413,9 +400,7 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_reportAfterDrawPreservesSharePrice() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
 
         uint256 ppsBefore = _pricePerShare();
 
@@ -429,7 +414,7 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_writeDownReducesDrawnAndRealizesLossOnReport() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
+        _seedFacilitySetup();
 
         vm.prank(management);
         usd3Strategy.setSUSD3(susd3Holder);
@@ -437,8 +422,6 @@ contract USD3CommittedLiquidityTest is Setup {
         vm.prank(alice);
         usd3Strategy.transfer(susd3Holder, 1_000e6);
 
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
         _draw(1_000e6);
 
         vm.prank(keeper);
@@ -448,6 +431,8 @@ contract USD3CommittedLiquidityTest is Setup {
         assertEq(susd3BalanceBefore, 1_000e6, "setup should seed sUSD3 protection");
 
         vm.prank(management);
+        vm.expectEmit(true, true, true, true);
+        emit USD3.CommittedLiquidityWrittenDown(1_000e6, 0);
         usd3Strategy.writeDownCommittedLiquidity(1_000e6);
 
         vm.prank(keeper);
@@ -459,7 +444,7 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_writeDownAboveSusd3CushionDropsUsd3Pps() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
+        _seedFacilitySetup();
 
         vm.prank(management);
         usd3Strategy.setSUSD3(susd3Holder);
@@ -467,8 +452,6 @@ contract USD3CommittedLiquidityTest is Setup {
         vm.prank(alice);
         usd3Strategy.transfer(susd3Holder, 500e6);
 
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
         _draw(1_000e6);
 
         vm.prank(keeper);
@@ -489,10 +472,24 @@ contract USD3CommittedLiquidityTest is Setup {
         assertLt(_pricePerShare(), ppsBefore, "residual loss should reduce USD3 PPS");
     }
 
+    function test_facility_writeDownAllowedDuringShutdownAndPause() public {
+        _seedFacilitySetup();
+        _draw(1_000e6);
+
+        vm.prank(emergencyAdmin);
+        strategy.shutdownStrategy();
+        _setProtocolPause(1);
+
+        vm.prank(management);
+        usd3Strategy.writeDownCommittedLiquidity(1_000e6);
+
+        assertEq(
+            usd3Strategy.committedLiquidityDrawn(), 0, "write-down should remain available during shutdown and pause"
+        );
+    }
+
     function test_facility_writeDownAboveDrawnReverts() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
         _draw(1_000e6);
 
         vm.prank(management);
@@ -501,9 +498,7 @@ contract USD3CommittedLiquidityTest is Setup {
     }
 
     function test_facility_writeDownByNonManagementReverts() public {
-        mintAndDepositIntoStrategy(strategy, alice, DEPOSIT);
-        _setCommittedLiquidity(RESERVE);
-        _setFacility(facility);
+        _seedFacilitySetup();
         _draw(1_000e6);
 
         vm.prank(bob);
