@@ -13,6 +13,9 @@ interface IUSD3 is IStrategy {
     event WhitelistUpdated(address indexed user, bool allowed);
     event MinDepositUpdated(uint256 newMinDeposit);
     event TrancheShareSynced(uint256 trancheShare);
+    event CommittedLiquidityDrawn(address indexed facility, uint256 assets, uint256 totalDrawn);
+    event CommittedLiquidityRepaid(address indexed payer, uint256 assets, uint256 totalDrawn);
+    event CommittedLiquidityWrittenDown(uint256 assets, uint256 totalDrawn);
 
     /*//////////////////////////////////////////////////////////////
                         VIEW FUNCTIONS
@@ -34,6 +37,11 @@ interface IUSD3 is IStrategy {
     function minCommitmentTime() external view returns (uint256);
     function depositTimestamp(address user) external view returns (uint256);
     function maxSubordinationRatio() external view returns (uint256);
+    function committedLiquidity() external view returns (uint256);
+    function committedLiquidityDrawn() external view returns (uint256);
+    function committedLiquidityFacility() external view returns (address);
+    function availableCommittedLiquidity() external view returns (uint256);
+    function maxCommittedLiquidityDraw() external view returns (uint256);
 
     /*//////////////////////////////////////////////////////////////
                     MANAGEMENT FUNCTIONS
@@ -44,6 +52,9 @@ interface IUSD3 is IStrategy {
     function setWhitelist(address _user, bool _allowed) external;
     function setDepositorWhitelist(address _depositor, bool _allowed) external;
     function setMinDeposit(uint256 _minDeposit) external;
+    function drawCommittedLiquidity(uint256 assets) external;
+    function repayCommittedLiquidity(uint256 assets) external;
+    function writeDownCommittedLiquidity(uint256 assets) external;
 
     /*//////////////////////////////////////////////////////////////
                         KEEPER FUNCTIONS

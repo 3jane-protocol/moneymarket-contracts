@@ -92,6 +92,9 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Used to enforce commitment periods
     mapping(address => uint256) public depositTimestamp;
 
+    /// @notice Principal drawn through the committed liquidity facility and not yet repaid or written down
+    uint256 public committedLiquidityDrawn;
+
     /*//////////////////////////////////////////////////////////////
                             EVENTS
     //////////////////////////////////////////////////////////////*/
@@ -100,6 +103,9 @@ contract USD3 is BaseHooksUpgradeable {
     event DepositorWhitelistUpdated(address indexed depositor, bool allowed);
     event MinDepositUpdated(uint256 newMinDeposit);
     event TrancheShareSynced(uint256 trancheShare);
+    event CommittedLiquidityDrawn(address indexed facility, uint256 assets, uint256 totalDrawn);
+    event CommittedLiquidityRepaid(address indexed payer, uint256 assets, uint256 totalDrawn);
+    event CommittedLiquidityWrittenDown(uint256 assets, uint256 totalDrawn);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -222,6 +228,26 @@ contract USD3 is BaseHooksUpgradeable {
         waUSDCMax = shares.toAssetsDown(totalSupplyAssets, totalShares);
     }
 
+    /// @dev Get the strategy's currently liquid assets, including local and Morpho-redeemable waUSDC.
+    function _liquidAssets() internal view returns (uint256) {
+        uint256 idleAsset = asset.balanceOf(address(this));
+
+        (, uint256 waUSDCMax, uint256 waUSDCLiquidity) = getPosition();
+
+        uint256 availableWaUSDC;
+
+        if (Pausable(address(WAUSDC)).paused()) {
+            availableWaUSDC = 0;
+        } else {
+            uint256 localWaUSDC = Math.min(balanceOfWaUSDC(), WAUSDC.maxRedeem(address(this)));
+            uint256 morphoWaUSDC = Math.min(waUSDCMax, waUSDCLiquidity);
+            morphoWaUSDC = Math.min(morphoWaUSDC, WAUSDC.maxRedeem(address(morphoCredit)));
+            availableWaUSDC = localWaUSDC + morphoWaUSDC;
+        }
+
+        return idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
+    }
+
     /*//////////////////////////////////////////////////////////////
                     INTERNAL STRATEGY FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -309,7 +335,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         uint256 totalWaUSDC = suppliedWaUSDC() + balanceOfWaUSDC();
 
-        return WAUSDC.convertToAssets(totalWaUSDC) + asset.balanceOf(address(this));
+        return WAUSDC.convertToAssets(totalWaUSDC) + asset.balanceOf(address(this)) + committedLiquidityDrawn;
     }
 
     /// @dev Rebalances between idle and deployed funds to maintain maxOnCredit ratio
@@ -384,24 +410,7 @@ contract USD3 is BaseHooksUpgradeable {
     /// @param _owner Address to check limit for
     /// @return Maximum amount that can be withdrawn
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
-        // Get available liquidity first
-        uint256 idleAsset = asset.balanceOf(address(this));
-
-        (, uint256 waUSDCMax, uint256 waUSDCLiquidity) = getPosition();
-
-        uint256 availableWaUSDC;
-
-        if (Pausable(address(WAUSDC)).paused()) {
-            availableWaUSDC = 0;
-        } else {
-            uint256 localWaUSDC = Math.min(balanceOfWaUSDC(), WAUSDC.maxRedeem(address(this)));
-            uint256 morphoWaUSDC = Math.min(waUSDCMax, waUSDCLiquidity);
-            morphoWaUSDC = Math.min(morphoWaUSDC, WAUSDC.maxRedeem(address(morphoCredit)));
-            availableWaUSDC = localWaUSDC + morphoWaUSDC;
-        }
-
-        uint256 availableLiquidity = idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
-        availableLiquidity = UtilsLib.zeroFloorSub(availableLiquidity, committedLiquidity());
+        uint256 availableLiquidity = UtilsLib.zeroFloorSub(_liquidAssets(), availableCommittedLiquidity());
 
         // During shutdown, bypass all checks
         if (TokenizedStrategy.isShutdown()) {
@@ -653,6 +662,31 @@ contract USD3 is BaseHooksUpgradeable {
         return config.config(ProtocolConfigLib.COMMITTED_LIQUIDITY);
     }
 
+    /**
+     * @notice Get the authorized committed liquidity facility address
+     * @return Facility address stored in ProtocolConfig, or the zero address if unset
+     */
+    function committedLiquidityFacility() public view returns (address) {
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        return address(uint160(config.config(ProtocolConfigLib.COMMITTED_LIQUIDITY_FACILITY)));
+    }
+
+    /**
+     * @notice Get the undrawn committed liquidity still reserved from USD3 withdrawals
+     * @return Undrawn commitment amount in asset (USDC) units
+     */
+    function availableCommittedLiquidity() public view returns (uint256) {
+        return UtilsLib.zeroFloorSub(committedLiquidity(), committedLiquidityDrawn);
+    }
+
+    /**
+     * @notice Get the maximum amount the committed liquidity facility can currently draw
+     * @return Drawable amount in asset (USDC) units
+     */
+    function maxCommittedLiquidityDraw() public view returns (uint256) {
+        return Math.min(availableCommittedLiquidity(), _liquidAssets());
+    }
+
     /*//////////////////////////////////////////////////////////////
                         MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -709,6 +743,61 @@ contract USD3 is BaseHooksUpgradeable {
     function setMinDeposit(uint256 _minDeposit) external onlyManagement {
         minDeposit = _minDeposit;
         emit MinDepositUpdated(_minDeposit);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        FACILITY FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Draw USDC from the committed liquidity facility
+     * @param assets Amount of USDC to draw
+     */
+    function drawCommittedLiquidity(uint256 assets) external {
+        require(assets > 0, "USD3/zero-draw");
+        address facility = committedLiquidityFacility();
+        require(facility != address(0) && msg.sender == facility, "USD3/not-facility");
+        require(!TokenizedStrategy.isShutdown(), "USD3/shutdown");
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        require(config.getIsPaused() == 0, "USD3/paused");
+        require(assets <= availableCommittedLiquidity(), "USD3/exceeds-commitment");
+
+        uint256 idleAssets = asset.balanceOf(address(this));
+        if (idleAssets < assets) {
+            _freeFunds(assets - idleAssets);
+        }
+        require(asset.balanceOf(address(this)) >= assets, "USD3/insufficient-liquid");
+
+        committedLiquidityDrawn += assets;
+        IERC20(asset).safeTransfer(facility, assets);
+        emit CommittedLiquidityDrawn(facility, assets, committedLiquidityDrawn);
+    }
+
+    /**
+     * @notice Repay drawn committed liquidity principal
+     * @param assets Amount of USDC to repay, or type(uint256).max to repay all drawn principal
+     */
+    function repayCommittedLiquidity(uint256 assets) external {
+        uint256 drawn = committedLiquidityDrawn;
+        if (assets == type(uint256).max) assets = drawn;
+        require(assets > 0, "USD3/zero-repay");
+        require(assets <= drawn, "USD3/overpayment");
+
+        committedLiquidityDrawn = drawn - assets;
+        IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
+        emit CommittedLiquidityRepaid(msg.sender, assets, committedLiquidityDrawn);
+    }
+
+    /**
+     * @notice Write down drawn committed liquidity principal as a loss
+     * @param assets Amount of drawn principal to write down
+     */
+    function writeDownCommittedLiquidity(uint256 assets) external onlyManagement {
+        uint256 drawn = committedLiquidityDrawn;
+        require(assets > 0 && assets <= drawn, "USD3/bad-writedown");
+
+        committedLiquidityDrawn = drawn - assets;
+        emit CommittedLiquidityWrittenDown(assets, committedLiquidityDrawn);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -770,5 +859,5 @@ contract USD3 is BaseHooksUpgradeable {
      * variables without shifting down storage in the inheritance chain.
      * See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
      */
-    uint256[40] private __gap;
+    uint256[39] private __gap;
 }

@@ -6,17 +6,21 @@ import {Setup, ERC20} from "./utils/Setup.sol";
 import {USD3} from "../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../src/usd3/sUSD3.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
+import {Pausable} from "../../../lib/openzeppelin/contracts/utils/Pausable.sol";
 import {
     TransparentUpgradeableProxy
 } from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {InvariantHandler} from "./handlers/InvariantHandler.sol";
+import {SharesMathLib} from "../../../src/libraries/SharesMathLib.sol";
 
 /**
  * @title InvariantsTest
  * @notice Invariant tests for USD3/sUSD3 protocol safety properties
  */
 contract InvariantsTest is StdInvariant, Setup {
+    using SharesMathLib for uint256;
+
     USD3 public usd3Strategy;
     sUSD3 public susd3Strategy;
     InvariantHandler public handler;
@@ -121,11 +125,25 @@ contract InvariantsTest is StdInvariant, Setup {
 
         uint256 idleUsdc = underlyingAsset.balanceOf(address(usd3Strategy));
         uint256 totalWaUsdc = usd3Strategy.balanceOfWaUSDC() + usd3Strategy.suppliedWaUSDC();
-        uint256 modeledAssets = idleUsdc + usd3Strategy.WAUSDC().convertToAssets(totalWaUsdc);
+        uint256 modeledAssets =
+            idleUsdc + usd3Strategy.WAUSDC().convertToAssets(totalWaUsdc) + usd3Strategy.committedLiquidityDrawn();
         uint256 reportedAssets = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
 
         // Allow small absolute tolerance for conversion dust, but forbid phantom asset reporting.
         assertLe(reportedAssets, modeledAssets + 5e6, "usd3 overreports assets");
+    }
+
+    function invariant_usd3WithdrawLimitRespectsCommittedLiquidity() public view {
+        uint256 reserveAdjustedLiquidity =
+            _zeroFloorSub(_grossUsd3LiquidAssets(), usd3Strategy.availableCommittedLiquidity());
+
+        for (uint256 i; i < actors.length; ++i) {
+            assertLe(
+                usd3Strategy.availableWithdrawLimit(actors[i]),
+                reserveAdjustedLiquidity,
+                "withdraw exceeds reserve-adjusted liquidity"
+            );
+        }
     }
 
     function invariant_usd3LocalAndDeployedWaUsdcTotalsAreConsistent() public view {
@@ -252,5 +270,33 @@ contract InvariantsTest is StdInvariant, Setup {
         // A loss event should not cause PPS increase when locked shares + sUSD3 are present.
         // Allow one asset-unit worth of PPS dust from share/asset rounding.
         assertLe(handler.maxPpsIncreaseOnLossWithLocked(), 1e6, "pps increased after locked-share loss report");
+    }
+
+    function _grossUsd3LiquidAssets() internal view returns (uint256) {
+        uint256 idleUsdc = underlyingAsset.balanceOf(address(usd3Strategy));
+
+        if (Pausable(address(usd3Strategy.WAUSDC())).paused()) {
+            return idleUsdc;
+        }
+
+        (uint256 totalSupplyAssets, uint256 totalShares,, uint256 waUsdcLiquidity) = usd3Strategy.getMarketLiquidity();
+        uint256 supplyShares =
+            usd3Strategy.morphoCredit().position(usd3Strategy.marketId(), address(usd3Strategy)).supplyShares;
+        uint256 waUsdcMax = supplyShares.toAssetsDown(totalSupplyAssets, totalShares);
+
+        uint256 localWaUsdc =
+            _min(usd3Strategy.balanceOfWaUSDC(), usd3Strategy.WAUSDC().maxRedeem(address(usd3Strategy)));
+        uint256 morphoWaUsdc = _min(waUsdcMax, waUsdcLiquidity);
+        morphoWaUsdc = _min(morphoWaUsdc, usd3Strategy.WAUSDC().maxRedeem(address(usd3Strategy.morphoCredit())));
+
+        return idleUsdc + usd3Strategy.WAUSDC().convertToAssets(localWaUsdc + morphoWaUsdc);
+    }
+
+    function _zeroFloorSub(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a > b ? a - b : 0;
+    }
+
+    function _min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
     }
 }
