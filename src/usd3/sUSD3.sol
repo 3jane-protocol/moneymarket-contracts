@@ -141,11 +141,12 @@ contract sUSD3 is BaseHooksUpgradeable {
             msg.sender == receiver || depositorWhitelist[msg.sender], "sUSD3: Only self or whitelisted deposits allowed"
         );
 
-        // Always extend lock period for valid deposits
+        // Extend lock period for valid deposits when configured.
         if (assets > 0 || shares > 0) {
-            // Read lock duration from ProtocolConfig
             uint256 duration = lockDuration();
-            lockedUntil[receiver] = block.timestamp + duration;
+            if (duration > 0) {
+                lockedUntil[receiver] = block.timestamp + duration;
+            }
         }
     }
 
@@ -363,9 +364,7 @@ contract sUSD3 is BaseHooksUpgradeable {
      */
     function lockDuration() public view returns (uint256) {
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
-
-        uint256 duration = config.getSusd3LockDuration();
-        return duration > 0 ? duration : 90 days; // Default to 90 days if not set
+        return config.getSusd3LockDuration();
     }
 
     /**

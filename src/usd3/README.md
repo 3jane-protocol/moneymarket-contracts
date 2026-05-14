@@ -28,7 +28,7 @@ USD3 and sUSD3 are tokenized yield strategies built on Yearn V3's architecture f
 #### sUSD3 Strategy
 
 - Accepts USD3 tokens to provide subordinate capital
-- Configurable lock period for stability (via ProtocolConfig, default 90 days)
+- Configurable lock period for stability (via ProtocolConfig; 0 disables new locks)
 - Configurable cooldown period (via ProtocolConfig, default 7 days) + withdrawal window (local, default 2 days)
 - Partial cooldown support for better UX
 - First-loss absorption protects USD3 holders
@@ -270,7 +270,7 @@ Centrally managed parameters (with defaults):
 
 - **sUSD3 Parameters**:
   - Subordination ratio (default 15%)
-  - Lock duration (default 90 days)
+  - Lock duration (0 disables new locks)
   - Cooldown period (default 7 days)
   - Interest distribution share
 
