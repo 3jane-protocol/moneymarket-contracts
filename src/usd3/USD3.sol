@@ -221,6 +221,10 @@ contract USD3 is BaseHooksUpgradeable {
         waUSDCMax = shares.toAssetsDown(totalSupplyAssets, totalShares);
     }
 
+    function _protocolConfig() internal view returns (IProtocolConfig) {
+        return IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+    }
+
     /*//////////////////////////////////////////////////////////////
                     INTERNAL STRATEGY FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -230,7 +234,7 @@ contract USD3 is BaseHooksUpgradeable {
     function _subordinationDeployCapWaUSDC() internal view returns (uint256) {
         if (sUSD3 == address(0)) return type(uint256).max;
 
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        IProtocolConfig config = _protocolConfig();
         uint256 backingRatio = config.config(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO);
         if (backingRatio == 0) return type(uint256).max;
 
@@ -375,7 +379,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         if (target == 0) return deployed > 0;
 
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        IProtocolConfig config = _protocolConfig();
         uint256 driftBps = config.config(ProtocolConfigLib.TEND_DRIFT_THRESHOLD);
         if (driftBps == 0) driftBps = 10;
         require(driftBps < 10_000, "Invalid drift threshold");
@@ -698,7 +702,7 @@ contract USD3 is BaseHooksUpgradeable {
      *      it returns 0, effectively preventing deployment until explicitly configured.
      */
     function maxOnCredit() public view returns (uint256) {
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        IProtocolConfig config = _protocolConfig();
         return config.getMaxOnCredit();
     }
 
@@ -707,7 +711,7 @@ contract USD3 is BaseHooksUpgradeable {
      * @return Minimum commitment time in seconds
      */
     function minCommitmentTime() public view returns (uint256) {
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        IProtocolConfig config = _protocolConfig();
         return config.getUsd3CommitmentTime();
     }
 
@@ -716,7 +720,7 @@ contract USD3 is BaseHooksUpgradeable {
      * @return Supply cap in asset units
      */
     function supplyCap() public view returns (uint256) {
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        IProtocolConfig config = _protocolConfig();
         return config.config(ProtocolConfigLib.USD3_SUPPLY_CAP);
     }
 
@@ -801,7 +805,7 @@ contract USD3 is BaseHooksUpgradeable {
      */
     function syncTrancheShare() external onlyKeepers {
         // Get the protocol config through MorphoCredit
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        IProtocolConfig config = _protocolConfig();
 
         // Read the tranche share variant (yield share to sUSD3 in basis points)
         uint256 trancheShare = config.getTrancheShareVariant();
