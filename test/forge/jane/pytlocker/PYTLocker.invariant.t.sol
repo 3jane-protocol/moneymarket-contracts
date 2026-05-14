@@ -24,10 +24,7 @@ contract PYTLockerInvariantTest is Test {
 
         // Deploy locker
         vm.prank(owner);
-        locker = new PYTLocker(owner);
-
-        vm.prank(owner);
-        locker.addMarket(address(yt));
+        locker = new PYTLocker(owner, address(yt));
 
         // Deploy handler
         handler = new PYTLockerHandler(locker, yt, sy, asset, owner);
@@ -40,13 +37,13 @@ contract PYTLockerInvariantTest is Test {
         selectors[0] = PYTLockerHandler.deposit.selector;
         selectors[1] = PYTLockerHandler.harvest.selector;
         selectors[2] = PYTLockerHandler.claim.selector;
-        selectors[3] = PYTLockerHandler.setMarketMaxSupply.selector;
+        selectors[3] = PYTLockerHandler.setMaxSupply.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
 
     /// @notice totalSupply must equal sum of all user balances
     function invariant_supplyConservation() public view {
-        uint256 totalSupply = locker.totalSupply(address(yt));
+        uint256 totalSupply = locker.totalSupply();
         uint256 sumOfBalances = handler.getSumOfBalances();
 
         assertEq(totalSupply, sumOfBalances, "Supply conservation violated");
@@ -63,7 +60,7 @@ contract PYTLockerInvariantTest is Test {
 
     /// @notice accYieldPerToken should only increase (never decrease)
     function invariant_accYieldPerTokenMonotonic() public view {
-        uint256 current = locker.accYieldPerToken(address(yt));
+        uint256 current = locker.accYieldPerToken();
         uint256 previous = handler.ghost_lastAccYieldPerToken();
 
         // Only check if there was a previous value recorded
@@ -74,7 +71,7 @@ contract PYTLockerInvariantTest is Test {
 
     /// @notice Total deposited in handler should match totalSupply in locker
     function invariant_depositTracking() public view {
-        uint256 totalSupply = locker.totalSupply(address(yt));
+        uint256 totalSupply = locker.totalSupply();
         uint256 ghostDeposited = handler.ghost_totalDeposited();
 
         assertEq(totalSupply, ghostDeposited, "Deposit tracking mismatch");
@@ -83,7 +80,7 @@ contract PYTLockerInvariantTest is Test {
     /// @notice YT balance of locker should equal totalSupply
     function invariant_lockerHoldsAllYT() public view {
         uint256 lockerYTBalance = yt.balanceOf(address(locker));
-        uint256 totalSupply = locker.totalSupply(address(yt));
+        uint256 totalSupply = locker.totalSupply();
 
         assertEq(lockerYTBalance, totalSupply, "Locker YT balance != totalSupply");
     }
@@ -99,29 +96,29 @@ contract PYTLockerInvariantTest is Test {
 
     /// @notice Scaled harvest remainder must stay below the current market supply
     function invariant_yieldRemainderBelowSupply() public view {
-        uint256 totalSupply = locker.totalSupply(address(yt));
+        uint256 totalSupply = locker.totalSupply();
 
         if (totalSupply > 0) {
-            assertLt(locker.yieldRemainder(address(yt)), totalSupply, "Yield remainder >= totalSupply");
+            assertLt(locker.yieldRemainder(), totalSupply, "Yield remainder >= totalSupply");
         }
     }
 
     /// @notice Contract remainder must match the handler's independent carry model
     function invariant_yieldRemainderMatchesGhostAccounting() public view {
-        assertEq(locker.yieldRemainder(address(yt)), handler.ghost_yieldRemainder(), "Yield remainder mismatch");
+        assertEq(locker.yieldRemainder(), handler.ghost_yieldRemainder(), "Yield remainder mismatch");
     }
 
-    /// @notice maxDeposit must reflect expiry, current supply, and the mutable market cap
+    /// @notice maxDeposit must reflect expiry, current supply, and the mutable cap
     function invariant_maxDepositMatchesCapState() public view {
         uint256 expected;
 
         if (!yt.isExpired()) {
-            uint256 supply = locker.totalSupply(address(yt));
-            uint256 cap = locker.marketMaxSupply(address(yt));
+            uint256 supply = locker.totalSupply();
+            uint256 cap = locker.maxSupply();
             expected = supply >= cap ? 0 : cap - supply;
         }
 
-        assertEq(locker.maxDeposit(address(yt)), expected, "maxDeposit mismatch");
+        assertEq(locker.maxDeposit(), expected, "maxDeposit mismatch");
     }
 
     /// @notice Debug helper - called after each invariant run
@@ -133,10 +130,10 @@ contract PYTLockerInvariantTest is Test {
         console2.log("Set caps:", handler.setCapCalls());
         console2.log("Total Yield:", handler.ghost_totalYieldHarvested());
         console2.log("Total Claimed:", handler.ghost_totalClaimed());
-        console2.log("marketMaxSupply:", locker.marketMaxSupply(address(yt)));
-        console2.log("maxDeposit:", locker.maxDeposit(address(yt)));
-        console2.log("accYieldPerToken:", locker.accYieldPerToken(address(yt)));
-        console2.log("yieldRemainder:", locker.yieldRemainder(address(yt)));
+        console2.log("maxSupply:", locker.maxSupply());
+        console2.log("maxDeposit:", locker.maxDeposit());
+        console2.log("accYieldPerToken:", locker.accYieldPerToken());
+        console2.log("yieldRemainder:", locker.yieldRemainder());
         console2.log("ghost_yieldRemainder:", handler.ghost_yieldRemainder());
     }
 }

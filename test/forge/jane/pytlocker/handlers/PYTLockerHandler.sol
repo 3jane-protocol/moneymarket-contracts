@@ -65,7 +65,7 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
 
     function deposit(uint256 actorSeed, uint256 amount) external {
         address actor = _getActor(actorSeed);
-        uint256 capacity = locker.maxDeposit(address(yt));
+        uint256 capacity = locker.maxDeposit();
         if (capacity < 1e18) return;
         uint256 maxAmount = capacity < 100e18 ? capacity : 100e18;
         amount = bound(amount, 1e18, maxAmount);
@@ -80,7 +80,7 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
 
         vm.startPrank(actor);
         yt.approve(address(locker), amount);
-        locker.deposit(address(yt), amount);
+        locker.deposit(amount);
         vm.stopPrank();
 
         uint256 claimed = asset.balanceOf(actor) - beforeBal;
@@ -100,8 +100,8 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
         depositCalls++;
     }
 
-    function setMarketMaxSupply(uint256 seed) external {
-        uint256 supply = locker.totalSupply(address(yt));
+    function setMaxSupply(uint256 seed) external {
+        uint256 supply = locker.totalSupply();
         uint256 mode = seed % 4;
         uint256 cap;
 
@@ -116,7 +116,7 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
         }
 
         vm.prank(owner);
-        locker.setMarketMaxSupply(address(yt), cap);
+        locker.setMaxSupply(cap);
 
         setCapCalls++;
     }
@@ -126,18 +126,18 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
         yieldAmount = bound(yieldAmount, 0, 10e18);
 
         // Skip if no depositors or zero yield
-        if (locker.totalSupply(address(yt)) == 0 || yieldAmount == 0) return;
+        if (locker.totalSupply() == 0 || yieldAmount == 0) return;
 
         // Store previous accYieldPerToken for monotonicity check
-        ghost_lastAccYieldPerToken = locker.accYieldPerToken(address(yt));
-        uint256 supply = locker.totalSupply(address(yt));
+        ghost_lastAccYieldPerToken = locker.accYieldPerToken();
+        uint256 supply = locker.totalSupply();
 
         // Simulate yield accrual
         sy.mint(address(yt), yieldAmount);
         sy.fundAsset(yieldAmount);
         yt.accrueInterest(address(locker), yieldAmount);
 
-        locker.harvest(address(yt));
+        locker.harvest();
 
         // Mirror of PYTLocker._harvest carry math. Kept independent on purpose so
         // invariant_yieldRemainderMatchesGhostAccounting cross-checks it.
@@ -157,12 +157,12 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
         address actor = _getActor(actorSeed);
 
         // Skip if actor has no deposits
-        if (locker.balanceOf(address(yt), actor) == 0) return;
+        if (locker.balanceOf(actor) == 0) return;
 
         uint256 beforeBal = asset.balanceOf(actor);
 
         vm.prank(actor);
-        locker.claim(address(yt));
+        locker.claim();
 
         uint256 claimed = asset.balanceOf(actor) - beforeBal;
         ghost_totalClaimed += claimed;
@@ -183,13 +183,13 @@ contract PYTLockerHandler is CommonBase, StdUtils, StdCheats {
 
     function getSumOfBalances() external view returns (uint256 sum) {
         for (uint256 i = 0; i < actors.length; i++) {
-            sum += locker.balanceOf(address(yt), actors[i]);
+            sum += locker.balanceOf(actors[i]);
         }
     }
 
     function getSumOfClaimable() external view returns (uint256 sum) {
         for (uint256 i = 0; i < actors.length; i++) {
-            sum += locker.claimable(address(yt), actors[i]);
+            sum += locker.claimable(actors[i]);
         }
     }
 

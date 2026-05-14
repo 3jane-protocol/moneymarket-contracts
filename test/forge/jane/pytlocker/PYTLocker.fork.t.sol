@@ -3,6 +3,7 @@ pragma solidity ^0.8.22;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {PYTLocker} from "../../../../src/jane/PYTLocker.sol";
+import {PYTLockerFactory} from "../../../../src/jane/PYTLockerFactory.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @notice Interface for Pendle YT token
@@ -103,12 +104,8 @@ contract PYTLockerForkTest is Test {
 
         // Deploy PYTLocker
         vm.prank(owner);
-        locker = new PYTLocker(owner);
+        locker = new PYTLocker(owner, YT_SUSDE);
         vm.label(address(locker), "PYTLocker");
-
-        // Add YT-sUSDE market
-        vm.prank(owner);
-        locker.addMarket(YT_SUSDE);
     }
 
     // ============ Yield Simulation Helper ============
@@ -169,11 +166,11 @@ contract PYTLockerForkTest is Test {
         // Alice deposits YT
         vm.startPrank(alice);
         IERC20(YT_SUSDE).approve(address(locker), depositAmount);
-        locker.deposit(YT_SUSDE, depositAmount);
+        locker.deposit(depositAmount);
         vm.stopPrank();
 
         // Record initial state
-        uint256 accYieldBefore = locker.accYieldPerToken(YT_SUSDE);
+        uint256 accYieldBefore = locker.accYieldPerToken();
         uint256 lockerSusdeBefore = IERC20(SUSDE).balanceOf(address(locker));
 
         // Simulate yield (1% of sUSDE total assets)
@@ -181,27 +178,27 @@ contract PYTLockerForkTest is Test {
         _simulateSusdeYield(yieldAmount);
 
         // Harvest
-        locker.harvest(YT_SUSDE);
+        locker.harvest();
 
         // Verify yield was captured
-        uint256 accYieldAfter = locker.accYieldPerToken(YT_SUSDE);
+        uint256 accYieldAfter = locker.accYieldPerToken();
         uint256 lockerSusdeAfter = IERC20(SUSDE).balanceOf(address(locker));
 
         assertGt(accYieldAfter, accYieldBefore, "accYieldPerToken should increase");
         assertGt(lockerSusdeAfter, lockerSusdeBefore, "Locker should have received sUSDE");
 
         // Verify Alice can claim
-        uint256 claimable = locker.claimable(YT_SUSDE, alice);
+        uint256 claimable = locker.claimable(alice);
         assertGt(claimable, 0, "Alice should have claimable yield");
 
         // Alice claims
         uint256 aliceSusdeBefore = IERC20(SUSDE).balanceOf(alice);
         vm.prank(alice);
-        locker.claim(YT_SUSDE);
+        locker.claim();
         uint256 aliceSusdeAfter = IERC20(SUSDE).balanceOf(alice);
 
         assertEq(aliceSusdeAfter - aliceSusdeBefore, claimable, "Alice should receive claimable amount");
-        assertEq(locker.claimable(YT_SUSDE, alice), 0, "Alice claimable should be zero after claim");
+        assertEq(locker.claimable(alice), 0, "Alice claimable should be zero after claim");
     }
 
     /// @notice Tests proportional yield distribution between two users
@@ -216,23 +213,23 @@ contract PYTLockerForkTest is Test {
         // Both deposit (Alice 30%, Bob 70%)
         vm.startPrank(alice);
         IERC20(YT_SUSDE).approve(address(locker), aliceDeposit);
-        locker.deposit(YT_SUSDE, aliceDeposit);
+        locker.deposit(aliceDeposit);
         vm.stopPrank();
 
         vm.startPrank(bob);
         IERC20(YT_SUSDE).approve(address(locker), bobDeposit);
-        locker.deposit(YT_SUSDE, bobDeposit);
+        locker.deposit(bobDeposit);
         vm.stopPrank();
 
         // Simulate yield
         _simulateSusdeYield(IStakedUSDe(SUSDE).totalAssets() / 100);
 
         // Harvest
-        locker.harvest(YT_SUSDE);
+        locker.harvest();
 
         // Check proportional distribution
-        uint256 aliceClaimable = locker.claimable(YT_SUSDE, alice);
-        uint256 bobClaimable = locker.claimable(YT_SUSDE, bob);
+        uint256 aliceClaimable = locker.claimable(alice);
+        uint256 bobClaimable = locker.claimable(bob);
         uint256 totalClaimable = aliceClaimable + bobClaimable;
 
         assertGt(totalClaimable, 0, "Should have yield to distribute");
@@ -264,35 +261,35 @@ contract PYTLockerForkTest is Test {
         // Alice deposits first
         vm.startPrank(alice);
         IERC20(YT_SUSDE).approve(address(locker), aliceDeposit);
-        locker.deposit(YT_SUSDE, aliceDeposit);
+        locker.deposit(aliceDeposit);
         vm.stopPrank();
 
         // Simulate yield round 1 (Alice gets 100%)
         _simulateSusdeYield(IStakedUSDe(SUSDE).totalAssets() / 100);
-        locker.harvest(YT_SUSDE);
+        locker.harvest();
 
-        uint256 aliceClaimableRound1 = locker.claimable(YT_SUSDE, alice);
+        uint256 aliceClaimableRound1 = locker.claimable(alice);
         assertGt(aliceClaimableRound1, 0, "Alice should have yield from round 1");
 
         // Bob deposits (should NOT dilute Alice's round 1 yield)
         vm.startPrank(bob);
         IERC20(YT_SUSDE).approve(address(locker), bobDeposit);
-        locker.deposit(YT_SUSDE, bobDeposit);
+        locker.deposit(bobDeposit);
         vm.stopPrank();
 
         // Alice's claimable should NOT decrease
-        assertEq(locker.claimable(YT_SUSDE, alice), aliceClaimableRound1, "Alice's round 1 yield should not be diluted");
+        assertEq(locker.claimable(alice), aliceClaimableRound1, "Alice's round 1 yield should not be diluted");
 
         // Bob should have zero claimable (no past yield)
-        assertEq(locker.claimable(YT_SUSDE, bob), 0, "Bob should not receive past yield");
+        assertEq(locker.claimable(bob), 0, "Bob should not receive past yield");
 
         // Simulate yield round 2 (split 50/50)
         _simulateSusdeYield(IStakedUSDe(SUSDE).totalAssets() / 100);
-        locker.harvest(YT_SUSDE);
+        locker.harvest();
 
         // Verify both got round 2 equally
-        uint256 aliceClaimableTotal = locker.claimable(YT_SUSDE, alice);
-        uint256 bobClaimableTotal = locker.claimable(YT_SUSDE, bob);
+        uint256 aliceClaimableTotal = locker.claimable(alice);
+        uint256 bobClaimableTotal = locker.claimable(bob);
         uint256 round2Yield = aliceClaimableTotal - aliceClaimableRound1;
 
         assertApproxEqRel(bobClaimableTotal, round2Yield, 1e14, "Bob should get half of round 2");
@@ -304,31 +301,31 @@ contract PYTLockerForkTest is Test {
 
         vm.startPrank(alice);
         IERC20(YT_SUSDE).approve(address(locker), depositAmount);
-        locker.deposit(YT_SUSDE, depositAmount);
+        locker.deposit(depositAmount);
         vm.stopPrank();
 
         // Round 1: Small yield (0.1%)
         _simulateSusdeYield(IStakedUSDe(SUSDE).totalAssets() / 1000);
-        locker.harvest(YT_SUSDE);
-        uint256 claimable1 = locker.claimable(YT_SUSDE, alice);
+        locker.harvest();
+        uint256 claimable1 = locker.claimable(alice);
         assertGt(claimable1, 0, "Round 1 should have yield");
 
         // Round 2: Large yield (2%)
         _simulateSusdeYield(IStakedUSDe(SUSDE).totalAssets() / 50);
-        locker.harvest(YT_SUSDE);
-        uint256 claimable2 = locker.claimable(YT_SUSDE, alice);
+        locker.harvest();
+        uint256 claimable2 = locker.claimable(alice);
         assertGt(claimable2, claimable1, "Round 2 should accumulate more");
 
         // Round 3: Medium yield (0.5%)
         _simulateSusdeYield(IStakedUSDe(SUSDE).totalAssets() / 200);
-        locker.harvest(YT_SUSDE);
-        uint256 claimable3 = locker.claimable(YT_SUSDE, alice);
+        locker.harvest();
+        uint256 claimable3 = locker.claimable(alice);
         assertGt(claimable3, claimable2, "Round 3 should accumulate more");
 
         // Claim all
         uint256 aliceBefore = IERC20(SUSDE).balanceOf(alice);
         vm.prank(alice);
-        locker.claim(YT_SUSDE);
+        locker.claim();
         uint256 aliceAfter = IERC20(SUSDE).balanceOf(alice);
 
         assertEq(aliceAfter - aliceBefore, claimable3, "Should receive all accumulated yield");
@@ -343,11 +340,30 @@ contract PYTLockerForkTest is Test {
     }
 
     function test_fork_marketConfigured() public {
-        assertTrue(locker.isSupported(YT_SUSDE), "YT should be supported");
-        (address sy, address asset, bool enabled) = locker.markets(YT_SUSDE);
-        assertEq(sy, SY_SUSDE, "SY should match");
-        assertEq(asset, SUSDE, "Asset should be sUSDE");
-        assertTrue(enabled, "Market should be enabled");
+        assertEq(locker.yt(), YT_SUSDE, "YT should match");
+        assertEq(locker.sy(), SY_SUSDE, "SY should match");
+        assertEq(locker.asset(), SUSDE, "Asset should be sUSDE");
+    }
+
+    function test_fork_factoryCreatesLockerForYT() public {
+        vm.prank(owner);
+        PYTLockerFactory factory = new PYTLockerFactory(owner);
+
+        vm.prank(owner);
+        address createdLocker = factory.createLocker(YT_SUSDE);
+
+        address[] memory allLockers = factory.allLockers();
+
+        assertEq(factory.locker(YT_SUSDE), createdLocker, "Factory lookup should match");
+        assertEq(factory.lockers(0), createdLocker, "Factory index should match");
+        assertEq(allLockers.length, 1, "Factory should expose one locker");
+        assertEq(allLockers[0], createdLocker, "Factory array should match");
+
+        PYTLocker created = PYTLocker(createdLocker);
+        assertEq(created.owner(), owner, "Locker owner should match");
+        assertEq(created.yt(), YT_SUSDE, "YT should match");
+        assertEq(created.sy(), SY_SUSDE, "SY should match");
+        assertEq(created.asset(), SUSDE, "Asset should be sUSDE");
     }
 
     function test_fork_syYieldToken() public {
@@ -363,11 +379,11 @@ contract PYTLockerForkTest is Test {
 
         vm.startPrank(alice);
         IERC20(YT_SUSDE).approve(address(locker), depositAmount);
-        locker.deposit(YT_SUSDE, depositAmount);
+        locker.deposit(depositAmount);
         vm.stopPrank();
 
-        assertEq(locker.balanceOf(YT_SUSDE, alice), depositAmount, "Alice balance should match deposit");
-        assertEq(locker.totalSupply(YT_SUSDE), depositAmount, "Total supply should match deposit");
+        assertEq(locker.balanceOf(alice), depositAmount, "Alice balance should match deposit");
+        assertEq(locker.totalSupply(), depositAmount, "Total supply should match deposit");
         assertEq(IERC20(YT_SUSDE).balanceOf(address(locker)), depositAmount, "Locker should hold YT");
         assertEq(IERC20(YT_SUSDE).balanceOf(alice), aliceBalanceBefore - depositAmount, "Alice YT reduced");
     }
@@ -382,25 +398,25 @@ contract PYTLockerForkTest is Test {
 
         vm.startPrank(alice);
         IERC20(YT_SUSDE).approve(address(locker), aliceDeposit);
-        locker.deposit(YT_SUSDE, aliceDeposit);
+        locker.deposit(aliceDeposit);
         vm.stopPrank();
 
         vm.startPrank(bob);
         IERC20(YT_SUSDE).approve(address(locker), bobDeposit);
-        locker.deposit(YT_SUSDE, bobDeposit);
+        locker.deposit(bobDeposit);
         vm.stopPrank();
 
-        assertEq(locker.balanceOf(YT_SUSDE, alice), aliceDeposit);
-        assertEq(locker.balanceOf(YT_SUSDE, bob), bobDeposit);
-        assertEq(locker.totalSupply(YT_SUSDE), aliceDeposit + bobDeposit);
+        assertEq(locker.balanceOf(alice), aliceDeposit);
+        assertEq(locker.balanceOf(bob), bobDeposit);
+        assertEq(locker.totalSupply(), aliceDeposit + bobDeposit);
     }
 
     // ============ Edge Case Tests ============
 
     function test_fork_harvestWithZeroSupply() public {
         // Should not revert when harvesting with no depositors
-        locker.harvest(YT_SUSDE);
-        assertEq(locker.accYieldPerToken(YT_SUSDE), 0);
+        locker.harvest();
+        assertEq(locker.accYieldPerToken(), 0);
     }
 
     function test_fork_claimWithNoYield() public {
@@ -409,8 +425,8 @@ contract PYTLockerForkTest is Test {
 
         vm.startPrank(alice);
         IERC20(YT_SUSDE).approve(address(locker), depositAmount);
-        locker.deposit(YT_SUSDE, depositAmount);
-        locker.claim(YT_SUSDE); // Claim immediately after deposit (no time warp)
+        locker.deposit(depositAmount);
+        locker.claim(); // Claim immediately after deposit (no time warp)
         vm.stopPrank();
 
         // Should not revert and sUSDE balance should remain same (no yield yet)
@@ -431,10 +447,10 @@ contract PYTLockerForkTest is Test {
 
         vm.startPrank(alice);
         IERC20(YT_SUSDE).approve(address(locker), depositAmount);
-        locker.deposit(YT_SUSDE, depositAmount);
+        locker.deposit(depositAmount);
         vm.stopPrank();
 
-        assertEq(locker.balanceOf(YT_SUSDE, alice), depositAmount);
+        assertEq(locker.balanceOf(alice), depositAmount);
     }
 
     function test_fork_revertDepositAfterExpiry() public {
@@ -452,7 +468,7 @@ contract PYTLockerForkTest is Test {
         IERC20(YT_SUSDE).approve(address(locker), depositAmount);
 
         vm.expectRevert(PYTLocker.YTExpired.selector);
-        locker.deposit(YT_SUSDE, depositAmount);
+        locker.deposit(depositAmount);
         vm.stopPrank();
     }
 
@@ -472,20 +488,20 @@ contract PYTLockerForkTest is Test {
 
             vm.startPrank(depositors[i]);
             IERC20(YT_SUSDE).approve(address(locker), depositAmount);
-            locker.deposit(YT_SUSDE, depositAmount);
+            locker.deposit(depositAmount);
             vm.stopPrank();
         }
 
-        assertEq(locker.totalSupply(YT_SUSDE), depositAmount * numDepositors);
+        assertEq(locker.totalSupply(), depositAmount * numDepositors);
 
         // Harvest should work with many depositors
-        locker.harvest(YT_SUSDE);
+        locker.harvest();
 
         // All depositors should have equal claimable (same deposit amount, same timing)
-        uint256 firstClaimable = locker.claimable(YT_SUSDE, depositors[0]);
+        uint256 firstClaimable = locker.claimable(depositors[0]);
         for (uint256 i = 1; i < numDepositors; i++) {
             assertEq(
-                locker.claimable(YT_SUSDE, depositors[i]),
+                locker.claimable(depositors[i]),
                 firstClaimable,
                 "All depositors should have equal claimable with equal deposits"
             );
@@ -499,15 +515,15 @@ contract PYTLockerForkTest is Test {
 
         vm.startPrank(alice);
         IERC20(YT_SUSDE).approve(address(locker), depositAmount);
-        locker.deposit(YT_SUSDE, depositAmount);
+        locker.deposit(depositAmount);
         vm.stopPrank();
 
         // View function returns stale data before harvest
-        uint256 claimableBefore = locker.claimable(YT_SUSDE, alice);
+        uint256 claimableBefore = locker.claimable(alice);
 
         // Even after time passes, claimable stays the same without harvest
         vm.warp(block.timestamp + 1 days);
-        uint256 claimableAfterTime = locker.claimable(YT_SUSDE, alice);
+        uint256 claimableAfterTime = locker.claimable(alice);
 
         assertEq(claimableAfterTime, claimableBefore, "Claimable should be stale without harvest");
     }

@@ -21,7 +21,7 @@ contract PYTLockerTest is Test {
     uint256 public constant INITIAL_YT_BALANCE = 1000e18;
     uint256 public constant YT_EXPIRY = 365 days;
 
-    event MarketMaxSupplyUpdated(address indexed yt, uint256 oldMaxSupply, uint256 newMaxSupply);
+    event MaxSupplyUpdated(uint256 oldMaxSupply, uint256 newMaxSupply);
 
     function setUp() public {
         asset = new MockAsset();
@@ -29,10 +29,7 @@ contract PYTLockerTest is Test {
         yt = new MockYT(address(sy), block.timestamp + YT_EXPIRY);
 
         vm.prank(owner);
-        locker = new PYTLocker(owner);
-
-        vm.prank(owner);
-        locker.addMarket(address(yt));
+        locker = new PYTLocker(owner, address(yt));
 
         yt.mint(alice, INITIAL_YT_BALANCE);
         yt.mint(bob, INITIAL_YT_BALANCE);
@@ -52,110 +49,79 @@ contract PYTLockerTest is Test {
         yt.accrueInterest(address(locker), amount);
     }
 
-    function _setMarketMaxSupply(uint256 maxSupply) internal {
+    function _setMaxSupply(uint256 maxSupply) internal {
         vm.prank(owner);
-        locker.setMarketMaxSupply(address(yt), maxSupply);
+        locker.setMaxSupply(maxSupply);
     }
 
     // ============ Admin Tests ============
 
-    function test_addMarket() public {
-        MockAsset asset2 = new MockAsset();
-        MockSY sy2 = new MockSY(address(asset2));
-        MockYT yt2 = new MockYT(address(sy2), block.timestamp + YT_EXPIRY);
-
-        vm.prank(owner);
-        locker.addMarket(address(yt2));
-
-        (address configSy, address configAsset, bool enabled) = locker.markets(address(yt2));
-        assertEq(configSy, address(sy2));
-        assertEq(configAsset, address(asset2));
-        assertTrue(enabled);
+    function test_constructor_bindsYTAndDerivesTokens() public view {
+        assertEq(locker.yt(), address(yt));
+        assertEq(locker.sy(), address(sy));
+        assertEq(locker.asset(), address(asset));
     }
 
-    function test_addMarket_initializesUnlimitedCap() public view {
-        assertEq(locker.marketMaxSupply(address(yt)), type(uint256).max);
-        assertEq(locker.maxDeposit(address(yt)), type(uint256).max);
+    function test_constructor_initializesUnlimitedCap() public view {
+        assertEq(locker.maxSupply(), type(uint256).max);
+        assertEq(locker.maxDeposit(), type(uint256).max);
     }
 
-    function test_addMarket_revertIfNotOwner() public {
-        MockYT yt2 = new MockYT(address(sy), block.timestamp + YT_EXPIRY);
-
-        vm.prank(alice);
-        vm.expectRevert();
-        locker.addMarket(address(yt2));
+    function test_constructor_revertsForZeroYT() public {
+        vm.expectRevert(PYTLocker.ZeroAddress.selector);
+        new PYTLocker(owner, address(0));
     }
 
-    function test_addMarket_revertIfAlreadyExists() public {
-        vm.prank(owner);
-        vm.expectRevert(PYTLocker.MarketExists.selector);
-        locker.addMarket(address(yt));
-    }
-
-    function test_setMarketMaxSupply_owner_emitsUpdate() public {
+    function test_setMaxSupply_owner_emitsUpdate() public {
         uint256 newCap = 500e18;
 
         vm.prank(owner);
-        vm.expectEmit(true, false, false, true, address(locker));
-        emit MarketMaxSupplyUpdated(address(yt), type(uint256).max, newCap);
-        locker.setMarketMaxSupply(address(yt), newCap);
+        vm.expectEmit(false, false, false, true, address(locker));
+        emit MaxSupplyUpdated(type(uint256).max, newCap);
+        locker.setMaxSupply(newCap);
 
-        assertEq(locker.marketMaxSupply(address(yt)), newCap);
+        assertEq(locker.maxSupply(), newCap);
     }
 
-    function test_setMarketMaxSupply_revertsForNonOwner() public {
+    function test_setMaxSupply_revertsForNonOwner() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
-        locker.setMarketMaxSupply(address(yt), 500e18);
-    }
-
-    function test_setMarketMaxSupply_revertsForUnsupported() public {
-        MockYT yt2 = new MockYT(address(sy), block.timestamp + YT_EXPIRY);
-
-        vm.prank(owner);
-        vm.expectRevert(PYTLocker.UnsupportedYT.selector);
-        locker.setMarketMaxSupply(address(yt2), 500e18);
-    }
-
-    function test_maxDeposit_unsupported() public {
-        MockYT yt2 = new MockYT(address(sy), block.timestamp + YT_EXPIRY);
-
-        assertEq(locker.maxDeposit(address(yt2)), 0);
+        locker.setMaxSupply(500e18);
     }
 
     function test_maxDeposit_expired() public {
         vm.warp(block.timestamp + YT_EXPIRY + 1);
 
-        assertEq(locker.maxDeposit(address(yt)), 0);
+        assertEq(locker.maxDeposit(), 0);
     }
 
     function test_maxDeposit_returnsRemainingCapacity() public {
         uint256 cap = 250e18;
-        _setMarketMaxSupply(cap);
+        _setMaxSupply(cap);
 
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
-        assertEq(locker.maxDeposit(address(yt)), cap - 100e18);
+        assertEq(locker.maxDeposit(), cap - 100e18);
     }
 
     function test_maxDeposit_returnsZeroWhenAtCap() public {
         uint256 cap = 100e18;
-        _setMarketMaxSupply(cap);
+        _setMaxSupply(cap);
 
         vm.prank(alice);
-        locker.deposit(address(yt), cap);
+        locker.deposit(cap);
 
-        assertEq(locker.maxDeposit(address(yt)), 0);
+        assertEq(locker.maxDeposit(), 0);
     }
 
     function test_maxDeposit_returnsZeroWhenOverCap() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
-        _setMarketMaxSupply(50e18);
+        _setMaxSupply(50e18);
 
-        assertEq(locker.maxDeposit(address(yt)), 0);
+        assertEq(locker.maxDeposit(), 0);
     }
 
     // ============ Deposit Tests ============
@@ -164,10 +130,10 @@ contract PYTLockerTest is Test {
         uint256 depositAmount = 100e18;
 
         vm.prank(alice);
-        locker.deposit(address(yt), depositAmount);
+        locker.deposit(depositAmount);
 
-        assertEq(locker.balanceOf(address(yt), alice), depositAmount);
-        assertEq(locker.totalSupply(address(yt)), depositAmount);
+        assertEq(locker.balanceOf(alice), depositAmount);
+        assertEq(locker.totalSupply(), depositAmount);
         assertEq(yt.balanceOf(alice), INITIAL_YT_BALANCE - depositAmount);
         assertEq(yt.balanceOf(address(locker)), depositAmount);
     }
@@ -179,48 +145,32 @@ contract PYTLockerTest is Test {
         uint256 aliceBalanceBefore = yt.balanceOf(alice);
 
         vm.prank(bob);
-        locker.deposit(address(yt), depositAmount, alice);
+        locker.deposit(depositAmount, alice);
 
-        assertEq(locker.balanceOf(address(yt), alice), depositAmount);
-        assertEq(locker.balanceOf(address(yt), bob), 0);
-        assertEq(locker.totalSupply(address(yt)), depositAmount);
+        assertEq(locker.balanceOf(alice), depositAmount);
+        assertEq(locker.balanceOf(bob), 0);
+        assertEq(locker.totalSupply(), depositAmount);
         assertEq(yt.balanceOf(bob), bobBalanceBefore - depositAmount);
         assertEq(yt.balanceOf(alice), aliceBalanceBefore);
         assertEq(yt.balanceOf(address(locker)), depositAmount);
     }
 
-    function test_deposit_revertIfNotSupported() public {
-        MockYT yt2 = new MockYT(address(sy), block.timestamp + YT_EXPIRY);
-
-        vm.prank(alice);
-        vm.expectRevert(PYTLocker.UnsupportedYT.selector);
-        locker.deposit(address(yt2), 100e18);
-    }
-
-    function test_deposit_receiver_revertIfNotSupported() public {
-        MockYT yt2 = new MockYT(address(sy), block.timestamp + YT_EXPIRY);
-
-        vm.prank(bob);
-        vm.expectRevert(PYTLocker.UnsupportedYT.selector);
-        locker.deposit(address(yt2), 100e18, alice);
-    }
-
     function test_deposit_revertIfZeroAmount() public {
         vm.prank(alice);
         vm.expectRevert(PYTLocker.ZeroAmount.selector);
-        locker.deposit(address(yt), 0);
+        locker.deposit(0);
     }
 
     function test_deposit_receiver_revertIfZeroAmount() public {
         vm.prank(bob);
         vm.expectRevert(PYTLocker.ZeroAmount.selector);
-        locker.deposit(address(yt), 0, alice);
+        locker.deposit(0, alice);
     }
 
     function test_deposit_receiver_revertIfZeroAddress() public {
         vm.prank(bob);
         vm.expectRevert(PYTLocker.ZeroAddress.selector);
-        locker.deposit(address(yt), 100e18, address(0));
+        locker.deposit(100e18, address(0));
     }
 
     function test_deposit_revertIfExpired() public {
@@ -228,7 +178,7 @@ contract PYTLockerTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(PYTLocker.YTExpired.selector);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
     }
 
     function test_deposit_receiver_revertIfExpired() public {
@@ -236,126 +186,126 @@ contract PYTLockerTest is Test {
 
         vm.prank(bob);
         vm.expectRevert(PYTLocker.YTExpired.selector);
-        locker.deposit(address(yt), 100e18, alice);
+        locker.deposit(100e18, alice);
     }
 
     function test_deposit_multipleUsers() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         vm.prank(bob);
-        locker.deposit(address(yt), 200e18);
+        locker.deposit(200e18);
 
-        assertEq(locker.balanceOf(address(yt), alice), 100e18);
-        assertEq(locker.balanceOf(address(yt), bob), 200e18);
-        assertEq(locker.totalSupply(address(yt)), 300e18);
+        assertEq(locker.balanceOf(alice), 100e18);
+        assertEq(locker.balanceOf(bob), 200e18);
+        assertEq(locker.totalSupply(), 300e18);
     }
 
     function test_deposit_succeedsAtExactCap() public {
         uint256 cap = 150e18;
-        _setMarketMaxSupply(cap);
+        _setMaxSupply(cap);
 
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         vm.prank(bob);
-        locker.deposit(address(yt), 50e18);
+        locker.deposit(50e18);
 
-        assertEq(locker.totalSupply(address(yt)), cap);
-        assertEq(locker.maxDeposit(address(yt)), 0);
+        assertEq(locker.totalSupply(), cap);
+        assertEq(locker.maxDeposit(), 0);
     }
 
     function test_deposit_revertsWhenExceedingCap() public {
         uint256 cap = 150e18;
-        _setMarketMaxSupply(cap);
+        _setMaxSupply(cap);
 
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         vm.prank(bob);
-        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
-        locker.deposit(address(yt), 50e18 + 1);
+        vm.expectRevert(PYTLocker.MaxSupplyExceeded.selector);
+        locker.deposit(50e18 + 1);
     }
 
     function test_deposit_atCapThenAnyMoreReverts() public {
         uint256 cap = 100e18;
-        _setMarketMaxSupply(cap);
+        _setMaxSupply(cap);
 
         vm.prank(alice);
-        locker.deposit(address(yt), cap);
+        locker.deposit(cap);
 
         vm.prank(bob);
-        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
-        locker.deposit(address(yt), 1);
+        vm.expectRevert(PYTLocker.MaxSupplyExceeded.selector);
+        locker.deposit(1);
     }
 
     function test_deposit_revertsWhenCapBelowSupply() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
-        _setMarketMaxSupply(50e18);
+        _setMaxSupply(50e18);
 
         vm.prank(bob);
-        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
-        locker.deposit(address(yt), 1);
+        vm.expectRevert(PYTLocker.MaxSupplyExceeded.selector);
+        locker.deposit(1);
     }
 
     function test_deposit_succeedsAfterCapRaisedFromZero() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
-        _setMarketMaxSupply(0);
+        _setMaxSupply(0);
 
-        assertEq(locker.maxDeposit(address(yt)), 0);
-
-        vm.prank(bob);
-        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
-        locker.deposit(address(yt), 1);
-
-        _setMarketMaxSupply(150e18);
-
-        assertEq(locker.maxDeposit(address(yt)), 50e18);
+        assertEq(locker.maxDeposit(), 0);
 
         vm.prank(bob);
-        locker.deposit(address(yt), 50e18);
+        vm.expectRevert(PYTLocker.MaxSupplyExceeded.selector);
+        locker.deposit(1);
 
-        assertEq(locker.totalSupply(address(yt)), 150e18);
-        assertEq(locker.maxDeposit(address(yt)), 0);
+        _setMaxSupply(150e18);
+
+        assertEq(locker.maxDeposit(), 50e18);
+
+        vm.prank(bob);
+        locker.deposit(50e18);
+
+        assertEq(locker.totalSupply(), 150e18);
+        assertEq(locker.maxDeposit(), 0);
     }
 
     function test_deposit_receiverForm_honorsCap() public {
         uint256 cap = 125e18;
-        _setMarketMaxSupply(cap);
+        _setMaxSupply(cap);
 
         vm.prank(bob);
-        locker.deposit(address(yt), 100e18, alice);
+        locker.deposit(100e18, alice);
 
         vm.prank(charlie);
-        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
-        locker.deposit(address(yt), 25e18 + 1, alice);
+        vm.expectRevert(PYTLocker.MaxSupplyExceeded.selector);
+        locker.deposit(25e18 + 1, alice);
 
         vm.prank(charlie);
-        locker.deposit(address(yt), 25e18, alice);
+        locker.deposit(25e18, alice);
 
-        assertEq(locker.balanceOf(address(yt), alice), cap);
-        assertEq(locker.totalSupply(address(yt)), cap);
+        assertEq(locker.balanceOf(alice), cap);
+        assertEq(locker.totalSupply(), cap);
     }
 
     function test_deposit_capRevertSkipsHarvest() public {
         uint256 cap = 100e18;
-        _setMarketMaxSupply(cap);
+        _setMaxSupply(cap);
 
         vm.prank(alice);
-        locker.deposit(address(yt), cap);
+        locker.deposit(cap);
 
         _accrueYield(10e18);
 
         vm.prank(bob);
-        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
-        locker.deposit(address(yt), 1);
+        vm.expectRevert(PYTLocker.MaxSupplyExceeded.selector);
+        locker.deposit(1);
 
-        assertEq(locker.accYieldPerToken(address(yt)), 0);
-        assertEq(locker.claimable(address(yt), alice), 0);
+        assertEq(locker.accYieldPerToken(), 0);
+        assertEq(locker.claimable(alice), 0);
         assertEq(asset.balanceOf(address(locker)), 0);
     }
 
@@ -363,15 +313,15 @@ contract PYTLockerTest is Test {
 
     function test_harvest_distributesYield() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         uint256 yieldAmount = 10e18;
         _accrueYield(yieldAmount);
 
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        assertEq(locker.accYieldPerToken(address(yt)), (yieldAmount * 1e18) / 100e18);
-        assertEq(locker.claimable(address(yt), alice), yieldAmount);
+        assertEq(locker.accYieldPerToken(), (yieldAmount * 1e18) / 100e18);
+        assertEq(locker.claimable(alice), yieldAmount);
     }
 
     function test_harvest_carriesRoundingRemainderAcrossHarvests() public {
@@ -381,22 +331,22 @@ contract PYTLockerTest is Test {
         yt.mint(alice, depositAmount);
 
         vm.prank(alice);
-        locker.deposit(address(yt), depositAmount);
+        locker.deposit(depositAmount);
 
         _accrueYield(smallYield);
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        assertEq(locker.accYieldPerToken(address(yt)), 0);
-        assertEq(locker.claimable(address(yt), alice), 0);
+        assertEq(locker.accYieldPerToken(), 0);
+        assertEq(locker.claimable(alice), 0);
 
         _accrueYield(smallYield);
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        assertEq(locker.accYieldPerToken(address(yt)), 1);
-        assertEq(locker.claimable(address(yt), alice), smallYield * 2);
+        assertEq(locker.accYieldPerToken(), 1);
+        assertEq(locker.claimable(alice), smallYield * 2);
 
         vm.prank(alice);
-        locker.claim(address(yt));
+        locker.claim();
 
         assertEq(asset.balanceOf(alice), smallYield * 2);
         assertEq(asset.balanceOf(address(locker)), 0);
@@ -409,21 +359,21 @@ contract PYTLockerTest is Test {
         yt.mint(alice, depositAmount);
 
         vm.prank(alice);
-        locker.deposit(address(yt), depositAmount);
+        locker.deposit(depositAmount);
 
         for (uint256 i = 0; i < 4; i++) {
             _accrueYield(smallYield);
-            locker.harvest(address(yt));
+            locker.harvest();
 
-            assertLt(locker.yieldRemainder(address(yt)), locker.totalSupply(address(yt)));
+            assertLt(locker.yieldRemainder(), locker.totalSupply());
             if (i < 3) {
-                assertEq(locker.accYieldPerToken(address(yt)), 0);
+                assertEq(locker.accYieldPerToken(), 0);
             }
         }
 
-        assertEq(locker.accYieldPerToken(address(yt)), 1);
-        assertEq(locker.yieldRemainder(address(yt)), 0);
-        assertEq(locker.claimable(address(yt), alice), smallYield * 4);
+        assertEq(locker.accYieldPerToken(), 1);
+        assertEq(locker.yieldRemainder(), 0);
+        assertEq(locker.claimable(alice), smallYield * 4);
     }
 
     function test_harvest_remainderNeverExceedsSupply() public {
@@ -433,13 +383,13 @@ contract PYTLockerTest is Test {
         yt.mint(alice, depositAmount);
 
         vm.prank(alice);
-        locker.deposit(address(yt), depositAmount);
+        locker.deposit(depositAmount);
 
         for (uint256 i = 0; i < 20; i++) {
             _accrueYield(smallYield);
-            locker.harvest(address(yt));
+            locker.harvest();
 
-            assertLt(locker.yieldRemainder(address(yt)), locker.totalSupply(address(yt)));
+            assertLt(locker.yieldRemainder(), locker.totalSupply());
         }
     }
 
@@ -453,34 +403,34 @@ contract PYTLockerTest is Test {
         yt.mint(bob, bobDeposit);
 
         vm.prank(alice);
-        locker.deposit(address(yt), aliceDeposit);
+        locker.deposit(aliceDeposit);
 
         _accrueYield(firstYield);
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        uint256 firstRemainder = locker.yieldRemainder(address(yt));
-        assertEq(locker.accYieldPerToken(address(yt)), 0);
+        uint256 firstRemainder = locker.yieldRemainder();
+        assertEq(locker.accYieldPerToken(), 0);
         assertEq(firstRemainder, firstYield * 1e18);
 
         vm.prank(bob);
-        locker.deposit(address(yt), bobDeposit);
+        locker.deposit(bobDeposit);
 
-        assertEq(locker.accYieldPerToken(address(yt)), 0);
-        assertEq(locker.yieldRemainder(address(yt)), firstRemainder);
+        assertEq(locker.accYieldPerToken(), 0);
+        assertEq(locker.yieldRemainder(), firstRemainder);
 
         _accrueYield(secondYield);
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        // Market-level carry intentionally shares sub-precision dust across the updated supply.
-        assertEq(locker.accYieldPerToken(address(yt)), 1);
-        assertEq(locker.yieldRemainder(address(yt)), 0);
-        assertEq(locker.claimable(address(yt), alice), 1_000_000);
-        assertEq(locker.claimable(address(yt), bob), 1_000_000);
+        // Carry intentionally shares sub-precision dust across the updated supply.
+        assertEq(locker.accYieldPerToken(), 1);
+        assertEq(locker.yieldRemainder(), 0);
+        assertEq(locker.claimable(alice), 1_000_000);
+        assertEq(locker.claimable(bob), 1_000_000);
 
         vm.prank(alice);
-        locker.claim(address(yt));
+        locker.claim();
         vm.prank(bob);
-        locker.claim(address(yt));
+        locker.claim();
 
         assertEq(asset.balanceOf(alice), 1_000_000);
         assertEq(asset.balanceOf(bob), 1_000_000);
@@ -494,239 +444,237 @@ contract PYTLockerTest is Test {
         yt.mint(alice, depositAmount);
 
         vm.prank(alice);
-        locker.deposit(address(yt), depositAmount);
+        locker.deposit(depositAmount);
 
         _accrueYield(smallYield);
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        uint256 remainder = locker.yieldRemainder(address(yt));
-        assertEq(locker.accYieldPerToken(address(yt)), 0);
+        uint256 remainder = locker.yieldRemainder();
+        assertEq(locker.accYieldPerToken(), 0);
         assertGt(remainder, 0);
 
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        assertEq(locker.accYieldPerToken(address(yt)), 0);
-        assertEq(locker.yieldRemainder(address(yt)), remainder);
+        assertEq(locker.accYieldPerToken(), 0);
+        assertEq(locker.yieldRemainder(), remainder);
         assertEq(asset.balanceOf(address(locker)), smallYield);
     }
 
     function test_harvest_noYieldIfNoDepositors() public {
-        locker.harvest(address(yt));
-        assertEq(locker.accYieldPerToken(address(yt)), 0);
+        locker.harvest();
+        assertEq(locker.accYieldPerToken(), 0);
     }
 
     function test_harvest_anyoneCanCall() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         uint256 yieldAmount = 10e18;
         _accrueYield(yieldAmount);
 
         address random = address(0xDEAD);
         vm.prank(random);
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        assertEq(locker.claimable(address(yt), alice), yieldAmount);
+        assertEq(locker.claimable(alice), yieldAmount);
     }
 
     // ============ Claim Tests ============
 
     function test_claim() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         uint256 yieldAmount = 10e18;
         _accrueYield(yieldAmount);
-        locker.harvest(address(yt));
+        locker.harvest();
 
         uint256 balanceBefore = asset.balanceOf(alice);
 
         vm.prank(alice);
-        locker.claim(address(yt));
+        locker.claim();
 
         assertEq(asset.balanceOf(alice), balanceBefore + yieldAmount);
-        assertEq(locker.claimable(address(yt), alice), 0);
+        assertEq(locker.claimable(alice), 0);
     }
 
     function test_claim_noOpIfNoRewards() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         vm.prank(alice);
-        locker.claim(address(yt));
+        locker.claim();
 
         assertEq(asset.balanceOf(alice), 0);
     }
 
     function test_claim_partialClaim() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         uint256 yield1 = 10e18;
         _accrueYield(yield1);
-        locker.harvest(address(yt));
+        locker.harvest();
 
         vm.prank(alice);
-        locker.claim(address(yt));
+        locker.claim();
         assertEq(asset.balanceOf(alice), yield1);
 
         uint256 yield2 = 5e18;
         _accrueYield(yield2);
-        locker.harvest(address(yt));
+        locker.harvest();
 
         vm.prank(alice);
-        locker.claim(address(yt));
+        locker.claim();
         assertEq(asset.balanceOf(alice), yield1 + yield2);
     }
 
     function test_claim_onBehalf() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         uint256 yieldAmount = 10e18;
         _accrueYield(yieldAmount);
-        locker.harvest(address(yt));
+        locker.harvest();
 
         uint256 bobBalanceBefore = asset.balanceOf(bob);
 
         vm.prank(bob);
-        locker.claim(address(yt), alice);
+        locker.claim(alice);
 
         assertEq(asset.balanceOf(alice), yieldAmount);
         assertEq(asset.balanceOf(bob), bobBalanceBefore);
-        assertEq(locker.claimable(address(yt), alice), 0);
+        assertEq(locker.claimable(alice), 0);
     }
 
     // ============ No Dilution Tests (Critical) ============
 
     function test_noDilution_newDepositorDoesNotGetPastYield() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         uint256 yieldAmount = 10e18;
         _accrueYield(yieldAmount);
 
         vm.prank(bob);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
-        assertEq(locker.claimable(address(yt), bob), 0);
-        assertEq(locker.claimable(address(yt), alice), yieldAmount);
+        assertEq(locker.claimable(bob), 0);
+        assertEq(locker.claimable(alice), yieldAmount);
     }
 
     function test_noDilution_multipleDepositsAndYields() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         uint256 yield1 = 10e18;
         _accrueYield(yield1);
-        locker.harvest(address(yt));
+        locker.harvest();
 
         vm.prank(bob);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         uint256 yield2 = 20e18;
         _accrueYield(yield2);
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        assertEq(locker.claimable(address(yt), alice), yield1 + yield2 / 2);
-        assertEq(locker.claimable(address(yt), bob), yield2 / 2);
+        assertEq(locker.claimable(alice), yield1 + yield2 / 2);
+        assertEq(locker.claimable(bob), yield2 / 2);
     }
 
     function test_noDilution_proportionalDistribution() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         vm.prank(bob);
-        locker.deposit(address(yt), 300e18);
+        locker.deposit(300e18);
 
         uint256 yieldAmount = 40e18;
         _accrueYield(yieldAmount);
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        assertEq(locker.claimable(address(yt), alice), 10e18);
-        assertEq(locker.claimable(address(yt), bob), 30e18);
+        assertEq(locker.claimable(alice), 10e18);
+        assertEq(locker.claimable(bob), 30e18);
     }
 
     // ============ Auto-Claim on Deposit Tests ============
 
     function test_deposit_autoClaimsPendingYield() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         uint256 yield1 = 10e18;
         _accrueYield(yield1);
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        assertEq(locker.claimable(address(yt), alice), yield1);
+        assertEq(locker.claimable(alice), yield1);
 
         vm.prank(alice);
-        locker.deposit(address(yt), 50e18);
+        locker.deposit(50e18);
 
         assertEq(asset.balanceOf(alice), yield1);
-        assertEq(locker.claimable(address(yt), alice), 0);
-        assertEq(locker.balanceOf(address(yt), alice), 150e18);
+        assertEq(locker.claimable(alice), 0);
+        assertEq(locker.balanceOf(alice), 150e18);
     }
 
     function test_deposit_receiver_autoClaimsPendingYield() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         uint256 yield1 = 10e18;
         _accrueYield(yield1);
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        assertEq(locker.claimable(address(yt), alice), yield1);
+        assertEq(locker.claimable(alice), yield1);
 
         vm.prank(bob);
-        locker.deposit(address(yt), 50e18, alice);
+        locker.deposit(50e18, alice);
 
         assertEq(asset.balanceOf(alice), yield1);
         assertEq(asset.balanceOf(bob), 0);
-        assertEq(locker.claimable(address(yt), alice), 0);
-        assertEq(locker.balanceOf(address(yt), alice), 150e18);
-        assertEq(locker.balanceOf(address(yt), bob), 0);
+        assertEq(locker.claimable(alice), 0);
+        assertEq(locker.balanceOf(alice), 150e18);
+        assertEq(locker.balanceOf(bob), 0);
     }
 
     // ============ Edge Cases ============
 
     function test_depositAfterClaim() public {
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         uint256 yield1 = 10e18;
         _accrueYield(yield1);
-        locker.harvest(address(yt));
+        locker.harvest();
 
         vm.prank(alice);
-        locker.claim(address(yt));
+        locker.claim();
 
         vm.prank(alice);
-        locker.deposit(address(yt), 50e18);
+        locker.deposit(50e18);
 
         uint256 yield2 = 15e18;
         _accrueYield(yield2);
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        assertEq(locker.claimable(address(yt), alice), yield2);
+        assertEq(locker.claimable(alice), yield2);
     }
 
-    function test_multipleMarkets() public {
+    function test_twoIndependentLockers_separateYield() public {
         MockAsset asset2 = new MockAsset();
         MockSY sy2 = new MockSY(address(asset2));
         MockYT yt2 = new MockYT(address(sy2), block.timestamp + YT_EXPIRY);
-
-        vm.prank(owner);
-        locker.addMarket(address(yt2));
+        PYTLocker locker2 = new PYTLocker(owner, address(yt2));
 
         yt2.mint(alice, 500e18);
         vm.prank(alice);
-        yt2.approve(address(locker), type(uint256).max);
+        yt2.approve(address(locker2), type(uint256).max);
 
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         vm.prank(alice);
-        locker.deposit(address(yt2), 200e18);
+        locker2.deposit(200e18);
 
         uint256 yield1 = 10e18;
         sy.mint(address(yt), yield1);
@@ -736,49 +684,47 @@ contract PYTLockerTest is Test {
         uint256 yield2 = 20e18;
         sy2.mint(address(yt2), yield2);
         sy2.fundAsset(yield2);
-        yt2.accrueInterest(address(locker), yield2);
+        yt2.accrueInterest(address(locker2), yield2);
 
-        locker.harvest(address(yt));
-        locker.harvest(address(yt2));
+        locker.harvest();
+        locker2.harvest();
 
-        assertEq(locker.claimable(address(yt), alice), yield1);
-        assertEq(locker.claimable(address(yt2), alice), yield2);
+        assertEq(locker.claimable(alice), yield1);
+        assertEq(locker2.claimable(alice), yield2);
     }
 
-    function test_multipleMarkets_independentCaps() public {
+    function test_twoIndependentLockers_separateCaps() public {
         MockAsset asset2 = new MockAsset();
         MockSY sy2 = new MockSY(address(asset2));
         MockYT yt2 = new MockYT(address(sy2), block.timestamp + YT_EXPIRY);
-
-        vm.prank(owner);
-        locker.addMarket(address(yt2));
+        PYTLocker locker2 = new PYTLocker(owner, address(yt2));
 
         yt2.mint(alice, 500e18);
         vm.prank(alice);
-        yt2.approve(address(locker), type(uint256).max);
+        yt2.approve(address(locker2), type(uint256).max);
 
         vm.startPrank(owner);
-        locker.setMarketMaxSupply(address(yt), 100e18);
-        locker.setMarketMaxSupply(address(yt2), 200e18);
+        locker.setMaxSupply(100e18);
+        locker2.setMaxSupply(200e18);
         vm.stopPrank();
 
         vm.prank(alice);
-        locker.deposit(address(yt), 100e18);
+        locker.deposit(100e18);
 
         vm.prank(alice);
-        locker.deposit(address(yt2), 150e18);
+        locker2.deposit(150e18);
 
         vm.prank(bob);
-        vm.expectRevert(PYTLocker.MarketMaxSupplyExceeded.selector);
-        locker.deposit(address(yt), 1);
+        vm.expectRevert(PYTLocker.MaxSupplyExceeded.selector);
+        locker.deposit(1);
 
         vm.prank(alice);
-        locker.deposit(address(yt2), 50e18);
+        locker2.deposit(50e18);
 
-        assertEq(locker.totalSupply(address(yt)), 100e18);
-        assertEq(locker.maxDeposit(address(yt)), 0);
-        assertEq(locker.totalSupply(address(yt2)), 200e18);
-        assertEq(locker.maxDeposit(address(yt2)), 0);
+        assertEq(locker.totalSupply(), 100e18);
+        assertEq(locker.maxDeposit(), 0);
+        assertEq(locker2.totalSupply(), 200e18);
+        assertEq(locker2.maxDeposit(), 0);
     }
 
     // ============ Sweep Tests ============
@@ -795,19 +741,19 @@ contract PYTLockerTest is Test {
 
     function test_sweep_revertsForYT() public {
         vm.prank(owner);
-        vm.expectRevert(PYTLocker.CannotSweepMarketToken.selector);
+        vm.expectRevert(PYTLocker.CannotSweepProtectedToken.selector);
         locker.sweep(address(yt), owner, 1e18);
     }
 
     function test_sweep_revertsForSY() public {
         vm.prank(owner);
-        vm.expectRevert(PYTLocker.CannotSweepMarketToken.selector);
+        vm.expectRevert(PYTLocker.CannotSweepProtectedToken.selector);
         locker.sweep(address(sy), owner, 1e18);
     }
 
     function test_sweep_revertsForAsset() public {
         vm.prank(owner);
-        vm.expectRevert(PYTLocker.CannotSweepMarketToken.selector);
+        vm.expectRevert(PYTLocker.CannotSweepProtectedToken.selector);
         locker.sweep(address(asset), owner, 1e18);
     }
 
@@ -827,16 +773,16 @@ contract PYTLockerTest is Test {
         yieldAmount = bound(yieldAmount, 1e18, 1000e18);
 
         vm.prank(alice);
-        locker.deposit(address(yt), depositAmount);
+        locker.deposit(depositAmount);
 
         _accrueYield(yieldAmount);
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        uint256 claimableAmount = locker.claimable(address(yt), alice);
+        uint256 claimableAmount = locker.claimable(alice);
         assertApproxEqRel(claimableAmount, yieldAmount, 1e11);
 
         vm.prank(alice);
-        locker.claim(address(yt));
+        locker.claim();
 
         assertApproxEqRel(asset.balanceOf(alice), yieldAmount, 1e11);
     }
@@ -848,28 +794,28 @@ contract PYTLockerTest is Test {
         yield2 = bound(yield2, 1e18, 100e18);
 
         vm.prank(alice);
-        locker.deposit(address(yt), aliceDeposit);
+        locker.deposit(aliceDeposit);
 
         _accrueYield(yield1);
-        locker.harvest(address(yt));
+        locker.harvest();
 
-        uint256 aliceClaimableAfterYield1 = locker.claimable(address(yt), alice);
+        uint256 aliceClaimableAfterYield1 = locker.claimable(alice);
         assertApproxEqRel(aliceClaimableAfterYield1, yield1, 1e11);
 
         vm.prank(bob);
-        locker.deposit(address(yt), bobDeposit);
+        locker.deposit(bobDeposit);
 
-        assertEq(locker.claimable(address(yt), bob), 0);
-        assertApproxEqRel(locker.claimable(address(yt), alice), yield1, 1e11);
+        assertEq(locker.claimable(bob), 0);
+        assertApproxEqRel(locker.claimable(alice), yield1, 1e11);
 
         _accrueYield(yield2);
-        locker.harvest(address(yt));
+        locker.harvest();
 
         uint256 totalLocked = aliceDeposit + bobDeposit;
         uint256 aliceShare2 = (yield2 * aliceDeposit) / totalLocked;
         uint256 bobShare2 = (yield2 * bobDeposit) / totalLocked;
 
-        assertApproxEqRel(locker.claimable(address(yt), alice), yield1 + aliceShare2, 1e11);
-        assertApproxEqRel(locker.claimable(address(yt), bob), bobShare2, 1e11);
+        assertApproxEqRel(locker.claimable(alice), yield1 + aliceShare2, 1e11);
+        assertApproxEqRel(locker.claimable(bob), bobShare2, 1e11);
     }
 }
