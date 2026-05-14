@@ -225,7 +225,37 @@ contract USD3 is BaseHooksUpgradeable {
                     INTERNAL STRATEGY FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Deploy funds to MorphoCredit market respecting maxOnCredit ratio
+    /// @dev Maximum waUSDC deployment allowed by sUSD3 backing alone.
+    /// Returns type(uint256).max when no subordination constraint applies.
+    function _subordinationDeployCapWaUSDC() internal view returns (uint256) {
+        if (sUSD3 == address(0)) return type(uint256).max;
+
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        uint256 backingRatio = config.config(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO);
+        if (backingRatio == 0) return type(uint256).max;
+
+        uint256 sUSD3Shares = TokenizedStrategy.balanceOf(sUSD3);
+        uint256 _totalSupply = TokenizedStrategy.totalSupply();
+        uint256 _totalAssets = TokenizedStrategy.totalAssets();
+
+        if (_totalSupply == 0 || _totalAssets == 0 || sUSD3Shares == 0) return 0;
+
+        // Conservative (floor-rounded) USD3 share-to-USDC conversion,
+        // same accounting model as sUSD3.sol availableDepositLimit/availableWithdrawLimit
+        uint256 sUSD3ValueUSDC = sUSD3Shares.mulDiv(_totalAssets, _totalSupply, Math.Rounding.Floor);
+        uint256 maxDebtUSDC = (sUSD3ValueUSDC * 10_000) / backingRatio;
+
+        return WAUSDC.convertToShares(maxDebtUSDC);
+    }
+
+    /// @dev Effective deployment cap: min(maxOnCredit-based cap, subordination cap)
+    function _effectiveDeployCapWaUSDC(uint256 totalWaUSDC) internal view returns (uint256) {
+        uint256 maxOnCreditCap = (totalWaUSDC * maxOnCredit()) / 10_000;
+        uint256 subCap = _subordinationDeployCapWaUSDC();
+        return Math.min(maxOnCreditCap, subCap);
+    }
+
+    /// @dev Deploy funds to MorphoCredit market respecting maxOnCredit ratio and subordination cap
     /// @param _amount Amount of asset to deploy
     function _deployFunds(uint256 _amount) internal override {
         if (_amount == 0) return;
@@ -244,8 +274,7 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 localWaUSDC = balanceOfWaUSDC();
         uint256 totalWaUSDC = deployedWaUSDC + localWaUSDC;
 
-        // Calculate max that should be deployed to MorphoCredit
-        uint256 maxDeployableWaUSDC = (totalWaUSDC * maxOnCreditRatio) / 10_000;
+        uint256 maxDeployableWaUSDC = _effectiveDeployCapWaUSDC(totalWaUSDC);
 
         if (maxDeployableWaUSDC <= deployedWaUSDC) {
             // Already at or above max, keep all new waUSDC local
@@ -324,7 +353,7 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 localWaUSDC = balanceOfWaUSDC();
         uint256 totalWaUSDC = deployedWaUSDC + localWaUSDC;
 
-        uint256 targetDeployedWaUSDC = (totalWaUSDC * maxOnCredit()) / 10_000;
+        uint256 targetDeployedWaUSDC = _effectiveDeployCapWaUSDC(totalWaUSDC);
 
         if (deployedWaUSDC > targetDeployedWaUSDC) {
             // Withdraw excess from MorphoCredit
@@ -335,6 +364,30 @@ contract USD3 is BaseHooksUpgradeable {
             uint256 waUSDCToDeploy = Math.min(localWaUSDC, targetDeployedWaUSDC - deployedWaUSDC);
             _supplyToMorpho(waUSDCToDeploy);
         }
+    }
+
+    /// @dev Signal keepers when deployment drifts from the effective cap
+    function _tendTrigger() internal view override returns (bool) {
+        uint256 deployed = suppliedWaUSDC();
+        uint256 localWaUSDC = balanceOfWaUSDC();
+        uint256 totalWaUSDC = deployed + localWaUSDC;
+        uint256 target = _effectiveDeployCapWaUSDC(totalWaUSDC);
+
+        if (target == 0) return deployed > 0;
+
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        uint256 driftBps = config.config(ProtocolConfigLib.TEND_DRIFT_THRESHOLD);
+        if (driftBps == 0) driftBps = 10;
+        require(driftBps < 10_000, "Invalid drift threshold");
+        uint256 threshold = (target * driftBps) / 10_000;
+
+        if (deployed > target) {
+            return (deployed - target) > threshold;
+        }
+        if (target > deployed && localWaUSDC > 0) {
+            return (target - deployed) > threshold;
+        }
+        return false;
     }
 
     /// @dev Helper function to supply waUSDC to MorphoCredit
@@ -611,6 +664,15 @@ contract USD3 is BaseHooksUpgradeable {
      */
     function suppliedWaUSDC() public view returns (uint256) {
         return morphoCredit.expectedSupplyAssets(_marketParams, address(this));
+    }
+
+    /**
+     * @notice Get the effective deployment cap accounting for both maxOnCredit and sUSD3 subordination
+     * @return Maximum waUSDC that should be deployed to MorphoCredit
+     */
+    function effectiveDeployCapWaUSDC() external view returns (uint256) {
+        uint256 totalWaUSDC = suppliedWaUSDC() + balanceOfWaUSDC();
+        return _effectiveDeployCapWaUSDC(totalWaUSDC);
     }
 
     /**
