@@ -47,8 +47,6 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         // Configure floor/cap environment.
         setMaxOnCredit(8000);
         setMorphoDebtCap(20_000_000e6);
-        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 3000); // 30%
-        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 400_000e6);
 
         // Seed liquidity and debt.
         address alice = makeAddr("debt-floor-alice");
@@ -59,6 +57,8 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         vm.stopPrank();
 
         createMarketDebt(makeAddr("debt-floor-borrower"), 1_000_000e6);
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 3000); // 30%
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 400_000e6);
 
         vm.startPrank(alice);
         IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 500_000e6);

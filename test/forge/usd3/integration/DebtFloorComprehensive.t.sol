@@ -198,7 +198,6 @@ contract DebtFloorComprehensiveTest is Setup {
     }
 
     function test_debtFloor_nominalFloorDominatesRatioFloor() public {
-        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 1000); // 10%
         protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 50_000e6);
 
         vm.prank(alice);
@@ -206,12 +205,12 @@ contract DebtFloorComprehensiveTest is Setup {
 
         setMaxOnCredit(8000);
         createMarketDebt(borrower, 100_000e6); // 10K ratio floor
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 1000); // 10%
 
         assertEq(susd3Strategy.getSubordinatedDebtFloorInUSDC(), 50_000e6, "nominal floor should dominate");
     }
 
     function test_debtFloor_ratioFloorDominatesNominalFloor() public {
-        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 5000); // 50%
         protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 10_000e6);
 
         vm.prank(alice);
@@ -219,6 +218,7 @@ contract DebtFloorComprehensiveTest is Setup {
 
         setMaxOnCredit(8000);
         createMarketDebt(borrower, 100_000e6); // 50K ratio floor
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 5000); // 50%
 
         assertEq(susd3Strategy.getSubordinatedDebtFloorInUSDC(), 50_000e6, "ratio floor should dominate");
     }
