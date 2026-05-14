@@ -28,6 +28,7 @@ library ProtocolConfigLib {
     bytes32 internal constant TRANCHE_RATIO = keccak256("TRANCHE_RATIO");
     bytes32 internal constant TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
     bytes32 internal constant MIN_SUSD3_BACKING_RATIO = keccak256("MIN_SUSD3_BACKING_RATIO");
+    bytes32 internal constant SUSD3_NOMINAL_BACKING_FLOOR = keccak256("SUSD3_NOMINAL_BACKING_FLOOR");
 
     // Timing Keys
     bytes32 internal constant SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");

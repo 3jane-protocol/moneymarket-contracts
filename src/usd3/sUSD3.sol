@@ -421,6 +421,16 @@ contract sUSD3 is BaseHooksUpgradeable {
     }
 
     /**
+     * @notice Get the nominal backing floor from ProtocolConfig
+     * @dev If set above achievable sUSD3 backing capacity, withdrawals can remain blocked.
+     * @return Nominal backing floor, expressed in USDC
+     */
+    function nominalBackingFloor() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
+        return config.config(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR);
+    }
+
+    /**
      * @notice Calculate maximum sUSD3 deposits allowed based on debt and subordination ratio
      * @dev Returns the cap amount for subordinated debt based on actual or potential market debt
      * @return Maximum subordinated debt cap, expressed in USDC
@@ -454,24 +464,24 @@ contract sUSD3 is BaseHooksUpgradeable {
 
     /**
      * @notice Calculate minimum sUSD3 backing required for current market debt
-     * @dev Returns the floor amount of sUSD3 assets needed based on MIN_SUSD3_BACKING_RATIO
+     * @dev Returns the greater of the ratio-based floor and nominal backing floor
      * @return Minimum backing amount required, expressed in USDC
      */
     function getSubordinatedDebtFloorInUSDC() public view returns (uint256) {
-        // Get minimum backing ratio
+        uint256 nominalFloor = nominalBackingFloor();
         uint256 backingRatio = minBackingRatio();
 
-        // If backing ratio is 0, no minimum backing required
-        if (backingRatio == 0) return 0;
+        uint256 ratioFloor;
+        if (backingRatio > 0) {
+            USD3 usd3 = USD3(address(asset));
 
-        USD3 usd3 = USD3(address(asset));
+            (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
+            uint256 debtUSDC = usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
 
-        // Get actual borrowed amount
-        (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
-        uint256 debtUSDC = usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
+            ratioFloor = (debtUSDC * backingRatio) / MAX_BPS;
+        }
 
-        // Calculate minimum required backing
-        return (debtUSDC * backingRatio) / MAX_BPS;
+        return Math.max(ratioFloor, nominalFloor);
     }
 
     /*//////////////////////////////////////////////////////////////
