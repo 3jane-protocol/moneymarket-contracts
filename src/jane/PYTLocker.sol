@@ -122,9 +122,8 @@ contract PYTLocker is Ownable, ReentrancyGuard {
     ///      Setting below current totalSupply blocks future deposits until the cap is raised.
     /// @param newMaxSupply The new cap (use type(uint256).max for unlimited)
     function setMaxSupply(uint256 newMaxSupply) external onlyOwner {
-        uint256 oldMaxSupply = maxSupply;
+        emit MaxSupplyUpdated(maxSupply, newMaxSupply);
         maxSupply = newMaxSupply;
-        emit MaxSupplyUpdated(oldMaxSupply, newMaxSupply);
     }
 
     /// @notice Sweep accumulated tokens (e.g., reward tokens) for external distribution
