@@ -142,11 +142,11 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
         assertEq(vault.balanceOf(address(reserve)), 60_000e6, "vault shares should be withdrawn");
     }
 
-    function test_adminReleasesAllToProtocol() public {
+    function test_adminReleasesMaxToProtocol() public {
         _draw(DRAW);
 
         vm.prank(admin);
-        reserve.releaseAllToProtocol();
+        reserve.releaseToProtocol(type(uint256).max);
 
         assertEq(reserve.outstandingDebtAssets(), 0, "debt should be fully repaid");
         assertEq(vault.balanceOf(address(reserve)), 0, "vault shares should be fully withdrawn");
@@ -180,6 +180,7 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
 
         assertEq(reserve.outstandingDebtAssets(), 0, "emergency repay should clear debt");
         assertEq(IERC20(reserveMarketParams.loanToken).balanceOf(address(reserve)), 0, "loan-token dust should be zero");
+        assertEq(underlyingAsset.balanceOf(address(reserve)), 0, "USDC residual should be zero");
         assertEq(vault.balanceOf(address(reserve)), 0, "vault shares should be fully withdrawn");
     }
 
@@ -239,6 +240,47 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
 
         vm.expectRevert(RevolvingCreditFacilityHolding.InvalidOperation.selector);
         reserve.executeScheduledRepayment();
+    }
+
+    function test_adminCanVetoScheduledRepaymentAfterEta() public {
+        _draw(DRAW);
+
+        skip(180 days);
+
+        vm.prank(proposer);
+        reserve.scheduleProtocolRepayment(10_000e6);
+
+        skip(7 days);
+
+        vm.prank(admin);
+        reserve.vetoScheduledRepayment();
+
+        vm.expectRevert(RevolvingCreditFacilityHolding.InvalidOperation.selector);
+        reserve.executeScheduledRepayment();
+    }
+
+    function test_proposerCanScheduleMaxRepayment() public {
+        _draw(DRAW);
+
+        skip(180 days);
+
+        vm.prank(proposer);
+        reserve.scheduleProtocolRepayment(type(uint256).max);
+
+        skip(7 days);
+
+        _postEmptyCycle();
+        morpho.accrueInterest(reserveMarketParams);
+        uint256 fullDebt = reserve.outstandingDebtAssets();
+        deal(address(underlyingAsset), address(reserve), fullDebt - DRAW);
+
+        vm.prank(admin);
+        reserve.investIdle(fullDebt - DRAW);
+
+        reserve.executeScheduledRepayment();
+
+        assertEq(reserve.outstandingDebtAssets(), 0, "scheduled max repayment should clear debt");
+        assertEq(vault.balanceOf(address(reserve)), 0, "vault shares should be fully withdrawn");
     }
 
     function test_proposerCanOverwriteScheduledRepayment() public {

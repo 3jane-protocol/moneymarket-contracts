@@ -20,8 +20,9 @@ import {SharesMathLib} from "./libraries/SharesMathLib.sol";
 /// @dev The reserve borrows USDC through Helper from a single Morpho market, deposits the USDC into the configured
 /// ERC4626 vault, and releases funds only through admin action or a proposer-scheduled fallback repayment. The
 /// proposer is the only fallback initiator and may schedule only after 180 days without admin activity; the admin may
-/// veto during a 7-day window, and execution after that window is permissionless. `emergencyRepay` bypasses Helper for
-/// repayment if the bound Helper is unavailable or unsafe.
+/// veto during a 7-day window, and execution after that window is permissionless. After a veto, the proposer may
+/// reschedule while the 180-day idle gate remains open; the admin can keep vetoing or rotate the proposer.
+/// `emergencyRepay` bypasses Helper for repayment if the bound Helper is unavailable or unsafe.
 contract RevolvingCreditFacilityHolding is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using MarketParamsLib for MarketParams;
@@ -220,8 +221,8 @@ contract RevolvingCreditFacilityHolding is Ownable, ReentrancyGuard {
         emit IdleInvested(amount, vaultShares);
     }
 
-    /// @notice Immediately releases vault liquidity to repay a fixed amount of this reserve's protocol debt.
-    /// @param amount USDC amount to repay; must not exceed the current outstanding debt.
+    /// @notice Immediately releases vault liquidity to repay this reserve's protocol debt.
+    /// @param amount USDC amount to repay, or `type(uint256).max` to repay the full outstanding debt.
     /// @return assetsRepaid USDC assets consumed by the repayment.
     /// @return sharesRepaid Borrow shares retired in the credit market.
     function releaseToProtocol(uint256 amount)
@@ -231,19 +232,6 @@ contract RevolvingCreditFacilityHolding is Ownable, ReentrancyGuard {
         returns (uint256 assetsRepaid, uint256 sharesRepaid)
     {
         return _releaseToProtocol(amount);
-    }
-
-    /// @notice Immediately releases enough vault liquidity to repay the full outstanding protocol debt.
-    /// @dev Routes through Helper's share-based full-repay path to avoid leaving any dust shares.
-    /// @return assetsRepaid USDC assets consumed by the repayment.
-    /// @return sharesRepaid Borrow shares retired in the credit market.
-    function releaseAllToProtocol()
-        external
-        onlyAdminTouch
-        nonReentrant
-        returns (uint256 assetsRepaid, uint256 sharesRepaid)
-    {
-        return _releaseToProtocol(type(uint256).max);
     }
 
     /// @notice Repays protocol debt directly through Morpho, bypassing the bound Helper.
