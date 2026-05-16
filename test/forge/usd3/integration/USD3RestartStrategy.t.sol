@@ -84,7 +84,7 @@ contract USD3RestartStrategyTest is Setup {
     }
 
     function _deployRestartableUSD3() internal returns (USD3 usd3, ProxyAdmin proxyAdmin) {
-        USD3 implementation = new USD3();
+        USD3 implementation = new USD3(address(0));
         USD3 setupStrategy = USD3(address(strategy));
 
         bytes memory initData = abi.encodeWithSelector(
@@ -112,7 +112,7 @@ contract USD3RestartStrategyTest is Setup {
     }
 
     function _upgradeAndRestart(USD3 usd3, ProxyAdmin proxyAdmin) internal {
-        USD3 newImplementation = new USD3();
+        USD3 newImplementation = new USD3(address(0));
         proxyAdmin.upgradeAndCall(
             ITransparentUpgradeableProxy(address(usd3)),
             address(newImplementation),

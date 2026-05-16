@@ -41,7 +41,7 @@ contract USD3UpgradeForkTest is MainnetForkBase {
         if (!isForkTest) return;
 
         // Deploy new USD3 implementation
-        newImplementation = new USD3();
+        newImplementation = new USD3(address(0));
 
         // Find actual USD3 holders from mainnet
         findUSD3Holders();

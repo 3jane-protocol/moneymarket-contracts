@@ -13,6 +13,7 @@ import {Pausable} from "../../lib/openzeppelin/contracts/utils/Pausable.sol";
 import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
+import {IUSD3WithdrawQueue} from "./interfaces/IUSD3WithdrawQueue.sol";
 
 /**
  * @title USD3
@@ -91,6 +92,9 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Used to enforce commitment periods
     mapping(address => uint256) public depositTimestamp;
 
+    /// @notice USD3 withdraw queue address. address(0) disables queue reservation.
+    address public immutable withdrawQueue;
+
     /*//////////////////////////////////////////////////////////////
                             EVENTS
     //////////////////////////////////////////////////////////////*/
@@ -101,7 +105,8 @@ contract USD3 is BaseHooksUpgradeable {
     event TrancheShareSynced(uint256 trancheShare);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
+    constructor(address _withdrawQueue) {
+        withdrawQueue = _withdrawQueue;
         _disableInitializers();
     }
 
@@ -400,6 +405,18 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         uint256 availableLiquidity = idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
+
+        if (withdrawQueue != address(0) && _owner != withdrawQueue) {
+            uint256 pendingShares = IUSD3WithdrawQueue(withdrawQueue).totalPendingShares();
+            if (pendingShares > 0) {
+                uint256 totalSupply = TokenizedStrategy.totalSupply();
+                uint256 reservedAssets = totalSupply == 0
+                    ? 0
+                    : pendingShares.mulDiv(TokenizedStrategy.totalAssets(), totalSupply, Math.Rounding.Ceil);
+
+                availableLiquidity = availableLiquidity > reservedAssets ? availableLiquidity - reservedAssets : 0;
+            }
+        }
 
         // During shutdown, bypass all checks
         if (TokenizedStrategy.isShutdown()) {

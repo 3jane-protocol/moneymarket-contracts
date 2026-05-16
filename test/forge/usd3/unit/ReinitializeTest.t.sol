@@ -37,7 +37,7 @@ contract ReinitializeTest is Setup {
 
     function test_reinitializeUpdatesAsset() public {
         // Deploy a fresh USD3 without reinitialize being called
-        USD3 freshImpl = new USD3();
+        USD3 freshImpl = new USD3(address(0));
         ProxyAdmin freshProxyAdmin = new ProxyAdmin(address(this));
 
         // Initialize with waUSDC as asset (simulating old version)
@@ -67,7 +67,7 @@ contract ReinitializeTest is Setup {
 
     function test_reinitializeApprovesWaUSDC() public {
         // Deploy fresh instance
-        USD3 freshImpl = new USD3();
+        USD3 freshImpl = new USD3(address(0));
         ProxyAdmin freshProxyAdmin = new ProxyAdmin(address(this));
 
         bytes memory initData = abi.encodeWithSelector(
@@ -93,7 +93,7 @@ contract ReinitializeTest is Setup {
 
     function test_reinitializeOnlyOnce() public {
         // Deploy fresh instance
-        USD3 freshImpl = new USD3();
+        USD3 freshImpl = new USD3(address(0));
         ProxyAdmin freshProxyAdmin = new ProxyAdmin(address(this));
 
         bytes memory initData = abi.encodeWithSelector(
@@ -150,7 +150,7 @@ contract ReinitializeTest is Setup {
 
     function test_reinitializeUpdatesTokenizedStrategySlot() public {
         // Deploy fresh instance
-        USD3 freshImpl = new USD3();
+        USD3 freshImpl = new USD3(address(0));
         ProxyAdmin freshProxyAdmin = new ProxyAdmin(address(this));
 
         bytes memory initData = abi.encodeWithSelector(
@@ -187,7 +187,7 @@ contract ReinitializeTest is Setup {
 
     function test_reinitializeWithExistingWaUSDCPosition() public {
         // Deploy fresh instance
-        USD3 freshImpl = new USD3();
+        USD3 freshImpl = new USD3(address(0));
         ProxyAdmin freshProxyAdmin = new ProxyAdmin(address(this));
 
         bytes memory initData = abi.encodeWithSelector(
