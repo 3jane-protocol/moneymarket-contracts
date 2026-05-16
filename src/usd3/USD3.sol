@@ -92,7 +92,10 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Used to enforce commitment periods
     mapping(address => uint256) public depositTimestamp;
 
-    /// @notice USD3 withdraw queue address. address(0) disables queue reservation.
+    /// @notice Address of the USD3 withdraw queue.
+    /// @dev Set once per implementation via the constructor and baked into bytecode.
+    /// `address(0)` disables queue reservation entirely and is used by test / non-production
+    /// deployments. Changing the queue requires deploying a new USD3 implementation.
     address public immutable withdrawQueue;
 
     /*//////////////////////////////////////////////////////////////
@@ -104,6 +107,13 @@ contract USD3 is BaseHooksUpgradeable {
     event MinDepositUpdated(uint256 newMinDeposit);
     event TrancheShareSynced(uint256 trancheShare);
 
+    /**
+     * @notice Bind this USD3 implementation to a withdraw-queue address and disable initializers.
+     * @dev The queue address is captured as an immutable for gas-cheap reads on the hot
+     * redemption path. Pass `address(0)` to deploy a queue-less implementation (used by tests
+     * and historical deployments).
+     * @param _withdrawQueue Withdraw queue proxy address, or `address(0)` to disable.
+     */
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address _withdrawQueue) {
         withdrawQueue = _withdrawQueue;
@@ -384,9 +394,15 @@ contract USD3 is BaseHooksUpgradeable {
                     PUBLIC VIEW FUNCTIONS (OVERRIDES)
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Returns available withdraw limit, enforcing commitment time
-    /// @param _owner Address to check limit for
-    /// @return Maximum amount that can be withdrawn
+    /// @notice Maximum USDC `_owner` can withdraw right now.
+    /// @dev Returns global executable liquidity (idle USDC + redeemable wrapped + Morpho-redeemable
+    /// wrapped) less the queue reservation, then gates the result on `_owner`'s commitment period.
+    /// The queue reservation is `totalPendingShares` priced at current PPS, rounded up to favor
+    /// the queue, and is applied before the shutdown short-circuit so FIFO fairness survives
+    /// shutdown. The queue contract itself is exempt from this reservation so it can process
+    /// its own pending requests.
+    /// @param _owner Address to check limit for.
+    /// @return Maximum USDC amount that can be withdrawn.
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
         // Get available liquidity first
         uint256 idleAsset = asset.balanceOf(address(this));
