@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.22;
 
+import {stdError} from "forge-std/StdError.sol";
+
 import {ERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Ownable} from "../../../lib/openzeppelin/contracts/access/Ownable.sol";
+import {ReentrancyGuard} from "../../../lib/openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {RevolvingCreditFacilityHolding} from "../../../src/RevolvingCreditFacilityHolding.sol";
 import {Helper} from "../../../src/Helper.sol";
@@ -12,6 +16,14 @@ import {ErrorsLib} from "../../../src/libraries/ErrorsLib.sol";
 import {USD3} from "../../../src/usd3/USD3.sol";
 import {MockWaUSDC} from "../usd3/mocks/MockWaUSDC.sol";
 import {Setup} from "../usd3/utils/Setup.sol";
+
+contract SimpleERC20 is ERC20 {
+    constructor() ERC20("Simple Token", "SIMPLE") {}
+
+    function mint(address account, uint256 amount) external {
+        _mint(account, amount);
+    }
+}
 
 contract MaliciousVault is ERC20 {
     IERC20 public immutable underlying;
@@ -44,7 +56,7 @@ contract MaliciousVault is ERC20 {
         shares = assets;
 
         if (attackEnabled) {
-            RevolvingCreditFacilityHolding(reserve).fallbackRepay(1);
+            RevolvingCreditFacilityHolding(reserve).executeScheduledRepayment();
         }
 
         if (msg.sender != owner) {
@@ -87,6 +99,7 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
             address(morpho), address(strategy), makeAddr("sUSD3"), address(underlyingAsset), address(waUSDC)
         );
 
+        // The reserve tests exercise the production Helper, so the protocol-wide helper is swapped from Setup's mock.
         vm.prank(morpho.owner());
         morpho.setHelper(address(realHelper));
 
@@ -97,6 +110,18 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
         reserve = _deployReserve(address(vault));
         _setReserveCredit(address(reserve), CREDIT);
         _postEmptyCycle();
+    }
+
+    function test_constructorRejectsLoanTokenWithDifferentAsset() public {
+        SimpleERC20 otherAsset = new SimpleERC20();
+        MockWaUSDC badLoanToken = new MockWaUSDC(address(otherAsset));
+        MarketParams memory badMarketParams = reserveMarketParams;
+        badMarketParams.loanToken = address(badLoanToken);
+
+        vm.expectRevert(ErrorsLib.InconsistentInput.selector);
+        new RevolvingCreditFacilityHolding(
+            admin, proposer, offRampRecipient, address(realHelper), address(vault), badMarketParams
+        );
     }
 
     function test_adminDrawsAndInvestsInVault() public {
@@ -127,6 +152,36 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
         assertEq(vault.balanceOf(address(reserve)), 0, "vault shares should be fully withdrawn");
     }
 
+    function test_emergencyRepayBypassesHelperForExistingDebt() public {
+        _draw(DRAW);
+
+        vm.prank(morpho.owner());
+        morpho.setHelper(makeAddr("rotatedHelper"));
+
+        vm.expectRevert(ErrorsLib.NotHelper.selector);
+        vm.prank(admin);
+        reserve.drawAndInvest(1e6);
+
+        vm.prank(admin);
+        reserve.emergencyRepay(40_000e6);
+
+        assertEq(reserve.outstandingDebtAssets(), 60_000e6, "emergency repay should reduce debt");
+        assertEq(vault.balanceOf(address(reserve)), 60_000e6, "vault shares should be withdrawn");
+    }
+
+    function test_emergencyRepayAllBypassesHelper() public {
+        _draw(DRAW);
+
+        vm.prank(morpho.owner());
+        morpho.setHelper(makeAddr("rotatedHelper"));
+
+        vm.prank(admin);
+        reserve.emergencyRepay(type(uint256).max);
+
+        assertEq(reserve.outstandingDebtAssets(), 0, "emergency repay should clear debt");
+        assertEq(vault.balanceOf(address(reserve)), 0, "vault shares should be fully withdrawn");
+    }
+
     function test_adminReleasesOnlyToFixedOffRampRecipient() public {
         _draw(DRAW);
 
@@ -138,16 +193,18 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
         assertEq(reserve.outstandingDebtAssets(), DRAW, "off-ramp release should not repay protocol debt");
     }
 
-    function test_usd3CannotPullVaultFundsAutomatically() public {
+    function test_vaultRejectsThirdPartyWithdrawWithoutAllowance() public {
         _draw(DRAW);
 
-        vm.expectRevert();
+        vm.expectRevert(stdError.arithmeticError);
         vm.prank(address(strategy));
         vault.withdraw(1e6, address(strategy), address(reserve));
     }
 
     function test_proposerRepaymentExecutesAfterDelay() public {
         _draw(DRAW);
+
+        skip(180 days);
 
         vm.prank(proposer);
         reserve.scheduleProtocolRepayment(10_000e6);
@@ -157,6 +214,7 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
 
         skip(7 days);
 
+        _postEmptyCycle();
         morpho.accrueInterest(reserveMarketParams);
         uint256 debtBefore = reserve.outstandingDebtAssets();
 
@@ -167,6 +225,8 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
 
     function test_adminCanVetoProposerRepayment() public {
         _draw(DRAW);
+
+        skip(180 days);
 
         vm.prank(proposer);
         reserve.scheduleProtocolRepayment(10_000e6);
@@ -182,6 +242,8 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
 
     function test_proposerCanOverwriteScheduledRepayment() public {
         _draw(DRAW);
+
+        skip(180 days);
 
         vm.prank(proposer);
         reserve.scheduleProtocolRepayment(10_000e6);
@@ -202,6 +264,8 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
     function test_overwrittenRepaymentUsesLatestAmountAndTimer() public {
         _draw(DRAW);
 
+        skip(180 days);
+
         vm.prank(proposer);
         reserve.scheduleProtocolRepayment(10_000e6);
 
@@ -217,6 +281,7 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
 
         skip(6 days);
 
+        _postEmptyCycle();
         morpho.accrueInterest(reserveMarketParams);
         uint256 debtBefore = reserve.outstandingDebtAssets();
 
@@ -228,32 +293,83 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
     function test_proposerCannotReleaseToOfframp() public {
         _draw(DRAW);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, proposer));
         vm.prank(proposer);
         reserve.releaseToOfframp(10_000e6);
     }
 
-    function test_fallbackRepayRequiresExpiredAdminHeartbeat() public {
+    function test_adminSetterRefreshesFallbackScheduleDelay() public {
+        _draw(DRAW);
+
+        skip(100 days);
+
+        address newProposer = makeAddr("newProposer");
+        vm.prank(admin);
+        reserve.setProposer(newProposer);
+        skip(100 days);
+
+        vm.expectRevert(RevolvingCreditFacilityHolding.FallbackNotReady.selector);
+        vm.prank(newProposer);
+        reserve.scheduleProtocolRepayment(10_000e6);
+    }
+
+    function test_proposerCannotScheduleBeforeFallbackDelay() public {
+        _draw(DRAW);
+
+        skip(180 days - 1);
+
+        vm.expectRevert(RevolvingCreditFacilityHolding.FallbackNotReady.selector);
+        vm.prank(proposer);
+        reserve.scheduleProtocolRepayment(10_000e6);
+    }
+
+    function test_adminPingResetsFallbackScheduleDelay() public {
         _draw(DRAW);
 
         skip(100 days);
 
         vm.prank(admin);
         reserve.adminPing();
-
         skip(100 days);
 
         vm.expectRevert(RevolvingCreditFacilityHolding.FallbackNotReady.selector);
-        reserve.fallbackRepay(10_000e6);
+        vm.prank(proposer);
+        reserve.scheduleProtocolRepayment(10_000e6);
+    }
 
-        skip(80 days);
-        _postEmptyCycle();
-        morpho.accrueInterest(reserveMarketParams);
-        uint256 debtBefore = reserve.outstandingDebtAssets();
+    function test_proposerCanScheduleAfterFallbackDelay() public {
+        _draw(DRAW);
 
-        reserve.fallbackRepay(10_000e6);
+        skip(180 days);
 
-        assertEq(reserve.outstandingDebtAssets(), debtBefore - 10_000e6, "fallback repayment should reduce debt");
+        vm.prank(proposer);
+        reserve.scheduleProtocolRepayment(10_000e6);
+
+        (uint256 amount, uint256 eta) = reserve.scheduledRepayment();
+        assertEq(amount, 10_000e6, "fallback amount should be scheduled");
+        assertEq(eta, block.timestamp + reserve.PROPOSER_DELAY(), "scheduled repayment should retain veto window");
+    }
+
+    function test_transferOwnershipRefreshesFallbackScheduleDelay() public {
+        address newAdmin = makeAddr("newAdmin");
+
+        _draw(DRAW);
+        skip(180 days);
+
+        vm.prank(admin);
+        reserve.transferOwnership(newAdmin);
+
+        vm.expectRevert(RevolvingCreditFacilityHolding.FallbackNotReady.selector);
+        vm.prank(proposer);
+        reserve.scheduleProtocolRepayment(10_000e6);
+    }
+
+    function test_renounceOwnershipIsDisabled() public {
+        _draw(DRAW);
+
+        vm.expectRevert(RevolvingCreditFacilityHolding.RenounceOwnershipDisabled.selector);
+        vm.prank(admin);
+        reserve.renounceOwnership();
     }
 
     function test_repayCannotExceedOutstandingDebt() public {
@@ -264,12 +380,36 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
         reserve.releaseToProtocol(DRAW + 1);
     }
 
+    function test_setProposerRejectsZeroAddressAndSameValue() public {
+        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
+        vm.prank(admin);
+        reserve.setProposer(address(0));
+
+        vm.expectRevert(ErrorsLib.AlreadySet.selector);
+        vm.prank(admin);
+        reserve.setProposer(proposer);
+    }
+
+    function test_setOffRampRecipientRejectsZeroAddressAndSameValue() public {
+        vm.expectRevert(ErrorsLib.ZeroAddress.selector);
+        vm.prank(admin);
+        reserve.setOffRampRecipient(address(0));
+
+        vm.expectRevert(ErrorsLib.AlreadySet.selector);
+        vm.prank(admin);
+        reserve.setOffRampRecipient(offRampRecipient);
+    }
+
     function test_rescueCannotRecoverProtectedAssets() public {
         _draw(DRAW);
 
         vm.expectRevert(RevolvingCreditFacilityHolding.ProtectedToken.selector);
         vm.prank(admin);
         reserve.rescueToken(address(vault), admin, 1);
+
+        vm.expectRevert(RevolvingCreditFacilityHolding.ProtectedToken.selector);
+        vm.prank(admin);
+        reserve.rescueToken(reserveMarketParams.loanToken, admin, 1);
 
         deal(address(underlyingAsset), address(reserve), 1e6);
 
@@ -278,7 +418,40 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
         reserve.rescueToken(address(underlyingAsset), admin, 1e6);
     }
 
-    function test_reentrantWrapperCannotReenterFallbackRepay() public {
+    function test_rescueTokenTransfersUnrelatedErc20() public {
+        SimpleERC20 token = new SimpleERC20();
+        token.mint(address(reserve), 100e18);
+
+        vm.prank(admin);
+        reserve.rescueToken(address(token), admin, 40e18);
+
+        assertEq(token.balanceOf(admin), 40e18, "admin should receive rescued token");
+        assertEq(token.balanceOf(address(reserve)), 60e18, "reserve should keep unrescued balance");
+    }
+
+    function test_investIdleRevertsWhenVaultMintsZeroShares() public {
+        MockWaUSDC zeroShareVault = new MockWaUSDC(address(underlyingAsset));
+        zeroShareVault.setSharePrice(2e6);
+        RevolvingCreditFacilityHolding zeroShareReserve = _deployReserve(address(zeroShareVault));
+        deal(address(underlyingAsset), address(zeroShareReserve), 1);
+
+        vm.expectRevert(ErrorsLib.ZeroAssets.selector);
+        vm.prank(admin);
+        zeroShareReserve.investIdle(1);
+    }
+
+    function test_drawAndInvestRevertsWhenVaultMintsZeroShares() public {
+        MockWaUSDC zeroShareVault = new MockWaUSDC(address(underlyingAsset));
+        zeroShareVault.setSharePrice(DRAW * 1e6 + 1);
+        RevolvingCreditFacilityHolding zeroShareReserve = _deployReserve(address(zeroShareVault));
+        _setReserveCredit(address(zeroShareReserve), CREDIT);
+
+        vm.expectRevert(ErrorsLib.ZeroAssets.selector);
+        vm.prank(admin);
+        zeroShareReserve.drawAndInvest(DRAW);
+    }
+
+    function test_reentrantWrapperCannotReenterScheduledRepayment() public {
         MaliciousVault maliciousVault = new MaliciousVault(address(underlyingAsset));
         RevolvingCreditFacilityHolding maliciousReserve = _deployReserve(address(maliciousVault));
         maliciousVault.setReserve(address(maliciousReserve));
@@ -288,11 +461,15 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
         maliciousReserve.drawAndInvest(DRAW);
 
         skip(181 days);
+        vm.prank(proposer);
+        maliciousReserve.scheduleProtocolRepayment(10_000e6);
+        skip(7 days);
         _postEmptyCycle();
+
         maliciousVault.setAttackEnabled(true);
 
-        vm.expectRevert();
-        maliciousReserve.fallbackRepay(10_000e6);
+        vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
+        maliciousReserve.executeScheduledRepayment();
     }
 
     function _deployReserve(address vault_) internal returns (RevolvingCreditFacilityHolding deployedReserve) {
