@@ -179,6 +179,7 @@ contract RevolvingCreditFacilityHoldingTest is Setup {
         reserve.emergencyRepay(type(uint256).max);
 
         assertEq(reserve.outstandingDebtAssets(), 0, "emergency repay should clear debt");
+        assertEq(IERC20(reserveMarketParams.loanToken).balanceOf(address(reserve)), 0, "loan-token dust should be zero");
         assertEq(vault.balanceOf(address(reserve)), 0, "vault shares should be fully withdrawn");
     }
 

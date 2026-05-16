@@ -352,14 +352,8 @@ contract RevolvingCreditFacilityHolding is Ownable, ReentrancyGuard {
     /// trigger premium accrual first.
     /// @return USDC amount that would fully repay the position at current accrued state.
     function outstandingDebtAssets() public view returns (uint256) {
-        Position memory reservePosition = morpho.position(marketId, address(this));
-        if (reservePosition.borrowShares == 0) return 0;
-
-        Market memory targetMarket = morpho.market(marketId);
-        uint256 loanTokenDebt = uint256(reservePosition.borrowShares)
-            .toAssetsUp(targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares);
-
-        return loanTokenVault.previewMint(loanTokenDebt);
+        (,, uint256 usdcAssets) = _currentDebt();
+        return usdcAssets;
     }
 
     /// @dev Shared repayment routine. `amount == type(uint256).max` routes through Helper's share-based full-repay
@@ -369,12 +363,13 @@ contract RevolvingCreditFacilityHolding is Ownable, ReentrancyGuard {
 
         _accrueReserveDebt();
 
+        (,, uint256 fullDebt) = _currentDebt();
         uint256 usdcToWithdraw;
         if (amount == type(uint256).max) {
-            usdcToWithdraw = outstandingDebtAssets();
-            if (usdcToWithdraw == 0) revert ErrorsLib.ZeroAssets();
+            if (fullDebt == 0) revert ErrorsLib.ZeroAssets();
+            usdcToWithdraw = fullDebt;
         } else {
-            if (amount > outstandingDebtAssets()) revert RepayAmountExceedsDebt();
+            if (amount > fullDebt) revert RepayAmountExceedsDebt();
             usdcToWithdraw = amount;
         }
 
@@ -389,34 +384,39 @@ contract RevolvingCreditFacilityHolding is Ownable, ReentrancyGuard {
 
         _accrueReserveDebt();
 
-        uint256 loanTokenAssets;
-        uint256 borrowShares;
         if (amount == type(uint256).max) {
-            Position memory reservePosition = morpho.position(marketId, address(this));
-            borrowShares = reservePosition.borrowShares;
-            if (borrowShares == 0) revert ErrorsLib.ZeroAssets();
+            (uint256 borrowShares, uint256 loanTokenAssets, uint256 usdcAssets) = _currentDebt();
+            if (borrowShares == 0 || usdcAssets == 0) revert ErrorsLib.ZeroAssets();
 
-            Market memory targetMarket = morpho.market(marketId);
-            loanTokenAssets =
-                uint256(borrowShares).toAssetsUp(targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares);
-            assetsRepaid = loanTokenVault.previewMint(loanTokenAssets);
-        } else {
-            if (amount > outstandingDebtAssets()) revert RepayAmountExceedsDebt();
-            assetsRepaid = amount;
+            assetsRepaid = usdcAssets;
+            vault.withdraw(assetsRepaid, address(this), address(this));
+            loanTokenVault.mint(loanTokenAssets, address(this));
+            (, sharesRepaid) = morpho.repay(_marketParams, 0, borrowShares, address(this), "");
+
+            emit ProtocolRepayment(assetsRepaid, sharesRepaid, msg.sender);
+            return (assetsRepaid, sharesRepaid);
         }
+
+        (,, uint256 fullDebt) = _currentDebt();
+        if (amount > fullDebt) revert RepayAmountExceedsDebt();
+        assetsRepaid = amount;
 
         vault.withdraw(assetsRepaid, address(this), address(this));
         uint256 mintedLoanTokens = loanTokenVault.deposit(assetsRepaid, address(this));
         if (mintedLoanTokens == 0) revert ErrorsLib.ZeroAssets();
-
-        if (amount == type(uint256).max) {
-            // `previewMint` can round up by at most dust; any excess loan-token dust stays protected.
-            (, sharesRepaid) = morpho.repay(_marketParams, 0, borrowShares, address(this), "");
-        } else {
-            (, sharesRepaid) = morpho.repay(_marketParams, mintedLoanTokens, 0, address(this), "");
-        }
+        (, sharesRepaid) = morpho.repay(_marketParams, mintedLoanTokens, 0, address(this), "");
 
         emit ProtocolRepayment(assetsRepaid, sharesRepaid, msg.sender);
+    }
+
+    function _currentDebt() internal view returns (uint256 borrowShares, uint256 loanTokenAssets, uint256 usdcAssets) {
+        Position memory reservePosition = morpho.position(marketId, address(this));
+        borrowShares = uint256(reservePosition.borrowShares);
+        if (borrowShares == 0) return (0, 0, 0);
+
+        Market memory targetMarket = morpho.market(marketId);
+        loanTokenAssets = borrowShares.toAssetsUp(targetMarket.totalBorrowAssets, targetMarket.totalBorrowShares);
+        usdcAssets = loanTokenVault.previewMint(loanTokenAssets);
     }
 
     /// @dev Forces premium accrual against this reserve's borrow position so the subsequent debt read is accurate.
