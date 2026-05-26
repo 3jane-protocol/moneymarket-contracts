@@ -13,6 +13,7 @@ import {Pausable} from "../../lib/openzeppelin/contracts/utils/Pausable.sol";
 import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
+import {IUSD3WithdrawQueue} from "./interfaces/IUSD3WithdrawQueue.sol";
 
 /**
  * @title USD3
@@ -91,6 +92,12 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Used to enforce commitment periods
     mapping(address => uint256) public depositTimestamp;
 
+    /// @notice Address of the USD3 withdraw queue.
+    /// @dev Set once per implementation via the constructor and baked into bytecode.
+    /// `address(0)` disables queue reservation entirely and is used by test / non-production
+    /// deployments. Changing the queue requires deploying a new USD3 implementation.
+    address public immutable withdrawQueue;
+
     /*//////////////////////////////////////////////////////////////
                             EVENTS
     //////////////////////////////////////////////////////////////*/
@@ -100,8 +107,16 @@ contract USD3 is BaseHooksUpgradeable {
     event MinDepositUpdated(uint256 newMinDeposit);
     event TrancheShareSynced(uint256 trancheShare);
 
+    /**
+     * @notice Bind this USD3 implementation to a withdraw-queue address and disable initializers.
+     * @dev The queue address is captured as an immutable for gas-cheap reads on the hot
+     * redemption path. Pass `address(0)` to deploy a queue-less implementation (used by tests
+     * and historical deployments).
+     * @param _withdrawQueue Withdraw queue proxy address, or `address(0)` to disable.
+     */
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
+    constructor(address _withdrawQueue) {
+        withdrawQueue = _withdrawQueue;
         _disableInitializers();
     }
 
@@ -379,9 +394,15 @@ contract USD3 is BaseHooksUpgradeable {
                     PUBLIC VIEW FUNCTIONS (OVERRIDES)
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Returns available withdraw limit, enforcing commitment time
-    /// @param _owner Address to check limit for
-    /// @return Maximum amount that can be withdrawn
+    /// @notice Maximum USDC `_owner` can withdraw right now.
+    /// @dev Returns global executable liquidity (idle USDC + redeemable wrapped + Morpho-redeemable
+    /// wrapped) less the queue reservation, then gates the result on `_owner`'s commitment period.
+    /// The queue reservation is `totalPendingShares` priced at current PPS, rounded up to favor
+    /// the queue, and is applied before the shutdown short-circuit so FIFO fairness survives
+    /// shutdown. The queue contract itself is exempt from this reservation so it can process
+    /// its own pending requests.
+    /// @param _owner Address to check limit for.
+    /// @return Maximum USDC amount that can be withdrawn.
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
         // Get available liquidity first
         uint256 idleAsset = asset.balanceOf(address(this));
@@ -400,6 +421,18 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         uint256 availableLiquidity = idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
+
+        if (withdrawQueue != address(0) && _owner != withdrawQueue) {
+            uint256 pendingShares = IUSD3WithdrawQueue(withdrawQueue).totalPendingShares();
+            if (pendingShares > 0) {
+                uint256 totalSupply = TokenizedStrategy.totalSupply();
+                uint256 reservedAssets = totalSupply == 0
+                    ? 0
+                    : pendingShares.mulDiv(TokenizedStrategy.totalAssets(), totalSupply, Math.Rounding.Ceil);
+
+                availableLiquidity = availableLiquidity > reservedAssets ? availableLiquidity - reservedAssets : 0;
+            }
+        }
 
         // During shutdown, bypass all checks
         if (TokenizedStrategy.isShutdown()) {

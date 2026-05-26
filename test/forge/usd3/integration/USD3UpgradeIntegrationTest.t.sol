@@ -165,7 +165,7 @@ contract USD3UpgradeIntegrationTest is Setup {
 
     function _performUpgrade() internal {
         // Deploy new implementation
-        newImplementation = new USD3();
+        newImplementation = new USD3(address(0));
 
         // Upgrade proxy to new implementation
         // Pass empty bytes since we'll call reinitialize separately

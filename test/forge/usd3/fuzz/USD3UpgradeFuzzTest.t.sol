@@ -96,7 +96,7 @@ contract USD3UpgradeFuzzTest is Setup {
         strategyInterface.report();
 
         // Step 4: Deploy new implementation
-        newImplementation = new USD3();
+        newImplementation = new USD3(address(0));
 
         // Step 5: Upgrade proxy to new implementation
         usd3ProxyAdmin.upgradeAndCall(

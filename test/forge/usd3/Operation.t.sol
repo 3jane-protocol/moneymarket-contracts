@@ -490,7 +490,7 @@ contract OperationTest is Setup {
 
     function test_marketId_initialization_invalidMarket() public {
         // Create a new USD3 implementation
-        USD3 newUsd3Implementation = new USD3();
+        USD3 newUsd3Implementation = new USD3(address(0));
 
         // Create an invalid market ID (market doesn't exist in Morpho)
         Id invalidId = Id.wrap(keccak256("INVALID_MARKET"));

@@ -158,7 +158,7 @@ contract Setup is Test, IEvents {
         vm.stopPrank();
 
         // Deploy USD3 implementation
-        USD3 usd3Implementation = new USD3();
+        USD3 usd3Implementation = new USD3(address(0));
 
         // Deploy proxy admin
         ProxyAdmin usd3ProxyAdmin = new ProxyAdmin(proxyAdminOwner);
