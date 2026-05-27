@@ -12,6 +12,7 @@ import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.
 abstract contract MainnetForkBase is Test {
     // Mainnet addresses
     address constant USD3_PROXY = 0x056B269Eb1f75477a8666ae8C7fE01b64dD55eCc;
+    address constant SUSD3_PROXY = 0xf689555121e529Ff0463e191F9Bd9d1E496164a7;
     address constant WAUSDC = 0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E;
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address constant MORPHO_CREDIT = address(0); // TODO: Add actual MorphoCredit address when deployed
@@ -54,6 +55,7 @@ abstract contract MainnetForkBase is Test {
 
         // Label addresses for better trace output
         vm.label(USD3_PROXY, "USD3_PROXY");
+        vm.label(SUSD3_PROXY, "SUSD3_PROXY");
         vm.label(WAUSDC, "waUSDC");
         vm.label(USDC, "USDC");
     }
