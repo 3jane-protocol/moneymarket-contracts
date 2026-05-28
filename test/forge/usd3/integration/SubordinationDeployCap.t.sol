@@ -68,6 +68,22 @@ contract SubordinationDeployCapTest is Setup {
         return susd3Strategy.deposit(usd3Amount, user);
     }
 
+    function _effectiveDeployCapWaUSDC() internal view returns (uint256) {
+        uint256 totalWaUSDC = usd3Strategy.suppliedWaUSDC() + usd3Strategy.balanceOfWaUSDC();
+        uint256 maxOnCreditCap = (totalWaUSDC * usd3Strategy.maxOnCredit()) / 10_000;
+        uint256 backingRatio = protocolConfig.config(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO);
+        if (backingRatio == 0) return maxOnCreditCap;
+
+        uint256 susd3Shares = strategy.balanceOf(address(susd3Strategy));
+        uint256 totalSupply = strategy.totalSupply();
+        uint256 totalAssets = strategy.totalAssets();
+        if (susd3Shares == 0 || totalSupply == 0 || totalAssets == 0) return 0;
+
+        uint256 sUSD3ValueUSDC = (susd3Shares * totalAssets) / totalSupply;
+        uint256 subCap = waUSDC.convertToShares((sUSD3ValueUSDC * 10_000) / backingRatio);
+        return maxOnCreditCap < subCap ? maxOnCreditCap : subCap;
+    }
+
     /// @dev Creates initial debt and sUSD3 backing WITHOUT the backing ratio constraint.
     /// Sets MIN_SUSD3_BACKING_RATIO after setup so the subordination cap can be tested.
     function _bootstrapDebtAndBacking(
@@ -123,6 +139,29 @@ contract SubordinationDeployCapTest is Setup {
         MorphoCredit(address(morpho)).setCreditLine(marketId, borrower, creditAmount, 0);
     }
 
+    function _setupSUSD3ExitRebalanceScenario() internal {
+        protocolConfig.setConfig(ProtocolConfigLib.TRANCHE_RATIO, 10_000);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_LOCK_DURATION, 0);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_COOLDOWN_PERIOD, 0);
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
+        setMaxOnCredit(10_000);
+        setMorphoDebtCap(10_000_000e6);
+
+        vm.prank(alice);
+        strategy.deposit(10_000_000e6, alice);
+
+        createMarketDebt(borrower, 1_000_000e6);
+
+        vm.prank(bob);
+        strategy.deposit(2_000_000e6, bob);
+        _depositToSUSD3(bob, strategy.balanceOf(bob));
+
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 10_000);
+
+        vm.prank(keeper);
+        ITokenizedStrategy(address(strategy)).tend();
+    }
+
     /*//////////////////////////////////////////////////////////////
                     BUG REGRESSION TESTS
     //////////////////////////////////////////////////////////////*/
@@ -137,7 +176,7 @@ contract SubordinationDeployCapTest is Setup {
         ITokenizedStrategy(address(strategy)).tend();
 
         uint256 suppliedAfterTend = usd3Strategy.suppliedWaUSDC();
-        uint256 cap = usd3Strategy.effectiveDeployCapWaUSDC();
+        uint256 cap = _effectiveDeployCapWaUSDC();
 
         assertLe(suppliedAfterTend, cap + 1, "Deployment should respect subordination cap");
 
@@ -174,6 +213,91 @@ contract SubordinationDeployCapTest is Setup {
         );
     }
 
+    function test_susd3WithdrawRebalancesUsd3ToPostExitCap() public {
+        _setupSUSD3ExitRebalanceScenario();
+
+        uint256 suppliedBefore = usd3Strategy.suppliedWaUSDC();
+        uint256 capBefore = _effectiveDeployCapWaUSDC();
+        (,, uint256 debtBefore,) = usd3Strategy.getMarketLiquidity();
+        uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
+
+        assertApproxEqAbs(suppliedBefore, capBefore, 2, "pre-withdraw deployment should sit at cap");
+        assertGt(suppliedBefore, debtBefore, "scenario should have unborrowed deployed liquidity");
+        assertGt(withdrawLimit, 0, "sUSD3 should have debt-floor withdrawal capacity");
+
+        vm.prank(bob);
+        susd3Strategy.withdraw(withdrawLimit, bob, bob);
+
+        uint256 suppliedAfter = usd3Strategy.suppliedWaUSDC();
+        uint256 capAfter = _effectiveDeployCapWaUSDC();
+
+        assertLt(suppliedAfter, suppliedBefore, "withdraw should pull excess USD3 supply");
+        assertLe(suppliedAfter, capAfter + 2, "withdraw should finish within post-exit cap");
+        assertApproxEqAbs(suppliedAfter, debtBefore, 2, "only borrowed liquidity should remain supplied");
+    }
+
+    function test_susd3WithdrawRemovesBorrowableOverCapLiquidity() public {
+        _setupSUSD3ExitRebalanceScenario();
+
+        uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
+
+        vm.prank(bob);
+        susd3Strategy.withdraw(withdrawLimit, bob, bob);
+
+        (,,, uint256 liquidityAfter) = usd3Strategy.getMarketLiquidity();
+        assertLe(liquidityAfter, 2, "over-cap liquidity should be pulled before another tx can borrow");
+
+        MarketParams memory marketParams = usd3Strategy.marketParams();
+        vm.expectRevert(ErrorsLib.InsufficientLiquidity.selector);
+        vm.prank(borrower);
+        helper.borrow(marketParams, 100_000e6, 0, borrower, borrower);
+    }
+
+    function test_susd3WithdrawDoesNotTendAfterUsd3Shutdown() public {
+        _setupSUSD3ExitRebalanceScenario();
+
+        uint256 suppliedBefore = usd3Strategy.suppliedWaUSDC();
+        uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
+
+        vm.prank(emergencyAdmin);
+        strategy.shutdownStrategy();
+
+        vm.prank(bob);
+        susd3Strategy.withdraw(withdrawLimit, bob, bob);
+
+        assertEq(usd3Strategy.suppliedWaUSDC(), suppliedBefore, "USD3 shutdown should bypass transfer-hook tend");
+    }
+
+    function test_susd3WithdrawDoesNotDeployIdleWaUSDCWhenPaused() public {
+        protocolConfig.setConfig(ProtocolConfigLib.TRANCHE_RATIO, 10_000);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_LOCK_DURATION, 0);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_COOLDOWN_PERIOD, 0);
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
+        setMaxOnCredit(0);
+
+        vm.prank(alice);
+        strategy.deposit(1_000_000e6, alice);
+
+        vm.prank(bob);
+        strategy.deposit(100_000e6, bob);
+        _depositToSUSD3(bob, strategy.balanceOf(bob));
+
+        assertEq(usd3Strategy.suppliedWaUSDC(), 0, "setup should be underdeployed");
+        assertGt(usd3Strategy.balanceOfWaUSDC(), 0, "setup should have local waUSDC");
+
+        setMaxOnCredit(10_000);
+        protocolConfig.setConfig(keccak256("IS_PAUSED"), 1);
+
+        uint256 localBefore = usd3Strategy.balanceOfWaUSDC();
+        uint256 shares = ITokenizedStrategy(address(susd3Strategy)).balanceOf(bob);
+
+        vm.prank(bob);
+        susd3Strategy.redeem(shares, bob, bob);
+
+        assertEq(usd3Strategy.suppliedWaUSDC(), 0, "sUSD3 exit hook should not deploy while paused");
+        assertEq(usd3Strategy.balanceOfWaUSDC(), localBefore, "local waUSDC should remain local");
+    }
+
     function test_reportRestoresBackingCapAfterLossAbsorption() public {
         protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
         setMaxOnCredit(10_000);
@@ -191,7 +315,7 @@ contract SubordinationDeployCapTest is Setup {
         ITokenizedStrategy(address(strategy)).tend();
 
         uint256 suppliedBeforeLoss = usd3Strategy.suppliedWaUSDC();
-        uint256 capBeforeLoss = usd3Strategy.effectiveDeployCapWaUSDC();
+        uint256 capBeforeLoss = _effectiveDeployCapWaUSDC();
         uint256 susd3BalanceBeforeLoss = strategy.balanceOf(address(susd3Strategy));
         uint256 localWaUSDC = usd3Strategy.balanceOfWaUSDC();
         uint256 lossWaUSDC = 400_000e6;
@@ -206,7 +330,7 @@ contract SubordinationDeployCapTest is Setup {
         (, uint256 loss) = ITokenizedStrategy(address(strategy)).report();
 
         uint256 suppliedAfterReport = usd3Strategy.suppliedWaUSDC();
-        uint256 capAfterReport = usd3Strategy.effectiveDeployCapWaUSDC();
+        uint256 capAfterReport = _effectiveDeployCapWaUSDC();
         uint256 susd3BalanceAfterReport = strategy.balanceOf(address(susd3Strategy));
 
         assertGt(loss, 0, "report should realize the local waUSDC loss");
@@ -376,12 +500,12 @@ contract SubordinationDeployCapTest is Setup {
 
         // 100% threshold should revert
         protocolConfig.setConfig(ProtocolConfigLib.TEND_DRIFT_THRESHOLD, 10_000);
-        vm.expectRevert("Invalid drift threshold");
+        vm.expectRevert();
         usd3Strategy.tendTrigger();
 
         // Above 100% should also revert
         protocolConfig.setConfig(ProtocolConfigLib.TEND_DRIFT_THRESHOLD, 15_000);
-        vm.expectRevert("Invalid drift threshold");
+        vm.expectRevert();
         usd3Strategy.tendTrigger();
     }
 
@@ -443,7 +567,7 @@ contract SubordinationDeployCapTest is Setup {
         vm.prank(keeper);
         ITokenizedStrategy(address(strategy)).tend();
 
-        uint256 cap = usd3Strategy.effectiveDeployCapWaUSDC();
+        uint256 cap = _effectiveDeployCapWaUSDC();
         uint256 supplied = usd3Strategy.suppliedWaUSDC();
         uint256 total = supplied + usd3Strategy.balanceOfWaUSDC();
 

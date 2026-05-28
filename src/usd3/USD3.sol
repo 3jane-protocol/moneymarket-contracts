@@ -346,7 +346,7 @@ contract USD3 is BaseHooksUpgradeable {
 
     /// @dev Rebalances between idle and deployed funds to maintain maxOnCredit ratio
     /// @param _totalIdle Current idle funds available
-    function _tend(uint256 _totalIdle) internal virtual override {
+    function _tend(uint256 _totalIdle) internal override {
         if (TokenizedStrategy.isShutdown()) {
             return;
         }
@@ -356,6 +356,14 @@ contract USD3 is BaseHooksUpgradeable {
             WAUSDC.deposit(_totalIdle, address(this));
         }
 
+        _applyDeployCap(true);
+    }
+
+    /// @dev Rebalances deployed waUSDC toward the effective deployment cap.
+    /// Withdraws excess from MorphoCredit when over the cap; otherwise tops up
+    /// deployment from local waUSDC only when supplying is permitted.
+    /// @param allowSupply Whether deploying additional local waUSDC is allowed
+    function _applyDeployCap(bool allowSupply) private {
         // Calculate based on waUSDC amounts
         uint256 deployedWaUSDC = suppliedWaUSDC();
         uint256 localWaUSDC = balanceOfWaUSDC();
@@ -367,7 +375,7 @@ contract USD3 is BaseHooksUpgradeable {
             // Withdraw excess from MorphoCredit
             uint256 waUSDCToWithdraw = deployedWaUSDC - targetDeployedWaUSDC;
             _withdrawFromMorpho(waUSDCToWithdraw);
-        } else if (targetDeployedWaUSDC > deployedWaUSDC && localWaUSDC > 0) {
+        } else if (allowSupply && targetDeployedWaUSDC > deployedWaUSDC && localWaUSDC > 0) {
             // Deploy more if we have local waUSDC
             uint256 waUSDCToDeploy = Math.min(localWaUSDC, targetDeployedWaUSDC - deployedWaUSDC);
             _supplyToMorpho(waUSDCToDeploy);
@@ -390,7 +398,7 @@ contract USD3 is BaseHooksUpgradeable {
         IProtocolConfig config = _protocolConfig();
         uint256 driftBps = config.config(ProtocolConfigLib.TEND_DRIFT_THRESHOLD);
         if (driftBps == 0) driftBps = 10;
-        require(driftBps < 10_000, "Invalid drift threshold");
+        require(driftBps < 10_000);
         uint256 threshold = (target * driftBps) / 10_000;
 
         if (deployed > target) {
@@ -503,7 +511,7 @@ contract USD3 is BaseHooksUpgradeable {
             return 0;
         }
 
-        uint256 cap = supplyCap();
+        uint256 cap = _protocolConfig().config(ProtocolConfigLib.USD3_SUPPLY_CAP);
         if (cap == 0) {
             return 0;
         }
@@ -536,16 +544,13 @@ contract USD3 is BaseHooksUpgradeable {
         // Enforce minimum deposit only for first-time depositors
         uint256 currentBalance = TokenizedStrategy.balanceOf(receiver);
         if (currentBalance == 0) {
-            require(assets >= minDeposit, "Below minimum deposit");
+            require(assets >= minDeposit, "<min");
         }
 
         // Prevent commitment bypass and griefing attacks
         if (minCommitmentTime() > 0) {
             // Only allow self-deposits or whitelisted depositors
-            require(
-                msg.sender == receiver || depositorWhitelist[msg.sender],
-                "USD3: Only self or whitelisted deposits allowed"
-            );
+            require(msg.sender == receiver || depositorWhitelist[msg.sender], "!allowed");
 
             // Always extend commitment for valid deposits
             depositTimestamp[receiver] = block.timestamp;
@@ -624,10 +629,17 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Check commitment period
         uint256 commitmentEnd = depositTimestamp[from] + minCommitmentTime();
-        require(
-            block.timestamp >= commitmentEnd || depositTimestamp[from] == 0,
-            "USD3: Cannot transfer during commitment period"
-        );
+        require(block.timestamp >= commitmentEnd || depositTimestamp[from] == 0, "!transfer");
+    }
+
+    /// @dev Post-transfer hook that rebalances deployment after sUSD3 unstakes.
+    /// When sUSD3 transfers out USD3 shares its subordination backing shrinks, so the
+    /// deployment cap is re-applied (withdraw-only) to pull any excess back from MorphoCredit.
+    /// Skipped during shutdown.
+    /// @param from Address transferring shares
+    /// @param amount Amount of shares being transferred
+    function _postTransferHook(address from, address, uint256 amount, bool success) internal override {
+        if (success && amount > 0 && from == sUSD3 && !TokenizedStrategy.isShutdown()) _applyDeployCap(false);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -696,15 +708,6 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Get the effective deployment cap accounting for both maxOnCredit and sUSD3 subordination
-     * @return Maximum waUSDC that should be deployed to MorphoCredit
-     */
-    function effectiveDeployCapWaUSDC() external view returns (uint256) {
-        uint256 totalWaUSDC = suppliedWaUSDC() + balanceOfWaUSDC();
-        return _effectiveDeployCapWaUSDC(totalWaUSDC);
-    }
-
-    /**
      * @notice Get the maximum percentage of funds to deploy to credit markets from ProtocolConfig
      * @return Maximum deployment ratio in basis points (10000 = 100%)
      * @dev Returns the value from ProtocolConfig directly. If not configured in ProtocolConfig,
@@ -722,15 +725,6 @@ contract USD3 is BaseHooksUpgradeable {
     function minCommitmentTime() public view returns (uint256) {
         IProtocolConfig config = _protocolConfig();
         return config.getUsd3CommitmentTime();
-    }
-
-    /**
-     * @notice Get the supply cap from ProtocolConfig
-     * @return Supply cap in asset units
-     */
-    function supplyCap() public view returns (uint256) {
-        IProtocolConfig config = _protocolConfig();
-        return config.config(ProtocolConfigLib.USD3_SUPPLY_CAP);
     }
 
     /*//////////////////////////////////////////////////////////////

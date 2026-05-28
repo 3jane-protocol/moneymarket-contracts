@@ -85,7 +85,7 @@ contract OperationTest is Setup {
         // Alice tries to deposit below minimum as first deposit - should fail
         vm.startPrank(alice);
         underlyingAsset.approve(address(usd3Strategy), type(uint256).max);
-        vm.expectRevert("Below minimum deposit");
+        vm.expectRevert(bytes("<min"));
         usd3Strategy.deposit(50e6, alice);
 
         // Alice deposits at minimum - should work
@@ -100,7 +100,7 @@ contract OperationTest is Setup {
         // Bob tries to deposit below minimum as first deposit - should fail
         vm.startPrank(bob);
         underlyingAsset.approve(address(usd3Strategy), type(uint256).max);
-        vm.expectRevert("Below minimum deposit");
+        vm.expectRevert(bytes("<min"));
         usd3Strategy.deposit(50e6, bob);
 
         // Bob deposits at minimum - should work
