@@ -339,9 +339,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         morphoCredit.accrueInterest(params);
 
-        uint256 totalWaUSDC = suppliedWaUSDC() + balanceOfWaUSDC();
-
-        return WAUSDC.convertToAssets(totalWaUSDC) + asset.balanceOf(address(this));
+        return nav();
     }
 
     /// @dev Rebalances between idle and deployed funds to maintain maxOnCredit ratio
@@ -458,6 +456,10 @@ contract USD3 is BaseHooksUpgradeable {
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
         // Get available liquidity first
         uint256 idleAsset = asset.balanceOf(address(this));
+
+        if (nav() + 2 < TokenizedStrategy.totalAssets()) {
+            return 0;
+        }
 
         (, uint256 waUSDCMax, uint256 waUSDCLiquidity) = getPosition();
 
@@ -707,6 +709,12 @@ contract USD3 is BaseHooksUpgradeable {
         return morphoCredit.expectedSupplyAssets(_marketParams, address(this));
     }
 
+    /// @dev Net asset value of the strategy in USDC terms
+    /// @return Sum of deployed and local waUSDC converted to assets, plus idle USDC held by the strategy
+    function nav() public view returns (uint256) {
+        return WAUSDC.convertToAssets(suppliedWaUSDC() + balanceOfWaUSDC()) + asset.balanceOf(address(this));
+    }
+
     /**
      * @notice Get the maximum percentage of funds to deploy to credit markets from ProtocolConfig
      * @return Maximum deployment ratio in basis points (10000 = 100%)
@@ -737,8 +745,8 @@ contract USD3 is BaseHooksUpgradeable {
      * @dev Only callable by management. After calling, also set performance fee recipient.
      */
     function setSUSD3(address _sUSD3) external onlyManagement {
-        require(sUSD3 == address(0), "sUSD3 already set");
-        require(_sUSD3 != address(0), "Invalid address");
+        require(sUSD3 == address(0));
+        require(_sUSD3 != address(0));
 
         sUSD3 = _sUSD3;
         emit SUSD3StrategyUpdated(address(0), _sUSD3);
