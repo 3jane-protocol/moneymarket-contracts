@@ -347,6 +347,10 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Rebalances between idle and deployed funds to maintain maxOnCredit ratio
     /// @param _totalIdle Current idle funds available
     function _tend(uint256 _totalIdle) internal virtual override {
+        if (TokenizedStrategy.isShutdown()) {
+            return;
+        }
+
         // First wrap any idle USDC to waUSDC
         if (_totalIdle > 0) {
             WAUSDC.deposit(_totalIdle, address(this));
@@ -372,6 +376,10 @@ contract USD3 is BaseHooksUpgradeable {
 
     /// @dev Signal keepers when deployment drifts from the effective cap
     function _tendTrigger() internal view override returns (bool) {
+        if (TokenizedStrategy.isShutdown()) {
+            return false;
+        }
+
         uint256 deployed = suppliedWaUSDC();
         uint256 localWaUSDC = balanceOfWaUSDC();
         uint256 totalWaUSDC = deployed + localWaUSDC;
