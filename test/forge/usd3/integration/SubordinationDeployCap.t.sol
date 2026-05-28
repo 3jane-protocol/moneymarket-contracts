@@ -174,6 +174,66 @@ contract SubordinationDeployCapTest is Setup {
         );
     }
 
+    function test_reportRestoresBackingCapAfterLossAbsorption() public {
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
+        setMaxOnCredit(10_000);
+
+        vm.prank(alice);
+        strategy.deposit(1_000_000e6, alice);
+
+        vm.prank(bob);
+        strategy.deposit(500_000e6, bob);
+        _depositToSUSD3(bob, strategy.balanceOf(bob));
+
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 10_000);
+
+        vm.prank(keeper);
+        ITokenizedStrategy(address(strategy)).tend();
+
+        uint256 suppliedBeforeLoss = usd3Strategy.suppliedWaUSDC();
+        uint256 capBeforeLoss = usd3Strategy.effectiveDeployCapWaUSDC();
+        uint256 susd3BalanceBeforeLoss = strategy.balanceOf(address(susd3Strategy));
+        uint256 localWaUSDC = usd3Strategy.balanceOfWaUSDC();
+        uint256 lossWaUSDC = 400_000e6;
+
+        assertApproxEqAbs(suppliedBeforeLoss, capBeforeLoss, 2, "pre-loss deployment should sit at cap");
+        assertGe(localWaUSDC, lossWaUSDC, "test requires enough local waUSDC to remove");
+
+        vm.prank(address(usd3Strategy));
+        waUSDC.transfer(address(0xdead), lossWaUSDC);
+
+        vm.prank(keeper);
+        (, uint256 loss) = ITokenizedStrategy(address(strategy)).report();
+
+        uint256 suppliedAfterReport = usd3Strategy.suppliedWaUSDC();
+        uint256 capAfterReport = usd3Strategy.effectiveDeployCapWaUSDC();
+        uint256 susd3BalanceAfterReport = strategy.balanceOf(address(susd3Strategy));
+
+        assertGt(loss, 0, "report should realize the local waUSDC loss");
+        assertLt(susd3BalanceAfterReport, susd3BalanceBeforeLoss, "sUSD3 should absorb the loss");
+        assertLe(suppliedAfterReport, capAfterReport + 2, "report should finish within post-burn cap");
+        assertLt(suppliedAfterReport, suppliedBeforeLoss, "report should pull excess Morpho supply");
+    }
+
+    function test_reportStillDeploysLocalWaUSDCWhenNoLoss() public {
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
+        setMaxOnCredit(0);
+
+        vm.prank(alice);
+        strategy.deposit(100_000e6, alice);
+
+        assertEq(usd3Strategy.suppliedWaUSDC(), 0, "maxOnCredit=0 should keep funds local");
+        assertGt(usd3Strategy.balanceOfWaUSDC(), 0, "deposit should wrap into local waUSDC");
+
+        setMaxOnCredit(10_000);
+
+        vm.prank(keeper);
+        ITokenizedStrategy(address(strategy)).report();
+
+        assertGt(usd3Strategy.suppliedWaUSDC(), 0, "report should still rebalance after accounting");
+        assertEq(usd3Strategy.balanceOfWaUSDC(), 0, "report should deploy local waUSDC");
+    }
+
     /*//////////////////////////////////////////////////////////////
                     DEPLOYMENT CAP TESTS
     //////////////////////////////////////////////////////////////*/

@@ -339,8 +339,6 @@ contract USD3 is BaseHooksUpgradeable {
 
         morphoCredit.accrueInterest(params);
 
-        _tend(asset.balanceOf(address(this)));
-
         uint256 totalWaUSDC = suppliedWaUSDC() + balanceOfWaUSDC();
 
         return WAUSDC.convertToAssets(totalWaUSDC) + asset.balanceOf(address(this));
@@ -576,37 +574,38 @@ contract USD3 is BaseHooksUpgradeable {
 
         _preReportHook();
         (profit, loss) = _reportInternal();
-        _postReportHook(profit, loss, preAssets, preSupply);
+        _postReportHook(loss, preAssets, preSupply);
     }
 
-    /// @dev Post-report hook to handle loss absorption by burning sUSD3's shares
-    function _postReportHook(uint256 _profit, uint256 loss, uint256 preAssets, uint256 preSupply) internal {
-        if (loss == 0 || sUSD3 == address(0)) return;
+    /// @dev Handles loss absorption and post-report rebalancing.
+    function _postReportHook(uint256 loss, uint256 preAssets, uint256 preSupply) internal {
+        if (loss > 0 && sUSD3 != address(0) && preAssets > 0 && preSupply > 0) {
+            // Get sUSD3's current USD3 balance
+            uint256 susd3Balance = TokenizedStrategy.balanceOf(sUSD3);
 
-        // Get sUSD3's current USD3 balance
-        uint256 susd3Balance = TokenizedStrategy.balanceOf(sUSD3);
-        if (susd3Balance == 0) return;
+            if (susd3Balance > 0) {
+                // Total shares required to cover the loss at the pre-report PPS
+                uint256 totalBurnNeeded = loss.mulDiv(preSupply, preAssets, Math.Rounding.Floor);
 
-        if (preAssets == 0 || preSupply == 0) return;
+                // Internal burn from locked shares is reflected in the post-report totalSupply
+                uint256 postSupply = TokenizedStrategy.totalSupply();
+                uint256 lockedBurn = preSupply > postSupply ? preSupply - postSupply : 0;
 
-        // Total shares required to cover the loss at the pre-report PPS
-        uint256 totalBurnNeeded = loss.mulDiv(preSupply, preAssets, Math.Rounding.Floor);
+                // Burn only the remaining shares from sUSD3
+                uint256 sharesToBurn = totalBurnNeeded > lockedBurn ? totalBurnNeeded - lockedBurn : 0;
 
-        // Internal burn from locked shares is reflected in the post-report totalSupply
-        uint256 postSupply = TokenizedStrategy.totalSupply();
-        uint256 lockedBurn = preSupply > postSupply ? preSupply - postSupply : 0;
+                // Cap at sUSD3's actual balance - they can't lose more than they have
+                if (sharesToBurn > susd3Balance) {
+                    sharesToBurn = susd3Balance;
+                }
 
-        // Burn only the remaining shares from sUSD3
-        uint256 sharesToBurn = totalBurnNeeded > lockedBurn ? totalBurnNeeded - lockedBurn : 0;
-
-        // Cap at sUSD3's actual balance - they can't lose more than they have
-        if (sharesToBurn > susd3Balance) {
-            sharesToBurn = susd3Balance;
+                if (sharesToBurn > 0) {
+                    _burnSharesFromSusd3(sharesToBurn);
+                }
+            }
         }
 
-        if (sharesToBurn > 0) {
-            _burnSharesFromSusd3(sharesToBurn);
-        }
+        _tend(asset.balanceOf(address(this)));
     }
 
     /**
