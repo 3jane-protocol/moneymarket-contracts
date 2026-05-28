@@ -160,8 +160,10 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Restart the strategy after an emergency shutdown.
-     * @dev Intended to be consumed atomically through ProxyAdmin.upgradeAndCall during the v3 restart upgrade.
+     * @notice Legacy restart hook for the completed v3 emergency restart.
+     * @dev This reinitializer was consumed in production during the controlled
+     *      ProxyAdmin.upgradeAndCall restart flow and is retained only for
+     *      deployed implementation compatibility.
      */
     function restartStrategy() external reinitializer(3) {
         TokenizedStrategyStorageLib.getStrategyStorage().shutdown = false;
