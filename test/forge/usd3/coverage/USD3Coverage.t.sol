@@ -129,7 +129,7 @@ contract USD3Coverage is Setup {
 
         // Try to sync - should revert
         vm.prank(keeper);
-        vm.expectRevert("Invalid tranche share");
+        vm.expectRevert();
         usd3Strategy.syncTrancheShare();
 
         // Verify current ratio hasn't changed

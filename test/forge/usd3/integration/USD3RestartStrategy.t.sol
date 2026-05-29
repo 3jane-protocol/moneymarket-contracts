@@ -16,6 +16,12 @@ import {
 } from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
+contract USD3Restartable is USD3 {
+    function restartStrategy() external reinitializer(3) {
+        TokenizedStrategyStorageLib.getStrategyStorage().shutdown = false;
+    }
+}
+
 contract USD3RestartStrategyTest is Setup {
     uint256 internal constant NOT_ENTERED = 1;
     uint256 internal constant ENTERED_OFFSET = 160;
@@ -25,7 +31,7 @@ contract USD3RestartStrategyTest is Setup {
     address internal bob = makeAddr("bob");
 
     function test_restartStrategyReopensShutdownStrategyAtomically() public {
-        (USD3 usd3, ProxyAdmin proxyAdmin) = _deployRestartableUSD3();
+        (USD3Restartable usd3, ProxyAdmin proxyAdmin) = _deployRestartableUSD3();
         ITokenizedStrategy tokenized = ITokenizedStrategy(address(usd3));
 
         _deposit(usd3, alice, 1_000e6);
@@ -47,7 +53,7 @@ contract USD3RestartStrategyTest is Setup {
     }
 
     function test_restartStrategyCanOnlyRunOnce() public {
-        (USD3 usd3, ProxyAdmin proxyAdmin) = _deployRestartableUSD3();
+        (USD3Restartable usd3, ProxyAdmin proxyAdmin) = _deployRestartableUSD3();
         ITokenizedStrategy tokenized = ITokenizedStrategy(address(usd3));
 
         _deposit(usd3, alice, 1_000e6);
@@ -62,7 +68,7 @@ contract USD3RestartStrategyTest is Setup {
     }
 
     function test_restartStrategySupportsEmergencyWithdrawRecoveryPath() public {
-        (USD3 usd3, ProxyAdmin proxyAdmin) = _deployRestartableUSD3();
+        (USD3Restartable usd3, ProxyAdmin proxyAdmin) = _deployRestartableUSD3();
         ITokenizedStrategy tokenized = ITokenizedStrategy(address(usd3));
 
         _deposit(usd3, alice, 1_000e6);
@@ -83,8 +89,8 @@ contract USD3RestartStrategyTest is Setup {
         assertApproxEqAbs(withdrawn, 500e6, 1, "redeem should work after restart");
     }
 
-    function _deployRestartableUSD3() internal returns (USD3 usd3, ProxyAdmin proxyAdmin) {
-        USD3 implementation = new USD3();
+    function _deployRestartableUSD3() internal returns (USD3Restartable usd3, ProxyAdmin proxyAdmin) {
+        USD3Restartable implementation = new USD3Restartable();
         USD3 setupStrategy = USD3(address(strategy));
 
         bytes memory initData = abi.encodeWithSelector(
@@ -99,7 +105,7 @@ contract USD3RestartStrategyTest is Setup {
             new TransparentUpgradeableProxy(address(implementation), address(this), initData);
 
         proxyAdmin = ProxyAdmin(address(uint160(uint256(vm.load(address(proxy), ERC1967Utils.ADMIN_SLOT)))));
-        usd3 = USD3(address(proxy));
+        usd3 = USD3Restartable(address(proxy));
 
         usd3.reinitialize();
 
@@ -111,12 +117,12 @@ contract USD3RestartStrategyTest is Setup {
         MorphoCredit(address(morpho)).setUsd3(address(usd3));
     }
 
-    function _upgradeAndRestart(USD3 usd3, ProxyAdmin proxyAdmin) internal {
-        USD3 newImplementation = new USD3();
+    function _upgradeAndRestart(USD3Restartable usd3, ProxyAdmin proxyAdmin) internal {
+        USD3Restartable newImplementation = new USD3Restartable();
         proxyAdmin.upgradeAndCall(
             ITransparentUpgradeableProxy(address(usd3)),
             address(newImplementation),
-            abi.encodeCall(USD3.restartStrategy, ())
+            abi.encodeCall(USD3Restartable.restartStrategy, ())
         );
     }
 

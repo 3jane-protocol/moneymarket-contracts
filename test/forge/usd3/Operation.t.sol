@@ -413,7 +413,7 @@ contract OperationTest is Setup {
 
         // Should revert with invalid share
         vm.prank(keeper);
-        vm.expectRevert("Invalid tranche share");
+        vm.expectRevert();
         usd3Strategy.syncTrancheShare();
     }
 
@@ -686,7 +686,7 @@ contract OperationTest is Setup {
 
         // syncTrancheShare should revert on invalid value
         vm.prank(keeper);
-        vm.expectRevert("Invalid tranche share");
+        vm.expectRevert();
         usd3Strategy.syncTrancheShare();
 
         // Normal operations should continue

@@ -14,6 +14,14 @@ import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/Tokenized
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 
+interface IAavePool {
+    function getVirtualUnderlyingBalance(address asset) external view returns (uint128);
+}
+
+interface IWaUSDC is IERC4626 {
+    function POOL() external view returns (IAavePool);
+}
+
 /**
  * @title USD3
  * @author 3Jane Protocol
@@ -54,7 +62,7 @@ contract USD3 is BaseHooksUpgradeable {
     /*//////////////////////////////////////////////////////////////
                         CONSTANTS
     //////////////////////////////////////////////////////////////*/
-    IERC4626 public constant WAUSDC = IERC4626(0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E);
+    IWaUSDC public constant WAUSDC = IWaUSDC(0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E);
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE - MORPHO PARAMETERS
@@ -159,15 +167,15 @@ contract USD3 is BaseHooksUpgradeable {
         IERC20(usdc).forceApprove(address(WAUSDC), type(uint256).max);
     }
 
-    /**
-     * @notice Legacy restart hook for the completed v3 emergency restart.
-     * @dev This reinitializer was consumed in production during the controlled
-     *      ProxyAdmin.upgradeAndCall restart flow and is retained only for
-     *      deployed implementation compatibility.
-     */
-    function restartStrategy() external reinitializer(3) {
-        TokenizedStrategyStorageLib.getStrategyStorage().shutdown = false;
-    }
+    // /**
+    //  * @notice Legacy restart hook for the completed v3 emergency restart.
+    //  * @dev This reinitializer was consumed in production during the controlled
+    //  *      ProxyAdmin.upgradeAndCall restart flow and is retained only for
+    //  *      deployed implementation compatibility.
+    //  */
+    // function restartStrategy() external reinitializer(3) {
+    //     TokenizedStrategyStorageLib.getStrategyStorage().shutdown = false;
+    // }
 
     /*//////////////////////////////////////////////////////////////
                         EXTERNAL VIEW FUNCTIONS
@@ -317,7 +325,7 @@ contract USD3 is BaseHooksUpgradeable {
             }
         }
 
-        uint256 waUSDCToUnwrap = Math.min(localWaUSDC, waUSDCNeeded);
+        uint256 waUSDCToUnwrap = Math.min(Math.min(localWaUSDC, waUSDCNeeded), WAUSDC.maxRedeem(address(this)));
 
         if (waUSDCToUnwrap > 0) {
             WAUSDC.redeem(waUSDCToUnwrap, address(this), address(this));
@@ -446,6 +454,10 @@ contract USD3 is BaseHooksUpgradeable {
         return amountWithdrawn;
     }
 
+    function _waUSDCGlobalRedeemable() internal view returns (uint256) {
+        return WAUSDC.convertToShares(WAUSDC.POOL().getVirtualUnderlyingBalance(WAUSDC.asset()));
+    }
+
     /*//////////////////////////////////////////////////////////////
                     PUBLIC VIEW FUNCTIONS (OVERRIDES)
     //////////////////////////////////////////////////////////////*/
@@ -468,10 +480,17 @@ contract USD3 is BaseHooksUpgradeable {
         if (Pausable(address(WAUSDC)).paused()) {
             availableWaUSDC = 0;
         } else {
-            uint256 localWaUSDC = Math.min(balanceOfWaUSDC(), WAUSDC.maxRedeem(address(this)));
+            uint256 localWaUSDC = balanceOfWaUSDC();
             uint256 morphoWaUSDC = Math.min(waUSDCMax, waUSDCLiquidity);
-            morphoWaUSDC = Math.min(morphoWaUSDC, WAUSDC.maxRedeem(address(morphoCredit)));
-            availableWaUSDC = localWaUSDC + morphoWaUSDC;
+            uint256 totalRedeemableWaUSDC = localWaUSDC + morphoWaUSDC;
+
+            if (totalRedeemableWaUSDC > 0) {
+                if (WAUSDC.maxRedeem(address(this)) == 0 && WAUSDC.maxRedeem(address(morphoCredit)) == 0) {
+                    availableWaUSDC = 0;
+                } else {
+                    availableWaUSDC = Math.min(totalRedeemableWaUSDC, _waUSDCGlobalRedeemable());
+                }
+            }
         }
 
         uint256 availableLiquidity = idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
@@ -820,7 +839,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Read the tranche share variant (yield share to sUSD3 in basis points)
         uint256 trancheShare = config.getTrancheShareVariant();
-        require(trancheShare <= 10_000, "Invalid tranche share");
+        require(trancheShare <= 10_000);
 
         // Get the storage slot for performanceFee using the library
         bytes32 targetSlot = TokenizedStrategyStorageLib.profitConfigSlot();
