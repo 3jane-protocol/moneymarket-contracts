@@ -14,6 +14,14 @@ import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/Tokenized
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 
+interface IAavePool {
+    function getVirtualUnderlyingBalance(address asset) external view returns (uint128);
+}
+
+interface IWaUSDC is IERC4626 {
+    function POOL() external view returns (IAavePool);
+}
+
 /**
  * @title USD3
  * @author 3Jane Protocol
@@ -54,7 +62,7 @@ contract USD3 is BaseHooksUpgradeable {
     /*//////////////////////////////////////////////////////////////
                         CONSTANTS
     //////////////////////////////////////////////////////////////*/
-    IERC4626 public constant WAUSDC = IERC4626(0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E);
+    IWaUSDC public constant WAUSDC = IWaUSDC(0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E);
 
     /*//////////////////////////////////////////////////////////////
                         STORAGE - MORPHO PARAMETERS
@@ -159,13 +167,15 @@ contract USD3 is BaseHooksUpgradeable {
         IERC20(usdc).forceApprove(address(WAUSDC), type(uint256).max);
     }
 
-    /**
-     * @notice Restart the strategy after an emergency shutdown.
-     * @dev Intended to be consumed atomically through ProxyAdmin.upgradeAndCall during the v3 restart upgrade.
-     */
-    function restartStrategy() external reinitializer(3) {
-        TokenizedStrategyStorageLib.getStrategyStorage().shutdown = false;
-    }
+    // /**
+    //  * @notice Legacy restart hook for the completed v3 emergency restart.
+    //  * @dev This reinitializer was consumed in production during the controlled
+    //  *      ProxyAdmin.upgradeAndCall restart flow and is retained only for
+    //  *      deployed implementation compatibility.
+    //  */
+    // function restartStrategy() external reinitializer(3) {
+    //     TokenizedStrategyStorageLib.getStrategyStorage().shutdown = false;
+    // }
 
     /*//////////////////////////////////////////////////////////////
                         EXTERNAL VIEW FUNCTIONS
@@ -221,11 +231,45 @@ contract USD3 is BaseHooksUpgradeable {
         waUSDCMax = shares.toAssetsDown(totalSupplyAssets, totalShares);
     }
 
+    function _protocolConfig() internal view returns (IProtocolConfig) {
+        return IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+    }
+
     /*//////////////////////////////////////////////////////////////
                     INTERNAL STRATEGY FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Deploy funds to MorphoCredit market respecting maxOnCredit ratio
+    /// @dev Maximum waUSDC deployment allowed by sUSD3 backing alone.
+    /// Returns type(uint256).max when no subordination constraint applies.
+    function _subordinationDeployCapWaUSDC() internal view returns (uint256) {
+        if (sUSD3 == address(0)) return type(uint256).max;
+
+        IProtocolConfig config = _protocolConfig();
+        uint256 backingRatio = config.config(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO);
+        if (backingRatio == 0) return type(uint256).max;
+
+        uint256 sUSD3Shares = TokenizedStrategy.balanceOf(sUSD3);
+        uint256 _totalSupply = TokenizedStrategy.totalSupply();
+        uint256 _totalAssets = TokenizedStrategy.totalAssets();
+
+        if (_totalSupply == 0 || _totalAssets == 0 || sUSD3Shares == 0) return 0;
+
+        // Conservative (floor-rounded) USD3 share-to-USDC conversion,
+        // same accounting model as sUSD3.sol availableDepositLimit/availableWithdrawLimit
+        uint256 sUSD3ValueUSDC = sUSD3Shares.mulDiv(_totalAssets, _totalSupply, Math.Rounding.Floor);
+        uint256 maxDebtUSDC = (sUSD3ValueUSDC * 10_000) / backingRatio;
+
+        return WAUSDC.convertToShares(maxDebtUSDC);
+    }
+
+    /// @dev Effective deployment cap: min(maxOnCredit-based cap, subordination cap)
+    function _effectiveDeployCapWaUSDC(uint256 totalWaUSDC) internal view returns (uint256) {
+        uint256 maxOnCreditCap = (totalWaUSDC * maxOnCredit()) / 10_000;
+        uint256 subCap = _subordinationDeployCapWaUSDC();
+        return Math.min(maxOnCreditCap, subCap);
+    }
+
+    /// @dev Deploy funds to MorphoCredit market respecting maxOnCredit ratio and subordination cap
     /// @param _amount Amount of asset to deploy
     function _deployFunds(uint256 _amount) internal override {
         if (_amount == 0) return;
@@ -244,8 +288,7 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 localWaUSDC = balanceOfWaUSDC();
         uint256 totalWaUSDC = deployedWaUSDC + localWaUSDC;
 
-        // Calculate max that should be deployed to MorphoCredit
-        uint256 maxDeployableWaUSDC = (totalWaUSDC * maxOnCreditRatio) / 10_000;
+        uint256 maxDeployableWaUSDC = _effectiveDeployCapWaUSDC(totalWaUSDC);
 
         if (maxDeployableWaUSDC <= deployedWaUSDC) {
             // Already at or above max, keep all new waUSDC local
@@ -282,7 +325,7 @@ contract USD3 is BaseHooksUpgradeable {
             }
         }
 
-        uint256 waUSDCToUnwrap = Math.min(localWaUSDC, waUSDCNeeded);
+        uint256 waUSDCToUnwrap = Math.min(Math.min(localWaUSDC, waUSDCNeeded), WAUSDC.maxRedeem(address(this)));
 
         if (waUSDCToUnwrap > 0) {
             WAUSDC.redeem(waUSDCToUnwrap, address(this), address(this));
@@ -304,37 +347,73 @@ contract USD3 is BaseHooksUpgradeable {
 
         morphoCredit.accrueInterest(params);
 
-        _tend(asset.balanceOf(address(this)));
-
-        uint256 totalWaUSDC = suppliedWaUSDC() + balanceOfWaUSDC();
-
-        return WAUSDC.convertToAssets(totalWaUSDC) + asset.balanceOf(address(this));
+        return nav();
     }
 
     /// @dev Rebalances between idle and deployed funds to maintain maxOnCredit ratio
     /// @param _totalIdle Current idle funds available
-    function _tend(uint256 _totalIdle) internal virtual override {
+    function _tend(uint256 _totalIdle) internal override {
+        if (TokenizedStrategy.isShutdown()) {
+            return;
+        }
+
         // First wrap any idle USDC to waUSDC
         if (_totalIdle > 0) {
             WAUSDC.deposit(_totalIdle, address(this));
         }
 
+        _applyDeployCap(true);
+    }
+
+    /// @dev Rebalances deployed waUSDC toward the effective deployment cap.
+    /// Withdraws excess from MorphoCredit when over the cap; otherwise tops up
+    /// deployment from local waUSDC only when supplying is permitted.
+    /// @param allowSupply Whether deploying additional local waUSDC is allowed
+    function _applyDeployCap(bool allowSupply) private {
         // Calculate based on waUSDC amounts
         uint256 deployedWaUSDC = suppliedWaUSDC();
         uint256 localWaUSDC = balanceOfWaUSDC();
         uint256 totalWaUSDC = deployedWaUSDC + localWaUSDC;
 
-        uint256 targetDeployedWaUSDC = (totalWaUSDC * maxOnCredit()) / 10_000;
+        uint256 targetDeployedWaUSDC = _effectiveDeployCapWaUSDC(totalWaUSDC);
 
         if (deployedWaUSDC > targetDeployedWaUSDC) {
             // Withdraw excess from MorphoCredit
             uint256 waUSDCToWithdraw = deployedWaUSDC - targetDeployedWaUSDC;
             _withdrawFromMorpho(waUSDCToWithdraw);
-        } else if (targetDeployedWaUSDC > deployedWaUSDC && localWaUSDC > 0) {
+        } else if (allowSupply && targetDeployedWaUSDC > deployedWaUSDC && localWaUSDC > 0) {
             // Deploy more if we have local waUSDC
             uint256 waUSDCToDeploy = Math.min(localWaUSDC, targetDeployedWaUSDC - deployedWaUSDC);
             _supplyToMorpho(waUSDCToDeploy);
         }
+    }
+
+    /// @dev Signal keepers when deployment drifts from the effective cap
+    function _tendTrigger() internal view override returns (bool) {
+        if (TokenizedStrategy.isShutdown()) {
+            return false;
+        }
+
+        uint256 deployed = suppliedWaUSDC();
+        uint256 localWaUSDC = balanceOfWaUSDC();
+        uint256 totalWaUSDC = deployed + localWaUSDC;
+        uint256 target = _effectiveDeployCapWaUSDC(totalWaUSDC);
+
+        if (target == 0) return deployed > 0;
+
+        IProtocolConfig config = _protocolConfig();
+        uint256 driftBps = config.config(ProtocolConfigLib.TEND_DRIFT_THRESHOLD);
+        if (driftBps == 0) driftBps = 10;
+        require(driftBps < 10_000);
+        uint256 threshold = (target * driftBps) / 10_000;
+
+        if (deployed > target) {
+            return (deployed - target) > threshold;
+        }
+        if (target > deployed && localWaUSDC > 0) {
+            return (target - deployed) > threshold;
+        }
+        return false;
     }
 
     /// @dev Helper function to supply waUSDC to MorphoCredit
@@ -375,6 +454,10 @@ contract USD3 is BaseHooksUpgradeable {
         return amountWithdrawn;
     }
 
+    function _waUSDCGlobalRedeemable() internal view returns (uint256) {
+        return WAUSDC.convertToShares(WAUSDC.POOL().getVirtualUnderlyingBalance(WAUSDC.asset()));
+    }
+
     /*//////////////////////////////////////////////////////////////
                     PUBLIC VIEW FUNCTIONS (OVERRIDES)
     //////////////////////////////////////////////////////////////*/
@@ -386,6 +469,10 @@ contract USD3 is BaseHooksUpgradeable {
         // Get available liquidity first
         uint256 idleAsset = asset.balanceOf(address(this));
 
+        if (nav() + 2 < TokenizedStrategy.totalAssets()) {
+            return 0;
+        }
+
         (, uint256 waUSDCMax, uint256 waUSDCLiquidity) = getPosition();
 
         uint256 availableWaUSDC;
@@ -393,10 +480,17 @@ contract USD3 is BaseHooksUpgradeable {
         if (Pausable(address(WAUSDC)).paused()) {
             availableWaUSDC = 0;
         } else {
-            uint256 localWaUSDC = Math.min(balanceOfWaUSDC(), WAUSDC.maxRedeem(address(this)));
+            uint256 localWaUSDC = balanceOfWaUSDC();
             uint256 morphoWaUSDC = Math.min(waUSDCMax, waUSDCLiquidity);
-            morphoWaUSDC = Math.min(morphoWaUSDC, WAUSDC.maxRedeem(address(morphoCredit)));
-            availableWaUSDC = localWaUSDC + morphoWaUSDC;
+            uint256 totalRedeemableWaUSDC = localWaUSDC + morphoWaUSDC;
+
+            if (totalRedeemableWaUSDC > 0) {
+                if (WAUSDC.maxRedeem(address(this)) == 0 && WAUSDC.maxRedeem(address(morphoCredit)) == 0) {
+                    availableWaUSDC = 0;
+                } else {
+                    availableWaUSDC = Math.min(totalRedeemableWaUSDC, _waUSDCGlobalRedeemable());
+                }
+            }
         }
 
         uint256 availableLiquidity = idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
@@ -438,7 +532,7 @@ contract USD3 is BaseHooksUpgradeable {
             return 0;
         }
 
-        uint256 cap = supplyCap();
+        uint256 cap = _protocolConfig().config(ProtocolConfigLib.USD3_SUPPLY_CAP);
         if (cap == 0) {
             return 0;
         }
@@ -471,16 +565,13 @@ contract USD3 is BaseHooksUpgradeable {
         // Enforce minimum deposit only for first-time depositors
         uint256 currentBalance = TokenizedStrategy.balanceOf(receiver);
         if (currentBalance == 0) {
-            require(assets >= minDeposit, "Below minimum deposit");
+            require(assets >= minDeposit, "<min");
         }
 
         // Prevent commitment bypass and griefing attacks
         if (minCommitmentTime() > 0) {
             // Only allow self-deposits or whitelisted depositors
-            require(
-                msg.sender == receiver || depositorWhitelist[msg.sender],
-                "USD3: Only self or whitelisted deposits allowed"
-            );
+            require(msg.sender == receiver || depositorWhitelist[msg.sender], "!allowed");
 
             // Always extend commitment for valid deposits
             depositTimestamp[receiver] = block.timestamp;
@@ -498,21 +589,36 @@ contract USD3 is BaseHooksUpgradeable {
         }
     }
 
-    /// @dev Post-report hook to handle loss absorption by burning sUSD3's shares
-    function _postReportHook(uint256 profit, uint256 loss) internal override {
-        if (loss > 0 && sUSD3 != address(0)) {
+    /**
+     * @notice Report profit and loss with pre-report context for accurate loss absorption
+     * @return profit Amount of profit generated
+     * @return loss Amount of loss incurred
+     */
+    function report() external override returns (uint256 profit, uint256 loss) {
+        uint256 preSupply = TokenizedStrategy.totalSupply();
+        uint256 preAssets = TokenizedStrategy.totalAssets();
+
+        _preReportHook();
+        (profit, loss) = _reportInternal();
+        _postReportHook(loss, preAssets, preSupply);
+    }
+
+    /// @dev Handles loss absorption and post-report rebalancing.
+    function _postReportHook(uint256 loss, uint256 preAssets, uint256 preSupply) internal {
+        if (loss > 0 && sUSD3 != address(0) && preAssets > 0 && preSupply > 0) {
             // Get sUSD3's current USD3 balance
             uint256 susd3Balance = TokenizedStrategy.balanceOf(sUSD3);
 
             if (susd3Balance > 0) {
-                // Calculate how many shares are needed to cover the loss
-                // IMPORTANT: We must use pre-report values to calculate the correct share amount
-                // The report has already reduced totalAssets, so we add the loss back
-                uint256 totalSupply = TokenizedStrategy.totalSupply();
-                uint256 totalAssets = TokenizedStrategy.totalAssets();
+                // Total shares required to cover the loss at the pre-report PPS
+                uint256 totalBurnNeeded = loss.mulDiv(preSupply, preAssets, Math.Rounding.Floor);
 
-                // Calculate shares to burn using pre-loss exchange rate
-                uint256 sharesToBurn = loss.mulDiv(totalSupply, totalAssets + loss, Math.Rounding.Floor);
+                // Internal burn from locked shares is reflected in the post-report totalSupply
+                uint256 postSupply = TokenizedStrategy.totalSupply();
+                uint256 lockedBurn = preSupply > postSupply ? preSupply - postSupply : 0;
+
+                // Burn only the remaining shares from sUSD3
+                uint256 sharesToBurn = totalBurnNeeded > lockedBurn ? totalBurnNeeded - lockedBurn : 0;
 
                 // Cap at sUSD3's actual balance - they can't lose more than they have
                 if (sharesToBurn > susd3Balance) {
@@ -524,6 +630,8 @@ contract USD3 is BaseHooksUpgradeable {
                 }
             }
         }
+
+        _tend(asset.balanceOf(address(this)));
     }
 
     /**
@@ -542,10 +650,17 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Check commitment period
         uint256 commitmentEnd = depositTimestamp[from] + minCommitmentTime();
-        require(
-            block.timestamp >= commitmentEnd || depositTimestamp[from] == 0,
-            "USD3: Cannot transfer during commitment period"
-        );
+        require(block.timestamp >= commitmentEnd || depositTimestamp[from] == 0, "!transfer");
+    }
+
+    /// @dev Post-transfer hook that rebalances deployment after sUSD3 unstakes.
+    /// When sUSD3 transfers out USD3 shares its subordination backing shrinks, so the
+    /// deployment cap is re-applied (withdraw-only) to pull any excess back from MorphoCredit.
+    /// Skipped during shutdown.
+    /// @param from Address transferring shares
+    /// @param amount Amount of shares being transferred
+    function _postTransferHook(address from, address, uint256 amount, bool success) internal override {
+        if (success && amount > 0 && from == sUSD3 && !TokenizedStrategy.isShutdown()) _applyDeployCap(false);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -613,6 +728,12 @@ contract USD3 is BaseHooksUpgradeable {
         return morphoCredit.expectedSupplyAssets(_marketParams, address(this));
     }
 
+    /// @dev Net asset value of the strategy in USDC terms
+    /// @return Sum of deployed and local waUSDC converted to assets, plus idle USDC held by the strategy
+    function nav() public view returns (uint256) {
+        return WAUSDC.convertToAssets(suppliedWaUSDC() + balanceOfWaUSDC()) + asset.balanceOf(address(this));
+    }
+
     /**
      * @notice Get the maximum percentage of funds to deploy to credit markets from ProtocolConfig
      * @return Maximum deployment ratio in basis points (10000 = 100%)
@@ -620,7 +741,7 @@ contract USD3 is BaseHooksUpgradeable {
      *      it returns 0, effectively preventing deployment until explicitly configured.
      */
     function maxOnCredit() public view returns (uint256) {
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        IProtocolConfig config = _protocolConfig();
         return config.getMaxOnCredit();
     }
 
@@ -629,17 +750,8 @@ contract USD3 is BaseHooksUpgradeable {
      * @return Minimum commitment time in seconds
      */
     function minCommitmentTime() public view returns (uint256) {
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        IProtocolConfig config = _protocolConfig();
         return config.getUsd3CommitmentTime();
-    }
-
-    /**
-     * @notice Get the supply cap from ProtocolConfig
-     * @return Supply cap in asset units
-     */
-    function supplyCap() public view returns (uint256) {
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
-        return config.config(ProtocolConfigLib.USD3_SUPPLY_CAP);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -652,8 +764,8 @@ contract USD3 is BaseHooksUpgradeable {
      * @dev Only callable by management. After calling, also set performance fee recipient.
      */
     function setSUSD3(address _sUSD3) external onlyManagement {
-        require(sUSD3 == address(0), "sUSD3 already set");
-        require(_sUSD3 != address(0), "Invalid address");
+        require(sUSD3 == address(0));
+        require(_sUSD3 != address(0));
 
         sUSD3 = _sUSD3;
         emit SUSD3StrategyUpdated(address(0), _sUSD3);
@@ -723,11 +835,11 @@ contract USD3 is BaseHooksUpgradeable {
      */
     function syncTrancheShare() external onlyKeepers {
         // Get the protocol config through MorphoCredit
-        IProtocolConfig config = IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
+        IProtocolConfig config = _protocolConfig();
 
         // Read the tranche share variant (yield share to sUSD3 in basis points)
         uint256 trancheShare = config.getTrancheShareVariant();
-        require(trancheShare <= 10_000, "Invalid tranche share");
+        require(trancheShare <= 10_000);
 
         // Get the storage slot for performanceFee using the library
         bytes32 targetSlot = TokenizedStrategyStorageLib.profitConfigSlot();

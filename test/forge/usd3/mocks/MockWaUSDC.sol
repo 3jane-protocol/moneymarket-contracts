@@ -22,6 +22,8 @@ contract MockWaUSDC is ERC20 {
     // Pause state for testing EIP-4626 compliance
     bool private _paused;
 
+    uint128 private _virtualUnderlyingBalance;
+
     constructor(address _usdc) ERC20("Wrapped Aave USDC", "waUSDC") {
         _asset = _usdc;
     }
@@ -41,11 +43,25 @@ contract MockWaUSDC is ERC20 {
         return _paused;
     }
 
+    function POOL() public view returns (MockWaUSDC) {
+        return this;
+    }
+
     /**
      * @dev Set the pause state (for testing)
      */
     function setPaused(bool paused_) external {
         _paused = paused_;
+    }
+
+    function setVirtualUnderlyingBalance(uint128 virtualUnderlyingBalance_) external {
+        _virtualUnderlyingBalance = virtualUnderlyingBalance_;
+    }
+
+    function getVirtualUnderlyingBalance(address asset_) external view returns (uint128) {
+        require(asset_ == _asset, "invalid asset");
+        if (_virtualUnderlyingBalance != 0) return _virtualUnderlyingBalance;
+        return uint128(totalAssets());
     }
 
     /**
@@ -77,6 +93,7 @@ contract MockWaUSDC is ERC20 {
      */
     function withdraw(uint256 assets, address receiver, address owner) public whenNotPaused returns (uint256 shares) {
         shares = previewWithdraw(assets);
+        require(shares <= maxRedeem(owner), "ERC4626: withdraw more than max");
         if (msg.sender != owner) {
             uint256 allowed = allowance(owner, msg.sender);
             if (allowed != type(uint256).max) {
@@ -92,6 +109,7 @@ contract MockWaUSDC is ERC20 {
      * @dev Redeem waUSDC shares for USDC
      */
     function redeem(uint256 shares, address receiver, address owner) public whenNotPaused returns (uint256 assets) {
+        require(shares <= maxRedeem(owner), "ERC4626: redeem more than max");
         assets = previewRedeem(shares);
         if (msg.sender != owner) {
             uint256 allowed = allowance(owner, msg.sender);
@@ -157,12 +175,15 @@ contract MockWaUSDC is ERC20 {
 
     function maxWithdraw(address owner) public view returns (uint256) {
         if (_paused) return 0;
-        return convertToAssets(balanceOf(owner));
+        return convertToAssets(maxRedeem(owner));
     }
 
     function maxRedeem(address owner) public view returns (uint256) {
         if (_paused) return 0;
-        return balanceOf(owner);
+        uint256 underlyingTokenBalanceInShares =
+            convertToShares(_virtualUnderlyingBalance == 0 ? totalAssets() : _virtualUnderlyingBalance);
+        uint256 cachedUserBalance = balanceOf(owner);
+        return underlyingTokenBalanceInShares >= cachedUserBalance ? cachedUserBalance : underlyingTokenBalanceInShares;
     }
 
     /**

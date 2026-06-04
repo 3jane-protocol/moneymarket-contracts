@@ -33,6 +33,7 @@ contract MockProtocolConfig is IProtocolConfig {
     bytes32 private constant MIN_BORROW = keccak256("MIN_BORROW");
     bytes32 private constant IRP = keccak256("IRP");
     bytes32 private constant DEBT_CAP = keccak256("DEBT_CAP");
+    bytes32 private constant TEND_DRIFT_THRESHOLD = keccak256("TEND_DRIFT_THRESHOLD");
 
     constructor() {
         owner = msg.sender;
@@ -51,6 +52,7 @@ contract MockProtocolConfig is IProtocolConfig {
         config[GRACE_PERIOD] = 7 days;
         config[DELINQUENCY_PERIOD] = 30 days;
         config[MIN_BORROW] = 100e6; // 100 USDC minimum
+        config[TEND_DRIFT_THRESHOLD] = 10; // 0.1% default
     }
 
     function initialize(address newOwner) external {

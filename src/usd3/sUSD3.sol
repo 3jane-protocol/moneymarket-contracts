@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {BaseHooksUpgradeable, IERC20, IMorphoCredit, IProtocolConfig, Math, SafeERC20, USD3} from "./USD3.sol";
+import {BaseHooksUpgradeable, IERC20, IMorphoCredit, IProtocolConfig, Math, USD3} from "./USD3.sol";
 import {IStrategy} from "@tokenized-strategy/interfaces/IStrategy.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 
@@ -141,11 +141,12 @@ contract sUSD3 is BaseHooksUpgradeable {
             msg.sender == receiver || depositorWhitelist[msg.sender], "sUSD3: Only self or whitelisted deposits allowed"
         );
 
-        // Always extend lock period for valid deposits
+        // Extend lock period for valid deposits when configured.
         if (assets > 0 || shares > 0) {
-            // Read lock duration from ProtocolConfig
             uint256 duration = lockDuration();
-            lockedUntil[receiver] = block.timestamp + duration;
+            if (duration > 0) {
+                lockedUntil[receiver] = block.timestamp + duration;
+            }
         }
     }
 
@@ -275,10 +276,22 @@ contract sUSD3 is BaseHooksUpgradeable {
     /// @param _owner Address to check limit for
     /// @return Maximum withdrawal amount allowed in assets
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
+        uint256 currentUSD3Holdings = asset.balanceOf(address(this));
+
+        // Block withdraws if sUSD3 has unrealized losses
+        if (currentUSD3Holdings + 2 < TokenizedStrategy.totalAssets()) {
+            return 0;
+        }
+
+        // Block withdraws if USD3 has unrealized losses
+        if (USD3(address(asset)).nav() + 2 < IStrategy(address(asset)).totalAssets()) {
+            return 0;
+        }
+
         // During shutdown, bypass all checks and return available assets
         if (TokenizedStrategy.isShutdown()) {
             // Return all available USD3 (entire balance since sUSD3 holds USD3 directly)
-            return asset.balanceOf(address(this));
+            return currentUSD3Holdings;
         }
 
         // Check initial lock period
@@ -319,7 +332,6 @@ contract sUSD3 is BaseHooksUpgradeable {
             return userWithdrawLimit;
         }
 
-        uint256 currentUSD3Holdings = asset.balanceOf(address(this));
         uint256 currentAssetsUSDC = IStrategy(address(asset)).convertToAssets(currentUSD3Holdings);
 
         if (currentAssetsUSDC <= subordinatedDebtFloorUSDC) {
@@ -363,9 +375,7 @@ contract sUSD3 is BaseHooksUpgradeable {
      */
     function lockDuration() public view returns (uint256) {
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
-
-        uint256 duration = config.getSusd3LockDuration();
-        return duration > 0 ? duration : 90 days; // Default to 90 days if not set
+        return config.getSusd3LockDuration();
     }
 
     /**

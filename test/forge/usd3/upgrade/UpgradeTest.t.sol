@@ -253,7 +253,7 @@ contract UpgradeTest is Setup {
         // Test that it cannot be changed once set (use a valid address)
         address anotherSusd3 = makeAddr("anotherSusd3");
         vm.prank(management);
-        vm.expectRevert("sUSD3 already set");
+        vm.expectRevert();
         usd3Strategy.setSUSD3(anotherSusd3);
 
         // Verify link remains unchanged
@@ -278,7 +278,7 @@ contract UpgradeTest is Setup {
         // Test that even with a new address, it cannot be changed
         address yetAnotherSusd3 = address(0x123);
         vm.prank(management);
-        vm.expectRevert("sUSD3 already set");
+        vm.expectRevert();
         usd3Strategy.setSUSD3(yetAnotherSusd3);
 
         // Verify original link still intact

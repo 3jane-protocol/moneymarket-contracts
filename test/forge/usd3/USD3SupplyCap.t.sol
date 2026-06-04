@@ -80,7 +80,7 @@ contract USD3SupplyCapTest is Setup {
 
     function test_supplyCap_unlimitedByDefault() public {
         // Default cap is unlimited (type(uint256).max)
-        assertEq(usd3Strategy.supplyCap(), type(uint256).max, "Default cap should be unlimited");
+        assertEq(protocolConfig.config(USD3_SUPPLY_CAP), type(uint256).max, "Default cap should be unlimited");
         uint256 expectedLimit = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
         assertEq(usd3Strategy.availableDepositLimit(alice), expectedLimit, "Should allow unlimited deposits");
 
@@ -107,7 +107,7 @@ contract USD3SupplyCapTest is Setup {
         // Set a supply cap
         _setSupplyCap(TEST_CAP);
 
-        assertEq(usd3Strategy.supplyCap(), TEST_CAP, "Cap should be set");
+        assertEq(protocolConfig.config(USD3_SUPPLY_CAP), TEST_CAP, "Cap should be set");
         assertEq(usd3Strategy.availableDepositLimit(alice), TEST_CAP, "Available should equal cap initially");
 
         // Deposit half the cap

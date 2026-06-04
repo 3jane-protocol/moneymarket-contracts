@@ -280,6 +280,64 @@ contract USD3MorphoIntegrationTest is Setup {
         assertEq(withdrawn, availableLimit, "Should withdraw exactly the available liquidity");
     }
 
+    function test_settlementBeforeReportBlocksStaleWithdrawals() public {
+        uint256 supplyAmount = 10000e6;
+        uint256 borrowAmount = 1000e6;
+
+        vm.prank(SUPPLIER);
+        uint256 shares = ITokenizedStrategy(address(usd3Strategy)).deposit(supplyAmount, SUPPLIER);
+
+        _setupBorrowerWithATokenLoan(BORROWER, borrowAmount);
+
+        uint256 storedAssetsBeforeSettlement = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
+        assertEq(storedAssetsBeforeSettlement, supplyAmount, "setup should have stale Yearn accounting baseline");
+
+        vm.prank(marketParams.creditLine);
+        (uint256 writtenOffAssets, uint256 writtenOffShares) =
+            MorphoCredit(address(morpho)).settleAccount(marketParams, BORROWER);
+        assertGt(writtenOffAssets, 0, "settlement should realize a loss");
+        assertGt(writtenOffShares, 0, "settlement should write off borrow shares");
+
+        assertLt(_usd3Nav(), storedAssetsBeforeSettlement, "spot nav should be below stored assets");
+        assertEq(usd3Strategy.availableWithdrawLimit(SUPPLIER), 0, "withdraw limit should be gated until report");
+        assertEq(ITokenizedStrategy(address(usd3Strategy)).maxWithdraw(SUPPLIER), 0, "maxWithdraw should be zero");
+        assertEq(ITokenizedStrategy(address(usd3Strategy)).maxRedeem(SUPPLIER), 0, "maxRedeem should be zero");
+
+        vm.prank(SUPPLIER);
+        vm.expectRevert();
+        ITokenizedStrategy(address(usd3Strategy)).redeem(shares, SUPPLIER, SUPPLIER);
+
+        vm.prank(strategyKeeper);
+        (uint256 profit, uint256 loss) = ITokenizedStrategy(address(usd3Strategy)).report();
+        assertEq(profit, 0, "settlement should not report profit");
+        assertApproxEqAbs(loss, writtenOffAssets, 1, "report should recognize realized settlement loss");
+
+        uint256 storedAssetsAfterReport = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
+        assertApproxEqAbs(storedAssetsAfterReport, _usd3Nav(), 2, "report should refresh stored assets to nav");
+        assertGt(usd3Strategy.availableWithdrawLimit(SUPPLIER), 0, "withdrawals should reopen after report");
+    }
+
+    function test_settlementBeforeReportBlocksStaleWithdrawalsDuringShutdown() public {
+        uint256 supplyAmount = 10000e6;
+        uint256 borrowAmount = 1000e6;
+
+        vm.prank(SUPPLIER);
+        ITokenizedStrategy(address(usd3Strategy)).deposit(supplyAmount, SUPPLIER);
+
+        _setupBorrowerWithATokenLoan(BORROWER, borrowAmount);
+
+        vm.prank(marketParams.creditLine);
+        MorphoCredit(address(morpho)).settleAccount(marketParams, BORROWER);
+
+        assertLt(_usd3Nav(), ITokenizedStrategy(address(usd3Strategy)).totalAssets(), "setup should be stale");
+
+        vm.prank(management);
+        ITokenizedStrategy(address(usd3Strategy)).shutdownStrategy();
+
+        assertEq(usd3Strategy.availableWithdrawLimit(SUPPLIER), 0, "shutdown should not bypass stale nav guard");
+        assertEq(ITokenizedStrategy(address(usd3Strategy)).maxWithdraw(SUPPLIER), 0, "maxWithdraw should be zero");
+    }
+
     function test_multipleDepositors() public {
         address depositor1 = makeAddr("Depositor1");
         address depositor2 = makeAddr("Depositor2");
@@ -350,6 +408,11 @@ contract USD3MorphoIntegrationTest is Setup {
     function _triggerAccrual() internal {
         // Trigger interest accrual in Morpho
         morpho.accrueInterest(marketParams);
+    }
+
+    function _usd3Nav() internal view returns (uint256) {
+        uint256 waUSDCAssets = usd3Strategy.suppliedWaUSDC() + usd3Strategy.balanceOfWaUSDC();
+        return waUSDC.convertToAssets(waUSDCAssets) + asset.balanceOf(address(usd3Strategy));
     }
 
     function _createPastObligation(address borrower, uint256 amount, uint256 endingBalance) internal {
