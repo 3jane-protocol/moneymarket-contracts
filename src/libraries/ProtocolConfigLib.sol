@@ -28,6 +28,7 @@ library ProtocolConfigLib {
     bytes32 internal constant TRANCHE_RATIO = keccak256("TRANCHE_RATIO");
     bytes32 internal constant TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
     bytes32 internal constant MIN_SUSD3_BACKING_RATIO = keccak256("MIN_SUSD3_BACKING_RATIO");
+    bytes32 internal constant SUSD3_NOMINAL_BACKING_FLOOR = keccak256("SUSD3_NOMINAL_BACKING_FLOOR");
 
     // Timing Keys
     bytes32 internal constant SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
@@ -37,6 +38,9 @@ library ProtocolConfigLib {
 
     // Supply Cap Keys
     bytes32 internal constant USD3_SUPPLY_CAP = keccak256("USD3_SUPPLY_CAP");
+
+    // Tend Keys
+    bytes32 internal constant TEND_DRIFT_THRESHOLD = keccak256("TEND_DRIFT_THRESHOLD");
 
     // Markdown Keys
     bytes32 internal constant FULL_MARKDOWN_DURATION = keccak256("FULL_MARKDOWN_DURATION");

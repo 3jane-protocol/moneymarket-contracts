@@ -250,7 +250,7 @@ contract WhitelistTest is Setup {
 
         // Alice (whitelisted) cannot deposit below minimum for first deposit
         vm.prank(alice);
-        vm.expectRevert("Below minimum deposit");
+        vm.expectRevert(bytes("<min"));
         strategy.deposit(25e6, alice);
 
         // Alice can deposit at or above minimum

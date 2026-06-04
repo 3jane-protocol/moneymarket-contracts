@@ -232,7 +232,7 @@ contract ShutdownIntegrationTest is Setup {
         // Bob tries to deposit below minimum (whitelisted)
         vm.startPrank(bob);
         underlyingAsset.approve(address(usd3Strategy), 50e6);
-        vm.expectRevert("Below minimum deposit");
+        vm.expectRevert(bytes("<min"));
         usd3Strategy.deposit(50e6, bob);
         vm.stopPrank();
 
@@ -319,7 +319,7 @@ contract ShutdownIntegrationTest is Setup {
 
         if (finalShares == 0) {
             // After full withdrawal, minimum applies again
-            vm.expectRevert("Below minimum deposit");
+            vm.expectRevert(bytes("<min"));
             usd3Strategy.deposit(50e6, alice);
 
             // Must meet minimum for new cycle

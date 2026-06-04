@@ -139,7 +139,7 @@ contract ShutdownSecurityTest is Setup {
         underlyingAsset.approve(address(usd3Strategy), 1000e6);
 
         uint256 bobSharesAttempt = ITokenizedStrategy(address(usd3Strategy)).previewDeposit(50e6); // Below minimum
-        vm.expectRevert("Below minimum deposit");
+        vm.expectRevert(bytes("<min"));
         usd3Strategy.mint(bobSharesAttempt, bob);
 
         // Bob must meet minimum for first deposit even with mint()
@@ -293,7 +293,7 @@ contract ShutdownSecurityTest is Setup {
 
             // Try to deposit below minimum again
             vm.startPrank(attacker);
-            vm.expectRevert("Below minimum deposit");
+            vm.expectRevert(bytes("<min"));
             usd3Strategy.deposit(50e6, attacker);
 
             // Must meet minimum again for first deposit after full withdrawal

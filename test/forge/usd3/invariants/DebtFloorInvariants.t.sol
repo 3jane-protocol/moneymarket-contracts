@@ -7,6 +7,7 @@ import {USD3} from "../../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
+import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {
     TransparentUpgradeableProxy
@@ -46,7 +47,6 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         // Configure floor/cap environment.
         setMaxOnCredit(8000);
         setMorphoDebtCap(20_000_000e6);
-        protocolConfig.setConfig(keccak256("MIN_SUSD3_BACKING_RATIO"), 3000); // 30%
 
         // Seed liquidity and debt.
         address alice = makeAddr("debt-floor-alice");
@@ -57,6 +57,8 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         vm.stopPrank();
 
         createMarketDebt(makeAddr("debt-floor-borrower"), 1_000_000e6);
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 3000); // 30%
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 400_000e6);
 
         vm.startPrank(alice);
         IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 500_000e6);
@@ -99,7 +101,9 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         (,, uint256 totalBorrowAssetsWaUSDC,) = usd3Strategy.getMarketLiquidity();
         uint256 debtUsdc = usd3Strategy.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
         uint256 backingRatio = susd3Strategy.minBackingRatio();
-        uint256 expectedFloor = (debtUsdc * backingRatio) / 10_000;
+        uint256 ratioFloor = (debtUsdc * backingRatio) / 10_000;
+        uint256 nominalFloor = susd3Strategy.nominalBackingFloor();
+        uint256 expectedFloor = ratioFloor > nominalFloor ? ratioFloor : nominalFloor;
 
         assertEq(susd3Strategy.getSubordinatedDebtFloorInUSDC(), expectedFloor, "debt floor formula mismatch");
     }
