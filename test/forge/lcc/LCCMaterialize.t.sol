@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.22;
+
+import {LCCBase} from "./LCCBase.t.sol";
+import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+
+contract LCCMaterializeTest is LCCBase {
+    function testDerivedViewMatchesMutatingMaterializationForPending() public {
+        vm.warp(START + NORMAL);
+        _deposit(alice, 100e18);
+
+        vm.warp(START + EPOCH);
+        _syncAs(bob);
+
+        ILeveragedCallableCreditVault.Account memory derived = vault.getAccount(alice);
+        _syncAs(alice);
+        ILeveragedCallableCreditVault.Account memory storedDerived = vault.getAccount(alice);
+
+        assertEq(derived.activeMargin, storedDerived.activeMargin);
+        assertEq(derived.pendingMargin, storedDerived.pendingMargin);
+        assertEq(derived.calledEpochCursor, storedDerived.calledEpochCursor);
+    }
+
+    function testDerivedViewMatchesMutatingMaterializationForDefault() public {
+        _deposit(alice, 100e18);
+        _openCall(100e18);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+
+        ILeveragedCallableCreditVault.Account memory derived = vault.getAccount(alice);
+        _syncAs(alice);
+        ILeveragedCallableCreditVault.Account memory storedDerived = vault.getAccount(alice);
+
+        assertEq(derived.activeMargin, 0);
+        assertEq(storedDerived.activeMargin, 0);
+        assertEq(derived.calledEpochCursor, storedDerived.calledEpochCursor);
+    }
+
+    function testPendingDepositDuringCallIsNotDefaultedForPriorEpoch() public {
+        _deposit(alice, 100e18);
+        _openCall(100e18);
+
+        vm.warp(START + NORMAL + PRE_CALL);
+        _deposit(bob, 100e18);
+
+        vm.warp(START + EPOCH);
+        _syncAs(bob);
+
+        ILeveragedCallableCreditVault.Account memory account = vault.getAccount(bob);
+        assertEq(account.activeMargin, 100e18);
+        assertEq(account.activeCallableUsdc, 200e18);
+        assertFalse(vault.defaultedEpoch(0, bob));
+    }
+
+    function testOnlyOldActiveExposureDefaultsWhenUserAlsoHasPendingDeposit() public {
+        _deposit(alice, 100e18);
+        _openCall(100e18);
+
+        vm.warp(START + NORMAL + PRE_CALL);
+        _deposit(alice, 50e18);
+
+        vm.warp(START + EPOCH);
+        _syncAs(alice);
+
+        ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
+        assertTrue(vault.defaultedEpoch(0, alice));
+        assertEq(account.activeMargin, 50e18);
+        assertEq(account.activeCallableUsdc, 100e18);
+        assertEq(margin.balanceOf(treasury), 100e18);
+    }
+
+    function testMaturedExiterIsNotDefaultedByLaterCall() public {
+        _deposit(alice, 100e18);
+        vm.prank(alice);
+        vault.requestExit();
+
+        vm.warp(START + EPOCH);
+        _deposit(bob, 100e18);
+
+        vm.warp(START + EPOCH + NORMAL);
+        vm.prank(owner);
+        vault.openEpochCall(1, 100e18);
+
+        vm.warp(START + EPOCH + NORMAL + PRE_CALL + FUNDING);
+        vault.finalizeEpochSlash(1);
+
+        assertEq(vault.claimableExitedMargin(alice), 100e18);
+        vm.prank(alice);
+        assertEq(vault.claimExitedMargin(alice), 100e18);
+        assertFalse(vault.defaultedEpoch(1, alice));
+    }
+}
