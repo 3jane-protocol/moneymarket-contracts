@@ -5,6 +5,52 @@ import {LCCBase} from "./LCCBase.t.sol";
 import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
 
 contract LCCMaterializeTest is LCCBase {
+    function testFreshAccountCanDepositAfterManyFinalizedCalls() public {
+        _createFundedCallHistory(alice, MAX_MATERIALIZE_STEPS_PLUS_ONE());
+
+        vm.warp(START + EPOCH * (MAX_MATERIALIZE_STEPS_PLUS_ONE() + 1));
+        _deposit(bob, 10e18);
+
+        ILeveragedCallableCreditVault.Account memory account = vault.getAccount(bob);
+        assertEq(account.activeMargin, 10e18);
+        assertEq(account.calledEpochCursor, vault.finalizedCallPrefix());
+    }
+
+    function testClearedAccountCanDepositAfterManyMoreFinalizedCalls() public {
+        _deposit(alice, 100e18);
+        _openCall(100e18);
+        _finishFunding();
+        _syncAs(alice);
+
+        vm.warp(START + EPOCH);
+        _createFundedCallHistoryFromEpoch(bob, 1, MAX_MATERIALIZE_STEPS_PLUS_ONE());
+
+        vm.warp(START + EPOCH * (MAX_MATERIALIZE_STEPS_PLUS_ONE() + 2));
+        _deposit(alice, 10e18);
+
+        ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
+        assertEq(account.activeMargin, 10e18);
+        assertEq(account.calledEpochCursor, vault.finalizedCallPrefix());
+    }
+
+    function testViewDoesNotReportClaimableExitPastUnfinalizedEligibleCall() public {
+        _deposit(alice, 100e18);
+        vm.prank(alice);
+        vault.requestExit();
+        _openCall(100e18);
+
+        vm.warp(START + EPOCH);
+
+        assertEq(vault.claimableExitedMargin(alice), 0);
+        ILeveragedCallableCreditVault.Account memory derived = vault.getAccount(alice);
+        assertEq(derived.claimableExitMargin, 0);
+
+        _syncAs(alice);
+
+        assertTrue(vault.defaultedEpoch(0, alice));
+        assertEq(vault.claimableExitedMargin(alice), 0);
+    }
+
     function testDerivedViewMatchesMutatingMaterializationForPending() public {
         vm.warp(START + NORMAL);
         _deposit(alice, 100e18);
@@ -88,5 +134,31 @@ contract LCCMaterializeTest is LCCBase {
         vm.prank(alice);
         assertEq(vault.claimExitedMargin(alice), 100e18);
         assertFalse(vault.defaultedEpoch(1, alice));
+    }
+
+    function _createFundedCallHistory(address funder, uint256 count) internal {
+        _createFundedCallHistoryFromEpoch(funder, 0, count);
+    }
+
+    function _createFundedCallHistoryFromEpoch(address funder, uint256 startEpoch, uint256 count) internal {
+        if (vault.getAccount(funder).activeMargin == 0) _deposit(funder, 10_000e18);
+
+        for (uint256 i = 0; i < count; ++i) {
+            uint256 epoch = startEpoch + i;
+            vm.warp(START + EPOCH * epoch + NORMAL);
+            vm.prank(owner);
+            vault.openEpochCall(epoch, 1e18);
+
+            vm.warp(START + EPOCH * epoch + NORMAL + PRE_CALL);
+            vm.prank(funder);
+            vault.fundEpochCall(epoch);
+
+            vm.warp(START + EPOCH * epoch + NORMAL + PRE_CALL + FUNDING);
+            vault.finalizeEpochSlash(epoch);
+        }
+    }
+
+    function MAX_MATERIALIZE_STEPS_PLUS_ONE() internal pure returns (uint256) {
+        return 65;
     }
 }

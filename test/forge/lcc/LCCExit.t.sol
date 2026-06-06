@@ -113,6 +113,26 @@ contract LCCExitTest is LCCBase {
         assertEq(vault.totalActiveMargin(), 0);
     }
 
+    function testPrunedMaturityBucketCanBeReusedInSameEpoch() public {
+        _deposit(alice, 100e18);
+        _deposit(bob, 100e18);
+
+        vm.prank(alice);
+        assertEq(vault.requestExit(), 1);
+
+        _openCall(400e18);
+        _fund(alice);
+
+        assertEq(vault.exitRequestedMarginByMaturity(1), 0);
+        assertEq(vault.exitRequestedCallableByMaturity(1), 0);
+
+        vm.prank(bob);
+        assertEq(vault.requestExit(), 1);
+
+        assertEq(vault.exitRequestedMarginByMaturity(1), 100e18);
+        assertEq(vault.exitRequestedCallableByMaturity(1), 200e18);
+    }
+
     function testExitRequestedAfterCallOpenRemainsLiableForOpenCall() public {
         _deposit(alice, 100e18);
         _openCall(100e18);

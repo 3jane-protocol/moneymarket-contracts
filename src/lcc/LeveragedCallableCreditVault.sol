@@ -47,6 +47,13 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         bool listed;
     }
 
+    struct AccountReplay {
+        Account account;
+        uint256[] defaultedEpochs;
+        uint256 defaultCount;
+        bool complete;
+    }
+
     IERC20 public immutable marginAsset;
     IERC20 public immutable callableAsset;
     IERC4626 public immutable usd3;
@@ -87,7 +94,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     mapping(uint256 => uint256) public exitRequestedMarginByMaturity;
     mapping(uint256 => uint256) public exitRequestedCallableByMaturity;
     uint256[] internal exitMaturityList;
-    mapping(uint256 => bool) internal exitMaturitySeen;
+    mapping(uint256 => uint256) internal exitMaturityIndexPlusOne;
 
     mapping(uint256 => mapping(uint256 => ExitExposure)) internal exitExposureByCallAndMaturity;
     mapping(uint256 => uint256[]) internal exitMaturitiesByCall;
@@ -258,9 +265,11 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         assets = account.activeMargin + account.pendingMargin;
         if (assets == 0) revert NothingToClaim();
 
+        uint256 maturity = account.exitMaturityEpoch;
         if (account.exitRequested && !account.exitClaimed && !account.exitMatured) {
-            exitRequestedMarginByMaturity[account.exitMaturityEpoch] -= account.exitBucketMargin;
-            exitRequestedCallableByMaturity[account.exitMaturityEpoch] -= account.exitBucketCallable;
+            exitRequestedMarginByMaturity[maturity] -= account.exitBucketMargin;
+            exitRequestedCallableByMaturity[maturity] -= account.exitBucketCallable;
+            _pruneExitMaturityIfEmpty(maturity);
         }
 
         _decreaseGlobalActive(account.activeMargin, account.activeCallableUsdc);
@@ -271,7 +280,6 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         account.pendingMargin = 0;
         account.pendingCallableUsdc = 0;
         account.pendingActivationEpoch = 0;
-        account.claimableExitMargin = 0;
         _clearExit(account);
 
         marginAsset.safeTransfer(receiver, assets);
@@ -350,6 +358,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     function materializeAccount(address user) external synced {
         if (user == address(0)) revert ZeroAddress();
+        // Accounts with live historical exposure may need repeated calls; empty accounts fast-forward.
         _materializeAccountPartial(user, MAX_MATERIALIZE_STEPS);
     }
 
@@ -430,6 +439,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
         exitRequestedMarginByMaturity[epoch] = 0;
         exitRequestedCallableByMaturity[epoch] = 0;
+        _pruneExitMaturityIfEmpty(epoch);
         _decreaseGlobalActive(margin, callable);
 
         emit ExitMatured(epoch, margin, callable);
@@ -453,12 +463,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
         _reduceExitBucketsForSlash(epoch);
 
-        if (slashedMargin != 0) {
-            _decreaseGlobalActive(slashedMargin, slashedCallable);
-            marginAsset.safeTransfer(treasury, slashedMargin);
-        } else if (slashedCallable != 0) {
-            _decreaseGlobalActive(0, slashedCallable);
-        }
+        _decreaseGlobalActive(slashedMargin, slashedCallable);
+        if (slashedMargin != 0) marginAsset.safeTransfer(treasury, slashedMargin);
 
         emit EpochSlashFinalized(epoch, slashedMargin, slashedCallable, false);
     }
@@ -468,118 +474,102 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     }
 
     function _materializeAccountPartial(address user, uint256 maxSteps) internal returns (bool complete) {
-        Account storage account = accounts[user];
+        AccountReplay memory replay = _replayAccount(accounts[user], user, maxSteps, true, true);
+        accounts[user] = replay.account;
 
-        uint256 cursor = account.calledEpochCursor;
+        for (uint256 i = 0; i < replay.defaultCount; ++i) {
+            uint256 epoch = replay.defaultedEpochs[i];
+            defaultedEpoch[epoch][user] = true;
+            emit UserDefaulted(user, epoch);
+        }
+
+        return replay.complete;
+    }
+
+    function _derivedAccount(address user) internal view returns (Account memory account) {
+        return _replayAccount(accounts[user], user, 0, false, false).account;
+    }
+
+    function _replayAccount(Account memory account, address user, uint256 maxSteps, bool bounded, bool recordDefaults)
+        internal
+        view
+        returns (AccountReplay memory replay)
+    {
+        replay.account = account;
+        if (recordDefaults) replay.defaultedEpochs = new uint256[](maxSteps);
+
+        if (_isZeroExposure(replay.account)) {
+            replay.account.calledEpochCursor = finalizedCallPrefix;
+            replay.complete = true;
+            return replay;
+        }
+
+        uint256 cursor = replay.account.calledEpochCursor;
         uint256 steps;
+        bool stoppedAtUnfinalized;
+        uint256 unfinalizedEpoch;
+
         while (cursor < calledEpochList.length) {
-            if (steps == maxSteps) break;
+            if (bounded && steps == maxSteps) break;
 
             uint256 epoch = calledEpochList[cursor];
             EpochState storage state = epochs[epoch];
-            if (!state.slashFinalized) break;
+            if (!state.slashFinalized) {
+                stoppedAtUnfinalized = true;
+                unfinalizedEpoch = epoch;
+                break;
+            }
 
-            _activatePendingForEpochStorage(account, epoch);
-            _matureExitForEpochStorage(account, epoch);
+            _activatePendingForEpoch(replay.account, epoch);
+            _matureExitForEpoch(replay.account, epoch);
 
-            if (_shouldDefaultStorage(account, state, epoch, user)) _defaultAccount(account, epoch, user);
+            if (_shouldDefault(replay.account, state, epoch, user)) {
+                _defaultAccount(replay.account);
+                if (recordDefaults) {
+                    replay.defaultedEpochs[replay.defaultCount] = epoch;
+                    unchecked {
+                        ++replay.defaultCount;
+                    }
+                }
+            }
 
             unchecked {
                 ++cursor;
                 ++steps;
             }
-        }
-        account.calledEpochCursor = cursor;
 
-        complete = cursor >= finalizedCallPrefix;
-        if (complete) {
-            _activateDuePendingStorage(account);
-            _matureDueExitStorage(account);
-        }
-    }
-
-    function _derivedAccount(address user) internal view returns (Account memory account) {
-        account = accounts[user];
-
-        uint256 cursor = account.calledEpochCursor;
-        while (cursor < calledEpochList.length) {
-            uint256 epoch = calledEpochList[cursor];
-            EpochState storage state = epochs[epoch];
-            if (!state.slashFinalized) break;
-
-            _activatePendingForEpochMemory(account, epoch);
-            _matureExitForEpochMemory(account, epoch);
-
-            if (_shouldDefaultMemory(account, state, epoch, user)) _defaultAccount(account);
-
-            unchecked {
-                ++cursor;
+            if (_isZeroExposure(replay.account)) {
+                cursor = finalizedCallPrefix;
+                break;
             }
         }
-        account.calledEpochCursor = cursor;
 
-        _activateDuePendingMemory(account, _effectiveLastActivationFolded());
-        _matureDueExitMemory(account, _effectiveLastMaturityFolded());
-    }
+        replay.account.calledEpochCursor = cursor;
+        replay.complete = cursor >= finalizedCallPrefix;
+        if (!replay.complete) return replay;
 
-    function _activatePendingForEpochStorage(Account storage account, uint256 epoch) internal {
-        if (account.pendingActivationEpoch != 0 && account.pendingActivationEpoch <= epoch) {
-            _activatePendingStorage(account);
+        uint256 activationFolded = _effectiveLastActivationFolded();
+        uint256 maturityFolded = _effectiveLastMaturityFolded();
+        if (stoppedAtUnfinalized && _slashEligible(unfinalizedEpoch)) {
+            if (activationFolded > unfinalizedEpoch) activationFolded = unfinalizedEpoch;
+            if (maturityFolded > unfinalizedEpoch) maturityFolded = unfinalizedEpoch;
         }
+
+        _activateDuePending(replay.account, activationFolded);
+        _matureDueExit(replay.account, maturityFolded);
     }
 
-    function _activateDuePendingStorage(Account storage account) internal {
-        if (account.pendingActivationEpoch != 0 && account.pendingActivationEpoch <= lastActivationFolded) {
-            _activatePendingStorage(account);
-        }
+    function _activatePendingForEpoch(Account memory account, uint256 epoch) internal pure {
+        if (account.pendingActivationEpoch != 0 && account.pendingActivationEpoch <= epoch) _activatePending(account);
     }
 
-    function _activatePendingStorage(Account storage account) internal {
-        account.activeMargin += account.pendingMargin;
-        account.activeCallableUsdc += account.pendingCallableUsdc;
-        account.pendingMargin = 0;
-        account.pendingCallableUsdc = 0;
-        account.pendingActivationEpoch = 0;
-    }
-
-    function _matureExitForEpochStorage(Account storage account, uint256 epoch) internal {
-        if (account.exitRequested && !account.exitMatured && !account.exitClaimed && account.exitMaturityEpoch <= epoch)
-        {
-            _matureExitStorage(account);
-        }
-    }
-
-    function _matureDueExitStorage(Account storage account) internal {
-        if (
-            account.exitRequested && !account.exitMatured && !account.exitClaimed
-                && account.exitMaturityEpoch <= lastMaturityFolded
-        ) {
-            _matureExitStorage(account);
-        }
-    }
-
-    function _matureExitStorage(Account storage account) internal {
-        account.claimableExitMargin += account.activeMargin;
-        account.activeMargin = 0;
-        account.activeCallableUsdc = 0;
-        account.exitBucketMargin = 0;
-        account.exitBucketCallable = 0;
-        account.exitMatured = true;
-    }
-
-    function _activatePendingForEpochMemory(Account memory account, uint256 epoch) internal pure {
-        if (account.pendingActivationEpoch != 0 && account.pendingActivationEpoch <= epoch) {
-            _activatePendingMemory(account);
-        }
-    }
-
-    function _activateDuePendingMemory(Account memory account, uint256 foldedEpoch) internal pure {
+    function _activateDuePending(Account memory account, uint256 foldedEpoch) internal pure {
         if (account.pendingActivationEpoch != 0 && account.pendingActivationEpoch <= foldedEpoch) {
-            _activatePendingMemory(account);
+            _activatePending(account);
         }
     }
 
-    function _activatePendingMemory(Account memory account) internal pure {
+    function _activatePending(Account memory account) internal pure {
         account.activeMargin += account.pendingMargin;
         account.activeCallableUsdc += account.pendingCallableUsdc;
         account.pendingMargin = 0;
@@ -587,23 +577,23 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         account.pendingActivationEpoch = 0;
     }
 
-    function _matureExitForEpochMemory(Account memory account, uint256 epoch) internal pure {
+    function _matureExitForEpoch(Account memory account, uint256 epoch) internal pure {
         if (account.exitRequested && !account.exitMatured && !account.exitClaimed && account.exitMaturityEpoch <= epoch)
         {
-            _matureExitMemory(account);
+            _matureExit(account);
         }
     }
 
-    function _matureDueExitMemory(Account memory account, uint256 foldedEpoch) internal pure {
+    function _matureDueExit(Account memory account, uint256 foldedEpoch) internal pure {
         if (
             account.exitRequested && !account.exitMatured && !account.exitClaimed
                 && account.exitMaturityEpoch <= foldedEpoch
         ) {
-            _matureExitMemory(account);
+            _matureExit(account);
         }
     }
 
-    function _matureExitMemory(Account memory account) internal pure {
+    function _matureExit(Account memory account) internal pure {
         account.claimableExitMargin += account.activeMargin;
         account.activeMargin = 0;
         account.activeCallableUsdc = 0;
@@ -612,33 +602,15 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         account.exitMatured = true;
     }
 
-    function _shouldDefaultStorage(Account storage account, EpochState storage state, uint256 epoch, address user)
+    function _shouldDefault(Account memory account, EpochState storage state, uint256 epoch, address user)
         internal
         view
         returns (bool)
     {
-        if (state.slashDisabledByShutdown || fundedEpoch[epoch][user] || account.activeCallableUsdc == 0) return false;
+        if (state.slashDisabledByShutdown || fundedEpoch[epoch][user] || account.activeCallableUsdc == 0) {
+            return false;
+        }
         return !account.exitRequested || account.exitMaturityEpoch > epoch;
-    }
-
-    function _shouldDefaultMemory(Account memory account, EpochState storage state, uint256 epoch, address user)
-        internal
-        view
-        returns (bool)
-    {
-        if (state.slashDisabledByShutdown || fundedEpoch[epoch][user] || account.activeCallableUsdc == 0) return false;
-        return !account.exitRequested || account.exitMaturityEpoch > epoch;
-    }
-
-    function _defaultAccount(Account storage account, uint256 epoch, address user) internal {
-        account.activeMargin = 0;
-        account.activeCallableUsdc = 0;
-        account.exitBucketMargin = 0;
-        account.exitBucketCallable = 0;
-        account.claimableExitMargin = 0;
-        if (account.exitRequested && !account.exitClaimed) _clearExit(account);
-        defaultedEpoch[epoch][user] = true;
-        emit UserDefaulted(user, epoch);
     }
 
     function _defaultAccount(Account memory account) internal pure {
@@ -647,12 +619,13 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         account.exitBucketMargin = 0;
         account.exitBucketCallable = 0;
         account.claimableExitMargin = 0;
-        if (account.exitRequested && !account.exitClaimed) {
-            account.exitRequested = false;
-            account.exitMaturityEpoch = 0;
-            account.exitClaimed = true;
-            account.exitMatured = false;
-        }
+        if (account.exitRequested && !account.exitClaimed) _clearExitMemory(account);
+    }
+
+    function _isZeroExposure(Account memory account) internal pure returns (bool) {
+        return account.activeMargin == 0 && account.activeCallableUsdc == 0 && account.pendingMargin == 0
+            && account.pendingCallableUsdc == 0 && account.claimableExitMargin == 0
+            && (!account.exitRequested || account.exitClaimed);
     }
 
     function _clearExit(Account storage account) internal {
@@ -664,10 +637,38 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         account.exitBucketCallable = 0;
     }
 
+    function _clearExitMemory(Account memory account) internal pure {
+        account.exitRequested = false;
+        account.exitMaturityEpoch = 0;
+        account.exitClaimed = true;
+        account.exitMatured = false;
+        account.exitBucketMargin = 0;
+        account.exitBucketCallable = 0;
+    }
+
     function _trackExitMaturity(uint256 maturityEpoch) internal {
-        if (exitMaturitySeen[maturityEpoch]) return;
-        exitMaturitySeen[maturityEpoch] = true;
+        if (exitMaturityIndexPlusOne[maturityEpoch] != 0) return;
+        exitMaturityIndexPlusOne[maturityEpoch] = exitMaturityList.length + 1;
         exitMaturityList.push(maturityEpoch);
+    }
+
+    function _pruneExitMaturityIfEmpty(uint256 maturityEpoch) internal {
+        if (
+            exitMaturityIndexPlusOne[maturityEpoch] == 0 || exitRequestedMarginByMaturity[maturityEpoch] != 0
+                || exitRequestedCallableByMaturity[maturityEpoch] != 0
+        ) {
+            return;
+        }
+
+        uint256 index = exitMaturityIndexPlusOne[maturityEpoch] - 1;
+        uint256 lastIndex = exitMaturityList.length - 1;
+        if (index != lastIndex) {
+            uint256 moved = exitMaturityList[lastIndex];
+            exitMaturityList[index] = moved;
+            exitMaturityIndexPlusOne[moved] = index + 1;
+        }
+        exitMaturityList.pop();
+        exitMaturityIndexPlusOne[maturityEpoch] = 0;
     }
 
     function _snapshotExitBucketsForCall(uint256 epoch) internal {
@@ -715,6 +716,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         uint256 maturity = account.exitMaturityEpoch;
         exitRequestedMarginByMaturity[maturity] -= releasedMargin;
         exitRequestedCallableByMaturity[maturity] -= obligationUsdc;
+        _pruneExitMaturityIfEmpty(maturity);
         account.exitBucketMargin -= releasedMargin;
         account.exitBucketCallable -= obligationUsdc;
 
@@ -739,6 +741,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
             exitRequestedMarginByMaturity[maturity] -= slashedMargin;
             exitRequestedCallableByMaturity[maturity] -= slashedCallable;
+            _pruneExitMaturityIfEmpty(maturity);
         }
     }
 
