@@ -60,6 +60,7 @@ contract LCCInvariantHandler is Test {
 
     function requestExit(uint256 actorSeed) external {
         _sync();
+        if (invariantVault.shutdownActive()) return;
 
         address actor = actors[_index(actorSeed)];
         ILeveragedCallableCreditVault.Account memory account = invariantVault.getAccount(actor);
@@ -73,6 +74,7 @@ contract LCCInvariantHandler is Test {
 
     function openCall(uint256 amountSeed) external {
         _sync();
+        if (invariantVault.shutdownActive()) return;
         if (invariantVault.currentPhase() != ILeveragedCallableCreditVault.Phase.PreCall) return;
 
         uint256 epoch = invariantVault.currentEpoch();
@@ -89,6 +91,7 @@ contract LCCInvariantHandler is Test {
 
     function fund(uint256 actorSeed) external {
         _sync();
+        if (invariantVault.shutdownActive()) return;
         if (invariantVault.currentPhase() != ILeveragedCallableCreditVault.Phase.Funding) return;
 
         address actor = actors[_index(actorSeed)];
@@ -127,6 +130,43 @@ contract LCCInvariantHandler is Test {
 
         vm.prank(actor);
         invariantVault.claimExitedMargin(actor);
+    }
+
+    function claimEmergency(uint256 actorSeed) external {
+        if (!invariantVault.shutdownActive()) return;
+
+        address actor = actors[_index(actorSeed)];
+        ILeveragedCallableCreditVault.Account memory account = invariantVault.getAccount(actor);
+        if (account.activeMargin + account.pendingMargin == 0) return;
+
+        vm.prank(actor);
+        invariantVault.claimEmergencyMargin(actor);
+    }
+
+    function setRiskCaps(uint256 protocolSeed, uint256 exitCapSeed) external {
+        _sync();
+        if (invariantVault.shutdownActive()) return;
+
+        uint256 currentUtilization =
+            invariantVault.totalActiveCallableUsdc() + invariantVault.totalPendingCallableUsdc();
+        uint256 maxCap = 10_000_000e18;
+        if (currentUtilization >= maxCap) return;
+
+        uint256 protocolCap = currentUtilization + _range(protocolSeed, 1, maxCap - currentUtilization);
+        uint256 exitCapBps = _range(exitCapSeed, 500, 5_000);
+
+        vm.prank(invariantOwner);
+        invariantVault.setRiskCaps(protocolCap, maxCap, exitCapBps);
+    }
+
+    function shutdown(uint256 seed) external {
+        _sync();
+        if (invariantVault.shutdownActive()) return;
+        if (seed % 64 != 0) return;
+        if (invariantVault.totalActiveMargin() + invariantVault.totalPendingMargin() == 0) return;
+
+        vm.prank(invariantOwner);
+        invariantVault.shutdown();
     }
 
     function warpToPreCall() external {
@@ -189,6 +229,11 @@ contract LCCStatefulInvariantTest is LCCBase {
         invariantActors.push(alice);
         invariantActors.push(bob);
         invariantActors.push(carol);
+        for (uint256 i = 0; i < 5; ++i) {
+            address actor = makeAddr(string.concat("lcc-invariant-actor-", vm.toString(i)));
+            invariantActors.push(actor);
+            _mintAndApprove(actor, 1_000_000e18, 1_000_000e18);
+        }
 
         handler = new LCCInvariantHandler(vault, margin, owner, invariantActors);
         targetContract(address(handler));

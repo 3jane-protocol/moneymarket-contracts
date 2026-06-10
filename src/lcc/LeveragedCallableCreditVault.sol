@@ -91,6 +91,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     mapping(uint256 => uint256) public pendingMarginByActivationEpoch;
     mapping(uint256 => uint256) public pendingCallableByActivationEpoch;
+    uint256[] internal activationEpochList;
+    mapping(uint256 => uint256) internal activationEpochIndexPlusOne;
     mapping(uint256 => uint256) public exitRequestedMarginByMaturity;
     mapping(uint256 => uint256) public exitRequestedCallableByMaturity;
     uint256[] internal exitMaturityList;
@@ -149,6 +151,9 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         return start + epochLength;
     }
 
+    /// @notice Updates risk caps for future deposits and future exit bucket assignment.
+    /// @dev Lowering caps below current utilization does not force existing positions or assigned exit buckets to
+    /// unwind.
     function setRiskCaps(uint256 newProtocolCap, uint256 newUserCap, uint256 newExitCapBps) external onlyOwner synced {
         if (newProtocolCap == 0 || newUserCap == 0 || newExitCapBps == 0 || newExitCapBps > BPS) {
             revert InvalidParams();
@@ -171,6 +176,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         emit EmergencyShutdown(shutdownEpoch, shutdownTimestamp);
     }
 
+    /// @dev The margin oracle is fully trusted to return a fresh marginAsset-to-USDC price scaled by
+    /// ORACLE_PRICE_SCALE, including any token decimal conversion.
     function deposit(uint256 assets, address receiver) external nonReentrant synced returns (uint256 callableUsdc) {
         if (shutdownActive) revert ShutdownActive();
         if (receiver == address(0)) revert ZeroAddress();
@@ -402,18 +409,54 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         }
 
         uint256 current = _currentEpoch();
-        while (lastActivationFolded < current) {
+        _foldDueActivations(current);
+        lastActivationFolded = current;
+
+        // Slash finalization must run before maturity folds so defaulted exiter exposure is carved out of exit buckets
+        // before those buckets decrement global active totals.
+        _foldDueMaturities(current);
+        lastMaturityFolded = current;
+    }
+
+    function _foldDueActivations(uint256 current) internal {
+        uint256[] memory dueEpochs = new uint256[](activationEpochList.length);
+        uint256 dueCount;
+        for (uint256 i = activationEpochList.length; i != 0;) {
             unchecked {
-                ++lastActivationFolded;
+                --i;
             }
-            _foldActivation(lastActivationFolded);
+            uint256 epoch = activationEpochList[i];
+            if (epoch <= current) {
+                dueEpochs[dueCount] = epoch;
+                unchecked {
+                    ++dueCount;
+                }
+            }
         }
 
-        while (lastMaturityFolded < current) {
+        for (uint256 i = 0; i < dueCount; ++i) {
+            _foldActivation(dueEpochs[i]);
+        }
+    }
+
+    function _foldDueMaturities(uint256 current) internal {
+        uint256[] memory dueEpochs = new uint256[](exitMaturityList.length);
+        uint256 dueCount;
+        for (uint256 i = exitMaturityList.length; i != 0;) {
             unchecked {
-                ++lastMaturityFolded;
+                --i;
             }
-            _foldMaturity(lastMaturityFolded);
+            uint256 epoch = exitMaturityList[i];
+            if (epoch <= current) {
+                dueEpochs[dueCount] = epoch;
+                unchecked {
+                    ++dueCount;
+                }
+            }
+        }
+
+        for (uint256 i = 0; i < dueCount; ++i) {
+            _foldMaturity(dueEpochs[i]);
         }
     }
 
@@ -424,6 +467,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
         pendingMarginByActivationEpoch[epoch] = 0;
         pendingCallableByActivationEpoch[epoch] = 0;
+        _pruneActivationEpochIfEmpty(epoch);
         totalPendingMargin -= margin;
         totalPendingCallableUsdc -= callable;
         totalActiveMargin += margin;
@@ -652,6 +696,31 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         exitMaturityList.push(maturityEpoch);
     }
 
+    function _trackActivationEpoch(uint256 activationEpoch) internal {
+        if (activationEpochIndexPlusOne[activationEpoch] != 0) return;
+        activationEpochIndexPlusOne[activationEpoch] = activationEpochList.length + 1;
+        activationEpochList.push(activationEpoch);
+    }
+
+    function _pruneActivationEpochIfEmpty(uint256 activationEpoch) internal {
+        if (
+            activationEpochIndexPlusOne[activationEpoch] == 0 || pendingMarginByActivationEpoch[activationEpoch] != 0
+                || pendingCallableByActivationEpoch[activationEpoch] != 0
+        ) {
+            return;
+        }
+
+        uint256 index = activationEpochIndexPlusOne[activationEpoch] - 1;
+        uint256 lastIndex = activationEpochList.length - 1;
+        if (index != lastIndex) {
+            uint256 moved = activationEpochList[lastIndex];
+            activationEpochList[index] = moved;
+            activationEpochIndexPlusOne[moved] = index + 1;
+        }
+        activationEpochList.pop();
+        activationEpochIndexPlusOne[activationEpoch] = 0;
+    }
+
     function _pruneExitMaturityIfEmpty(uint256 maturityEpoch) internal {
         if (
             exitMaturityIndexPlusOne[maturityEpoch] == 0 || exitRequestedMarginByMaturity[maturityEpoch] != 0
@@ -768,6 +837,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         totalPendingCallableUsdc += callable;
         pendingMarginByActivationEpoch[activationEpoch] += margin;
         pendingCallableByActivationEpoch[activationEpoch] += callable;
+        if (activationEpoch > lastActivationFolded) _trackActivationEpoch(activationEpoch);
     }
 
     function _decreasePending(Account storage account, uint256 margin, uint256 callable) internal {
@@ -780,6 +850,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         if (activationEpoch > lastActivationFolded) {
             pendingMarginByActivationEpoch[activationEpoch] -= margin;
             pendingCallableByActivationEpoch[activationEpoch] -= callable;
+            _pruneActivationEpochIfEmpty(activationEpoch);
         }
     }
 
