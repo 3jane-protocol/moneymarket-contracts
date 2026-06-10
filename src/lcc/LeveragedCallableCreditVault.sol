@@ -269,7 +269,9 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         _materializeAccount(msg.sender);
         Account storage account = accounts[msg.sender];
 
-        assets = account.activeMargin + account.pendingMargin;
+        uint256 activeMargin = account.activeMargin;
+        uint256 pendingMargin = account.pendingMargin;
+        assets = activeMargin + pendingMargin;
         if (assets == 0) revert NothingToClaim();
 
         uint256 maturity = account.exitMaturityEpoch;
@@ -279,8 +281,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
             _pruneExitMaturityIfEmpty(maturity);
         }
 
-        _decreaseGlobalActive(account.activeMargin, account.activeCallableUsdc);
-        _decreasePending(account, account.pendingMargin, account.pendingCallableUsdc);
+        _decreaseGlobalActive(activeMargin, account.activeCallableUsdc);
+        _decreasePending(account, pendingMargin, account.pendingCallableUsdc);
 
         account.activeMargin = 0;
         account.activeCallableUsdc = 0;
@@ -663,7 +665,12 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         account.exitBucketMargin = 0;
         account.exitBucketCallable = 0;
         account.claimableExitMargin = 0;
-        if (account.exitRequested && !account.exitClaimed) _clearExitMemory(account);
+        if (account.exitRequested && !account.exitClaimed) {
+            account.exitRequested = false;
+            account.exitMaturityEpoch = 0;
+            account.exitClaimed = true;
+            account.exitMatured = false;
+        }
     }
 
     function _isZeroExposure(Account memory account) internal pure returns (bool) {
@@ -673,15 +680,6 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     }
 
     function _clearExit(Account storage account) internal {
-        account.exitRequested = false;
-        account.exitMaturityEpoch = 0;
-        account.exitClaimed = true;
-        account.exitMatured = false;
-        account.exitBucketMargin = 0;
-        account.exitBucketCallable = 0;
-    }
-
-    function _clearExitMemory(Account memory account) internal pure {
         account.exitRequested = false;
         account.exitMaturityEpoch = 0;
         account.exitClaimed = true;
