@@ -49,6 +49,32 @@ contract LCCDepositTest is LCCBase {
         _deposit(alice, 101e18);
     }
 
+    function testMinDepositEnforced() public {
+        ILeveragedCallableCreditVault.VaultParams memory params = _params(CAP, CAP);
+        params.minDepositAssets = 10e18;
+        vault = new LeveragedCallableCreditVault(params);
+        vm.prank(alice);
+        margin.approve(address(vault), type(uint256).max);
+
+        vm.expectRevert(LeveragedCallableCreditVault.InvalidAmount.selector);
+        _deposit(alice, 10e18 - 1);
+
+        _deposit(alice, 10e18);
+        assertEq(vault.getAccount(alice).activeMargin, 10e18);
+    }
+
+    function testSetRiskCapsUpdatesMinDeposit() public {
+        vm.prank(owner);
+        vault.setRiskCaps(CAP, CAP, 2_000, 5e18);
+
+        assertEq(vault.minDepositAssets(), 5e18);
+
+        vm.expectRevert(LeveragedCallableCreditVault.InvalidAmount.selector);
+        _deposit(alice, 1e18);
+
+        _deposit(alice, 5e18);
+    }
+
     function testZeroOraclePriceReverts() public {
         oracle.setPrice(0);
         vm.expectRevert(LeveragedCallableCreditVault.OraclePriceInvalid.selector);

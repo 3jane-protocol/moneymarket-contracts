@@ -9,24 +9,24 @@ import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILevera
 contract LCCFactoryTest is LCCBase {
     function testFactoryCreatesAndTracksVault() public {
         LeveragedCallableCreditVaultFactory factory = new LeveragedCallableCreditVaultFactory();
-        bytes32 facilityId = keccak256("facility");
 
-        address created = factory.createVault(facilityId, _params(CAP, CAP));
+        address created = factory.createVault(_params(CAP, CAP));
 
-        assertEq(factory.vaultFor(facilityId), created);
         assertTrue(factory.isVault(created));
         assertEq(factory.numVaults(), 1);
         assertEq(factory.allVaults()[0], created);
     }
 
-    function testFactoryRejectsDuplicateFacilityId() public {
+    function testFactoryTracksMultipleVaults() public {
         LeveragedCallableCreditVaultFactory factory = new LeveragedCallableCreditVaultFactory();
-        bytes32 facilityId = keccak256("facility");
 
-        factory.createVault(facilityId, _params(CAP, CAP));
+        address first = factory.createVault(_params(CAP, CAP));
+        address second = factory.createVault(_params(CAP, CAP));
 
-        vm.expectRevert(LeveragedCallableCreditVaultFactory.DuplicateFacility.selector);
-        factory.createVault(facilityId, _params(CAP, CAP));
+        assertTrue(first != second);
+        assertTrue(factory.isVault(first));
+        assertTrue(factory.isVault(second));
+        assertEq(factory.numVaults(), 2);
     }
 
     function testConstructorValidation() public {

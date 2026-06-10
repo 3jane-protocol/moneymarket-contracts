@@ -7,6 +7,7 @@ import {SafeERC20} from "../../lib/openzeppelin/contracts/token/ERC20/utils/Safe
 import {IERC4626} from "../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 import {ReentrancyGuard} from "../../lib/openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
+import {SafeCast} from "../../lib/openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {IOracle} from "../interfaces/IOracle.sol";
 import {ORACLE_PRICE_SCALE} from "../libraries/ConstantsLib.sol";
@@ -15,6 +16,7 @@ import {ILeveragedCallableCreditVault} from "./interfaces/ILeveragedCallableCred
 contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using Math for uint256;
+    using SafeCast for uint256;
 
     error ZeroAddress();
     error InvalidParams();
@@ -37,6 +39,22 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     uint256 internal constant BPS = 10_000;
     uint256 internal constant MAX_MATERIALIZE_STEPS = 64;
 
+    struct AccountStorage {
+        uint128 activeMargin;
+        uint128 activeCallableUsdc;
+        uint128 pendingMargin;
+        uint128 pendingCallableUsdc;
+        uint128 claimableExitMargin;
+        uint128 exitBucketMargin;
+        uint128 exitBucketCallable;
+        uint64 pendingActivationEpoch;
+        uint64 calledEpochCursor;
+        uint64 exitMaturityEpoch;
+        bool exitRequested;
+        bool exitClaimed;
+        bool exitMatured;
+    }
+
     struct ExitExposure {
         uint256 margin;
         uint256 callable;
@@ -47,13 +65,20 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         bool listed;
     }
 
+    struct DefaultRecord {
+        uint256 epoch;
+        uint256 slashedMargin;
+        uint256 slashedCallable;
+    }
+
     struct AccountReplay {
         Account account;
-        uint256[] defaultedEpochs;
+        DefaultRecord[] defaults;
         uint256 defaultCount;
         bool complete;
     }
 
+    /// @dev Must be a standard ERC20: fee-on-transfer and rebasing tokens break margin conservation.
     IERC20 public immutable marginAsset;
     IERC20 public immutable callableAsset;
     IERC4626 public immutable usd3;
@@ -70,12 +95,16 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     uint256 public protocolCallableCapUsdc;
     uint256 public userCallableCapUsdc;
+    /// @dev Per-epoch exit capacity is `protocolCallableCapUsdc * exitCapBps / BPS`. The protocol cap is used as the
+    /// base (rather than live active callable) so bucket assignment is deterministic and not path-dependent.
     uint256 public exitCapBps;
+    uint256 public minDepositAssets;
 
     uint256 public totalActiveMargin;
     uint256 public totalActiveCallableUsdc;
     uint256 public totalPendingMargin;
     uint256 public totalPendingCallableUsdc;
+    uint256 public totalEscrowedFundingUsdc;
 
     uint256 public lastActivationFolded;
     uint256 public lastMaturityFolded;
@@ -85,7 +114,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     uint256 public shutdownTimestamp;
     uint256 public shutdownEpoch;
 
-    mapping(address => Account) internal accounts;
+    mapping(address => AccountStorage) internal accounts;
     mapping(uint256 => EpochState) internal epochs;
     uint256[] internal calledEpochList;
 
@@ -103,6 +132,9 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     mapping(uint256 => mapping(address => bool)) public fundedEpoch;
     mapping(uint256 => mapping(address => bool)) public defaultedEpoch;
+
+    /// @notice Funding USDC held by the vault for `user` because USD3 could not accept the deposit at funding time.
+    mapping(address => uint256) public escrowedFundingUsdc;
 
     constructor(VaultParams memory params) Ownable(params.owner) {
         _validateParams(params);
@@ -124,6 +156,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         protocolCallableCapUsdc = params.protocolCallableCapUsdc;
         userCallableCapUsdc = params.userCallableCapUsdc;
         exitCapBps = params.exitCapBps;
+        minDepositAssets = params.minDepositAssets;
 
         uint256 epoch = _currentEpoch();
         lastActivationFolded = epoch;
@@ -154,7 +187,11 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     /// @notice Updates risk caps for future deposits and future exit bucket assignment.
     /// @dev Lowering caps below current utilization does not force existing positions or assigned exit buckets to
     /// unwind.
-    function setRiskCaps(uint256 newProtocolCap, uint256 newUserCap, uint256 newExitCapBps) external onlyOwner synced {
+    function setRiskCaps(uint256 newProtocolCap, uint256 newUserCap, uint256 newExitCapBps, uint256 newMinDeposit)
+        external
+        onlyOwner
+        synced
+    {
         if (newProtocolCap == 0 || newUserCap == 0 || newExitCapBps == 0 || newExitCapBps > BPS) {
             revert InvalidParams();
         }
@@ -162,8 +199,9 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         protocolCallableCapUsdc = newProtocolCap;
         userCallableCapUsdc = newUserCap;
         exitCapBps = newExitCapBps;
+        minDepositAssets = newMinDeposit;
 
-        emit RiskCapUpdated(newProtocolCap, newUserCap, newExitCapBps);
+        emit RiskCapUpdated(newProtocolCap, newUserCap, newExitCapBps, newMinDeposit);
     }
 
     function shutdown() external onlyOwner synced {
@@ -181,10 +219,9 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     function deposit(uint256 assets, address receiver) external nonReentrant synced returns (uint256 callableUsdc) {
         if (shutdownActive) revert ShutdownActive();
         if (receiver == address(0)) revert ZeroAddress();
-        if (assets == 0) revert InvalidAmount();
+        if (assets == 0 || assets < minDepositAssets) revert InvalidAmount();
 
-        _materializeAccount(receiver);
-        Account storage account = accounts[receiver];
+        Account memory account = _materializeAccount(receiver);
         if (account.exitRequested && !account.exitClaimed) revert ExitInProgress();
 
         uint256 price = marginOracle.price();
@@ -212,13 +249,13 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         } else {
             _addPending(account, assets, callableUsdc, activationEpoch);
         }
+        _storeAccount(receiver, account);
 
-        emit DepositCheckpointed(receiver, assets, callableUsdc, activationEpoch, immediate);
+        emit DepositCheckpointed(receiver, assets, marginValueUsdc, callableUsdc, activationEpoch, immediate);
     }
 
     function requestExit() external nonReentrant synced returns (uint256 maturityEpoch) {
-        _materializeAccount(msg.sender);
-        Account storage account = accounts[msg.sender];
+        Account memory account = _materializeAccount(msg.sender);
         if (account.exitRequested && !account.exitClaimed) revert ExitInProgress();
         if (account.pendingMargin != 0 || account.pendingCallableUsdc != 0) revert PendingDepositExists();
 
@@ -234,20 +271,20 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         account.claimableExitMargin = 0;
         account.exitBucketMargin = accountMargin;
         account.exitBucketCallable = accountCallable;
+        _storeAccount(msg.sender, account);
 
         exitRequestedMarginByMaturity[maturityEpoch] += accountMargin;
         exitRequestedCallableByMaturity[maturityEpoch] += accountCallable;
         _trackExitMaturity(maturityEpoch);
-        _addCurrentCallExitExposure(account, maturityEpoch);
+        _addCurrentCallExitExposure(accountMargin, accountCallable, maturityEpoch);
 
-        emit ExitRequested(msg.sender, maturityEpoch, accountCallable);
+        emit ExitRequested(msg.sender, maturityEpoch, accountMargin, accountCallable);
     }
 
     function claimExitedMargin(address receiver) external nonReentrant synced returns (uint256 assets) {
         if (receiver == address(0)) revert ZeroAddress();
 
-        _materializeAccount(msg.sender);
-        Account storage account = accounts[msg.sender];
+        Account memory account = _materializeAccount(msg.sender);
         if (!account.exitRequested || account.exitClaimed) revert NoExitRequested();
         if (_currentEpoch() < account.exitMaturityEpoch) revert ExitNotMature();
 
@@ -256,6 +293,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
         account.claimableExitMargin = 0;
         _clearExit(account);
+        _storeAccount(msg.sender, account);
 
         marginAsset.safeTransfer(receiver, assets);
 
@@ -266,8 +304,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         if (!shutdownActive) revert ShutdownRequired();
         if (receiver == address(0)) revert ZeroAddress();
 
-        _materializeAccount(msg.sender);
-        Account storage account = accounts[msg.sender];
+        Account memory account = _materializeAccount(msg.sender);
 
         uint256 activeMargin = account.activeMargin;
         uint256 pendingMargin = account.pendingMargin;
@@ -290,6 +327,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         account.pendingCallableUsdc = 0;
         account.pendingActivationEpoch = 0;
         _clearExit(account);
+        _storeAccount(msg.sender, account);
 
         marginAsset.safeTransfer(receiver, assets);
 
@@ -319,43 +357,57 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     }
 
     function fundEpochCall(uint256 epoch) external nonReentrant synced returns (uint256 obligationUsdc) {
-        if (epoch != _currentEpoch()) revert InvalidEpoch();
-        if (_phaseAt(block.timestamp) != Phase.Funding) revert InvalidPhase();
+        return _fund(epoch, msg.sender, msg.sender);
+    }
 
-        _materializeAccount(msg.sender);
-        Account storage account = accounts[msg.sender];
-        EpochState storage state = epochs[epoch];
-        if (!state.callOpened || state.slashFinalized) revert InvalidEpoch();
-        if (fundedEpoch[epoch][msg.sender]) revert AlreadyFunded();
+    /// @notice Funds `user`'s current-epoch obligation with USDC supplied by the caller.
+    /// @dev Push-based third-party funding: the caller pays; released margin, the USD3 position (or escrow credit),
+    /// and funded status always accrue to `user`.
+    function fundEpochCallFor(uint256 epoch, address user)
+        external
+        nonReentrant
+        synced
+        returns (uint256 obligationUsdc)
+    {
+        if (user == address(0)) revert ZeroAddress();
+        return _fund(epoch, msg.sender, user);
+    }
 
-        obligationUsdc = _obligation(state, account.activeCallableUsdc);
-        if (obligationUsdc == 0) revert InvalidAmount();
+    /// @notice Deposits escrowed funding USDC into USD3 for `user`, up to USD3's current deposit capacity.
+    function placeEscrowedFunding(address user) external nonReentrant synced returns (uint256 placedUsdc) {
+        if (user == address(0)) revert ZeroAddress();
 
-        uint256 releasedMargin = account.activeMargin.mulDiv(obligationUsdc, account.activeCallableUsdc);
-        uint256 remainingMargin = account.activeMargin - releasedMargin;
-        uint256 remainingCallable = account.activeCallableUsdc - obligationUsdc;
+        uint256 escrowed = escrowedFundingUsdc[user];
+        if (escrowed == 0) revert NothingToClaim();
 
-        _recordExitingFund(epoch, account, obligationUsdc, releasedMargin, remainingMargin, remainingCallable);
+        uint256 capacity = usd3.maxDeposit(user);
+        placedUsdc = escrowed < capacity ? escrowed : capacity;
+        if (placedUsdc == 0) revert InvalidAmount();
 
-        account.activeMargin = remainingMargin;
-        account.activeCallableUsdc = remainingCallable;
-        fundedEpoch[epoch][msg.sender] = true;
+        escrowedFundingUsdc[user] = escrowed - placedUsdc;
+        totalEscrowedFundingUsdc -= placedUsdc;
 
-        state.fundedUsdc += obligationUsdc;
-        state.rawMarginReleased += releasedMargin;
-        state.honoredRawMarginRemaining += remainingMargin;
-        state.honoredCallableRemaining += remainingCallable;
+        callableAsset.forceApprove(address(usd3), placedUsdc);
+        usd3.deposit(placedUsdc, user);
 
-        _decreaseGlobalActive(releasedMargin, obligationUsdc);
+        emit EscrowedFundingPlaced(user, placedUsdc);
+    }
 
-        callableAsset.safeTransferFrom(msg.sender, address(this), obligationUsdc);
-        callableAsset.forceApprove(address(usd3), obligationUsdc);
-        usd3.deposit(obligationUsdc, msg.sender);
+    /// @notice Returns escrowed funding USDC to the funder after terminal shutdown, when USD3 placement can no
+    /// longer be forced.
+    function claimEscrowedFunding(address receiver) external nonReentrant synced returns (uint256 assets) {
+        if (!shutdownActive) revert ShutdownRequired();
+        if (receiver == address(0)) revert ZeroAddress();
 
-        marginAsset.safeTransfer(msg.sender, releasedMargin);
+        assets = escrowedFundingUsdc[msg.sender];
+        if (assets == 0) revert NothingToClaim();
 
-        emit CallFunded(msg.sender, epoch, obligationUsdc);
-        emit MarginReleased(msg.sender, epoch, releasedMargin);
+        escrowedFundingUsdc[msg.sender] = 0;
+        totalEscrowedFundingUsdc -= assets;
+
+        callableAsset.safeTransfer(receiver, assets);
+
+        emit EscrowedFundingClaimed(msg.sender, receiver, assets);
     }
 
     function finalizeEpochSlash(uint256 epoch) external nonReentrant synced {
@@ -365,10 +417,12 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         }
     }
 
-    function materializeAccount(address user) external synced {
+    function materializeAccount(address user) external nonReentrant synced {
         if (user == address(0)) revert ZeroAddress();
         // Accounts with live historical exposure may need repeated calls; empty accounts fast-forward.
-        _materializeAccountPartial(user, MAX_MATERIALIZE_STEPS);
+        AccountReplay memory replay = _replayAccount(_loadAccount(user), user, MAX_MATERIALIZE_STEPS, true, true);
+        _recordDefaults(user, replay);
+        if (!_sameAccount(_loadAccount(user), replay.account)) _storeAccount(user, replay.account);
     }
 
     function getAccount(address user) external view returns (Account memory) {
@@ -394,6 +448,60 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     function calledEpochs() external view returns (uint256[] memory) {
         return calledEpochList;
+    }
+
+    function _fund(uint256 epoch, address payer, address user) internal returns (uint256 obligationUsdc) {
+        if (epoch != _currentEpoch()) revert InvalidEpoch();
+        if (_phaseAt(block.timestamp) != Phase.Funding) revert InvalidPhase();
+
+        Account memory account = _materializeAccount(user);
+        EpochState storage state = epochs[epoch];
+        if (!state.callOpened || state.slashFinalized) revert InvalidEpoch();
+        if (fundedEpoch[epoch][user]) revert AlreadyFunded();
+
+        uint256 activeMargin = account.activeMargin;
+        uint256 activeCallable = account.activeCallableUsdc;
+        obligationUsdc = _obligation(state, activeCallable);
+        if (obligationUsdc == 0) revert InvalidAmount();
+
+        uint256 releasedMargin = activeMargin.mulDiv(obligationUsdc, activeCallable);
+        uint256 remainingMargin = activeMargin - releasedMargin;
+        uint256 remainingCallable = activeCallable - obligationUsdc;
+
+        _recordExitingFund(epoch, account, obligationUsdc, releasedMargin, remainingMargin, remainingCallable);
+
+        account.activeMargin = remainingMargin;
+        account.activeCallableUsdc = remainingCallable;
+        _storeAccount(user, account);
+        fundedEpoch[epoch][user] = true;
+
+        state.fundedUsdc += obligationUsdc;
+        state.rawMarginReleased += releasedMargin;
+        state.honoredRawMarginRemaining += remainingMargin;
+        state.honoredCallableRemaining += remainingCallable;
+
+        _decreaseGlobalActive(releasedMargin, obligationUsdc);
+
+        callableAsset.safeTransferFrom(payer, address(this), obligationUsdc);
+        _placeFunding(user, epoch, obligationUsdc);
+
+        marginAsset.safeTransfer(user, releasedMargin);
+
+        emit CallFunded(user, epoch, obligationUsdc);
+        emit MarginReleased(user, epoch, releasedMargin);
+    }
+
+    /// @dev Funding success must not depend on USD3 capacity: when USD3 cannot take the full amount the USDC is
+    /// escrowed for the funder instead of reverting (which would default honoring users at the deadline).
+    function _placeFunding(address user, uint256 epoch, uint256 amountUsdc) internal {
+        if (usd3.maxDeposit(user) >= amountUsdc) {
+            callableAsset.forceApprove(address(usd3), amountUsdc);
+            usd3.deposit(amountUsdc, user);
+        } else {
+            escrowedFundingUsdc[user] += amountUsdc;
+            totalEscrowedFundingUsdc += amountUsdc;
+            emit FundingEscrowed(user, epoch, amountUsdc);
+        }
     }
 
     function _syncGlobal() internal {
@@ -515,25 +623,69 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         emit EpochSlashFinalized(epoch, slashedMargin, slashedCallable, false);
     }
 
-    function _materializeAccount(address user) internal {
-        if (!_materializeAccountPartial(user, MAX_MATERIALIZE_STEPS)) revert AccountMaterializationIncomplete();
+    function _materializeAccount(address user) internal returns (Account memory account) {
+        AccountReplay memory replay = _replayAccount(_loadAccount(user), user, MAX_MATERIALIZE_STEPS, true, true);
+        if (!replay.complete) revert AccountMaterializationIncomplete();
+        _recordDefaults(user, replay);
+        // Callers mutate the returned account and are responsible for the single _storeAccount write.
+        return replay.account;
     }
 
-    function _materializeAccountPartial(address user, uint256 maxSteps) internal returns (bool complete) {
-        AccountReplay memory replay = _replayAccount(accounts[user], user, maxSteps, true, true);
-        accounts[user] = replay.account;
-
+    function _recordDefaults(address user, AccountReplay memory replay) internal {
         for (uint256 i = 0; i < replay.defaultCount; ++i) {
-            uint256 epoch = replay.defaultedEpochs[i];
-            defaultedEpoch[epoch][user] = true;
-            emit UserDefaulted(user, epoch);
+            DefaultRecord memory record = replay.defaults[i];
+            defaultedEpoch[record.epoch][user] = true;
+            emit UserDefaulted(user, record.epoch, record.slashedMargin, record.slashedCallable);
         }
+    }
 
-        return replay.complete;
+    function _loadAccount(address user) internal view returns (Account memory account) {
+        AccountStorage storage stored = accounts[user];
+        account.activeMargin = stored.activeMargin;
+        account.activeCallableUsdc = stored.activeCallableUsdc;
+        account.pendingMargin = stored.pendingMargin;
+        account.pendingCallableUsdc = stored.pendingCallableUsdc;
+        account.pendingActivationEpoch = stored.pendingActivationEpoch;
+        account.calledEpochCursor = stored.calledEpochCursor;
+        account.claimableExitMargin = stored.claimableExitMargin;
+        account.exitBucketMargin = stored.exitBucketMargin;
+        account.exitBucketCallable = stored.exitBucketCallable;
+        account.exitRequested = stored.exitRequested;
+        account.exitMaturityEpoch = stored.exitMaturityEpoch;
+        account.exitClaimed = stored.exitClaimed;
+        account.exitMatured = stored.exitMatured;
+    }
+
+    function _storeAccount(address user, Account memory account) internal {
+        accounts[user] = AccountStorage({
+            activeMargin: account.activeMargin.toUint128(),
+            activeCallableUsdc: account.activeCallableUsdc.toUint128(),
+            pendingMargin: account.pendingMargin.toUint128(),
+            pendingCallableUsdc: account.pendingCallableUsdc.toUint128(),
+            claimableExitMargin: account.claimableExitMargin.toUint128(),
+            exitBucketMargin: account.exitBucketMargin.toUint128(),
+            exitBucketCallable: account.exitBucketCallable.toUint128(),
+            pendingActivationEpoch: account.pendingActivationEpoch.toUint64(),
+            calledEpochCursor: account.calledEpochCursor.toUint64(),
+            exitMaturityEpoch: account.exitMaturityEpoch.toUint64(),
+            exitRequested: account.exitRequested,
+            exitClaimed: account.exitClaimed,
+            exitMatured: account.exitMatured
+        });
+    }
+
+    function _sameAccount(Account memory a, Account memory b) internal pure returns (bool) {
+        return a.activeMargin == b.activeMargin && a.activeCallableUsdc == b.activeCallableUsdc
+            && a.pendingMargin == b.pendingMargin && a.pendingCallableUsdc == b.pendingCallableUsdc
+            && a.pendingActivationEpoch == b.pendingActivationEpoch && a.calledEpochCursor == b.calledEpochCursor
+            && a.claimableExitMargin == b.claimableExitMargin && a.exitBucketMargin == b.exitBucketMargin
+            && a.exitBucketCallable == b.exitBucketCallable && a.exitRequested == b.exitRequested
+            && a.exitMaturityEpoch == b.exitMaturityEpoch && a.exitClaimed == b.exitClaimed
+            && a.exitMatured == b.exitMatured;
     }
 
     function _derivedAccount(address user) internal view returns (Account memory account) {
-        return _replayAccount(accounts[user], user, 0, false, false).account;
+        return _replayAccount(_loadAccount(user), user, 0, false, false).account;
     }
 
     function _replayAccount(Account memory account, address user, uint256 maxSteps, bool bounded, bool recordDefaults)
@@ -542,7 +694,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         returns (AccountReplay memory replay)
     {
         replay.account = account;
-        if (recordDefaults) replay.defaultedEpochs = new uint256[](maxSteps);
+        if (recordDefaults) replay.defaults = new DefaultRecord[](maxSteps);
 
         if (_isZeroExposure(replay.account)) {
             replay.account.calledEpochCursor = finalizedCallPrefix;
@@ -570,13 +722,14 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
             _matureExitForEpoch(replay.account, epoch);
 
             if (_shouldDefault(replay.account, state, epoch, user)) {
-                _defaultAccount(replay.account);
                 if (recordDefaults) {
-                    replay.defaultedEpochs[replay.defaultCount] = epoch;
+                    replay.defaults[replay.defaultCount] =
+                        DefaultRecord(epoch, replay.account.activeMargin, replay.account.activeCallableUsdc);
                     unchecked {
                         ++replay.defaultCount;
                     }
                 }
+                _defaultAccount(replay.account);
             }
 
             unchecked {
@@ -665,12 +818,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         account.exitBucketMargin = 0;
         account.exitBucketCallable = 0;
         account.claimableExitMargin = 0;
-        if (account.exitRequested && !account.exitClaimed) {
-            account.exitRequested = false;
-            account.exitMaturityEpoch = 0;
-            account.exitClaimed = true;
-            account.exitMatured = false;
-        }
+        if (account.exitRequested && !account.exitClaimed) _clearExit(account);
     }
 
     function _isZeroExposure(Account memory account) internal pure returns (bool) {
@@ -679,7 +827,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
             && (!account.exitRequested || account.exitClaimed);
     }
 
-    function _clearExit(Account storage account) internal {
+    function _clearExit(Account memory account) internal pure {
         account.exitRequested = false;
         account.exitMaturityEpoch = 0;
         account.exitClaimed = true;
@@ -751,13 +899,15 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         }
     }
 
-    function _addCurrentCallExitExposure(Account storage account, uint256 maturityEpoch) internal {
+    function _addCurrentCallExitExposure(uint256 accountMargin, uint256 accountCallable, uint256 maturityEpoch)
+        internal
+    {
         uint256 epoch = _currentEpoch();
         EpochState storage state = epochs[epoch];
         if (!state.callOpened || state.slashFinalized || fundedEpoch[epoch][msg.sender] || maturityEpoch <= epoch) {
             return;
         }
-        _addCallExitExposure(epoch, maturityEpoch, account.activeMargin, account.activeCallableUsdc);
+        _addCallExitExposure(epoch, maturityEpoch, accountMargin, accountCallable);
     }
 
     function _addCallExitExposure(uint256 epoch, uint256 maturity, uint256 margin, uint256 callable) internal {
@@ -772,7 +922,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     function _recordExitingFund(
         uint256 epoch,
-        Account storage account,
+        Account memory account,
         uint256 obligationUsdc,
         uint256 releasedMargin,
         uint256 remainingMargin,
@@ -822,7 +972,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         return current > lastMaturityFolded ? current : lastMaturityFolded;
     }
 
-    function _addPending(Account storage account, uint256 margin, uint256 callable, uint256 activationEpoch) internal {
+    function _addPending(Account memory account, uint256 margin, uint256 callable, uint256 activationEpoch) internal {
         if (account.pendingActivationEpoch != 0 && account.pendingActivationEpoch != activationEpoch) {
             revert InvalidEpoch();
         }
@@ -838,7 +988,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         if (activationEpoch > lastActivationFolded) _trackActivationEpoch(activationEpoch);
     }
 
-    function _decreasePending(Account storage account, uint256 margin, uint256 callable) internal {
+    function _decreasePending(Account memory account, uint256 margin, uint256 callable) internal {
         if (margin == 0 && callable == 0) return;
 
         uint256 activationEpoch = account.pendingActivationEpoch;
@@ -857,6 +1007,9 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         if (callable != 0) totalActiveCallableUsdc -= callable;
     }
 
+    /// @dev Assignment is first-fit by request time, not strict FIFO: funded or slashed amounts can free bucket
+    /// capacity retroactively, and a request larger than the whole per-epoch capacity takes the first bucket with any
+    /// remaining room.
     function _assignExitMaturity(uint256 accountCallable) internal view returns (uint256 maturityEpoch) {
         uint256 capacity = protocolCallableCapUsdc.mulDiv(exitCapBps, BPS);
         if (capacity == 0) revert InvalidParams();

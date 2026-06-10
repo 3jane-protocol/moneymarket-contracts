@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
-import {LCCMockToken} from "./LCCBase.t.sol";
+import {LCCMockToken, LCCMockUSD3} from "./LCCBase.t.sol";
 import {Test} from "../../../lib/forge-std/src/Test.sol";
 import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
 import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
@@ -26,12 +26,20 @@ contract LCCInvariantTest is LCCBase {
 contract LCCInvariantHandler is Test {
     LeveragedCallableCreditVault internal invariantVault;
     LCCMockToken internal invariantMargin;
+    LCCMockUSD3 internal invariantUsd3;
     address internal invariantOwner;
     address[] internal actors;
 
-    constructor(LeveragedCallableCreditVault vault_, LCCMockToken margin_, address owner_, address[] memory actors_) {
+    constructor(
+        LeveragedCallableCreditVault vault_,
+        LCCMockToken margin_,
+        LCCMockUSD3 usd3_,
+        address owner_,
+        address[] memory actors_
+    ) {
         invariantVault = vault_;
         invariantMargin = margin_;
+        invariantUsd3 = usd3_;
         invariantOwner = owner_;
         actors = actors_;
     }
@@ -100,8 +108,36 @@ contract LCCInvariantHandler is Test {
         if (!state.callOpened || state.slashFinalized || invariantVault.fundedEpoch(epoch, actor)) return;
         if (invariantVault.obligationOf(epoch, actor) == 0) return;
 
+        if (actorSeed % 4 == 0) {
+            address payer = actors[(actorSeed / 4) % actors.length];
+            vm.prank(payer);
+            invariantVault.fundEpochCallFor(epoch, actor);
+        } else {
+            vm.prank(actor);
+            invariantVault.fundEpochCall(epoch);
+        }
+    }
+
+    function setUsd3DepositLimit(uint256 seed) external {
+        invariantUsd3.setDepositLimit(seed % 3 == 0 ? 0 : type(uint256).max);
+    }
+
+    function placeEscrow(uint256 actorSeed) external {
+        address actor = actors[_index(actorSeed)];
+        if (invariantVault.escrowedFundingUsdc(actor) == 0) return;
+        if (invariantUsd3.maxDeposit(actor) == 0) return;
+
+        invariantVault.placeEscrowedFunding(actor);
+    }
+
+    function claimEscrow(uint256 actorSeed) external {
+        if (!invariantVault.shutdownActive()) return;
+
+        address actor = actors[_index(actorSeed)];
+        if (invariantVault.escrowedFundingUsdc(actor) == 0) return;
+
         vm.prank(actor);
-        invariantVault.fundEpochCall(epoch);
+        invariantVault.claimEscrowedFunding(actor);
     }
 
     function finalizeCall(uint256 epochSeed) external {
@@ -156,7 +192,7 @@ contract LCCInvariantHandler is Test {
         uint256 exitCapBps = _range(exitCapSeed, 500, 5_000);
 
         vm.prank(invariantOwner);
-        invariantVault.setRiskCaps(protocolCap, maxCap, exitCapBps);
+        invariantVault.setRiskCaps(protocolCap, maxCap, exitCapBps, 0);
     }
 
     function shutdown(uint256 seed) external {
@@ -235,7 +271,7 @@ contract LCCStatefulInvariantTest is LCCBase {
             _mintAndApprove(actor, 1_000_000e18, 1_000_000e18);
         }
 
-        handler = new LCCInvariantHandler(vault, margin, owner, invariantActors);
+        handler = new LCCInvariantHandler(vault, margin, usd3, owner, invariantActors);
         targetContract(address(handler));
     }
 
@@ -264,5 +300,12 @@ contract LCCStatefulInvariantTest is LCCBase {
         assertEq(pendingMargin, vault.totalPendingMargin());
         assertEq(pendingCallable, vault.totalPendingCallableUsdc());
         assertGe(margin.balanceOf(address(vault)), activeMargin + pendingMargin + claimableMargin);
+
+        uint256 escrowed;
+        for (uint256 i = 0; i < invariantActors.length; ++i) {
+            escrowed += vault.escrowedFundingUsdc(invariantActors[i]);
+        }
+        assertEq(escrowed, vault.totalEscrowedFundingUsdc());
+        assertEq(usdc.balanceOf(address(vault)), vault.totalEscrowedFundingUsdc());
     }
 }

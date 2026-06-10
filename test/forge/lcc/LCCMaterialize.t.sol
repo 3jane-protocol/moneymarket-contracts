@@ -136,6 +136,19 @@ contract LCCMaterializeTest is LCCBase {
         assertFalse(vault.defaultedEpoch(1, alice));
     }
 
+    function testRepeatMaterializeSkipsAccountStorageWrite() public {
+        _deposit(alice, 100e18);
+        vault.materializeAccount(alice);
+
+        vm.record();
+        vault.materializeAccount(alice);
+        (, bytes32[] memory writes) = vm.accesses(address(vault));
+
+        // Only the reentrancy guard (2 writes) and the two fold trackers should be written; the unchanged account
+        // must not be re-stored.
+        assertLe(writes.length, 4);
+    }
+
     function _createFundedCallHistory(address funder, uint256 count) internal {
         _createFundedCallHistoryFromEpoch(funder, 0, count);
     }

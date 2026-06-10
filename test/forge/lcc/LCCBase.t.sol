@@ -21,7 +21,17 @@ contract LCCMockToken is ERC20 {
 }
 
 contract LCCMockUSD3 is ERC4626 {
+    uint256 internal depositLimit = type(uint256).max;
+
     constructor(IERC20 asset_) ERC20("Mock USD3", "mUSD3") ERC4626(asset_) {}
+
+    function setDepositLimit(uint256 limit) external {
+        depositLimit = limit;
+    }
+
+    function maxDeposit(address) public view override returns (uint256) {
+        return depositLimit;
+    }
 }
 
 contract LCCRevertingOracle is IOracle {
@@ -94,7 +104,8 @@ contract LCCBase is Test {
             protocolCallableCapUsdc: protocolCap,
             userCallableCapUsdc: userCap,
             exitCapBps: exitCapBps,
-            exitDelayEpochs: 1
+            exitDelayEpochs: 1,
+            minDepositAssets: 0
         });
     }
 
