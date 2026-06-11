@@ -6,6 +6,13 @@ import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCr
 import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
 
 contract LCCEscrowTest is LCCBase {
+    function _setupEscrowedFunding() internal {
+        _deposit(alice, 100e18);
+        _openCall(100e18);
+        usd3.setDepositLimit(0);
+        _fund(alice);
+    }
+
     function testFundingEscrowsWhenUsd3CapacityInsufficient() public {
         _deposit(alice, 100e18);
         _openCall(100e18);
@@ -25,10 +32,7 @@ contract LCCEscrowTest is LCCBase {
     }
 
     function testEscrowedFunderIsNotSlashed() public {
-        _deposit(alice, 100e18);
-        _openCall(100e18);
-        usd3.setDepositLimit(0);
-        _fund(alice);
+        _setupEscrowedFunding();
         _finishFunding();
 
         vault.finalizeEpochSlash(0);
@@ -41,10 +45,7 @@ contract LCCEscrowTest is LCCBase {
     }
 
     function testPlaceEscrowedFundingPartialThenFull() public {
-        _deposit(alice, 100e18);
-        _openCall(100e18);
-        usd3.setDepositLimit(0);
-        _fund(alice);
+        _setupEscrowedFunding();
 
         usd3.setDepositLimit(40e18);
         vm.expectEmit(true, false, false, true, address(vault));
@@ -69,20 +70,14 @@ contract LCCEscrowTest is LCCBase {
         vm.expectRevert(LeveragedCallableCreditVault.NothingToClaim.selector);
         vault.placeEscrowedFunding(alice);
 
-        _deposit(alice, 100e18);
-        _openCall(100e18);
-        usd3.setDepositLimit(0);
-        _fund(alice);
+        _setupEscrowedFunding();
 
         vm.expectRevert(LeveragedCallableCreditVault.InvalidAmount.selector);
         vault.placeEscrowedFunding(alice);
     }
 
     function testClaimEscrowedFundingRequiresShutdown() public {
-        _deposit(alice, 100e18);
-        _openCall(100e18);
-        usd3.setDepositLimit(0);
-        _fund(alice);
+        _setupEscrowedFunding();
 
         vm.expectRevert(LeveragedCallableCreditVault.ShutdownRequired.selector);
         vm.prank(alice);
@@ -106,14 +101,12 @@ contract LCCFundForTest is LCCBase {
     function testFundEpochCallForPayerPaysAndUserBenefits() public {
         _deposit(alice, 100e18);
         _openCall(100e18);
-        vm.warp(START + NORMAL + PRE_CALL);
 
         uint256 bobUsdcBefore = usdc.balanceOf(bob);
         uint256 aliceUsdcBefore = usdc.balanceOf(alice);
         uint256 aliceMarginBefore = margin.balanceOf(alice);
 
-        vm.prank(bob);
-        uint256 obligation = vault.fundEpochCallFor(0, alice);
+        uint256 obligation = _fundFor(bob, alice);
 
         assertEq(obligation, 100e18);
         assertEq(usdc.balanceOf(bob), bobUsdcBefore - 100e18);
@@ -128,14 +121,11 @@ contract LCCFundForTest is LCCBase {
     function testFundEpochCallForCannotRepeatOrTargetZero() public {
         _deposit(alice, 100e18);
         _openCall(100e18);
-        vm.warp(START + NORMAL + PRE_CALL);
 
         vm.expectRevert(LeveragedCallableCreditVault.ZeroAddress.selector);
-        vm.prank(bob);
-        vault.fundEpochCallFor(0, address(0));
+        _fundFor(bob, address(0));
 
-        vm.prank(bob);
-        vault.fundEpochCallFor(0, alice);
+        _fundFor(bob, alice);
 
         vm.expectRevert(LeveragedCallableCreditVault.AlreadyFunded.selector);
         vm.prank(alice);

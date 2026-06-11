@@ -53,8 +53,7 @@ contract LCCDepositTest is LCCBase {
         ILeveragedCallableCreditVault.VaultParams memory params = _params(CAP, CAP);
         params.minDepositAssets = 10e18;
         vault = new LeveragedCallableCreditVault(params);
-        vm.prank(alice);
-        margin.approve(address(vault), type(uint256).max);
+        _mintAndApprove(alice, 0, 0);
 
         vm.expectRevert(LeveragedCallableCreditVault.InvalidAmount.selector);
         _deposit(alice, 10e18 - 1);

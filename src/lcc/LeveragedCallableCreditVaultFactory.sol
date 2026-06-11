@@ -4,6 +4,8 @@ pragma solidity ^0.8.22;
 import {LeveragedCallableCreditVault} from "./LeveragedCallableCreditVault.sol";
 import {ILeveragedCallableCreditVault} from "./interfaces/ILeveragedCallableCreditVault.sol";
 
+/// @dev Vault creation is permissionless with arbitrary parameters; registry membership (isVault/allVaults) records
+/// provenance only and confers no trust in a vault's owner, oracle, or assets.
 contract LeveragedCallableCreditVaultFactory {
     event VaultCreated(address indexed vault, address indexed owner);
 
