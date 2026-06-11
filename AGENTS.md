@@ -10,6 +10,7 @@ This repository contains Morpho Blue plus 3Jane-specific credit extensions for u
 - Credit-line and borrower-premium logic in `src/` and `src/libraries/`.
 - JANE token and rewards distribution modules in `src/jane/`.
 - USD3/sUSD3 strategy and lifecycle tests in `test/forge/usd3/`.
+- Leveraged Callable Credit (LCC) vault module in `src/lcc/` with tests in `test/forge/lcc/`.
 - Formal and symbolic test suites in `test/halmos/` and `certora/`.
 
 ## Golden Rules
@@ -84,6 +85,7 @@ Foundry CI jobs seed fuzz/invariant runs from base SHA or commit SHA for determi
 
 - Core contracts: `src/`
 - Core interfaces/libraries: `src/interfaces/`, `src/libraries/`
+- LCC vault module: `src/lcc/` (vault, factory, interface)
 - Mocks: `src/mocks/`
 - Forge tests: `test/forge/`
 - Hardhat tests: `test/hardhat/`
@@ -110,6 +112,16 @@ Targeted local command patterns for Jane changes:
 
 - `yarn run test:forge --match-path 'test/forge/jane/**/*.t.sol' -vvv`
 - `yarn run test:forge --match-contract MarkdownControllerJaneTest -vvv`
+
+## LCC Module Guide (`src/lcc/`)
+
+- `src/lcc/LeveragedCallableCreditVault.sol`: per-facility leveraged callable credit vault — margin deposits create USDC callable commitments, the owner opens one capital call per epoch, funding routes USDC into USD3 (with internal escrow fallback when USD3 lacks capacity), missed obligations slash margin to treasury. State progression is lazy (no keeper); `materializeAccount` and `finalizeEpochSlash` are permissionless.
+- `src/lcc/LeveragedCallableCreditVaultFactory.sol`: permissionless factory; registry confers no trust.
+- Design notes: `docs/architecture.md` (LCC Domain section).
+
+Targeted local command for LCC changes:
+
+- `yarn run test:forge --match-path 'test/forge/lcc/**/*.t.sol' -vvv`
 
 ## Architecture Notes
 

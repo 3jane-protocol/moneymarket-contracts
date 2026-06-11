@@ -35,6 +35,16 @@ This repository extends Morpho Blue with 3Jane credit primitives and USD3/sUSD3 
   - owner-only root/emission updates in `RewardsDistributor`
   - `onlyMorphoCredit` and markdown enablement gates in `MarkdownController`
 
+## LCC Domain (Leveraged Callable Credit)
+
+- `src/lcc/LeveragedCallableCreditVault.sol`: per-facility callable-credit vault (not ERC-4626, no transferable shares). One ERC20 `marginAsset` is posted as a performance bond, valued in USDC through a trusted Morpho-style `IOracle`, and leveraged by `marginRatioBps` into a USDC callable commitment.
+- `src/lcc/LeveragedCallableCreditVaultFactory.sol`: permissionless vault deployment; registry membership confers no trust.
+- Lifecycle: epochs and phases (`Normal`, `PreCall`, `Funding`, `Closed`) are time-derived. The owner opens at most one USDC call per epoch during `PreCall`; users fund all-or-nothing pro-rata obligations during `Funding`; unfunded accounts are slashed (full remaining margin to treasury) after the deadline.
+- No keeper: all state progression is lazy. A `synced` modifier folds due pending activations, exit maturities, and eligible slash finalizations on every touch; per-user state is materialized by replaying finalized calls through a bounded cursor (`materializeAccount` is permissionless).
+- Funding routes USDC into USD3 for the funder, or into an internal escrow when USD3 lacks deposit capacity (`placeEscrowedFunding` pushes escrow into USD3 permissionlessly; escrow is refundable to the funder only under terminal shutdown). Third parties may fund a user's obligation push-style via `fundEpochCallFor` (the caller pays; all proceeds accrue to the user).
+- Exits are full-account, irrevocable, assigned first-fit to per-epoch maturity buckets capped at a percentage of the protocol callable cap; exiting accounts remain callable until maturity.
+- Trust model: the vault owner and margin oracle are fully trusted; the margin asset must be a standard ERC20 (no fee-on-transfer/rebasing).
+
 ## USD3 / sUSD3 Domain
 
 - USD3 and sUSD3 behavior is exercised in `test/forge/usd3/`.
@@ -45,6 +55,7 @@ This repository extends Morpho Blue with 3Jane credit primitives and USD3/sUSD3 
 
 - Forge unit/integration/fuzz tests: `test/forge/`
 - Jane token/rewards suites: `test/forge/jane/` and `test/forge/integration/markdown/MarkdownControllerJaneTest.sol`
+- LCC suites: `test/forge/lcc/` (focused regressions plus the `LCCStatefulInvariantTest` harness, which runs in the standard `test` profile)
 - Forge invariants:
   - Core harness: `CoreInvariantHarness`
   - USD3 harnesses: `InvariantsTest`, `DebtFloorInvariantsTest`
