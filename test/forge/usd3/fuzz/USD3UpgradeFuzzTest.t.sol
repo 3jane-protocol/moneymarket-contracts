@@ -542,6 +542,11 @@ contract USD3UpgradeFuzzTest is Setup {
             assertGt(oldWithdraw, 0, "Old user cannot withdraw");
         }
 
+        // Resync totalAssets with nav so wei-level conversion rounding drift does not trip the stale-NAV
+        // withdrawal gate and zero out maxRedeem for the new user.
+        vm.prank(keeper);
+        ITokenizedStrategy(address(usd3Proxy)).report();
+
         vm.startPrank(newUser);
         uint256 newMaxRedeem = ITokenizedStrategy(address(usd3Proxy)).maxRedeem(newUser);
         uint256 newSharesToRedeem = newShares > newMaxRedeem ? newMaxRedeem : newShares;
