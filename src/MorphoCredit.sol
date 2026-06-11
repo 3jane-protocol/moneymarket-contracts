@@ -709,6 +709,16 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         return creditLimit >= borrowed;
     }
 
+    /// @dev Override liquidity check to account for markdown
+    /// @param id The market id
+    /// @dev Markdown reduces totalSupplyAssets but actual tokens remain, so we add it back for liquidity checks
+    function _checkLiquidity(Id id) internal view override {
+        Market memory m = market[id];
+        // Add markdown back to get effective liquidity (actual tokens available)
+        uint256 effectiveLiquidity = m.totalSupplyAssets + m.totalMarkdownAmount;
+        if (m.totalBorrowAssets > effectiveLiquidity) revert ErrorsLib.InsufficientLiquidity();
+    }
+
     /* MARKDOWN FUNCTIONS */
 
     /// @notice Update a borrower's markdown state and market total
