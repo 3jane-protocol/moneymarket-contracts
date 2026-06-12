@@ -7,6 +7,11 @@ optimizer = true
 optimizer_runs = 999999
 bytecode_hash = "none"
 evm_version = "shanghai"
+# The LCC vault is near the bytecode size limit at max runs; compile it with standard runs instead.
+additional_compiler_profiles = [{ name = "lcc-size", optimizer_runs = 200 }]
+compilation_restrictions = [
+    { paths = "src/lcc/LeveragedCallableCreditVault.sol", optimizer_runs = 200 },
+]
 
 [profile.default.invariant]
 runs = 16

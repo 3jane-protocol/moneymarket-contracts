@@ -11,6 +11,7 @@ import {SafeCast} from "../../lib/openzeppelin/contracts/utils/math/SafeCast.sol
 
 import {IOracle} from "../interfaces/IOracle.sol";
 import {ORACLE_PRICE_SCALE} from "../libraries/ConstantsLib.sol";
+import {LCCAuctionLib} from "./libraries/LCCAuctionLib.sol";
 import {ILeveragedCallableCreditVault} from "./interfaces/ILeveragedCallableCreditVault.sol";
 
 contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable, ReentrancyGuard {
@@ -35,6 +36,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     error ExitNotMature();
     error SlashNotEligible();
     error ShutdownRequired();
+    error AuctionNotLive();
 
     uint256 internal constant BPS = 10_000;
     uint256 internal constant MAX_MATERIALIZE_STEPS = 64;
@@ -95,6 +97,9 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     uint256 public immutable fundingDuration;
     uint256 public immutable marginRatioBps;
     uint256 public immutable exitDelayEpochs;
+    /// @dev Auction step parameters; auctionStepDuration == 0 permanently disables the auction machinery.
+    uint256 public immutable auctionStepDuration;
+    uint256 public immutable auctionStepDecayRateBps;
 
     uint256 public protocolCallableCapUsdc;
     uint256 public userCallableCapUsdc;
@@ -102,6 +107,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     /// base (rather than live active callable) so bucket assignment is deterministic and not path-dependent.
     uint256 public exitCapBps;
     uint256 public minDepositAssets;
+    /// @dev Oracle-valued award cap per USDC filled in the auction; 0 is the runtime off-switch.
+    uint256 public maxAuctionAwardBps;
 
     uint256 public totalActiveMargin;
     uint256 public totalActiveCallableUsdc;
@@ -116,6 +123,12 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     bool public shutdownActive;
     uint256 public shutdownTimestamp;
     uint256 public shutdownEpoch;
+
+    /// @dev Single live-auction slot (epoch + 1; 0 = none). Safe because calls are sequential: an auction for epoch
+    /// E exists only during E's Closed window, and a later kick happens inside _syncGlobal after _settleDueAuction
+    /// has already swept E.
+    uint256 public pendingAuctionEpochPlusOne;
+    mapping(uint256 => LCCAuctionLib.AuctionState) internal epochAuctions;
 
     mapping(address => AccountStorage) internal accounts;
     mapping(uint256 => EpochState) internal epochs;
@@ -155,11 +168,14 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         fundingDuration = params.fundingDuration;
         marginRatioBps = params.marginRatioBps;
         exitDelayEpochs = params.exitDelayEpochs;
+        auctionStepDuration = params.auctionStepDuration;
+        auctionStepDecayRateBps = params.auctionStepDecayRateBps;
 
         protocolCallableCapUsdc = params.protocolCallableCapUsdc;
         userCallableCapUsdc = params.userCallableCapUsdc;
         exitCapBps = params.exitCapBps;
         minDepositAssets = params.minDepositAssets;
+        maxAuctionAwardBps = params.maxAuctionAwardBps;
 
         uint256 epoch = _currentEpoch();
         lastActivationFolded = epoch;
@@ -195,9 +211,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         onlyOwner
         synced
     {
-        if (newProtocolCap == 0 || newUserCap == 0 || newExitCapBps == 0 || newExitCapBps > BPS) {
-            revert InvalidParams();
-        }
+        if (newProtocolCap == 0 || newProtocolCap > type(uint128).max) revert InvalidParams();
+        if (newUserCap == 0 || newExitCapBps == 0 || newExitCapBps > BPS) revert InvalidParams();
 
         protocolCallableCapUsdc = newProtocolCap;
         userCallableCapUsdc = newUserCap;
@@ -205,6 +220,17 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         minDepositAssets = newMinDeposit;
 
         emit RiskCapUpdated(newProtocolCap, newUserCap, newExitCapBps, newMinDeposit);
+    }
+
+    function setMaxAuctionAwardBps(uint256 newMaxAuctionAwardBps) external onlyOwner synced {
+        if (newMaxAuctionAwardBps > BPS) revert InvalidParams();
+        if (newMaxAuctionAwardBps != 0 && auctionStepDuration == 0) revert InvalidParams();
+        // No repricing while fillers are mid-auction.
+        if (pendingAuctionEpochPlusOne != 0) revert InvalidPhase();
+
+        maxAuctionAwardBps = newMaxAuctionAwardBps;
+
+        emit AuctionAwardCapUpdated(newMaxAuctionAwardBps);
     }
 
     function shutdown() external onlyOwner synced {
@@ -374,6 +400,52 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         return _fund(epoch, msg.sender, user);
     }
 
+    /// @notice Fills up to `maxFillUsdc` of the live auction's shortfall: the fill is deposited into USD3 for the
+    /// caller, and a collateral kicker from the slashed margin pool is awarded at the current ramp, capped by
+    /// `maxAuctionAwardBps` of the fill at the fill-time oracle price.
+    /// @dev No escrow fallback for fillers — they are volunteers, not obligated funders: if USD3 cannot accept the
+    /// deposit (capacity, depositor whitelist, first-time minimum) the take reverts. Fills require the vault to be
+    /// on USD3's depositorWhitelist while commitment enforcement is active.
+    function takeAuction(uint256 epoch, uint256 maxFillUsdc)
+        external
+        nonReentrant
+        synced
+        returns (uint256 filledUsdc, uint256 marginAward)
+    {
+        if (shutdownActive) revert ShutdownActive();
+        // synced settled any past-window auction, so a live slot implies the window is open.
+        if (pendingAuctionEpochPlusOne != epoch + 1) revert AuctionNotLive();
+
+        LCCAuctionLib.AuctionState storage state = epochAuctions[epoch];
+        uint256 remainingShortfall = state.shortfallUsdc - state.filledUsdc;
+        filledUsdc = maxFillUsdc < remainingShortfall ? maxFillUsdc : remainingShortfall;
+        if (filledUsdc == 0) revert InvalidAmount();
+
+        uint256 price = marginOracle.price();
+        if (price == 0) revert OraclePriceInvalid();
+
+        marginAward = LCCAuctionLib.computeAward(
+            state,
+            filledUsdc,
+            block.timestamp - _fundingDeadline(epoch),
+            auctionStepDuration,
+            auctionStepDecayRateBps,
+            maxAuctionAwardBps,
+            price
+        );
+
+        state.filledUsdc += filledUsdc.toUint128();
+        state.marginAwarded += marginAward;
+
+        callableAsset.safeTransferFrom(msg.sender, address(this), filledUsdc);
+        _depositToUsd3(msg.sender, filledUsdc);
+        if (marginAward != 0) marginAsset.safeTransfer(msg.sender, marginAward);
+
+        if (state.filledUsdc == state.shortfallUsdc) _settleAuction(epoch);
+
+        emit AuctionFill(msg.sender, epoch, filledUsdc, marginAward);
+    }
+
     /// @notice Deposits escrowed funding USDC into USD3 for `user`, up to USD3's current deposit capacity.
     function placeEscrowedFunding(address user) external nonReentrant synced returns (uint256 placedUsdc) {
         if (user == address(0)) revert ZeroAddress();
@@ -428,6 +500,10 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     function getEpochState(uint256 epoch) external view returns (EpochState memory) {
         return epochs[epoch];
+    }
+
+    function getAuctionState(uint256 epoch) external view returns (LCCAuctionLib.AuctionState memory) {
+        return epochAuctions[epoch];
     }
 
     function obligationOf(uint256 epoch, address user) external view returns (uint256) {
@@ -522,6 +598,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     }
 
     function _syncGlobal() internal {
+        _settleDueAuction();
+
         while (finalizedCallPrefix < calledEpochList.length) {
             uint256 epoch = calledEpochList[finalizedCallPrefix];
             if (!epochs[epoch].slashFinalized) {
@@ -635,9 +713,49 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         _reduceExitBucketsForSlash(epoch);
 
         _decreaseGlobalActive(slashedMargin, slashedCallable);
-        if (slashedMargin != 0) marginAsset.safeTransfer(treasury, slashedMargin);
+
+        if (slashedMargin != 0) {
+            uint256 shortfall = state.callAmount > state.fundedUsdc ? state.callAmount - state.fundedUsdc : 0;
+            // Kick an auction only while its timestamp-derived window is still open; a late lazy finalization
+            // falls through to treasury and the shortfall fails cleanly.
+            if (
+                shortfall != 0 && maxAuctionAwardBps != 0 && !shutdownActive
+                    && block.timestamp < _epochStart(epoch) + epochLength
+            ) {
+                epochAuctions[epoch] = LCCAuctionLib.AuctionState({
+                    shortfallUsdc: shortfall.toUint128(), filledUsdc: 0, marginPool: slashedMargin, marginAwarded: 0
+                });
+                pendingAuctionEpochPlusOne = epoch + 1;
+                emit AuctionKicked(epoch, shortfall, slashedMargin);
+            } else {
+                marginAsset.safeTransfer(treasury, slashedMargin);
+            }
+        }
 
         emit EpochSlashFinalized(epoch, slashedMargin, slashedCallable, false);
+    }
+
+    /// @dev Sweeps the live auction once its window has passed (or once shutdown blocks takes). Runs before slash
+    /// finalization in _syncGlobal so a prior epoch's auction always settles before a new one can be kicked.
+    /// Settlement touches no active totals or exit buckets, so the slash-before-maturity-folds ordering below is
+    /// unaffected.
+    function _settleDueAuction() internal {
+        uint256 slot = pendingAuctionEpochPlusOne;
+        if (slot == 0) return;
+
+        uint256 epoch = slot - 1;
+        if (!shutdownActive && block.timestamp < _epochStart(epoch) + epochLength) return;
+        _settleAuction(epoch);
+    }
+
+    function _settleAuction(uint256 epoch) internal {
+        LCCAuctionLib.AuctionState storage state = epochAuctions[epoch];
+        pendingAuctionEpochPlusOne = 0;
+
+        uint256 remainder = state.marginPool - state.marginAwarded;
+        if (remainder != 0) marginAsset.safeTransfer(treasury, remainder);
+
+        emit AuctionSettled(epoch, state.filledUsdc, state.marginAwarded, remainder);
     }
 
     function _materializeAccount(address user) internal returns (Account memory account) {
@@ -767,18 +885,12 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
             if (maturityFolded > unfinalizedEpoch) maturityFolded = unfinalizedEpoch;
         }
 
-        _activateDuePending(replay.account, activationFolded);
-        _matureDueExit(replay.account, maturityFolded);
+        _activatePendingForEpoch(replay.account, activationFolded);
+        _matureExitForEpoch(replay.account, maturityFolded);
     }
 
     function _activatePendingForEpoch(Account memory account, uint256 epoch) internal pure {
         if (account.pendingActivationEpoch != 0 && account.pendingActivationEpoch <= epoch) _activatePending(account);
-    }
-
-    function _activateDuePending(Account memory account, uint256 foldedEpoch) internal pure {
-        if (account.pendingActivationEpoch != 0 && account.pendingActivationEpoch <= foldedEpoch) {
-            _activatePending(account);
-        }
     }
 
     function _activatePending(Account memory account) internal pure {
@@ -792,15 +904,6 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     function _matureExitForEpoch(Account memory account, uint256 epoch) internal pure {
         if (account.exitRequested && !account.exitMatured && !account.exitClaimed && account.exitMaturityEpoch <= epoch)
         {
-            _matureExit(account);
-        }
-    }
-
-    function _matureDueExit(Account memory account, uint256 foldedEpoch) internal pure {
-        if (
-            account.exitRequested && !account.exitMatured && !account.exitClaimed
-                && account.exitMaturityEpoch <= foldedEpoch
-        ) {
             _matureExit(account);
         }
     }
@@ -1105,7 +1208,21 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
             revert InvalidParams();
         }
         if (params.protocolCallableCapUsdc == 0 || params.userCallableCapUsdc == 0) revert InvalidParams();
+        // Callable totals are bounded by the (historical) protocol cap; capping it at uint128 keeps the auction
+        // kick's casts from ever reverting inside _syncGlobal.
+        if (params.protocolCallableCapUsdc > type(uint128).max) revert InvalidParams();
         if (params.exitCapBps == 0 || params.exitCapBps > BPS) revert InvalidParams();
         if (params.exitDelayEpochs == 0) revert InvalidParams();
+
+        if (params.auctionStepDuration == 0) {
+            if (params.auctionStepDecayRateBps != 0 || params.maxAuctionAwardBps != 0) revert InvalidParams();
+        } else {
+            if (params.auctionStepDecayRateBps == 0 || params.auctionStepDecayRateBps > BPS) revert InvalidParams();
+            if (params.maxAuctionAwardBps > BPS) revert InvalidParams();
+            // The auction needs a nonzero Closed window to ever be takeable.
+            if (params.normalDuration + params.preCallDuration + params.fundingDuration >= params.epochLength) {
+                revert InvalidParams();
+            }
+        }
     }
 }

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.22;
 
+import {LCCAuctionLib} from "../libraries/LCCAuctionLib.sol";
+
 interface ILeveragedCallableCreditVault {
     enum Phase {
         Normal,
@@ -27,6 +29,9 @@ interface ILeveragedCallableCreditVault {
         uint256 exitCapBps;
         uint256 exitDelayEpochs;
         uint256 minDepositAssets;
+        uint256 auctionStepDuration;
+        uint256 auctionStepDecayRateBps;
+        uint256 maxAuctionAwardBps;
     }
 
     struct Account {
@@ -89,6 +94,10 @@ interface ILeveragedCallableCreditVault {
         uint256 protocolCallableCapUsdc, uint256 userCallableCapUsdc, uint256 exitCapBps, uint256 minDepositAssets
     );
     event EmergencyShutdown(uint256 indexed epoch, uint256 timestamp);
+    event AuctionKicked(uint256 indexed epoch, uint256 shortfallUsdc, uint256 marginPool);
+    event AuctionFill(address indexed filler, uint256 indexed epoch, uint256 fillUsdc, uint256 marginAward);
+    event AuctionSettled(uint256 indexed epoch, uint256 filledUsdc, uint256 marginAwarded, uint256 marginToTreasury);
+    event AuctionAwardCapUpdated(uint256 maxAuctionAwardBps);
 
     error PendingDepositExists();
     error AccountMaterializationIncomplete();
@@ -106,6 +115,13 @@ interface ILeveragedCallableCreditVault {
     function openEpochCall(uint256 epoch, uint256 totalCallAmountUsdc) external;
     function fundEpochCall(uint256 epoch) external returns (uint256 obligationUsdc);
     function fundEpochCallFor(uint256 epoch, address user) external returns (uint256 obligationUsdc);
+    function takeAuction(uint256 epoch, uint256 maxFillUsdc) external returns (uint256 filledUsdc, uint256 marginAward);
+    function setMaxAuctionAwardBps(uint256 newMaxAuctionAwardBps) external;
+    function getAuctionState(uint256 epoch) external view returns (LCCAuctionLib.AuctionState memory);
+    function pendingAuctionEpochPlusOne() external view returns (uint256);
+    function maxAuctionAwardBps() external view returns (uint256);
+    function auctionStepDuration() external view returns (uint256);
+    function auctionStepDecayRateBps() external view returns (uint256);
     function placeEscrowedFunding(address user) external returns (uint256 placedUsdc);
     function claimEscrowedFunding(address receiver) external returns (uint256 assets);
     function finalizeEpochSlash(uint256 epoch) external;

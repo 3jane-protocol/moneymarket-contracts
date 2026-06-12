@@ -115,8 +115,25 @@ contract LCCBase is Test {
             userCallableCapUsdc: userCap,
             exitCapBps: exitCapBps,
             exitDelayEpochs: 1,
-            minDepositAssets: 0
+            minDepositAssets: 0,
+            auctionStepDuration: 0,
+            auctionStepDecayRateBps: 0,
+            maxAuctionAwardBps: 0
         });
+    }
+
+    function _auctionParams() internal view returns (ILeveragedCallableCreditVault.VaultParams memory params) {
+        params = _params(CAP, CAP);
+        params.auctionStepDuration = 5;
+        params.auctionStepDecayRateBps = 5_000;
+        params.maxAuctionAwardBps = 10_000;
+    }
+
+    function _deployAuctionVault() internal {
+        vault = new LeveragedCallableCreditVault(_auctionParams());
+        _mintAndApprove(alice, 0, 0);
+        _mintAndApprove(bob, 0, 0);
+        _mintAndApprove(carol, 0, 0);
     }
 
     function _mintAndApprove(address user, uint256 marginAmount, uint256 usdcAmount) internal {

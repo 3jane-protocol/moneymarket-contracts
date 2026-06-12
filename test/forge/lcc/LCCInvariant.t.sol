@@ -6,6 +6,7 @@ import {LCCMockToken, LCCMockUSD3} from "./LCCBase.t.sol";
 import {Test} from "../../../lib/forge-std/src/Test.sol";
 import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
 import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
 
 contract LCCInvariantTest is LCCBase {
     function testFinalizedEpochConservesCallOpenMargin() public {
@@ -140,6 +141,39 @@ contract LCCInvariantHandler is Test {
         invariantVault.claimEscrowedFunding(actor);
     }
 
+    function takeAuction(uint256 actorSeed, uint256 fillSeed) external {
+        if (invariantVault.shutdownActive()) return;
+
+        uint256 slot = invariantVault.pendingAuctionEpochPlusOne();
+        if (slot == 0) return;
+        uint256 epoch = slot - 1;
+        if (block.timestamp >= invariantVault.phaseEndsAt(epoch, ILeveragedCallableCreditVault.Phase.Closed)) {
+            return;
+        }
+
+        LCCAuctionLib.AuctionState memory state = invariantVault.getAuctionState(epoch);
+        uint256 remaining = state.shortfallUsdc - state.filledUsdc;
+        if (remaining == 0) return;
+
+        address actor = actors[_index(actorSeed)];
+        uint256 fill = _range(fillSeed, 1, remaining);
+        if (invariantUsd3.maxDeposit(actor) < fill) return;
+
+        vm.prank(actor);
+        invariantVault.takeAuction(epoch, fill);
+    }
+
+    function warpIntoClosed(uint256 seed) external {
+        uint256 epoch = invariantVault.currentEpoch();
+        uint256 fundingEnd = invariantVault.phaseEndsAt(epoch, ILeveragedCallableCreditVault.Phase.Funding);
+        uint256 epochEnd = invariantVault.phaseEndsAt(epoch, ILeveragedCallableCreditVault.Phase.Closed);
+        if (epochEnd <= fundingEnd + 1) return;
+
+        uint256 target = fundingEnd + _range(seed, 0, epochEnd - fundingEnd - 1);
+        if (target <= block.timestamp) return;
+        vm.warp(target);
+    }
+
     function finalizeCall(uint256 epochSeed) external {
         uint256[] memory called = invariantVault.calledEpochs();
         if (called.length == 0) return;
@@ -259,9 +293,12 @@ contract LCCStatefulInvariantTest is LCCBase {
     LCCInvariantHandler internal handler;
     address[] internal invariantActors;
 
-    function setUp() public override {
+    function setUp() public virtual override {
         super.setUp();
+        _setupHandler();
+    }
 
+    function _setupHandler() internal {
         invariantActors.push(alice);
         invariantActors.push(bob);
         invariantActors.push(carol);
@@ -299,7 +336,14 @@ contract LCCStatefulInvariantTest is LCCBase {
         assertEq(activeCallable, vault.totalActiveCallableUsdc());
         assertEq(pendingMargin, vault.totalPendingMargin());
         assertEq(pendingCallable, vault.totalPendingCallableUsdc());
-        assertGe(margin.balanceOf(address(vault)), activeMargin + pendingMargin + claimableMargin);
+
+        uint256 auctionInventory;
+        uint256 slot = vault.pendingAuctionEpochPlusOne();
+        if (slot != 0) {
+            LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(slot - 1);
+            auctionInventory = auction.marginPool - auction.marginAwarded;
+        }
+        assertGe(margin.balanceOf(address(vault)), activeMargin + pendingMargin + claimableMargin + auctionInventory);
 
         uint256 escrowed;
         for (uint256 i = 0; i < invariantActors.length; ++i) {
@@ -307,5 +351,22 @@ contract LCCStatefulInvariantTest is LCCBase {
         }
         assertEq(escrowed, vault.totalEscrowedFundingUsdc());
         assertEq(usdc.balanceOf(address(vault)), vault.totalEscrowedFundingUsdc());
+    }
+
+    function invariant_AuctionFillAndAwardBounds() public view {
+        uint256[] memory called = vault.calledEpochs();
+        for (uint256 i = 0; i < called.length; ++i) {
+            LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(called[i]);
+            assertLe(auction.filledUsdc, auction.shortfallUsdc);
+            assertLe(auction.marginAwarded, auction.marginPool);
+        }
+    }
+}
+
+contract LCCAuctionStatefulInvariantTest is LCCStatefulInvariantTest {
+    function setUp() public override {
+        LCCBase.setUp();
+        _deployAuctionVault();
+        _setupHandler();
     }
 }
