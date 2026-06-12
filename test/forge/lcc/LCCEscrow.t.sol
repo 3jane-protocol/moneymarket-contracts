@@ -31,6 +31,29 @@ contract LCCEscrowTest is LCCBase {
         assertTrue(vault.fundedEpoch(0, alice));
     }
 
+    function testFundingEscrowsWhenUsd3DepositHookRevertsDespiteMaxDeposit() public {
+        _deposit(alice, 100e18);
+        _openCall(100e18);
+        usd3.setDepositHookReverts(true);
+
+        uint256 obligation = _fund(alice);
+
+        assertEq(obligation, 100e18);
+        assertEq(usd3.balanceOf(alice), 0);
+        assertEq(vault.escrowedFundingUsdc(alice), 100e18);
+        assertEq(usdc.allowance(address(vault), address(usd3)), 0);
+        assertTrue(vault.fundedEpoch(0, alice));
+
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+        assertEq(margin.balanceOf(treasury), 0);
+
+        usd3.setDepositHookReverts(false);
+        vault.placeEscrowedFunding(alice);
+        assertEq(usd3.balanceOf(alice), 100e18);
+        assertEq(vault.escrowedFundingUsdc(alice), 0);
+    }
+
     function testEscrowedFunderIsNotSlashed() public {
         _setupEscrowedFunding();
         _finishFunding();

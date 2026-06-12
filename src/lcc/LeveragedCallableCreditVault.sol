@@ -488,15 +488,22 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         emit MarginReleased(user, epoch, releasedMargin);
     }
 
-    /// @dev Funding success must not depend on USD3 capacity: when USD3 cannot take the full amount the USDC is
-    /// escrowed for the funder instead of reverting (which would default honoring users at the deadline).
+    /// @dev Funding success must not depend on USD3 accepting the deposit: when USD3 cannot take the full amount —
+    /// insufficient maxDeposit, or a pre-deposit hook revert invisible to maxDeposit (depositor whitelist,
+    /// first-time minimum deposit) — the USDC is escrowed for the funder instead of reverting (which would default
+    /// honoring users at the deadline). Deployments should add the vault to USD3's depositorWhitelist so the direct
+    /// path is the norm; escrow covers the failure if not.
     function _placeFunding(address user, uint256 epoch, uint256 amountUsdc) internal {
         if (usd3.maxDeposit(user) >= amountUsdc) {
-            _depositToUsd3(user, amountUsdc);
-        } else {
-            _addEscrow(user, amountUsdc);
-            emit FundingEscrowed(user, epoch, amountUsdc);
+            callableAsset.forceApprove(address(usd3), amountUsdc);
+            try usd3.deposit(amountUsdc, user) returns (uint256) {
+                return;
+            } catch {
+                callableAsset.forceApprove(address(usd3), 0);
+            }
         }
+        _addEscrow(user, amountUsdc);
+        emit FundingEscrowed(user, epoch, amountUsdc);
     }
 
     function _depositToUsd3(address receiver, uint256 amountUsdc) internal {

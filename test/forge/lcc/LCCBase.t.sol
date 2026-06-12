@@ -22,6 +22,7 @@ contract LCCMockToken is ERC20 {
 
 contract LCCMockUSD3 is ERC4626 {
     uint256 internal depositLimit = type(uint256).max;
+    bool internal depositHookReverts;
 
     constructor(IERC20 asset_) ERC20("Mock USD3", "mUSD3") ERC4626(asset_) {}
 
@@ -29,8 +30,17 @@ contract LCCMockUSD3 is ERC4626 {
         depositLimit = limit;
     }
 
+    function setDepositHookReverts(bool reverts) external {
+        depositHookReverts = reverts;
+    }
+
     function maxDeposit(address) public view override returns (uint256) {
         return depositLimit;
+    }
+
+    function deposit(uint256 assets, address receiver) public override returns (uint256) {
+        require(!depositHookReverts, "!allowed");
+        return super.deposit(assets, receiver);
     }
 }
 
