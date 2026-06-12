@@ -115,8 +115,11 @@ Targeted local command patterns for Jane changes:
 
 ## LCC Module Guide (`src/lcc/`)
 
-- `src/lcc/LeveragedCallableCreditVault.sol`: per-facility leveraged callable credit vault — margin deposits create USDC callable commitments, the owner opens one capital call per epoch, funding routes USDC into USD3 (with internal escrow fallback when USD3 lacks capacity), missed obligations slash margin to treasury. State progression is lazy (no keeper); `materializeAccount` and `finalizeEpochSlash` are permissionless.
+- `src/lcc/LeveragedCallableCreditVault.sol`: per-facility leveraged callable credit vault — margin deposits create USDC callable commitments, the owner opens one capital call per epoch, funding routes USDC into USD3 (with internal escrow fallback when USD3 cannot accept the deposit), missed obligations slash margin. State progression is lazy (no keeper); `materializeAccount` and `finalizeEpochSlash` are permissionless.
+- Slashed margin backs a step-decay shortfall auction during the epoch's `Closed` phase (pricing math in the externally linked `src/lcc/libraries/LCCAuctionLib.sol`); leftover collateral sweeps to treasury at lazy settlement. Disabled config (`auctionStepCount == 0`) restores direct-to-treasury slashing.
 - `src/lcc/LeveragedCallableCreditVaultFactory.sol`: permissionless factory; registry confers no trust.
+- Vaults must be on USD3's `depositorWhitelist` for funding/fill deposits to land directly.
+- The vault compiles under a scoped `compilation_restrictions` entry in `foundry.toml` (`optimizer_runs = 200`) to stay below the bytecode size limit.
 - Design notes: `docs/architecture.md` (LCC Domain section).
 
 Targeted local command for LCC changes:

@@ -29,7 +29,7 @@ interface ILeveragedCallableCreditVault {
         uint256 exitCapBps;
         uint256 exitDelayEpochs;
         uint256 minDepositAssets;
-        uint256 auctionStepDuration;
+        uint256 auctionStepCount;
         uint256 auctionStepDecayRateBps;
         uint256 maxAuctionAwardBps;
     }
@@ -120,6 +120,7 @@ interface ILeveragedCallableCreditVault {
     function getAuctionState(uint256 epoch) external view returns (LCCAuctionLib.AuctionState memory);
     function pendingAuctionEpochPlusOne() external view returns (uint256);
     function maxAuctionAwardBps() external view returns (uint256);
+    function auctionStepCount() external view returns (uint256);
     function auctionStepDuration() external view returns (uint256);
     function auctionStepDecayRateBps() external view returns (uint256);
     function placeEscrowedFunding(address user) external returns (uint256 placedUsdc);

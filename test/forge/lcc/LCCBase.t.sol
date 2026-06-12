@@ -116,7 +116,7 @@ contract LCCBase is Test {
             exitCapBps: exitCapBps,
             exitDelayEpochs: 1,
             minDepositAssets: 0,
-            auctionStepDuration: 0,
+            auctionStepCount: 0,
             auctionStepDecayRateBps: 0,
             maxAuctionAwardBps: 0
         });
@@ -124,7 +124,8 @@ contract LCCBase is Test {
 
     function _auctionParams() internal view returns (ILeveragedCallableCreditVault.VaultParams memory params) {
         params = _params(CAP, CAP);
-        params.auctionStepDuration = 5;
+        // 20s Closed window split into 4 steps of 5s, halving the retained share each step.
+        params.auctionStepCount = 4;
         params.auctionStepDecayRateBps = 5_000;
         params.maxAuctionAwardBps = 10_000;
     }

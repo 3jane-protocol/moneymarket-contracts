@@ -47,6 +47,28 @@ contract LCCAuctionTest is LCCBase {
         assertEq(state.marginAwarded, 0);
     }
 
+    function testStepDurationDerivedFromClosedWindow() public view {
+        assertEq(vault.auctionStepCount(), 4);
+        assertEq(vault.auctionStepDuration(), (EPOCH - NORMAL - PRE_CALL - FUNDING) / 4);
+    }
+
+    function testLateKickStartsMidRamp() public {
+        _deposit(alice, 100e18);
+        _deposit(bob, 50e18);
+        _openCall(150e18);
+        _fund(alice);
+
+        // Nobody touches the vault until two steps into the window: elapsed is measured from the funding
+        // deadline, not the kick, so the ramp is already at 75%.
+        vm.warp(DEADLINE + 10);
+        vault.finalizeEpochSlash(0);
+        assertEq(vault.pendingAuctionEpochPlusOne(), 1);
+
+        vm.prank(carol);
+        (, uint256 award) = vault.takeAuction(0, 25e18);
+        assertEq(award, 18.75e18);
+    }
+
     function testNoKickWhenFinalizedAfterWindow() public {
         _deposit(alice, 100e18);
         _deposit(bob, 50e18);
@@ -313,6 +335,12 @@ contract LCCAuctionTest is LCCBase {
         // Auction-enabled vaults need a nonzero Closed window.
         params = _auctionParams();
         params.fundingDuration = EPOCH - NORMAL - PRE_CALL;
+        vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
+        new LeveragedCallableCreditVault(params);
+
+        // At least one second per step: stepCount cannot exceed the Closed window.
+        params = _auctionParams();
+        params.auctionStepCount = EPOCH - NORMAL - PRE_CALL - FUNDING + 1;
         vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
         new LeveragedCallableCreditVault(params);
 

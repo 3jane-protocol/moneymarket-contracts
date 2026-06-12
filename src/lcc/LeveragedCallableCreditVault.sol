@@ -97,9 +97,13 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     uint256 public immutable fundingDuration;
     uint256 public immutable marginRatioBps;
     uint256 public immutable exitDelayEpochs;
-    /// @dev Auction step parameters; auctionStepDuration == 0 permanently disables the auction machinery.
-    uint256 public immutable auctionStepDuration;
+    /// @dev The auction window (the Closed phase) is divided into auctionStepCount price steps; the protocol's
+    /// retained share of the pool decays by auctionStepDecayRateBps each step, so the curve completes exactly over
+    /// every auction window. auctionStepCount == 0 permanently disables the auction machinery.
+    uint256 public immutable auctionStepCount;
     uint256 public immutable auctionStepDecayRateBps;
+    /// @dev Derived: closed-window seconds / auctionStepCount.
+    uint256 public immutable auctionStepDuration;
 
     uint256 public protocolCallableCapUsdc;
     uint256 public userCallableCapUsdc;
@@ -168,8 +172,12 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         fundingDuration = params.fundingDuration;
         marginRatioBps = params.marginRatioBps;
         exitDelayEpochs = params.exitDelayEpochs;
-        auctionStepDuration = params.auctionStepDuration;
+        auctionStepCount = params.auctionStepCount;
         auctionStepDecayRateBps = params.auctionStepDecayRateBps;
+        auctionStepDuration = params.auctionStepCount == 0
+            ? 0
+            : (params.epochLength - params.normalDuration - params.preCallDuration - params.fundingDuration)
+                / params.auctionStepCount;
 
         protocolCallableCapUsdc = params.protocolCallableCapUsdc;
         userCallableCapUsdc = params.userCallableCapUsdc;
@@ -224,7 +232,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     function setMaxAuctionAwardBps(uint256 newMaxAuctionAwardBps) external onlyOwner synced {
         if (newMaxAuctionAwardBps > BPS) revert InvalidParams();
-        if (newMaxAuctionAwardBps != 0 && auctionStepDuration == 0) revert InvalidParams();
+        if (newMaxAuctionAwardBps != 0 && auctionStepCount == 0) revert InvalidParams();
         // No repricing while fillers are mid-auction.
         if (pendingAuctionEpochPlusOne != 0) revert InvalidPhase();
 
@@ -441,9 +449,9 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         _depositToUsd3(msg.sender, filledUsdc);
         if (marginAward != 0) marginAsset.safeTransfer(msg.sender, marginAward);
 
-        if (state.filledUsdc == state.shortfallUsdc) _settleAuction(epoch);
-
         emit AuctionFill(msg.sender, epoch, filledUsdc, marginAward);
+
+        if (state.filledUsdc == state.shortfallUsdc) _settleAuction(epoch);
     }
 
     /// @notice Deposits escrowed funding USDC into USD3 for `user`, up to USD3's current deposit capacity.
@@ -1214,15 +1222,16 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         if (params.exitCapBps == 0 || params.exitCapBps > BPS) revert InvalidParams();
         if (params.exitDelayEpochs == 0) revert InvalidParams();
 
-        if (params.auctionStepDuration == 0) {
+        if (params.auctionStepCount == 0) {
             if (params.auctionStepDecayRateBps != 0 || params.maxAuctionAwardBps != 0) revert InvalidParams();
         } else {
             if (params.auctionStepDecayRateBps == 0 || params.auctionStepDecayRateBps > BPS) revert InvalidParams();
             if (params.maxAuctionAwardBps > BPS) revert InvalidParams();
-            // The auction needs a nonzero Closed window to ever be takeable.
-            if (params.normalDuration + params.preCallDuration + params.fundingDuration >= params.epochLength) {
-                revert InvalidParams();
-            }
+            // The auction needs a nonzero Closed window, and at least one second per step so the full curve fits
+            // inside every auction window.
+            uint256 phaseDurations = params.normalDuration + params.preCallDuration + params.fundingDuration;
+            if (phaseDurations >= params.epochLength) revert InvalidParams();
+            if (params.auctionStepCount > params.epochLength - phaseDurations) revert InvalidParams();
         }
     }
 }
