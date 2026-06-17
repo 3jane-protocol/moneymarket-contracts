@@ -23,10 +23,23 @@ library UtilsLib {
         }
     }
 
+    /// @dev Returns the max of `x` and `y`.
+    function max(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        assembly {
+            z := xor(x, mul(xor(x, y), gt(y, x)))
+        }
+    }
+
     /// @dev Returns `x` safely cast to uint128.
     function toUint128(uint256 x) internal pure returns (uint128) {
         if (x > type(uint128).max) revert ErrorsLib.MaxUint128Exceeded();
         return uint128(x);
+    }
+
+    /// @dev Returns `x` safely cast to uint64.
+    function toUint64(uint256 x) internal pure returns (uint64) {
+        if (x > type(uint64).max) revert ErrorsLib.MaxUint64Exceeded();
+        return uint64(x);
     }
 
     /// @dev Returns max(0, x - y).

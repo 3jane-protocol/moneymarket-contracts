@@ -20,6 +20,7 @@ library MorphoCreditStorageLib {
     uint256 internal constant PAYMENT_CYCLE_SLOT = 22;
     uint256 internal constant REPAYMENT_OBLIGATION_SLOT = 23;
     uint256 internal constant MARKDOWN_STATE_SLOT = 24;
+    uint256 internal constant CALLABLE_CREDIT_SLOT = 25;
 
     /* SLOT OFFSETS */
 
@@ -33,6 +34,10 @@ library MorphoCreditStorageLib {
 
     function helperSlot() internal pure returns (bytes32) {
         return bytes32(HELPER_SLOT);
+    }
+
+    function callableCreditSlot() internal pure returns (bytes32) {
+        return bytes32(CALLABLE_CREDIT_SLOT);
     }
 
     function usd3Slot() internal pure returns (bytes32) {

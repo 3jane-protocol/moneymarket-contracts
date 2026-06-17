@@ -332,6 +332,9 @@ interface IMorphoCredit {
     /// @notice The helper of the contract.
     function helper() external view returns (address);
 
+    /// @notice The callable credit contract authorized to borrow on behalf of borrowers.
+    function callableCredit() external view returns (address);
+
     /// @notice The usd3 contract
     function usd3() external view returns (address);
 
@@ -341,6 +344,10 @@ interface IMorphoCredit {
     /// @notice Sets `helper` as `helper` of the contract.
     /// @param newHelper The new helper address
     function setHelper(address newHelper) external;
+
+    /// @notice Sets `callableCredit` as the authorized callable credit contract.
+    /// @param newCallableCredit The new callable credit address
+    function setCallableCredit(address newCallableCredit) external;
 
     /// @notice Sets `usd3` as `usd3` of the contract.
     /// @param newUsd3 The new usd3 address

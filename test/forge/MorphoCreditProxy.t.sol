@@ -114,12 +114,13 @@ contract MorphoCreditProxyTest is Test {
 
         // Test MorphoCredit storage slots (start after Morpho base + __gap)
         assertEq(uint256(MorphoCreditStorageLib.helperSlot()), 19);
-        // protocolConfigSlot removed - protocolConfig is immutable
+        // protocolConfig is immutable, not in storage
         assertEq(uint256(MorphoCreditStorageLib.usd3Slot()), 20);
         assertEq(uint256(bytes32(MorphoCreditStorageLib.BORROWER_PREMIUM_SLOT)), 21);
         assertEq(uint256(bytes32(MorphoCreditStorageLib.PAYMENT_CYCLE_SLOT)), 22);
         assertEq(uint256(bytes32(MorphoCreditStorageLib.REPAYMENT_OBLIGATION_SLOT)), 23);
         assertEq(uint256(bytes32(MorphoCreditStorageLib.MARKDOWN_STATE_SLOT)), 24);
+        assertEq(uint256(MorphoCreditStorageLib.callableCreditSlot()), 25);
     }
 
     function testProxyStatePreservation() public {

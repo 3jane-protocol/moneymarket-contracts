@@ -49,6 +49,10 @@ contract ProtocolConfig is Initializable {
     bytes32 private constant USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
     bytes32 private constant SUSD3_WITHDRAWAL_WINDOW = keccak256("SUSD3_WITHDRAWAL_WINDOW");
     bytes32 private constant USD3_SUPPLY_CAP = keccak256("USD3_SUPPLY_CAP");
+    // Callable Credit
+    bytes32 private constant CC_FROZEN = keccak256("CC_FROZEN");
+    bytes32 private constant CC_DEBT_CAP_BPS = keccak256("CC_DEBT_CAP_BPS");
+    bytes32 private constant CC_CREDIT_LINE_BPS = keccak256("CC_CREDIT_LINE_BPS");
 
     /// @dev Configuration storage mapping
     mapping(bytes32 => uint256) public config;
@@ -98,6 +102,7 @@ contract ProtocolConfig is Initializable {
     /// @param value The configuration value (restricted to binary values)
     /// @notice Emergency parameters and their effects:
     /// - IS_PAUSED: Set to 1 to pause all borrowing operations
+    /// - CC_FROZEN: Set to 1 to freeze all callable credit operations
     /// - DEBT_CAP: Set to 0 to prevent new borrows
     /// - MAX_ON_CREDIT: Set to 0 to stop USD3 deployments to MorphoCredit (protects lenders)
     /// - USD3_SUPPLY_CAP: Set to 0 to prevent new USD3 deposits
@@ -105,8 +110,8 @@ contract ProtocolConfig is Initializable {
         if (msg.sender != owner && msg.sender != emergencyAdmin) {
             revert ErrorsLib.Unauthorized();
         }
-        // IS_PAUSED: can only set to 1 (pause)
-        if (key == IS_PAUSED) {
+        // IS_PAUSED, CC_FROZEN: can only set to 1 (pause/freeze)
+        if (key == IS_PAUSED || key == CC_FROZEN) {
             if (value != 1) revert EmergencyCanOnlyPause();
         }
         // All other emergency params: can only set to 0 (full stop)
@@ -195,7 +200,8 @@ contract ProtocolConfig is Initializable {
         return config[USD3_SUPPLY_CAP];
     }
 
-    function getDebtCap() external view returns (uint256) {
-        return config[DEBT_CAP];
+    // Callable Credit getters
+    function getCcFrozen() external view returns (uint256) {
+        return config[CC_FROZEN];
     }
 }

@@ -193,6 +193,10 @@ contract MockProtocolConfig is IProtocolConfig {
     function getUsd3SupplyCap() external pure returns (uint256) {
         return 0;
     }
+
+    function getCcFrozen() external pure returns (uint256) {
+        return 0;
+    }
 }
 
 contract CreditLineTest is Test {

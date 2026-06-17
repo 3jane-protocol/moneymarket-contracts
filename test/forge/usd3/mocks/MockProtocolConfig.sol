@@ -138,4 +138,8 @@ contract MockProtocolConfig is IProtocolConfig {
     function getUsd3SupplyCap() external view returns (uint256) {
         return config[USD3_SUPPLY_CAP];
     }
+
+    function getCcFrozen() external view returns (uint256) {
+        return config[keccak256("CC_FROZEN")];
+    }
 }
