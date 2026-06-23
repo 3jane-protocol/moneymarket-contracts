@@ -70,12 +70,13 @@ contract LCCAuctionLibTest is Test {
     function testFuzzFillSequenceConservesPool(uint128 shortfall, uint128 pool, uint256 seed) public pure {
         shortfall = uint128(bound(shortfall, 1, type(uint128).max));
 
-        LCCAuctionLib.AuctionState memory state =
-            LCCAuctionLib.AuctionState({shortfallUsdc: shortfall, filledUsdc: 0, marginPool: pool, marginAwarded: 0});
+        LCCAuctionLib.AuctionState memory state = LCCAuctionLib.AuctionState({
+            shortfallAmount: shortfall, filledAmount: 0, marginPool: pool, marginAwarded: 0
+        });
 
         uint256 totalAward;
         for (uint256 i = 0; i < 8; ++i) {
-            uint256 remaining = shortfall - state.filledUsdc;
+            uint256 remaining = shortfall - state.filledAmount;
             if (remaining == 0) break;
 
             uint256 fill = bound(uint256(keccak256(abi.encode(seed, i, "fill"))), 1, remaining);
@@ -84,7 +85,7 @@ contract LCCAuctionLibTest is Test {
 
             uint256 award = LCCAuctionLib.fillAward(state, fill, offered, type(uint256).max);
 
-            state.filledUsdc += uint128(fill);
+            state.filledAmount += uint128(fill);
             state.marginAwarded += award;
             totalAward += award;
         }
@@ -95,7 +96,7 @@ contract LCCAuctionLibTest is Test {
 
     function testFillAwardCaps() public pure {
         LCCAuctionLib.AuctionState memory state =
-            LCCAuctionLib.AuctionState({shortfallUsdc: 100e18, filledUsdc: 0, marginPool: 50e18, marginAwarded: 0});
+            LCCAuctionLib.AuctionState({shortfallAmount: 100e18, filledAmount: 0, marginPool: 50e18, marginAwarded: 0});
 
         // Pro-rata: half the shortfall at full offer takes half the pool.
         assertEq(LCCAuctionLib.fillAward(state, 50e18, 50e18, type(uint256).max), 25e18);
@@ -105,7 +106,7 @@ contract LCCAuctionLibTest is Test {
         state.marginAwarded = 49e18;
         assertEq(LCCAuctionLib.fillAward(state, 100e18, 50e18, type(uint256).max), 1e18);
         // Zero shortfall short-circuits.
-        state.shortfallUsdc = 0;
+        state.shortfallAmount = 0;
         assertEq(LCCAuctionLib.fillAward(state, 1e18, 50e18, type(uint256).max), 0);
     }
 }

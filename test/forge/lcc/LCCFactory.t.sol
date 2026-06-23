@@ -31,7 +31,7 @@ contract LCCFactoryTest is LCCBase {
 
     function testConstructorValidation() public {
         ILeveragedCallableCreditVault.VaultParams memory badAsset = _params(CAP, CAP);
-        badAsset.callableAsset = address(margin);
+        badAsset.fundingAsset = address(margin);
 
         vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
         new LeveragedCallableCreditVault(badAsset);

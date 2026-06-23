@@ -19,13 +19,13 @@ contract LCCEscrowTest is LCCBase {
         usd3.setDepositLimit(0);
 
         vm.expectEmit(true, true, false, true, address(vault));
-        emit ILeveragedCallableCreditVault.FundingEscrowed(alice, 0, 100e18);
+        emit ILeveragedCallableCreditVault.EscrowedFundingCreated(alice, 0, 100e18);
         uint256 obligation = _fund(alice);
 
         assertEq(obligation, 100e18);
         assertEq(usd3.balanceOf(alice), 0);
-        assertEq(vault.escrowedFundingUsdc(alice), 100e18);
-        assertEq(vault.totalEscrowedFundingUsdc(), 100e18);
+        assertEq(vault.escrowedFundingAmount(alice), 100e18);
+        assertEq(vault.totalEscrowedFundingAmount(), 100e18);
         assertEq(usdc.balanceOf(address(vault)), 100e18);
         assertEq(margin.balanceOf(alice), 1_000_000e18 - 50e18);
         assertTrue(vault.fundedEpoch(0, alice));
@@ -40,7 +40,7 @@ contract LCCEscrowTest is LCCBase {
 
         assertEq(obligation, 100e18);
         assertEq(usd3.balanceOf(alice), 0);
-        assertEq(vault.escrowedFundingUsdc(alice), 100e18);
+        assertEq(vault.escrowedFundingAmount(alice), 100e18);
         assertEq(usdc.allowance(address(vault), address(usd3)), 0);
         assertTrue(vault.fundedEpoch(0, alice));
 
@@ -49,9 +49,9 @@ contract LCCEscrowTest is LCCBase {
         assertEq(margin.balanceOf(treasury), 0);
 
         usd3.setDepositHookReverts(false);
-        vault.placeEscrowedFunding(alice);
+        vault.depositEscrowedFunding(alice);
         assertEq(usd3.balanceOf(alice), 100e18);
-        assertEq(vault.escrowedFundingUsdc(alice), 0);
+        assertEq(vault.escrowedFundingAmount(alice), 0);
     }
 
     function testEscrowedFunderIsNotSlashed() public {
@@ -64,7 +64,7 @@ contract LCCEscrowTest is LCCBase {
         assertFalse(vault.defaultedEpoch(0, alice));
         ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 50e18);
-        assertEq(account.activeCallableUsdc, 100e18);
+        assertEq(account.activeCommitment, 100e18);
     }
 
     function testPlaceEscrowedFundingPartialThenFull() public {
@@ -73,30 +73,30 @@ contract LCCEscrowTest is LCCBase {
         usd3.setDepositLimit(40e18);
         vm.expectEmit(true, false, false, true, address(vault));
         emit ILeveragedCallableCreditVault.EscrowedFundingPlaced(alice, 40e18);
-        uint256 placed = vault.placeEscrowedFunding(alice);
+        uint256 placed = vault.depositEscrowedFunding(alice);
 
         assertEq(placed, 40e18);
         assertEq(usd3.balanceOf(alice), 40e18);
-        assertEq(vault.escrowedFundingUsdc(alice), 60e18);
-        assertEq(vault.totalEscrowedFundingUsdc(), 60e18);
+        assertEq(vault.escrowedFundingAmount(alice), 60e18);
+        assertEq(vault.totalEscrowedFundingAmount(), 60e18);
 
         usd3.setDepositLimit(type(uint256).max);
-        placed = vault.placeEscrowedFunding(alice);
+        placed = vault.depositEscrowedFunding(alice);
 
         assertEq(placed, 60e18);
         assertEq(usd3.balanceOf(alice), 100e18);
-        assertEq(vault.escrowedFundingUsdc(alice), 0);
+        assertEq(vault.escrowedFundingAmount(alice), 0);
         assertEq(usdc.balanceOf(address(vault)), 0);
     }
 
     function testPlaceEscrowedFundingRevertsWithoutEscrowOrCapacity() public {
         vm.expectRevert(LeveragedCallableCreditVault.NothingToClaim.selector);
-        vault.placeEscrowedFunding(alice);
+        vault.depositEscrowedFunding(alice);
 
         _setupEscrowedFunding();
 
         vm.expectRevert(LeveragedCallableCreditVault.InvalidAmount.selector);
-        vault.placeEscrowedFunding(alice);
+        vault.depositEscrowedFunding(alice);
     }
 
     function testClaimEscrowedFundingRequiresShutdown() public {
@@ -115,8 +115,8 @@ contract LCCEscrowTest is LCCBase {
 
         assertEq(claimed, 100e18);
         assertEq(usdc.balanceOf(alice), usdcBefore + 100e18);
-        assertEq(vault.escrowedFundingUsdc(alice), 0);
-        assertEq(vault.totalEscrowedFundingUsdc(), 0);
+        assertEq(vault.escrowedFundingAmount(alice), 0);
+        assertEq(vault.totalEscrowedFundingAmount(), 0);
     }
 }
 

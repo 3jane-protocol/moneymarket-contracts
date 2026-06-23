@@ -22,7 +22,7 @@ contract LCCFundingTest is LCCBase {
 
         ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 75e18);
-        assertEq(account.activeCallableUsdc, 150e18);
+        assertEq(account.activeCommitment, 150e18);
     }
 
     function testObligationRoundsUpAndMarginReleaseRoundsDown() public {
@@ -36,7 +36,7 @@ contract LCCFundingTest is LCCBase {
 
         ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 1e18);
-        assertEq(account.activeCallableUsdc, 2e18 - 1);
+        assertEq(account.activeCommitment, 2e18 - 1);
     }
 
     function testFundingRequiresFundingPhaseAndCannotRepeat() public {

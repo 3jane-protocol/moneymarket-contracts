@@ -94,7 +94,7 @@ contract LCCMaterializeTest is LCCBase {
 
         ILeveragedCallableCreditVault.Account memory account = vault.getAccount(bob);
         assertEq(account.activeMargin, 100e18);
-        assertEq(account.activeCallableUsdc, 200e18);
+        assertEq(account.activeCommitment, 200e18);
         assertFalse(vault.defaultedEpoch(0, bob));
     }
 
@@ -111,7 +111,7 @@ contract LCCMaterializeTest is LCCBase {
         ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
         assertTrue(vault.defaultedEpoch(0, alice));
         assertEq(account.activeMargin, 50e18);
-        assertEq(account.activeCallableUsdc, 100e18);
+        assertEq(account.activeCommitment, 100e18);
         assertEq(margin.balanceOf(treasury), 100e18);
     }
 

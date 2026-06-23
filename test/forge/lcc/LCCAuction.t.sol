@@ -16,7 +16,7 @@ contract LCCAuctionTest is LCCBase {
         _deployAuctionVault();
     }
 
-    /// @dev alice honors, bob defaults: pool = 50e18 margin, shortfall = 50e18 USDC, kicked at the deadline.
+    /// @dev alice honors, bob defaults: pool = 50e18 margin, shortfall = 50e18 funding asset, kicked at the deadline.
     function _setupShortfallAuction() internal {
         _deposit(alice, 100e18);
         _deposit(bob, 50e18);
@@ -41,9 +41,9 @@ contract LCCAuctionTest is LCCBase {
         assertEq(vault.pendingAuctionEpochPlusOne(), 1);
 
         LCCAuctionLib.AuctionState memory state = vault.getAuctionState(0);
-        assertEq(state.shortfallUsdc, 50e18);
+        assertEq(state.shortfallAmount, 50e18);
         assertEq(state.marginPool, 50e18);
-        assertEq(state.filledUsdc, 0);
+        assertEq(state.filledAmount, 0);
         assertEq(state.marginAwarded, 0);
     }
 
@@ -219,7 +219,7 @@ contract LCCAuctionTest is LCCBase {
 
         // Nothing was filled or awarded; the pool is intact.
         LCCAuctionLib.AuctionState memory state = vault.getAuctionState(0);
-        assertEq(state.filledUsdc, 0);
+        assertEq(state.filledAmount, 0);
         assertEq(state.marginAwarded, 0);
         assertEq(margin.balanceOf(carol), 1_000_000e18);
     }
@@ -278,8 +278,8 @@ contract LCCAuctionTest is LCCBase {
 
         assertEq(vault.pendingAuctionEpochPlusOne(), 1);
         assertEq(vault.getAuctionState(0).marginPool, 50e18);
-        assertEq(vault.exitRequestedMarginByMaturity(maturity), 0);
-        assertEq(vault.exitRequestedCallableByMaturity(maturity), 0);
+        assertEq(vault.exitBucketMarginByMaturity(maturity), 0);
+        assertEq(vault.exitBucketCommitmentByMaturity(maturity), 0);
     }
 
     function testSetMaxAuctionAwardBpsMatrix() public {
@@ -345,7 +345,7 @@ contract LCCAuctionTest is LCCBase {
         new LeveragedCallableCreditVault(params);
 
         params = _params(CAP, CAP);
-        params.protocolCallableCapUsdc = uint256(type(uint128).max) + 1;
+        params.protocolCommitmentCap = uint256(type(uint128).max) + 1;
         vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
         new LeveragedCallableCreditVault(params);
     }

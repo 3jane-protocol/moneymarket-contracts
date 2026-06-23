@@ -60,7 +60,7 @@ contract LCCSyncTest is LCCBase {
         _syncAs(alice);
 
         assertEq(vault.pendingMarginByActivationEpoch(1), 0);
-        assertEq(vault.pendingCallableByActivationEpoch(1), 0);
+        assertEq(vault.pendingCommitmentByActivationEpoch(1), 0);
         assertEq(vault.totalPendingMargin(), 0);
         assertEq(vault.totalActiveMargin(), 100e18);
     }
@@ -73,8 +73,8 @@ contract LCCSyncTest is LCCBase {
         vm.warp(START + EPOCH * HUGE_EPOCH_GAP);
         _syncAs(alice);
 
-        assertEq(vault.exitRequestedMarginByMaturity(maturity), 0);
-        assertEq(vault.exitRequestedCallableByMaturity(maturity), 0);
+        assertEq(vault.exitBucketMarginByMaturity(maturity), 0);
+        assertEq(vault.exitBucketCommitmentByMaturity(maturity), 0);
         assertEq(vault.totalActiveMargin(), 0);
         assertEq(vault.claimableExitedMargin(alice), 100e18);
     }
@@ -91,7 +91,7 @@ contract LCCSyncTest is LCCBase {
         _syncAs(bob);
 
         assertEq(vault.pendingMarginByActivationEpoch(1), 0);
-        assertEq(vault.exitRequestedMarginByMaturity(maturity), 0);
+        assertEq(vault.exitBucketMarginByMaturity(maturity), 0);
         assertEq(vault.totalPendingMargin(), 0);
         assertEq(vault.totalActiveMargin(), 50e18);
         assertEq(vault.claimableExitedMargin(alice), 100e18);
@@ -121,9 +121,9 @@ contract LCCSyncTest is LCCBase {
         vm.warp(START + EPOCH * (carolMaturity + 1));
         _syncAs(alice);
 
-        assertEq(vault.exitRequestedMarginByMaturity(aliceMaturity), 0);
-        assertEq(vault.exitRequestedMarginByMaturity(bobMaturity), 0);
-        assertEq(vault.exitRequestedMarginByMaturity(carolMaturity), 0);
+        assertEq(vault.exitBucketMarginByMaturity(aliceMaturity), 0);
+        assertEq(vault.exitBucketMarginByMaturity(bobMaturity), 0);
+        assertEq(vault.exitBucketMarginByMaturity(carolMaturity), 0);
         assertEq(vault.totalActiveMargin(), 0);
         assertEq(vault.claimableExitedMargin(alice), 100e18);
         assertEq(vault.claimableExitedMargin(bob), 100e18);

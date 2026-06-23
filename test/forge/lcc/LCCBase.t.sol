@@ -101,7 +101,7 @@ contract LCCBase is Test {
         return ILeveragedCallableCreditVault.VaultParams({
             owner: owner,
             marginAsset: address(margin),
-            callableAsset: address(usdc),
+            fundingAsset: address(usdc),
             usd3: address(usd3),
             marginOracle: oracle_,
             treasury: treasury,
@@ -111,8 +111,8 @@ contract LCCBase is Test {
             preCallDuration: PRE_CALL,
             fundingDuration: FUNDING,
             marginRatioBps: 5_000,
-            protocolCallableCapUsdc: protocolCap,
-            userCallableCapUsdc: userCap,
+            protocolCommitmentCap: protocolCap,
+            userCommitmentCap: userCap,
             exitCapBps: exitCapBps,
             exitDelayEpochs: 1,
             minDepositAssets: 0,
@@ -147,9 +147,9 @@ contract LCCBase is Test {
         vm.stopPrank();
     }
 
-    function _deposit(address user, uint256 assets) internal returns (uint256 callable) {
+    function _deposit(address user, uint256 assets) internal returns (uint256 commitment) {
         vm.prank(user);
-        callable = vault.deposit(assets, user);
+        commitment = vault.deposit(assets, user);
     }
 
     function _openCall(uint256 amount) internal {

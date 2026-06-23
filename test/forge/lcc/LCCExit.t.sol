@@ -104,8 +104,8 @@ contract LCCExitTest is LCCBase {
         _openCall(100e18);
         _fund(alice);
 
-        assertEq(vault.exitRequestedMarginByMaturity(1), 50e18);
-        assertEq(vault.exitRequestedCallableByMaturity(1), 100e18);
+        assertEq(vault.exitBucketMarginByMaturity(1), 50e18);
+        assertEq(vault.exitBucketCommitmentByMaturity(1), 100e18);
 
         vm.warp(START + EPOCH);
         vm.prank(alice);
@@ -123,14 +123,14 @@ contract LCCExitTest is LCCBase {
         _openCall(400e18);
         _fund(alice);
 
-        assertEq(vault.exitRequestedMarginByMaturity(1), 0);
-        assertEq(vault.exitRequestedCallableByMaturity(1), 0);
+        assertEq(vault.exitBucketMarginByMaturity(1), 0);
+        assertEq(vault.exitBucketCommitmentByMaturity(1), 0);
 
         vm.prank(bob);
         assertEq(vault.requestExit(), 1);
 
-        assertEq(vault.exitRequestedMarginByMaturity(1), 100e18);
-        assertEq(vault.exitRequestedCallableByMaturity(1), 200e18);
+        assertEq(vault.exitBucketMarginByMaturity(1), 100e18);
+        assertEq(vault.exitBucketCommitmentByMaturity(1), 200e18);
     }
 
     function testExitRequestedAfterCallOpenRemainsLiableForOpenCall() public {

@@ -15,8 +15,8 @@ contract LCCCallTest is LCCBase {
         vault.openEpochCall(1, 100e18);
 
         ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(1);
-        assertEq(state.callableDenominator, 200e18);
-        assertEq(state.rawMarginAtCallOpen, 100e18);
+        assertEq(state.commitmentDenominator, 200e18);
+        assertEq(state.marginAtCallOpen, 100e18);
     }
 
     function testOpenCallRequiresPreCallAndOwner() public {

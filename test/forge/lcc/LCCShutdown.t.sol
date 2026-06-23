@@ -64,13 +64,13 @@ contract LCCShutdownTest is LCCBase {
         vm.prank(alice);
         vault.claimEmergencyMargin(alice);
 
-        assertEq(vault.exitRequestedMarginByMaturity(maturity), 0);
-        assertEq(vault.exitRequestedCallableByMaturity(maturity), 0);
+        assertEq(vault.exitBucketMarginByMaturity(maturity), 0);
+        assertEq(vault.exitBucketCommitmentByMaturity(maturity), 0);
 
         vm.warp(START + EPOCH * (maturity + 1));
         _syncAs(bob);
 
         assertEq(vault.totalActiveMargin(), 0);
-        assertEq(vault.totalActiveCallableUsdc(), 0);
+        assertEq(vault.totalActiveCommitment(), 0);
     }
 }

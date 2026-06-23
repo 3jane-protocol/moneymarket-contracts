@@ -15,10 +15,10 @@ contract LCCSlashTest is LCCBase {
         vault.finalizeEpochSlash(0);
 
         ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(state.rawMarginReleased + state.honoredRawMarginRemaining + margin.balanceOf(treasury), 200e18);
+        assertEq(state.marginReleased + state.fundedUsersRemainingMargin + margin.balanceOf(treasury), 200e18);
         assertEq(margin.balanceOf(treasury), 100e18);
         assertEq(vault.totalActiveMargin(), 0);
-        assertEq(vault.totalActiveCallableUsdc(), 0);
+        assertEq(vault.totalActiveCommitment(), 0);
 
         vault.finalizeEpochSlash(0);
         assertEq(margin.balanceOf(treasury), 100e18);
@@ -71,7 +71,7 @@ contract LCCSlashTest is LCCBase {
         _deposit(bob, 50e18);
 
         assertEq(margin.balanceOf(treasury), 100e18);
-        assertEq(vault.exitRequestedMarginByMaturity(1), 0);
+        assertEq(vault.exitBucketMarginByMaturity(1), 0);
         assertEq(vault.totalActiveMargin(), 50e18);
 
         _deposit(carol, 25e18);

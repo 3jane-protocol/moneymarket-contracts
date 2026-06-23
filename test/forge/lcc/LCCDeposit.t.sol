@@ -7,21 +7,21 @@ import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILevera
 
 contract LCCDepositTest is LCCBase {
     function testDepositValuesMarginAndActivatesDuringNormal() public {
-        uint256 callable = _deposit(alice, 100e18);
+        uint256 commitment = _deposit(alice, 100e18);
 
         ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
-        assertEq(callable, 200e18);
+        assertEq(commitment, 200e18);
         assertEq(account.activeMargin, 100e18);
-        assertEq(account.activeCallableUsdc, 200e18);
+        assertEq(account.activeCommitment, 200e18);
         assertEq(vault.totalActiveMargin(), 100e18);
-        assertEq(vault.totalActiveCallableUsdc(), 200e18);
+        assertEq(vault.totalActiveCommitment(), 200e18);
     }
 
     function testDepositStagesOutsideNormalAndAggregateBucketActivates() public {
         vm.warp(START + NORMAL);
-        uint256 callable = _deposit(alice, 100e18);
+        uint256 commitment = _deposit(alice, 100e18);
 
-        assertEq(callable, 200e18);
+        assertEq(commitment, 200e18);
         assertEq(vault.totalPendingMargin(), 100e18);
         assertEq(vault.pendingMarginByActivationEpoch(1), 100e18);
 
@@ -36,7 +36,7 @@ contract LCCDepositTest is LCCBase {
         assertEq(derived.pendingMargin, 0);
     }
 
-    function testCapsIncludePendingCallable() public {
+    function testCapsIncludePendingCommitment() public {
         vault = new LeveragedCallableCreditVault(_params(400e18, 400e18));
         vm.startPrank(alice);
         margin.approve(address(vault), type(uint256).max);
