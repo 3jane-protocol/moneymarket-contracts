@@ -17,8 +17,8 @@ contract LCCSlashTest is LCCBase {
         ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.marginReleased + state.fundedUsersRemainingMargin + margin.balanceOf(treasury), 200e18);
         assertEq(margin.balanceOf(treasury), 100e18);
-        assertEq(vault.totalActiveMargin(), 0);
-        assertEq(vault.totalActiveCommitment(), 0);
+        assertEq(vault.totals().activeMargin, 0);
+        assertEq(vault.totals().activeCommitment, 0);
 
         vault.finalizeEpochSlash(0);
         assertEq(margin.balanceOf(treasury), 100e18);
@@ -33,11 +33,11 @@ contract LCCSlashTest is LCCBase {
 
         assertEq(margin.balanceOf(treasury), 100e18);
         assertTrue(vault.defaultedEpoch(0, alice));
-        assertEq(vault.totalActiveMargin(), 0);
+        assertEq(vault.totals().activeMargin, 0);
 
         _syncAs(alice);
         assertEq(margin.balanceOf(treasury), 100e18);
-        assertEq(vault.totalActiveMargin(), 0);
+        assertEq(vault.totals().activeMargin, 0);
     }
 
     function testDefaultedUserCanDepositAgainAndDefaultInLaterEpoch() public {
@@ -72,10 +72,10 @@ contract LCCSlashTest is LCCBase {
 
         assertEq(margin.balanceOf(treasury), 100e18);
         assertEq(vault.exitBucketMarginByMaturity(1), 0);
-        assertEq(vault.totalActiveMargin(), 50e18);
+        assertEq(vault.totals().activeMargin, 50e18);
 
         _deposit(carol, 25e18);
-        assertEq(vault.totalActiveMargin(), 75e18);
+        assertEq(vault.totals().activeMargin, 75e18);
     }
 
     function testExitingDefaulterMaterializedAfterMaturityCannotDoubleDecrement() public {
@@ -91,7 +91,7 @@ contract LCCSlashTest is LCCBase {
         _syncAs(alice);
 
         assertTrue(vault.defaultedEpoch(0, alice));
-        assertEq(vault.totalActiveMargin(), 50e18);
+        assertEq(vault.totals().activeMargin, 50e18);
         assertEq(vault.claimableExitedMargin(alice), 0);
     }
 }

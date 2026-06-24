@@ -40,7 +40,7 @@ contract LCCAuctionTest is LCCBase {
         vault.finalizeEpochSlash(0);
 
         assertEq(margin.balanceOf(treasury), 0);
-        assertEq(vault.pendingAuctionEpochPlusOne(), 1);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
 
         LCCAuctionLib.AuctionState memory state = vault.getAuctionState(0);
         assertEq(state.shortfallAmount, 50e18);
@@ -50,8 +50,8 @@ contract LCCAuctionTest is LCCBase {
     }
 
     function testStepDurationDerivedFromClosedWindow() public view {
-        assertEq(vault.auctionStepCount(), 4);
-        assertEq(vault.auctionStepDuration(), (EPOCH - NORMAL - PRE_CALL - FUNDING) / 4);
+        assertEq(vault.auctionConfig().auctionStepCount, 4);
+        assertEq(vault.auctionConfig().auctionStepDuration, (EPOCH - NORMAL - PRE_CALL - FUNDING) / 4);
     }
 
     function testLateKickStartsMidRamp() public {
@@ -64,7 +64,7 @@ contract LCCAuctionTest is LCCBase {
         // deadline, not the kick, so the ramp is already at 75%.
         vm.warp(DEADLINE + 10);
         vault.finalizeEpochSlash(0);
-        assertEq(vault.pendingAuctionEpochPlusOne(), 1);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
 
         vm.prank(carol);
         (, uint256 award) = vault.takeAuction(0, 25e18);
@@ -81,7 +81,7 @@ contract LCCAuctionTest is LCCBase {
         vault.finalizeEpochSlash(0);
 
         assertEq(margin.balanceOf(treasury), 50e18);
-        assertEq(vault.pendingAuctionEpochPlusOne(), 0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
     function testNoKickWhenAwardCapZero() public {
@@ -91,7 +91,7 @@ contract LCCAuctionTest is LCCBase {
         _setupShortfallAuction();
 
         assertEq(margin.balanceOf(treasury), 50e18);
-        assertEq(vault.pendingAuctionEpochPlusOne(), 0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
     function testNoKickWhenNoShortfall() public {
@@ -104,7 +104,7 @@ contract LCCAuctionTest is LCCBase {
 
         // Alice's ceil-rounded obligation covered the full 1-wei call; bob still defaulted and was slashed.
         assertEq(margin.balanceOf(treasury), 50e18);
-        assertEq(vault.pendingAuctionEpochPlusOne(), 0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
     function testZeroAwardFillBeforeFirstStep() public {
@@ -138,7 +138,7 @@ contract LCCAuctionTest is LCCBase {
         assertEq(award2, 18.75e18);
 
         // Full fill settles immediately: remainder to treasury.
-        assertEq(vault.pendingAuctionEpochPlusOne(), 0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         assertEq(margin.balanceOf(treasury), 50e18 - award1 - award2);
         assertEq(usd3.balanceOf(carol), 25e18);
         assertEq(usd3.balanceOf(bob), 25e18);
@@ -157,7 +157,7 @@ contract LCCAuctionTest is LCCBase {
         emit LCCEventsLib.AuctionSettled(0, 10e18, 5e18, 45e18);
         vault.materializeAccount(carol);
 
-        assertEq(vault.pendingAuctionEpochPlusOne(), 0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         assertEq(margin.balanceOf(treasury), 45e18);
 
         vm.warp(WINDOW_END + 1);
@@ -173,7 +173,7 @@ contract LCCAuctionTest is LCCBase {
         vm.prank(carol);
         vault.takeAuction(0, 50e18);
 
-        assertEq(vault.pendingAuctionEpochPlusOne(), 0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
 
         vm.expectRevert(LCCErrorsLib.AuctionNotLive.selector);
         vm.prank(bob);
@@ -233,7 +233,7 @@ contract LCCAuctionTest is LCCBase {
         vm.prank(owner);
         vault.shutdown();
 
-        assertEq(vault.pendingAuctionEpochPlusOne(), 0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         assertEq(margin.balanceOf(treasury), 50e18);
 
         vm.expectRevert(LCCErrorsLib.ShutdownActive.selector);
@@ -253,7 +253,7 @@ contract LCCAuctionTest is LCCBase {
         vm.prank(owner);
         vault.openEpochCall(1, 100e18);
 
-        assertEq(vault.pendingAuctionEpochPlusOne(), 0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         assertEq(margin.balanceOf(treasury), 50e18);
 
         vm.warp(START + EPOCH + NORMAL + PRE_CALL);
@@ -264,7 +264,7 @@ contract LCCAuctionTest is LCCBase {
         vault.finalizeEpochSlash(1);
 
         // Everyone honored epoch 1: no second auction.
-        assertEq(vault.pendingAuctionEpochPlusOne(), 0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
     function testExitingDefaulterFeedsPoolAndExitBucketCarved() public {
@@ -278,7 +278,7 @@ contract LCCAuctionTest is LCCBase {
         _finishFunding();
         vault.finalizeEpochSlash(0);
 
-        assertEq(vault.pendingAuctionEpochPlusOne(), 1);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
         assertEq(vault.getAuctionState(0).marginPool, 50e18);
         assertEq(vault.exitBucketMarginByMaturity(maturity), 0);
         assertEq(vault.exitBucketCommitmentByMaturity(maturity), 0);
@@ -291,7 +291,7 @@ contract LCCAuctionTest is LCCBase {
 
         vm.prank(owner);
         vault.setMaxAuctionAwardBps(5_000);
-        assertEq(vault.maxAuctionAwardBps(), 5_000);
+        assertEq(vault.riskConfig().maxAuctionAwardBps, 5_000);
 
         _setupShortfallAuction();
         vm.expectRevert(LCCErrorsLib.InvalidPhase.selector);

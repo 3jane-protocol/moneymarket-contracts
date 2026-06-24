@@ -75,6 +75,100 @@ interface ILeveragedCallableCreditVault {
         uint256 maxAuctionAwardBps;
     }
 
+    /// @notice Immutable asset and integration addresses for this vault.
+    /// @param marginAsset ERC20 posted as the performance bond.
+    /// @param fundingAsset ERC20 used to fund calls and auction fills.
+    /// @param usd3 ERC-4626 vault that receives funded amounts.
+    /// @param marginOracle Trusted oracle for margin-to-fundingAsset pricing.
+    /// @param treasury Recipient of slashed margin and unsold auction collateral.
+    struct AssetConfig {
+        address marginAsset;
+        address fundingAsset;
+        address usd3;
+        address marginOracle;
+        address treasury;
+    }
+
+    /// @notice Immutable epoch timing and commitment derivation configuration.
+    /// @param startTimestamp Epoch-zero start timestamp.
+    /// @param epochLength Total epoch duration in seconds.
+    /// @param normalDuration Seconds of the Normal phase.
+    /// @param preCallDuration Seconds of the PreCall phase.
+    /// @param fundingDuration Seconds of the Funding phase.
+    /// @param marginRatioBps Leverage ratio in bps.
+    /// @param exitDelayEpochs Minimum epochs between exit request and earliest maturity.
+    struct EpochConfig {
+        uint256 startTimestamp;
+        uint256 epochLength;
+        uint256 normalDuration;
+        uint256 preCallDuration;
+        uint256 fundingDuration;
+        uint256 marginRatioBps;
+        uint256 exitDelayEpochs;
+    }
+
+    /// @notice Immutable auction timing and decay configuration.
+    /// @param auctionStepCount Number of price steps spanning the Closed-window auction.
+    /// @param auctionStepDecayRateBps Per-step retained-pool decay, in bps.
+    /// @param auctionStepDuration Derived duration of each auction price step, in seconds.
+    struct AuctionConfig {
+        uint256 auctionStepCount;
+        uint256 auctionStepDecayRateBps;
+        uint256 auctionStepDuration;
+    }
+
+    /// @notice Mutable risk limits used by deposits, exits, and auction awards.
+    /// @param protocolCommitmentCap Vault-wide cap on active+pending commitment.
+    /// @param userCommitmentCap Per-account cap on active+pending commitment.
+    /// @param exitCapBps Per-epoch exit capacity fraction, in bps.
+    /// @param minDepositAssets Minimum margin deposit.
+    /// @param maxAuctionAwardBps Oracle-valued auction award cap per fundingAsset filled, in bps.
+    struct RiskConfig {
+        uint256 protocolCommitmentCap;
+        uint256 userCommitmentCap;
+        uint256 exitCapBps;
+        uint256 minDepositAssets;
+        uint256 maxAuctionAwardBps;
+    }
+
+    /// @notice Packed aggregate margin/commitment totals plus unbounded escrow total.
+    /// @dev Commitment totals are cap-bounded by `protocolCommitmentCap <= type(uint128).max`; margin totals rely on
+    /// the aggregate deployment invariant documented on the vault and fail safely via SafeCast if exceeded.
+    /// @param activeMargin Total active margin across all accounts (marginAsset).
+    /// @param activeCommitment Total active commitment across all accounts (fundingAsset).
+    /// @param pendingMargin Total pending margin across all accounts (marginAsset).
+    /// @param pendingCommitment Total pending commitment across all accounts (fundingAsset).
+    /// @param escrowedFunding Total funding held in escrow across all accounts (fundingAsset).
+    struct Totals {
+        uint128 activeMargin;
+        uint128 activeCommitment;
+        uint128 pendingMargin;
+        uint128 pendingCommitment;
+        uint256 escrowedFunding;
+    }
+
+    /// @notice Packed global sync cursors and live-auction slot.
+    /// @param lastActivationFolded Highest epoch whose pending activations have been folded.
+    /// @param lastMaturityFolded Highest epoch whose maturity buckets have been folded.
+    /// @param finalizedCallPrefix Count of leading called epochs whose slash is finalized.
+    /// @param pendingAuctionEpochPlusOne Live-auction slot encoded as epoch + 1 (0 means none).
+    struct SyncState {
+        uint64 lastActivationFolded;
+        uint64 lastMaturityFolded;
+        uint64 finalizedCallPrefix;
+        uint64 pendingAuctionEpochPlusOne;
+    }
+
+    /// @notice Packed terminal emergency shutdown state.
+    /// @param active Whether shutdown has been triggered.
+    /// @param timestamp Block timestamp at which shutdown was triggered (0 if not shut down).
+    /// @param epoch Epoch in which shutdown was triggered (0 if not shut down).
+    struct ShutdownState {
+        bool active;
+        uint64 timestamp;
+        uint64 epoch;
+    }
+
     /// @notice Materialized per-account position (the in-memory shape returned by views; storage is packed).
     /// @param activeMargin Margin currently callable (marginAsset).
     /// @param activeCommitment Commitment backed by `activeMargin` (fundingAsset).
@@ -214,21 +308,6 @@ interface ILeveragedCallableCreditVault {
     /// @param epoch Epoch to query.
     /// @return The auction state.
     function getAuctionState(uint256 epoch) external view returns (LCCAuctionLib.AuctionState memory);
-    /// @notice Live-auction slot, encoded as epoch + 1 (0 means no live auction).
-    /// @return The encoded live-auction epoch.
-    function pendingAuctionEpochPlusOne() external view returns (uint256);
-    /// @notice Oracle-valued auction award cap per fundingAsset filled, in bps (0 disables the kicker).
-    /// @return The award cap in bps.
-    function maxAuctionAwardBps() external view returns (uint256);
-    /// @notice Number of price steps spanning the Closed-window auction (0 disables auctions).
-    /// @return The step count.
-    function auctionStepCount() external view returns (uint256);
-    /// @notice Duration of each auction price step, in seconds.
-    /// @return The step duration.
-    function auctionStepDuration() external view returns (uint256);
-    /// @notice Per-step decay of the protocol's retained pool share, in bps.
-    /// @return The per-step decay in bps.
-    function auctionStepDecayRateBps() external view returns (uint256);
     /// @notice Deposits a user's escrowed funding into USD3, up to USD3's current capacity.
     /// @param user Beneficiary whose escrow is placed.
     /// @return placedAmount Amount deposited into USD3 (fundingAsset).
@@ -263,40 +342,31 @@ interface ILeveragedCallableCreditVault {
     /// @notice The epochs in which a call has been opened, in order.
     /// @return The list of called epochs.
     function calledEpochs() external view returns (uint256[] memory);
-    /// @notice Total active margin across all accounts (marginAsset).
-    /// @return The total active margin.
-    function totalActiveMargin() external view returns (uint256);
-    /// @notice Total active commitment across all accounts (fundingAsset).
-    /// @return The total active commitment.
-    function totalActiveCommitment() external view returns (uint256);
-    /// @notice Total pending (not-yet-active) margin across all accounts (marginAsset).
-    /// @return The total pending margin.
-    function totalPendingMargin() external view returns (uint256);
-    /// @notice Total pending commitment across all accounts (fundingAsset).
-    /// @return The total pending commitment.
-    function totalPendingCommitment() external view returns (uint256);
-    /// @notice Total funding held in escrow across all accounts (fundingAsset).
-    /// @return The total escrowed funding.
-    function totalEscrowedFundingAmount() external view returns (uint256);
+    /// @notice Immutable asset and integration address configuration.
+    /// @return The asset configuration.
+    function assetConfig() external view returns (AssetConfig memory);
+    /// @notice Immutable epoch timing and leverage configuration.
+    /// @return The epoch configuration.
+    function epochConfig() external view returns (EpochConfig memory);
+    /// @notice Immutable auction timing and decay configuration.
+    /// @return The auction configuration.
+    function auctionConfig() external view returns (AuctionConfig memory);
+    /// @notice Mutable risk limits.
+    /// @return The risk configuration.
+    function riskConfig() external view returns (RiskConfig memory);
+    /// @notice Aggregate margin, commitment, and escrow totals.
+    /// @return The aggregate totals.
+    function totals() external view returns (Totals memory);
+    /// @notice Global sync cursors and live-auction slot.
+    /// @return The sync state.
+    function syncState() external view returns (SyncState memory);
+    /// @notice Terminal emergency shutdown state.
+    /// @return The shutdown state.
+    function shutdownState() external view returns (ShutdownState memory);
     /// @notice Funding held in escrow for a specific user (fundingAsset).
     /// @param user Account to query.
     /// @return The escrowed funding for `user`.
     function escrowedFundingAmount(address user) external view returns (uint256);
-    /// @notice Vault-wide cap on active+pending commitment (fundingAsset).
-    /// @return The protocol commitment cap.
-    function protocolCommitmentCap() external view returns (uint256);
-    /// @notice Per-account cap on active+pending commitment (fundingAsset).
-    /// @return The user commitment cap.
-    function userCommitmentCap() external view returns (uint256);
-    /// @notice Per-epoch exit capacity as a fraction of the protocol cap, in bps.
-    /// @return The exit cap in bps.
-    function exitCapBps() external view returns (uint256);
-    /// @notice Minimum margin deposit (marginAsset).
-    /// @return The minimum deposit.
-    function minDepositAssets() external view returns (uint256);
-    /// @notice Whether emergency shutdown has been triggered.
-    /// @return True if shut down.
-    function shutdownActive() external view returns (bool);
     /// @notice Whether `user` fully funded their obligation for `epoch`.
     /// @param epoch Epoch to query.
     /// @param user Account to query.

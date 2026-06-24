@@ -23,7 +23,7 @@ contract LCCExitTest is LCCBase {
 
         assertEq(claimed, 100e18);
         assertEq(margin.balanceOf(alice), beforeBalance + 100e18);
-        assertEq(vault.totalActiveMargin(), 0);
+        assertEq(vault.totals().activeMargin, 0);
     }
 
     function testExitBlocksNewDepositsAndRemainsCallableUntilMaturity() public {
@@ -111,7 +111,7 @@ contract LCCExitTest is LCCBase {
         vm.warp(START + EPOCH);
         vm.prank(alice);
         assertEq(vault.claimExitedMargin(alice), 50e18);
-        assertEq(vault.totalActiveMargin(), 0);
+        assertEq(vault.totals().activeMargin, 0);
     }
 
     function testPrunedMaturityBucketCanBeReusedInSameEpoch() public {

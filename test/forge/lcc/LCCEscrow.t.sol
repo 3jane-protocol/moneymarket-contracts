@@ -27,7 +27,7 @@ contract LCCEscrowTest is LCCBase {
         assertEq(obligation, 100e18);
         assertEq(usd3.balanceOf(alice), 0);
         assertEq(vault.escrowedFundingAmount(alice), 100e18);
-        assertEq(vault.totalEscrowedFundingAmount(), 100e18);
+        assertEq(vault.totals().escrowedFunding, 100e18);
         assertEq(usdc.balanceOf(address(vault)), 100e18);
         assertEq(margin.balanceOf(alice), 1_000_000e18 - 50e18);
         assertTrue(vault.fundedEpoch(0, alice));
@@ -80,7 +80,7 @@ contract LCCEscrowTest is LCCBase {
         assertEq(placed, 40e18);
         assertEq(usd3.balanceOf(alice), 40e18);
         assertEq(vault.escrowedFundingAmount(alice), 60e18);
-        assertEq(vault.totalEscrowedFundingAmount(), 60e18);
+        assertEq(vault.totals().escrowedFunding, 60e18);
 
         usd3.setDepositLimit(type(uint256).max);
         placed = vault.depositEscrowedFunding(alice);
@@ -118,7 +118,7 @@ contract LCCEscrowTest is LCCBase {
         assertEq(claimed, 100e18);
         assertEq(usdc.balanceOf(alice), usdcBefore + 100e18);
         assertEq(vault.escrowedFundingAmount(alice), 0);
-        assertEq(vault.totalEscrowedFundingAmount(), 0);
+        assertEq(vault.totals().escrowedFunding, 0);
     }
 }
 

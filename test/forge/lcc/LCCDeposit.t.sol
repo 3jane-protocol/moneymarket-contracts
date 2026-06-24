@@ -14,8 +14,8 @@ contract LCCDepositTest is LCCBase {
         assertEq(commitment, 200e18);
         assertEq(account.activeMargin, 100e18);
         assertEq(account.activeCommitment, 200e18);
-        assertEq(vault.totalActiveMargin(), 100e18);
-        assertEq(vault.totalActiveCommitment(), 200e18);
+        assertEq(vault.totals().activeMargin, 100e18);
+        assertEq(vault.totals().activeCommitment, 200e18);
     }
 
     function testDepositStagesOutsideNormalAndAggregateBucketActivates() public {
@@ -23,14 +23,14 @@ contract LCCDepositTest is LCCBase {
         uint256 commitment = _deposit(alice, 100e18);
 
         assertEq(commitment, 200e18);
-        assertEq(vault.totalPendingMargin(), 100e18);
+        assertEq(vault.totals().pendingMargin, 100e18);
         assertEq(vault.pendingMarginByActivationEpoch(1), 100e18);
 
         vm.warp(START + EPOCH);
         _syncAs(bob);
 
-        assertEq(vault.totalPendingMargin(), 0);
-        assertEq(vault.totalActiveMargin(), 100e18);
+        assertEq(vault.totals().pendingMargin, 0);
+        assertEq(vault.totals().activeMargin, 100e18);
 
         ILeveragedCallableCreditVault.Account memory derived = vault.getAccount(alice);
         assertEq(derived.activeMargin, 100e18);
@@ -67,7 +67,7 @@ contract LCCDepositTest is LCCBase {
         vm.prank(owner);
         vault.setRiskCaps(CAP, CAP, 2_000, 5e18);
 
-        assertEq(vault.minDepositAssets(), 5e18);
+        assertEq(vault.riskConfig().minDepositAssets, 5e18);
 
         vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
         _deposit(alice, 1e18);

@@ -13,7 +13,7 @@ contract LCCMaterializeTest is LCCBase {
 
         ILeveragedCallableCreditVault.Account memory account = vault.getAccount(bob);
         assertEq(account.activeMargin, 10e18);
-        assertEq(account.calledEpochCursor, vault.finalizedCallPrefix());
+        assertEq(account.calledEpochCursor, vault.syncState().finalizedCallPrefix);
     }
 
     function testClearedAccountCanDepositAfterManyMoreFinalizedCalls() public {
@@ -30,7 +30,7 @@ contract LCCMaterializeTest is LCCBase {
 
         ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 10e18);
-        assertEq(account.calledEpochCursor, vault.finalizedCallPrefix());
+        assertEq(account.calledEpochCursor, vault.syncState().finalizedCallPrefix);
     }
 
     function testViewDoesNotReportClaimableExitPastUnfinalizedEligibleCall() public {

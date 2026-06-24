@@ -17,7 +17,7 @@ contract LCCShutdownTest is LCCBase {
         assertTrue(state.slashFinalized);
         assertTrue(state.slashDisabledByShutdown);
         assertEq(margin.balanceOf(treasury), 0);
-        assertEq(vault.totalActiveMargin(), 100e18);
+        assertEq(vault.totals().activeMargin, 100e18);
     }
 
     function testShutdownAfterFundingDeadlineAllowsNormalSlash() public {
@@ -49,7 +49,7 @@ contract LCCShutdownTest is LCCBase {
 
         assertEq(claimed, 100e18);
         assertEq(margin.balanceOf(alice), beforeBalance + 100e18);
-        assertEq(vault.totalActiveMargin(), 0);
+        assertEq(vault.totals().activeMargin, 0);
     }
 
     function testEmergencyClaimClearsPendingExitBucket() public {
@@ -70,7 +70,7 @@ contract LCCShutdownTest is LCCBase {
         vm.warp(START + EPOCH * (maturity + 1));
         _syncAs(bob);
 
-        assertEq(vault.totalActiveMargin(), 0);
-        assertEq(vault.totalActiveCommitment(), 0);
+        assertEq(vault.totals().activeMargin, 0);
+        assertEq(vault.totals().activeCommitment, 0);
     }
 }

@@ -14,8 +14,8 @@ contract LCCSyncTest is LCCBase {
         vm.warp(START + EPOCH);
         _deposit(bob, 50e18);
 
-        assertEq(vault.totalPendingMargin(), 0);
-        assertEq(vault.totalActiveMargin(), 150e18);
+        assertEq(vault.totals().pendingMargin, 0);
+        assertEq(vault.totals().activeMargin, 150e18);
     }
 
     function testSyncFoldsMaturedExitsBeforeNextAction() public {
@@ -26,7 +26,7 @@ contract LCCSyncTest is LCCBase {
         vm.warp(START + EPOCH);
         _deposit(bob, 50e18);
 
-        assertEq(vault.totalActiveMargin(), 50e18);
+        assertEq(vault.totals().activeMargin, 50e18);
     }
 
     function testExplicitFinalizeAndAutoSyncReachSameState() public {
@@ -38,7 +38,7 @@ contract LCCSyncTest is LCCBase {
         vault.materializeAccount(bob);
 
         assertEq(margin.balanceOf(treasury), 100e18);
-        assertEq(vault.totalActiveMargin(), 0);
+        assertEq(vault.totals().activeMargin, 0);
     }
 
     function testSparseSyncSkipsLargeEmptyEpochGapWithBoundedGas() public {
@@ -49,7 +49,7 @@ contract LCCSyncTest is LCCBase {
         uint256 gasUsed = gasBefore - gasleft();
 
         assertLt(gasUsed, 700_000);
-        assertEq(vault.totalActiveMargin(), 100e18);
+        assertEq(vault.totals().activeMargin, 100e18);
     }
 
     function testSparseSyncFoldsPendingAfterLargeDormantGapOnce() public {
@@ -61,8 +61,8 @@ contract LCCSyncTest is LCCBase {
 
         assertEq(vault.pendingMarginByActivationEpoch(1), 0);
         assertEq(vault.pendingCommitmentByActivationEpoch(1), 0);
-        assertEq(vault.totalPendingMargin(), 0);
-        assertEq(vault.totalActiveMargin(), 100e18);
+        assertEq(vault.totals().pendingMargin, 0);
+        assertEq(vault.totals().activeMargin, 100e18);
     }
 
     function testSparseSyncFoldsMaturityAfterLargeDormantGapOnce() public {
@@ -75,7 +75,7 @@ contract LCCSyncTest is LCCBase {
 
         assertEq(vault.exitBucketMarginByMaturity(maturity), 0);
         assertEq(vault.exitBucketCommitmentByMaturity(maturity), 0);
-        assertEq(vault.totalActiveMargin(), 0);
+        assertEq(vault.totals().activeMargin, 0);
         assertEq(vault.claimableExitedMargin(alice), 100e18);
     }
 
@@ -92,8 +92,8 @@ contract LCCSyncTest is LCCBase {
 
         assertEq(vault.pendingMarginByActivationEpoch(1), 0);
         assertEq(vault.exitBucketMarginByMaturity(maturity), 0);
-        assertEq(vault.totalPendingMargin(), 0);
-        assertEq(vault.totalActiveMargin(), 50e18);
+        assertEq(vault.totals().pendingMargin, 0);
+        assertEq(vault.totals().activeMargin, 50e18);
         assertEq(vault.claimableExitedMargin(alice), 100e18);
     }
 
@@ -124,7 +124,7 @@ contract LCCSyncTest is LCCBase {
         assertEq(vault.exitBucketMarginByMaturity(aliceMaturity), 0);
         assertEq(vault.exitBucketMarginByMaturity(bobMaturity), 0);
         assertEq(vault.exitBucketMarginByMaturity(carolMaturity), 0);
-        assertEq(vault.totalActiveMargin(), 0);
+        assertEq(vault.totals().activeMargin, 0);
         assertEq(vault.claimableExitedMargin(alice), 100e18);
         assertEq(vault.claimableExitedMargin(bob), 100e18);
         assertEq(vault.claimableExitedMargin(carol), 100e18);
@@ -143,6 +143,6 @@ contract LCCSyncTest is LCCBase {
 
         assertEq(claimed, 100e18);
         assertEq(margin.balanceOf(alice), beforeBalance + 100e18);
-        assertEq(vault.totalActiveMargin(), 0);
+        assertEq(vault.totals().activeMargin, 0);
     }
 }
