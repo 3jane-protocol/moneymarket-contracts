@@ -5,6 +5,7 @@ import {LCCBase} from "./LCCBase.t.sol";
 import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
 import {LeveragedCallableCreditVaultFactory} from "../../../src/lcc/LeveragedCallableCreditVaultFactory.sol";
 import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCFactoryTest is LCCBase {
     function testFactoryCreatesAndTracksVault() public {
@@ -33,13 +34,13 @@ contract LCCFactoryTest is LCCBase {
         ILeveragedCallableCreditVault.VaultParams memory badAsset = _params(CAP, CAP);
         badAsset.fundingAsset = address(margin);
 
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         new LeveragedCallableCreditVault(badAsset);
 
         ILeveragedCallableCreditVault.VaultParams memory zeroTreasury = _params(CAP, CAP);
         zeroTreasury.treasury = address(0);
 
-        vm.expectRevert(LeveragedCallableCreditVault.ZeroAddress.selector);
+        vm.expectRevert(LCCErrorsLib.ZeroAddress.selector);
         new LeveragedCallableCreditVault(zeroTreasury);
     }
 }

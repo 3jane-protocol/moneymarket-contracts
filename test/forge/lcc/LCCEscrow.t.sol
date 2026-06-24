@@ -4,6 +4,8 @@ pragma solidity ^0.8.22;
 import {LCCBase} from "./LCCBase.t.sol";
 import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
 import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
+import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
 
 contract LCCEscrowTest is LCCBase {
     function _setupEscrowedFunding() internal {
@@ -19,7 +21,7 @@ contract LCCEscrowTest is LCCBase {
         usd3.setDepositLimit(0);
 
         vm.expectEmit(true, true, false, true, address(vault));
-        emit ILeveragedCallableCreditVault.EscrowedFundingCreated(alice, 0, 100e18);
+        emit LCCEventsLib.EscrowedFundingCreated(alice, 0, 100e18);
         uint256 obligation = _fund(alice);
 
         assertEq(obligation, 100e18);
@@ -72,7 +74,7 @@ contract LCCEscrowTest is LCCBase {
 
         usd3.setDepositLimit(40e18);
         vm.expectEmit(true, false, false, true, address(vault));
-        emit ILeveragedCallableCreditVault.EscrowedFundingPlaced(alice, 40e18);
+        emit LCCEventsLib.EscrowedFundingPlaced(alice, 40e18);
         uint256 placed = vault.depositEscrowedFunding(alice);
 
         assertEq(placed, 40e18);
@@ -90,19 +92,19 @@ contract LCCEscrowTest is LCCBase {
     }
 
     function testPlaceEscrowedFundingRevertsWithoutEscrowOrCapacity() public {
-        vm.expectRevert(LeveragedCallableCreditVault.NothingToClaim.selector);
+        vm.expectRevert(LCCErrorsLib.NothingToClaim.selector);
         vault.depositEscrowedFunding(alice);
 
         _setupEscrowedFunding();
 
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidAmount.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
         vault.depositEscrowedFunding(alice);
     }
 
     function testClaimEscrowedFundingRequiresShutdown() public {
         _setupEscrowedFunding();
 
-        vm.expectRevert(LeveragedCallableCreditVault.ShutdownRequired.selector);
+        vm.expectRevert(LCCErrorsLib.ShutdownRequired.selector);
         vm.prank(alice);
         vault.claimEscrowedFunding(alice);
 
@@ -145,12 +147,12 @@ contract LCCFundForTest is LCCBase {
         _deposit(alice, 100e18);
         _openCall(100e18);
 
-        vm.expectRevert(LeveragedCallableCreditVault.ZeroAddress.selector);
+        vm.expectRevert(LCCErrorsLib.ZeroAddress.selector);
         _fundFor(bob, address(0));
 
         _fundFor(bob, alice);
 
-        vm.expectRevert(LeveragedCallableCreditVault.AlreadyFunded.selector);
+        vm.expectRevert(LCCErrorsLib.AlreadyFunded.selector);
         vm.prank(alice);
         vault.fundEpochCall(0);
     }
@@ -159,7 +161,7 @@ contract LCCFundForTest is LCCBase {
 contract LCCEventEnrichmentTest is LCCBase {
     function testDepositCheckpointedIncludesMarginValue() public {
         vm.expectEmit(true, false, false, true, address(vault));
-        emit ILeveragedCallableCreditVault.DepositCheckpointed(alice, 100e18, 100e18, 200e18, 0, true);
+        emit LCCEventsLib.DepositCheckpointed(alice, 100e18, 100e18, 200e18, 0, true);
         _deposit(alice, 100e18);
     }
 
@@ -167,7 +169,7 @@ contract LCCEventEnrichmentTest is LCCBase {
         _deposit(alice, 100e18);
 
         vm.expectEmit(true, true, false, true, address(vault));
-        emit ILeveragedCallableCreditVault.ExitRequested(alice, 1, 100e18, 200e18);
+        emit LCCEventsLib.ExitRequested(alice, 1, 100e18, 200e18);
         vm.prank(alice);
         vault.requestExit();
     }
@@ -181,7 +183,7 @@ contract LCCEventEnrichmentTest is LCCBase {
         vault.finalizeEpochSlash(0);
 
         vm.expectEmit(true, true, false, true, address(vault));
-        emit ILeveragedCallableCreditVault.UserDefaulted(bob, 0, 50e18, 100e18);
+        emit LCCEventsLib.UserDefaulted(bob, 0, 50e18, 100e18);
         vault.materializeAccount(bob);
 
         assertTrue(vault.defaultedEpoch(0, bob));

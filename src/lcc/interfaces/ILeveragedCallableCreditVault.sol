@@ -15,7 +15,8 @@ import {LCCAuctionLib} from "../libraries/LCCAuctionLib.sol";
 /// shortfall is offered through an epoch-shortfall Dutch auction.
 /// @dev Unit convention: amount-like accounting values outside the margin family are denominated in `fundingAsset`
 /// unless documented otherwise; margin amounts are in `marginAsset`; `marginValue` is margin valued in
-/// `fundingAsset`; epoch fields are epoch indices; `*Bps` fields are basis points (out of 10_000).
+/// `fundingAsset`; epoch fields are epoch indices; `*Bps` fields are basis points (out of 10_000). Events and
+/// errors are exposed through `LCCEventsLib` and `LCCErrorsLib`.
 interface ILeveragedCallableCreditVault {
     /// @notice Timestamp-derived lifecycle phase within an epoch.
     /// @dev `Normal`: deposits activate immediately (until a call opens). `PreCall`: the owner may open the epoch
@@ -131,129 +132,6 @@ interface ILeveragedCallableCreditVault {
         bool slashFinalized;
         bool slashDisabledByShutdown;
     }
-
-    /// @notice Emitted when a deposit is checkpointed (immediately active or staged as pending).
-    /// @param user Account credited with the deposit.
-    /// @param marginAssets Margin deposited (marginAsset).
-    /// @param marginValue Oracle value of the deposited margin (fundingAsset).
-    /// @param commitment Commitment created by the deposit (fundingAsset).
-    /// @param activationEpoch Epoch at which the commitment becomes callable.
-    /// @param immediate True if activated in the current epoch, false if staged as pending.
-    event DepositCheckpointed(
-        address indexed user,
-        uint256 marginAssets,
-        uint256 marginValue,
-        uint256 commitment,
-        uint256 activationEpoch,
-        bool immediate
-    );
-    /// @notice Emitted when a pending-activation bucket folds into the active totals.
-    /// @param epoch Activation epoch whose bucket folded.
-    /// @param marginAssets Margin activated (marginAsset).
-    /// @param commitment Commitment activated (fundingAsset).
-    event PendingActivated(uint256 indexed epoch, uint256 marginAssets, uint256 commitment);
-    /// @notice Emitted when the owner opens an epoch's capital call.
-    /// @param epoch Epoch the call was opened for.
-    /// @param callAmount Total amount called (fundingAsset).
-    /// @param commitmentDenominator Active-commitment base snapshotted as the pro-rata denominator (fundingAsset).
-    event EpochCallOpened(uint256 indexed epoch, uint256 callAmount, uint256 commitmentDenominator);
-    /// @notice Emitted when a user's epoch obligation is funded.
-    /// @param user Account whose obligation was funded.
-    /// @param epoch Epoch funded.
-    /// @param obligationAmount Obligation paid (fundingAsset).
-    event CallFunded(address indexed user, uint256 indexed epoch, uint256 obligationAmount);
-    /// @notice Emitted when backing margin is released to a funder.
-    /// @param user Account receiving the released margin.
-    /// @param epoch Epoch the funding settled for.
-    /// @param marginAssets Margin released (marginAsset).
-    event MarginReleased(address indexed user, uint256 indexed epoch, uint256 marginAssets);
-    /// @notice Emitted when funding USDC is escrowed because USD3 could not accept the deposit.
-    /// @param user Beneficiary the escrow is held for.
-    /// @param epoch Epoch the funding settled for.
-    /// @param fundingAmount Amount escrowed (fundingAsset).
-    event EscrowedFundingCreated(address indexed user, uint256 indexed epoch, uint256 fundingAmount);
-    /// @notice Emitted when previously escrowed funding is later deposited into USD3.
-    /// @param user Beneficiary of the USD3 deposit.
-    /// @param fundingAmount Amount moved from escrow into USD3 (fundingAsset).
-    event EscrowedFundingPlaced(address indexed user, uint256 fundingAmount);
-    /// @notice Emitted when escrowed funding is returned to its owner after shutdown.
-    /// @param user Owner of the escrow.
-    /// @param receiver Recipient of the returned funds.
-    /// @param fundingAmount Amount returned (fundingAsset).
-    event EscrowedFundingClaimed(address indexed user, address indexed receiver, uint256 fundingAmount);
-    /// @notice Emitted when an account's unfunded obligation is materialized as a default.
-    /// @param user Defaulted account.
-    /// @param epoch Epoch defaulted on.
-    /// @param slashedMargin Margin forfeited by this account (marginAsset).
-    /// @param slashedCommitment Commitment removed by this default (fundingAsset).
-    event UserDefaulted(address indexed user, uint256 indexed epoch, uint256 slashedMargin, uint256 slashedCommitment);
-    /// @notice Emitted once an epoch's slash is finalized.
-    /// @param epoch Epoch finalized.
-    /// @param slashedMargin Aggregate margin slashed (marginAsset); 0 if disabled by shutdown.
-    /// @param slashedCommitment Aggregate commitment removed (fundingAsset); 0 if disabled by shutdown.
-    /// @param disabledByShutdown True if no slash was taken because shutdown interrupted the funding window.
-    event EpochSlashFinalized(
-        uint256 indexed epoch, uint256 slashedMargin, uint256 slashedCommitment, bool disabledByShutdown
-    );
-    /// @notice Emitted when an account requests a full-account exit.
-    /// @param user Exiting account.
-    /// @param maturityEpoch Epoch the exit was assigned to mature.
-    /// @param marginAssets Margin scheduled to exit (marginAsset).
-    /// @param commitment Commitment scheduled to exit (fundingAsset).
-    event ExitRequested(address indexed user, uint256 indexed maturityEpoch, uint256 marginAssets, uint256 commitment);
-    /// @notice Emitted when a maturity bucket folds out of the active totals.
-    /// @param maturityEpoch Maturity epoch whose bucket folded.
-    /// @param marginAssets Margin matured out (marginAsset).
-    /// @param commitment Commitment matured out (fundingAsset).
-    event ExitMatured(uint256 indexed maturityEpoch, uint256 marginAssets, uint256 commitment);
-    /// @notice Emitted when matured exit margin is claimed.
-    /// @param user Exiting account.
-    /// @param receiver Recipient of the margin.
-    /// @param marginAssets Margin transferred (marginAsset).
-    event ExitedMarginClaimed(address indexed user, address indexed receiver, uint256 marginAssets);
-    /// @notice Emitted when safe margin is withdrawn through the emergency path after shutdown.
-    /// @param user Withdrawing account.
-    /// @param receiver Recipient of the margin.
-    /// @param marginAssets Margin transferred (marginAsset).
-    event EmergencyMarginClaimed(address indexed user, address indexed receiver, uint256 marginAssets);
-    /// @notice Emitted when the owner updates mutable risk caps.
-    /// @param protocolCommitmentCap New vault-wide commitment cap (fundingAsset).
-    /// @param userCommitmentCap New per-account commitment cap (fundingAsset).
-    /// @param exitCapBps New per-epoch exit capacity, in bps.
-    /// @param minDepositAssets New minimum margin deposit (marginAsset).
-    event RiskCapUpdated(
-        uint256 protocolCommitmentCap, uint256 userCommitmentCap, uint256 exitCapBps, uint256 minDepositAssets
-    );
-    /// @notice Emitted when emergency shutdown is triggered (terminal).
-    /// @param epoch Epoch in which shutdown occurred.
-    /// @param timestamp Block timestamp of shutdown.
-    event EmergencyShutdown(uint256 indexed epoch, uint256 timestamp);
-    /// @notice Emitted when an epoch's funding shortfall opens a Dutch auction.
-    /// @param epoch Epoch whose shortfall is auctioned.
-    /// @param shortfallAmount Unfunded amount to be filled (fundingAsset).
-    /// @param marginPool Slashed margin backing the collateral kicker (marginAsset).
-    event AuctionKicked(uint256 indexed epoch, uint256 shortfallAmount, uint256 marginPool);
-    /// @notice Emitted on each auction fill.
-    /// @param filler Account filling the shortfall.
-    /// @param epoch Auctioned epoch.
-    /// @param fillAmount Shortfall filled by this take (fundingAsset).
-    /// @param marginAward Collateral kicker awarded (marginAsset).
-    event AuctionFill(address indexed filler, uint256 indexed epoch, uint256 fillAmount, uint256 marginAward);
-    /// @notice Emitted when an auction settles (fully filled or window elapsed).
-    /// @param epoch Settled epoch.
-    /// @param filledAmount Total shortfall filled (fundingAsset).
-    /// @param marginAwarded Total collateral awarded to fillers (marginAsset).
-    /// @param marginToTreasury Unsold collateral swept to treasury (marginAsset).
-    event AuctionSettled(uint256 indexed epoch, uint256 filledAmount, uint256 marginAwarded, uint256 marginToTreasury);
-    /// @notice Emitted when the owner updates the oracle-valued auction award cap.
-    /// @param maxAuctionAwardBps New award cap per fundingAsset filled, in bps.
-    event AuctionAwardCapUpdated(uint256 maxAuctionAwardBps);
-
-    /// @notice Thrown when requesting an exit while the account still holds a pending (not-yet-active) deposit.
-    error PendingDepositExists();
-    /// @notice Thrown when an account cannot be fully materialized within the per-call step bound; call
-    /// `materializeAccount` repeatedly to catch up before retrying.
-    error AccountMaterializationIncomplete();
 
     /// @notice Current epoch index derived from the block timestamp.
     /// @return The current epoch.

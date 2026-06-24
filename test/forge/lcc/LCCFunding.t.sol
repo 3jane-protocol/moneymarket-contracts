@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import {LCCBase} from "./LCCBase.t.sol";
 import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
 import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCFundingTest is LCCBase {
     function testFundingPullsExactObligationDepositsUsd3AndReleasesMargin() public {
@@ -43,13 +44,13 @@ contract LCCFundingTest is LCCBase {
         _deposit(alice, 100e18);
         _openCall(100e18);
 
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidPhase.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidPhase.selector);
         vm.prank(alice);
         vault.fundEpochCall(0);
 
         _fund(alice);
 
-        vm.expectRevert(LeveragedCallableCreditVault.AlreadyFunded.selector);
+        vm.expectRevert(LCCErrorsLib.AlreadyFunded.selector);
         vm.prank(alice);
         vault.fundEpochCall(0);
     }

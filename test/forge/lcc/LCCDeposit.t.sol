@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import {LCCBase, LCCRevertingOracle} from "./LCCBase.t.sol";
 import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
 import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCDepositTest is LCCBase {
     function testDepositValuesMarginAndActivatesDuringNormal() public {
@@ -45,7 +46,7 @@ contract LCCDepositTest is LCCBase {
         vm.warp(START + NORMAL);
         _deposit(alice, 100e18);
 
-        vm.expectRevert(LeveragedCallableCreditVault.CapExceeded.selector);
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
         _deposit(alice, 101e18);
     }
 
@@ -55,7 +56,7 @@ contract LCCDepositTest is LCCBase {
         vault = new LeveragedCallableCreditVault(params);
         _mintAndApprove(alice, 0, 0);
 
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidAmount.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
         _deposit(alice, 10e18 - 1);
 
         _deposit(alice, 10e18);
@@ -68,7 +69,7 @@ contract LCCDepositTest is LCCBase {
 
         assertEq(vault.minDepositAssets(), 5e18);
 
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidAmount.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
         _deposit(alice, 1e18);
 
         _deposit(alice, 5e18);
@@ -76,7 +77,7 @@ contract LCCDepositTest is LCCBase {
 
     function testZeroOraclePriceReverts() public {
         oracle.setPrice(0);
-        vm.expectRevert(LeveragedCallableCreditVault.OraclePriceInvalid.selector);
+        vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
         _deposit(alice, 100e18);
     }
 

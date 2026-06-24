@@ -5,6 +5,8 @@ import {LCCBase} from "./LCCBase.t.sol";
 import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
 import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
 import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
+import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
+import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
 import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
 
 contract LCCAuctionTest is LCCBase {
@@ -34,7 +36,7 @@ contract LCCAuctionTest is LCCBase {
         _finishFunding();
 
         vm.expectEmit(true, false, false, true, address(vault));
-        emit ILeveragedCallableCreditVault.AuctionKicked(0, 50e18, 50e18);
+        emit LCCEventsLib.AuctionKicked(0, 50e18, 50e18);
         vault.finalizeEpochSlash(0);
 
         assertEq(margin.balanceOf(treasury), 0);
@@ -152,14 +154,14 @@ contract LCCAuctionTest is LCCBase {
 
         vm.warp(WINDOW_END);
         vm.expectEmit(true, false, false, true, address(vault));
-        emit ILeveragedCallableCreditVault.AuctionSettled(0, 10e18, 5e18, 45e18);
+        emit LCCEventsLib.AuctionSettled(0, 10e18, 5e18, 45e18);
         vault.materializeAccount(carol);
 
         assertEq(vault.pendingAuctionEpochPlusOne(), 0);
         assertEq(margin.balanceOf(treasury), 45e18);
 
         vm.warp(WINDOW_END + 1);
-        vm.expectRevert(LeveragedCallableCreditVault.AuctionNotLive.selector);
+        vm.expectRevert(LCCErrorsLib.AuctionNotLive.selector);
         vm.prank(carol);
         vault.takeAuction(0, 1e18);
     }
@@ -173,7 +175,7 @@ contract LCCAuctionTest is LCCBase {
 
         assertEq(vault.pendingAuctionEpochPlusOne(), 0);
 
-        vm.expectRevert(LeveragedCallableCreditVault.AuctionNotLive.selector);
+        vm.expectRevert(LCCErrorsLib.AuctionNotLive.selector);
         vm.prank(bob);
         vault.takeAuction(0, 1e18);
     }
@@ -197,7 +199,7 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(DEADLINE + 5);
         oracle.setPrice(0);
 
-        vm.expectRevert(LeveragedCallableCreditVault.OraclePriceInvalid.selector);
+        vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
         vm.prank(carol);
         vault.takeAuction(0, 10e18);
     }
@@ -234,7 +236,7 @@ contract LCCAuctionTest is LCCBase {
         assertEq(vault.pendingAuctionEpochPlusOne(), 0);
         assertEq(margin.balanceOf(treasury), 50e18);
 
-        vm.expectRevert(LeveragedCallableCreditVault.ShutdownActive.selector);
+        vm.expectRevert(LCCErrorsLib.ShutdownActive.selector);
         vm.prank(carol);
         vault.takeAuction(0, 10e18);
 
@@ -283,7 +285,7 @@ contract LCCAuctionTest is LCCBase {
     }
 
     function testSetMaxAuctionAwardBpsMatrix() public {
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         vm.prank(owner);
         vault.setMaxAuctionAwardBps(10_001);
 
@@ -292,7 +294,7 @@ contract LCCAuctionTest is LCCBase {
         assertEq(vault.maxAuctionAwardBps(), 5_000);
 
         _setupShortfallAuction();
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidPhase.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidPhase.selector);
         vm.prank(owner);
         vault.setMaxAuctionAwardBps(1_000);
     }
@@ -300,7 +302,7 @@ contract LCCAuctionTest is LCCBase {
     function testCannotEnableAwardCapWithoutMachinery() public {
         vault = new LeveragedCallableCreditVault(_params(CAP, CAP));
 
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         vm.prank(owner);
         vault.setMaxAuctionAwardBps(1);
     }
@@ -309,49 +311,49 @@ contract LCCAuctionTest is LCCBase {
         ILeveragedCallableCreditVault.VaultParams memory params = _params(CAP, CAP);
 
         params.auctionStepDecayRateBps = 1;
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         new LeveragedCallableCreditVault(params);
 
         params.auctionStepDecayRateBps = 0;
         params.maxAuctionAwardBps = 1;
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         new LeveragedCallableCreditVault(params);
 
         params = _auctionParams();
         params.auctionStepDecayRateBps = 0;
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         new LeveragedCallableCreditVault(params);
 
         params = _auctionParams();
         params.auctionStepDecayRateBps = 10_001;
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         new LeveragedCallableCreditVault(params);
 
         params = _auctionParams();
         params.maxAuctionAwardBps = 10_001;
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         new LeveragedCallableCreditVault(params);
 
         // Auction-enabled vaults need a nonzero Closed window.
         params = _auctionParams();
         params.fundingDuration = EPOCH - NORMAL - PRE_CALL;
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         new LeveragedCallableCreditVault(params);
 
         // At least one second per step: stepCount cannot exceed the Closed window.
         params = _auctionParams();
         params.auctionStepCount = EPOCH - NORMAL - PRE_CALL - FUNDING + 1;
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         new LeveragedCallableCreditVault(params);
 
         params = _params(CAP, CAP);
         params.protocolCommitmentCap = uint256(type(uint128).max) + 1;
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         new LeveragedCallableCreditVault(params);
     }
 
     function testSetRiskCapsRejectsCapAboveUint128() public {
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidParams.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         vm.prank(owner);
         vault.setRiskCaps(uint256(type(uint128).max) + 1, CAP, 2_000, 0);
     }

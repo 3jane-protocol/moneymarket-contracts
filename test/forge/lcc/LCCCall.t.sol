@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import {LCCBase} from "./LCCBase.t.sol";
 import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
 import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCCallTest is LCCBase {
     function testOpenCallSnapshotsDenominatorAfterPendingActivation() public {
@@ -22,7 +23,7 @@ contract LCCCallTest is LCCBase {
     function testOpenCallRequiresPreCallAndOwner() public {
         _deposit(alice, 100e18);
 
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidPhase.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidPhase.selector);
         vm.prank(owner);
         vault.openEpochCall(0, 100e18);
 
@@ -36,7 +37,7 @@ contract LCCCallTest is LCCBase {
         _openCall(100e18);
 
         vm.warp(START + EPOCH + NORMAL);
-        vm.expectRevert(LeveragedCallableCreditVault.InvalidAmount.selector);
+        vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
         vm.prank(owner);
         vault.openEpochCall(1, 100e18);
     }

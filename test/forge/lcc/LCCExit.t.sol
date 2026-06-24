@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import {LCCBase} from "./LCCBase.t.sol";
 import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
 import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCExitTest is LCCBase {
     function testExitMaturesAndClaimsFullMargin() public {
@@ -31,7 +32,7 @@ contract LCCExitTest is LCCBase {
         vm.prank(alice);
         vault.requestExit();
 
-        vm.expectRevert(LeveragedCallableCreditVault.ExitInProgress.selector);
+        vm.expectRevert(LCCErrorsLib.ExitInProgress.selector);
         _deposit(alice, 1e18);
 
         _openCall(100e18);
@@ -62,7 +63,7 @@ contract LCCExitTest is LCCBase {
         vm.prank(alice);
         vault.requestExit();
 
-        vm.expectRevert(LeveragedCallableCreditVault.ExitNotMature.selector);
+        vm.expectRevert(LCCErrorsLib.ExitNotMature.selector);
         vm.prank(alice);
         vault.claimExitedMargin(alice);
     }
@@ -71,7 +72,7 @@ contract LCCExitTest is LCCBase {
         vm.warp(START + NORMAL);
         _deposit(alice, 100e18);
 
-        vm.expectRevert(ILeveragedCallableCreditVault.PendingDepositExists.selector);
+        vm.expectRevert(LCCErrorsLib.PendingDepositExists.selector);
         vm.prank(alice);
         vault.requestExit();
     }
@@ -82,7 +83,7 @@ contract LCCExitTest is LCCBase {
         vm.warp(START + NORMAL);
         _deposit(alice, 50e18);
 
-        vm.expectRevert(ILeveragedCallableCreditVault.PendingDepositExists.selector);
+        vm.expectRevert(LCCErrorsLib.PendingDepositExists.selector);
         vm.prank(alice);
         vault.requestExit();
     }
