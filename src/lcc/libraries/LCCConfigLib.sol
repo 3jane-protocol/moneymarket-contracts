@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.22;
+pragma solidity 0.8.35;
 
 import {IERC4626} from "../../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 

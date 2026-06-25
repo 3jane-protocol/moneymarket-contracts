@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.22;
+pragma solidity 0.8.35;
 
 import {Ownable} from "../../lib/openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";

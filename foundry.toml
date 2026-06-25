@@ -7,10 +7,13 @@ optimizer = true
 optimizer_runs = 999999
 bytecode_hash = "none"
 evm_version = "shanghai"
-# The LCC vault is near the bytecode size limit at max runs; compile it with standard runs instead.
-additional_compiler_profiles = [{ name = "lcc-size", optimizer_runs = 200 }]
+# The LCC vault and factory (pinned to solc 0.8.35 in their source pragmas) exceed the bytecode size limit at
+# max runs; the factory embeds the vault's creation code, so it is the binding constraint. Compile both at reduced
+# runs: 800 keeps the vault ~4.2 KB and the factory ~1 KB under the limit.
+additional_compiler_profiles = [{ name = "lcc-size", optimizer_runs = 800 }]
 compilation_restrictions = [
-    { paths = "src/lcc/LeveragedCallableCreditVault.sol", optimizer_runs = 200 },
+    { paths = "src/lcc/LeveragedCallableCreditVault.sol", optimizer_runs = 800 },
+    { paths = "src/lcc/LeveragedCallableCreditVaultFactory.sol", optimizer_runs = 800 },
 ]
 
 [profile.default.invariant]
