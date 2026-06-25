@@ -1203,6 +1203,11 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         return block.timestamp >= _fundingDeadline(epoch);
     }
 
+    /// @dev Each account's obligation is computed independently from the call-open snapshot and rounded up, so the
+    /// sum across accounts can exceed `callAmount` by up to ~(number of funding accounts - 1) units. Ceil is
+    /// intentional: it keeps each funding account's pro-rata obligation from rounding below its fair share. It does
+    /// not guarantee the pool collects `callAmount` in full — accounts that default still under-collect, and that
+    /// shortfall is covered by the slash/auction path, not by this rounding.
     function _obligation(EpochState storage state, uint256 activeCommitment) internal view returns (uint256) {
         if (activeCommitment == 0 || state.commitmentDenominator == 0) return 0;
         return activeCommitment.mulDiv(state.callAmount, state.commitmentDenominator, Math.Rounding.Ceil);

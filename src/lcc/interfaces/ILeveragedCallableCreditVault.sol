@@ -203,9 +203,12 @@ interface ILeveragedCallableCreditVault {
     /// @param callOpened True once the owner has opened this epoch's call.
     /// @param commitmentDenominator Total active commitment snapshotted at call open; the pro-rata base for
     /// obligations (fundingAsset).
-    /// @param callAmount Total amount called this epoch (fundingAsset).
+    /// @param callAmount Total amount called this epoch (fundingAsset). This is the nominal base for independently
+    /// computed pro-rata obligations, not a strict aggregate funding cap: because each obligation is ceil-rounded,
+    /// `fundedAmount` can settle slightly above `callAmount`.
     /// @param marginAtCallOpen Total active margin snapshotted at call open (marginAsset).
-    /// @param fundedAmount Cumulative funded obligations this epoch (fundingAsset).
+    /// @param fundedAmount Cumulative funded obligations this epoch (fundingAsset). May exceed `callAmount` by up to
+    /// ~(number of funding accounts - 1) units of rounding dust from per-account ceil obligations.
     /// @param marginReleased Cumulative margin released to funders this epoch (marginAsset).
     /// @param fundedUsersRemainingMargin Margin of fully-funded users that stays callable past this call
     /// (marginAsset).
@@ -274,20 +277,23 @@ interface ILeveragedCallableCreditVault {
     function shutdown() external;
     /// @notice Owner opens the current epoch's capital call during PreCall.
     /// @dev Reverts unless in PreCall of `epoch`, if a prior call is unsettled, if already opened, or if
-    /// `callAmount` exceeds the active-commitment base.
+    /// `callAmount` exceeds the active-commitment base. Owner guidance: `callAmount` should be meaningful relative to
+    /// the active-commitment base and the account distribution. Because obligations are ceil-rounded per account
+    /// (see `obligationOf`), a dust-sized call can force every account to owe a single funding unit, and any account
+    /// that does not fund then forfeits its full margin under the all-or-nothing slash.
     /// @param epoch Epoch to open the call for (must be current).
     /// @param callAmount Total amount to call (fundingAsset).
     function openEpochCall(uint256 epoch, uint256 callAmount) external;
     /// @notice Funds the caller's own current-epoch obligation, all-or-nothing.
     /// @param epoch Epoch to fund (must be current).
-    /// @return obligationAmount Obligation paid (fundingAsset).
+    /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
     function fundEpochCall(uint256 epoch) external returns (uint256 obligationAmount);
     /// @notice Funds `user`'s current-epoch obligation with funding supplied by the caller (push-based).
     /// @dev The caller pays; released margin, the USD3 position (or escrow credit), and funded status accrue to
     /// `user`. Escrow credit is never refundable to the payer.
     /// @param epoch Epoch to fund (must be current).
     /// @param user Account whose obligation is funded.
-    /// @return obligationAmount Obligation paid (fundingAsset).
+    /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
     function fundEpochCallFor(uint256 epoch, address user) external returns (uint256 obligationAmount);
     /// @notice Fills up to `maxFillAmount` of the live auction's shortfall in exchange for a USD3 position and a
     /// collateral kicker.
@@ -331,6 +337,9 @@ interface ILeveragedCallableCreditVault {
     /// @return The epoch state.
     function getEpochState(uint256 epoch) external view returns (EpochState memory);
     /// @notice Current obligation a user owes for an epoch's open call (0 if none, funded, or finalized).
+    /// @dev Ceil-rounded and computed independently per account from the call-open commitment snapshot; another
+    /// account funding does not reduce or extinguish this account's obligation, so the sum of obligations across
+    /// accounts can exceed `callAmount`.
     /// @param epoch Epoch to query.
     /// @param user Account to query.
     /// @return The obligation (fundingAsset).
