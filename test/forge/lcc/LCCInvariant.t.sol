@@ -117,7 +117,7 @@ contract LCCInvariantHandler is Test {
         if (actorSeed % 4 == 0) {
             address payer = actors[(actorSeed / 4) % actors.length];
             vm.prank(payer);
-            invariantVault.fundEpochCallFor(epoch, actor);
+            invariantVault.fundEpochCall(epoch, actor);
         } else {
             vm.prank(actor);
             invariantVault.fundEpochCall(epoch);

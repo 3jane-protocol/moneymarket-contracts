@@ -294,7 +294,7 @@ interface ILeveragedCallableCreditVault {
     /// @param epoch Epoch to fund (must be current).
     /// @param user Account whose obligation is funded.
     /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
-    function fundEpochCallFor(uint256 epoch, address user) external returns (uint256 obligationAmount);
+    function fundEpochCall(uint256 epoch, address user) external returns (uint256 obligationAmount);
     /// @notice Fills up to `maxFillAmount` of the live auction's shortfall in exchange for a USD3 position and a
     /// collateral kicker.
     /// @dev No escrow fallback for fillers: reverts if USD3 cannot accept the deposit. The award is the current

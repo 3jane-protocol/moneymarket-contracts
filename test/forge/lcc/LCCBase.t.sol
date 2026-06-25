@@ -167,7 +167,7 @@ contract LCCBase is Test {
     function _fundFor(address payer, address user) internal returns (uint256 obligation) {
         vm.warp(START + NORMAL + PRE_CALL);
         vm.prank(payer);
-        obligation = vault.fundEpochCallFor(0, user);
+        obligation = vault.fundEpochCall(0, user);
     }
 
     function _finishFunding() internal {

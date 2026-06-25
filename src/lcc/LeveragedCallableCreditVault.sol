@@ -273,10 +273,10 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         commitment = marginValue.mulDiv(BPS, marginRatioBps);
         if (commitment == 0) revert LCCErrorsLib.InvalidAmount();
 
-        if (_totals.activeCommitment + _totals.pendingCommitment + commitment > _riskConfig.protocolCommitmentCap) {
-            revert LCCErrorsLib.CapExceeded();
-        }
-        if (account.activeCommitment + account.pendingCommitment + commitment > _riskConfig.userCommitmentCap) {
+        if (
+            _totals.activeCommitment + _totals.pendingCommitment + commitment > _riskConfig.protocolCommitmentCap
+                || account.activeCommitment + account.pendingCommitment + commitment > _riskConfig.userCommitmentCap
+        ) {
             revert LCCErrorsLib.CapExceeded();
         }
 
@@ -409,7 +409,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     /// @inheritdoc ILeveragedCallableCreditVault
     /// @dev Push-based third-party funding: the caller pays; released margin, the USD3 position (or escrow credit),
     /// and funded status always accrue to `user`. Escrow credit is never refundable to the payer.
-    function fundEpochCallFor(uint256 epoch, address user)
+    function fundEpochCall(uint256 epoch, address user)
         external
         nonReentrant
         synced
