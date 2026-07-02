@@ -167,7 +167,7 @@ contract LCCMaterializeTest is LCCBase {
 
             vm.warp(START + EPOCH * epoch + NORMAL + PRE_CALL);
             vm.prank(funder);
-            vault.fundEpochCall(epoch);
+            vault.fundCall();
 
             vm.warp(START + EPOCH * epoch + NORMAL + PRE_CALL + FUNDING);
             vault.finalizeEpochSlash(epoch);

@@ -133,10 +133,10 @@ contract LCCInvariantHandler is Test {
         if (actorSeed % 4 == 0) {
             address payer = actors[(actorSeed / 4) % actors.length];
             vm.prank(payer);
-            invariantVault.fundEpochCall(epoch, actor);
+            invariantVault.fundCall(actor);
         } else {
             vm.prank(actor);
-            invariantVault.fundEpochCall(epoch);
+            invariantVault.fundCall();
         }
     }
 
@@ -158,7 +158,7 @@ contract LCCInvariantHandler is Test {
         uint256 fill = _range(fillSeed, 1, remaining);
 
         vm.prank(actor);
-        invariantVault.takeAuction(epoch, fill);
+        invariantVault.takeAuction(fill);
     }
 
     function warpIntoClosed(uint256 seed) external {

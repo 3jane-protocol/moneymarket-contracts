@@ -297,26 +297,25 @@ interface ILeveragedCallableCreditVault {
     /// @param callAmount Total amount to call (fundingAsset).
     function openEpochCall(uint256 epoch, uint256 callAmount) external;
     /// @notice Funds the caller's own current-epoch obligation, all-or-nothing.
-    /// @param epoch Epoch to fund (must be current).
+    /// @dev The Funding phase is the timing guard. A delayed transaction landing in another epoch's Funding phase
+    /// would need to cross epoch end, Normal, and PreCall first.
     /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
-    function fundEpochCall(uint256 epoch) external returns (uint256 obligationAmount);
+    function fundCall() external returns (uint256 obligationAmount);
     /// @notice Funds `user`'s current-epoch obligation with funding supplied by the caller (push-based).
-    /// @dev The caller pays; released margin, wrapped nUSD3 delivery, and funded status accrue to `user`.
-    /// @param epoch Epoch to fund (must be current).
+    /// @dev The caller pays; released margin, wrapped nUSD3 delivery, and funded status accrue to `user`. The
+    /// Funding phase is the timing guard, as on {fundCall}.
     /// @param user Account whose obligation is funded.
     /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
-    function fundEpochCall(uint256 epoch, address user) external returns (uint256 obligationAmount);
+    function fundCall(address user) external returns (uint256 obligationAmount);
     /// @notice Fills up to `maxFillAmount` of the live auction's shortfall in exchange for wrapped nUSD3 and a
     /// collateral kicker.
-    /// @dev Reverts if USD3 or the notification vault cannot accept delivery. The award is the current ramped
-    /// pro-rata kicker, capped by `maxAuctionAwardBps` of the fill at the fill-time oracle price.
-    /// @param epoch Auctioned epoch (must be the live auction).
+    /// @dev Targets whichever auction is live, following Yearn-take semantics. `maxFillAmount` is the caller's only
+    /// bound; the award is the current ramped pro-rata kicker, capped by `maxAuctionAwardBps` of the fill at the
+    /// fill-time oracle price. Reverts if USD3 or the notification vault cannot accept delivery.
     /// @param maxFillAmount Maximum shortfall to fill (fundingAsset).
     /// @return filledAmount Shortfall actually filled (fundingAsset).
     /// @return marginAward Collateral kicker awarded (marginAsset).
-    function takeAuction(uint256 epoch, uint256 maxFillAmount)
-        external
-        returns (uint256 filledAmount, uint256 marginAward);
+    function takeAuction(uint256 maxFillAmount) external returns (uint256 filledAmount, uint256 marginAward);
     /// @notice Owner update of the oracle-valued auction award cap.
     /// @dev Reverts above BPS, when set nonzero while auctions are disabled, or while an auction is live.
     /// @param newMaxAuctionAwardBps New award cap per fundingAsset filled, in bps.

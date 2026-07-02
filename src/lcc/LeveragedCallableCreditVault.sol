@@ -140,7 +140,10 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     /// @notice Deploys a vault with immutable facility parameters and initial mutable risk caps.
     /// @dev Validates `params` and derives the auction step duration from the Closed
-    /// window. The epoch clock starts at `params.startTimestamp`.
+    /// window. The epoch clock starts at `params.startTimestamp`. The vault grants standing max allowances to the
+    /// trusted, construction-fixed USD3 and notification vault spenders. USD3 short-circuits max allowance as
+    /// permanently infinite; USDC decrements max allowance, but type(uint256).max is inexhaustible in practice. The
+    /// vault holds no fundingAsset or USD3 between transactions, so the allowances expose no idle balance.
     /// @param params The facility configuration; see {ILeveragedCallableCreditVault.VaultParams}.
     constructor(VaultParams memory params) Ownable(params.owner) {
         LCCConfigLib.validate(params);
@@ -151,6 +154,9 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         usd3 = IERC4626(notificationVault.asset());
         marginOracle = IOracle(params.marginOracle);
         treasury = params.treasury;
+
+        fundingAsset.forceApprove(address(usd3), type(uint256).max);
+        IERC20(address(usd3)).forceApprove(address(notificationVault), type(uint256).max);
 
         startTimestamp = params.startTimestamp;
         epochLength = params.epochLength;
@@ -415,26 +421,23 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     }
 
     /// @inheritdoc ILeveragedCallableCreditVault
-    function fundEpochCall(uint256 epoch) external nonReentrant synced returns (uint256 obligationAmount) {
-        return _fund(epoch, msg.sender, msg.sender);
+    function fundCall() external nonReentrant synced returns (uint256 obligationAmount) {
+        return _fund(msg.sender, msg.sender);
     }
 
     /// @inheritdoc ILeveragedCallableCreditVault
     /// @dev Push-based third-party funding: the caller pays; released margin, wrapped nUSD3 delivery, and funded
     /// status always accrue to `user`.
-    function fundEpochCall(uint256 epoch, address user)
-        external
-        nonReentrant
-        synced
-        returns (uint256 obligationAmount)
-    {
+    function fundCall(address user) external nonReentrant synced returns (uint256 obligationAmount) {
         if (user == address(0)) revert LCCErrorsLib.ZeroAddress();
-        return _fund(epoch, msg.sender, user);
+        return _fund(msg.sender, user);
     }
 
     /// @inheritdoc ILeveragedCallableCreditVault
-    /// @dev If USD3 or the notification vault cannot deliver wrapped nUSD3, the take reverts.
-    function takeAuction(uint256 epoch, uint256 maxFillAmount)
+    /// @dev If USD3 or the notification vault cannot deliver wrapped nUSD3, the take reverts. The fill targets
+    /// whichever auction is live, following Yearn-take semantics: `maxFillAmount` is the caller's only bound, and the
+    /// award is the current ramped kicker.
+    function takeAuction(uint256 maxFillAmount)
         external
         nonReentrant
         synced
@@ -442,7 +445,9 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     {
         if (_shutdown.active) revert LCCErrorsLib.ShutdownActive();
         // synced settled any past-window auction, so a live slot implies the window is open.
-        if (_syncState.pendingAuctionEpochPlusOne != epoch + 1) revert LCCErrorsLib.AuctionNotLive();
+        uint256 slot = _syncState.pendingAuctionEpochPlusOne;
+        if (slot == 0) revert LCCErrorsLib.AuctionNotLive();
+        uint256 epoch = slot - 1;
 
         LCCAuctionLib.AuctionState storage state = epochAuctions[epoch];
         uint256 remainingShortfallAmount = state.shortfallAmount - state.filledAmount;
@@ -585,8 +590,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     /* FUNDING INTERNALS */
 
-    function _fund(uint256 epoch, address payer, address user) internal returns (uint256 obligationAmount) {
-        if (epoch != _currentEpoch()) revert LCCErrorsLib.InvalidEpoch();
+    function _fund(address payer, address user) internal returns (uint256 obligationAmount) {
+        uint256 epoch = _currentEpoch();
         if (_phaseAt(block.timestamp) != Phase.Funding) revert LCCErrorsLib.InvalidPhase();
 
         EpochState storage state = epochs[epoch];
@@ -629,13 +634,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     /// @dev Delivers funded USDC as wrapped nUSD3. The LCC vault is the USD3 receiver, so deployments must grant
     /// the vault the USD3 supply-cap exemption and, when enabled, the regular USD3 whitelist.
     function _deliverWrapped(address receiver, uint256 fundingAmount) internal {
-        fundingAsset.forceApprove(address(usd3), fundingAmount);
         uint256 usd3Assets = usd3.deposit(fundingAmount, address(this));
-        fundingAsset.forceApprove(address(usd3), 0);
-
-        IERC20(address(usd3)).forceApprove(address(notificationVault), usd3Assets);
         notificationVault.deposit(usd3Assets, receiver);
-        IERC20(address(usd3)).forceApprove(address(notificationVault), 0);
     }
 
     /* SYNC, FOLD & SLASH INTERNALS */

@@ -63,7 +63,7 @@ contract LCCFundingTest is LCCBase {
         vm.warp(START + NORMAL + PRE_CALL);
         vm.expectRevert(bytes("<min"));
         vm.prank(alice);
-        vault.fundEpochCall(0);
+        vault.fundCall();
     }
 
     function testFundingRevertsWhenNotificationVaultRejectsAndRetrySucceeds() public {
@@ -74,7 +74,7 @@ contract LCCFundingTest is LCCBase {
         vm.warp(START + NORMAL + PRE_CALL);
         vm.expectRevert(bytes("!notification"));
         vm.prank(alice);
-        vault.fundEpochCall(0);
+        vault.fundCall();
 
         notificationVault.setDepositHookReverts(false);
         uint256 obligation = _fund(alice);
@@ -140,12 +140,12 @@ contract LCCFundingTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.InvalidPhase.selector);
         vm.prank(alice);
-        vault.fundEpochCall(0);
+        vault.fundCall();
 
         _fund(alice);
 
         vm.expectRevert(LCCErrorsLib.AlreadyFunded.selector);
         vm.prank(alice);
-        vault.fundEpochCall(0);
+        vault.fundCall();
     }
 }

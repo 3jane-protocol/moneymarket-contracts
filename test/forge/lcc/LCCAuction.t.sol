@@ -67,7 +67,7 @@ contract LCCAuctionTest is LCCBase {
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
 
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(0, 25e18);
+        (, uint256 award) = vault.takeAuction(25e18);
         assertEq(award, 18.75e18);
     }
 
@@ -112,7 +112,7 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(DEADLINE + 4);
 
         vm.prank(carol);
-        (uint256 filled, uint256 award) = vault.takeAuction(0, 10e18);
+        (uint256 filled, uint256 award) = vault.takeAuction(10e18);
 
         assertEq(filled, 10e18);
         assertEq(award, 0);
@@ -126,14 +126,14 @@ contract LCCAuctionTest is LCCBase {
         // Step 1 (50% offered = 25e18): fill half the shortfall.
         vm.warp(DEADLINE + 5);
         vm.prank(carol);
-        (uint256 filled1, uint256 award1) = vault.takeAuction(0, 25e18);
+        (uint256 filled1, uint256 award1) = vault.takeAuction(25e18);
         assertEq(filled1, 25e18);
         assertEq(award1, 12.5e18);
 
         // Step 2 (75% offered = 37.5e18): clamp a too-large fill to the 25e18 remaining.
         vm.warp(DEADLINE + 10);
         vm.prank(bob);
-        (uint256 filled2, uint256 award2) = vault.takeAuction(0, 100e18);
+        (uint256 filled2, uint256 award2) = vault.takeAuction(100e18);
         assertEq(filled2, 25e18);
         assertEq(award2, 18.75e18);
 
@@ -149,7 +149,7 @@ contract LCCAuctionTest is LCCBase {
 
         vm.warp(DEADLINE + 5);
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(0, 10e18);
+        (, uint256 award) = vault.takeAuction(10e18);
         assertEq(award, 5e18);
 
         vm.warp(WINDOW_END);
@@ -165,7 +165,7 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(WINDOW_END + 1);
         vm.expectRevert(LCCErrorsLib.AuctionNotLive.selector);
         vm.prank(carol);
-        vault.takeAuction(0, 1e18);
+        vault.takeAuction(1e18);
     }
 
     function testFullFillEndsAuction() public {
@@ -173,13 +173,13 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(DEADLINE + 5);
 
         vm.prank(carol);
-        vault.takeAuction(0, 50e18);
+        vault.takeAuction(50e18);
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
 
         vm.expectRevert(LCCErrorsLib.AuctionNotLive.selector);
         vm.prank(bob);
-        vault.takeAuction(0, 1e18);
+        vault.takeAuction(1e18);
     }
 
     function testOracleCapBindsAtFillTimePrice() public {
@@ -190,7 +190,7 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(DEADLINE + 10);
 
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(0, 25e18);
+        (, uint256 award) = vault.takeAuction(25e18);
 
         // Ramp award would be 37.5e18 * 25/50 = 18.75e18; cap = 25e18 / 10 = 2.5e18.
         assertEq(award, 2.5e18);
@@ -203,7 +203,7 @@ contract LCCAuctionTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
         vm.prank(carol);
-        vault.takeAuction(0, 10e18);
+        vault.takeAuction(10e18);
     }
 
     function testTakeRevertsWhenUsd3CannotAccept() public {
@@ -213,13 +213,13 @@ contract LCCAuctionTest is LCCBase {
         usd3.setDepositLimit(0);
         vm.expectRevert();
         vm.prank(carol);
-        vault.takeAuction(0, 10e18);
+        vault.takeAuction(10e18);
 
         usd3.setDepositLimit(type(uint256).max);
         usd3.setDepositHookReverts(true);
         vm.expectRevert("!allowed");
         vm.prank(carol);
-        vault.takeAuction(0, 10e18);
+        vault.takeAuction(10e18);
 
         // Nothing was filled or awarded; the pool is intact.
         LCCAuctionLib.AuctionState memory state = vault.getAuctionState(0);
@@ -235,7 +235,7 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(DEADLINE + 5);
 
         vm.prank(carol);
-        (uint256 filled,) = vault.takeAuction(0, 1);
+        (uint256 filled,) = vault.takeAuction(1);
 
         assertEq(filled, 1);
         assertEq(notificationVault.balanceOf(carol), 1);
@@ -256,7 +256,7 @@ contract LCCAuctionTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.ShutdownActive.selector);
         vm.prank(carol);
-        vault.takeAuction(0, 10e18);
+        vault.takeAuction(10e18);
 
         // Honored funder's emergency claim is isolated from the swept inventory.
         vm.prank(alice);
@@ -276,7 +276,7 @@ contract LCCAuctionTest is LCCBase {
 
         vm.warp(START + EPOCH + NORMAL + PRE_CALL);
         vm.prank(alice);
-        vault.fundEpochCall(1);
+        vault.fundCall();
 
         vm.warp(START + EPOCH + NORMAL + PRE_CALL + FUNDING);
         vault.finalizeEpochSlash(1);

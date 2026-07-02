@@ -32,6 +32,15 @@ contract LCCCallTest is LCCBase {
         vault.openEpochCall(0, 100e18);
     }
 
+    function testOpenCallRejectsNonCurrentEpoch() public {
+        _deposit(alice, 100e18);
+
+        vm.warp(START + NORMAL);
+        vm.expectRevert(LCCErrorsLib.InvalidEpoch.selector);
+        vm.prank(owner);
+        vault.openEpochCall(1, 100e18);
+    }
+
     function testNextOpenAutoFinalizesPriorSlashBeforeSnapshot() public {
         _deposit(alice, 100e18);
         _openCall(100e18);
