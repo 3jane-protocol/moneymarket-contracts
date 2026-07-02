@@ -259,61 +259,6 @@ contract NotificationVaultTest is Setup {
         assertTrue(vault.cooldownBypass(alice));
     }
 
-    function test_depositUSDC() public {
-        uint256 amount = 100e6;
-        deal(address(underlyingAsset), alice, amount);
-
-        vm.startPrank(alice);
-        underlyingAsset.approve(address(vault), amount);
-        uint256 shares = vault.depositUSDC(amount, bob);
-        vm.stopPrank();
-
-        assertEq(ERC20(address(vault)).balanceOf(bob), shares);
-        assertEq(ERC20(address(usd3)).balanceOf(address(vault)), amount);
-        assertEq(ERC20(address(usd3)).allowance(address(vault), address(vault)), 0);
-        assertEq(underlyingAsset.allowance(address(vault), address(usd3)), 0);
-    }
-
-    function test_depositUSDCEndToEndCooldownRedeem() public {
-        uint256 amount = 100e6;
-        deal(address(underlyingAsset), alice, amount);
-        uint256 aliceUsd3Before = ERC20(address(usd3)).balanceOf(alice);
-
-        vm.startPrank(alice);
-        underlyingAsset.approve(address(vault), amount);
-        uint256 shares = vault.depositUSDC(amount, alice);
-        vault.startCooldown(shares);
-        skip(COOLDOWN + 1);
-        uint256 assets = vault.redeem(shares, alice, alice);
-        vm.stopPrank();
-
-        assertEq(assets, amount);
-        assertEq(ERC20(address(usd3)).balanceOf(alice) - aliceUsd3Before, amount);
-    }
-
-    function test_depositUSDCRevertsAtomicallyWhenUsd3Rejects() public {
-        uint256 amount = 10e6;
-        deal(address(underlyingAsset), alice, amount);
-
-        vm.prank(management);
-        usd3.setMinDeposit(amount + 1);
-
-        uint256 aliceUsdcBefore = underlyingAsset.balanceOf(alice);
-
-        vm.startPrank(alice);
-        underlyingAsset.approve(address(vault), amount);
-        vm.expectRevert(bytes("<min"));
-        vault.depositUSDC(amount, alice);
-        vm.stopPrank();
-
-        assertEq(underlyingAsset.balanceOf(alice), aliceUsdcBefore);
-        assertEq(underlyingAsset.balanceOf(address(vault)), 0);
-        assertEq(ERC20(address(usd3)).balanceOf(address(vault)), 0);
-        assertEq(ERC20(address(vault)).balanceOf(alice), 0);
-        assertEq(ERC20(address(usd3)).allowance(address(vault), address(vault)), 0);
-        assertEq(underlyingAsset.allowance(address(vault), address(usd3)), 0);
-    }
-
     function test_reportAndHarvestRevert() public {
         vm.expectRevert(INotificationVault.ReportsDisabled.selector);
         vault.report();

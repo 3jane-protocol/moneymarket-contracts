@@ -37,8 +37,20 @@ contract LCCCallTest is LCCBase {
         _openCall(100e18);
 
         vm.warp(START + EPOCH + NORMAL);
-        vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
         vm.prank(owner);
         vault.openEpochCall(1, 100e18);
+
+        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(1);
+        assertEq(state.commitmentDenominator, 180e18);
+        assertEq(state.marginAtCallOpen, 90e18);
+    }
+
+    function testOpenCallRevertsAboveActiveCommitment() public {
+        _deposit(alice, 100e18);
+
+        vm.warp(START + NORMAL);
+        vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
+        vm.prank(owner);
+        vault.openEpochCall(0, 200e18 + 1);
     }
 }

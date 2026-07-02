@@ -15,9 +15,11 @@ library LCCConfigLib {
     function validate(ILeveragedCallableCreditVault.VaultParams memory params) internal view {
         if (
             params.owner == address(0) || params.marginAsset == address(0) || params.fundingAsset == address(0)
-                || params.usd3 == address(0) || params.marginOracle == address(0) || params.treasury == address(0)
+                || params.notificationVault == address(0) || params.marginOracle == address(0)
+                || params.treasury == address(0)
         ) revert LCCErrorsLib.ZeroAddress();
-        if (params.fundingAsset != IERC4626(params.usd3).asset()) revert LCCErrorsLib.InvalidParams();
+        address usd3 = IERC4626(params.notificationVault).asset();
+        if (params.fundingAsset != IERC4626(usd3).asset()) revert LCCErrorsLib.InvalidParams();
         if (params.marginRatioBps == 0 || params.marginRatioBps > BPS) revert LCCErrorsLib.InvalidParams();
         if (params.epochLength == 0 || params.normalDuration == 0 || params.preCallDuration == 0) {
             revert LCCErrorsLib.InvalidParams();
@@ -34,6 +36,7 @@ library LCCConfigLib {
         if (params.protocolCommitmentCap > type(uint128).max) revert LCCErrorsLib.InvalidParams();
         if (params.exitCapBps == 0 || params.exitCapBps > BPS) revert LCCErrorsLib.InvalidParams();
         if (params.exitDelayEpochs == 0) revert LCCErrorsLib.InvalidParams();
+        if (params.slashFeeBps > BPS) revert LCCErrorsLib.InvalidParams();
 
         if (params.auctionStepCount == 0) {
             if (params.auctionStepDecayRateBps != 0 || params.maxAuctionAwardBps != 0) {

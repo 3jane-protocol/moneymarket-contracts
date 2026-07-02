@@ -35,6 +35,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     using LCCAccountLib for Account;
 
     uint256 internal constant MAX_MATERIALIZE_STEPS = 64;
+    /// @notice Minimum returned funding commitment retained for attribution, assuming 6-decimal USDC funding units.
+    uint256 internal constant MIN_RETURN_COMMITMENT = 1e6;
 
     /* STORAGE */
 
@@ -46,8 +48,10 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     IERC20 private immutable marginAsset;
     /// @notice The ERC20 used to fund calls and auction fills; equals USD3's underlying asset.
     IERC20 private immutable fundingAsset;
-    /// @notice The ERC-4626 vault that funded amounts are deposited into for the funder.
+    /// @notice The ERC-4626 USD3 vault that accepts fundingAsset deposits.
     IERC4626 private immutable usd3;
+    /// @notice The ERC-4626 notification wrapper that delivers nUSD3 to funders and fillers.
+    IERC4626 private immutable notificationVault;
     /// @notice Trusted oracle quoting one marginAsset in fundingAsset, scaled by ORACLE_PRICE_SCALE.
     IOracle private immutable marginOracle;
     /// @notice Recipient of slashed margin and unsold auction collateral.
@@ -81,6 +85,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     /// @dev Mutable risk configuration. Per-epoch exit capacity is `protocolCommitmentCap * exitCapBps / BPS`.
     /// The protocol cap is used as the base (rather than live active commitment) so bucket assignment is
     /// deterministic and not path-dependent. `maxAuctionAwardBps` is the runtime auction-kicker off-switch.
+    /// `slashFeeBps` is charged on unawarded slashed margin surplus.
     RiskConfig internal _riskConfig;
 
     /// @dev Packed aggregate totals. Commitment totals are cap-bounded by `protocolCommitmentCap <=
@@ -131,9 +136,6 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     /// @inheritdoc ILeveragedCallableCreditVault
     mapping(uint256 => mapping(address => bool)) public defaultedEpoch;
 
-    /// @inheritdoc ILeveragedCallableCreditVault
-    mapping(address => uint256) public escrowedFundingAmount;
-
     /* CONSTRUCTOR */
 
     /// @notice Deploys a vault with immutable facility parameters and initial mutable risk caps.
@@ -145,7 +147,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
         marginAsset = IERC20(params.marginAsset);
         fundingAsset = IERC20(params.fundingAsset);
-        usd3 = IERC4626(params.usd3);
+        notificationVault = IERC4626(params.notificationVault);
+        usd3 = IERC4626(notificationVault.asset());
         marginOracle = IOracle(params.marginOracle);
         treasury = params.treasury;
 
@@ -168,7 +171,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
             userCommitmentCap: params.userCommitmentCap,
             exitCapBps: params.exitCapBps,
             minDepositAssets: params.minDepositAssets,
-            maxAuctionAwardBps: params.maxAuctionAwardBps
+            maxAuctionAwardBps: params.maxAuctionAwardBps,
+            slashFeeBps: params.slashFeeBps
         });
 
         uint256 epoch = _currentEpoch();
@@ -243,14 +247,23 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     }
 
     /// @inheritdoc ILeveragedCallableCreditVault
-    function shutdown() external onlyOwner synced {
+    function setSlashFeeBps(uint256 newSlashFeeBps) external onlyOwner synced {
+        if (newSlashFeeBps > BPS) revert LCCErrorsLib.InvalidParams();
+        if (_syncState.pendingAuctionEpochPlusOne != 0) revert LCCErrorsLib.InvalidPhase();
+        _riskConfig.slashFeeBps = newSlashFeeBps;
+        emit LCCEventsLib.SlashFeeUpdated(newSlashFeeBps);
+    }
+
+    /// @inheritdoc ILeveragedCallableCreditVault
+    function shutdown() external onlyOwner {
         if (_shutdown.active) revert LCCErrorsLib.ShutdownActive();
         _shutdown.active = true;
         _shutdown.timestamp = block.timestamp.toUint64();
         _shutdown.epoch = _currentEpoch().toUint64();
-        // Re-run after recording shutdown so in-flight calls can finalize with slash disabled.
-        _syncGlobal();
         emit LCCEventsLib.EmergencyShutdown(_shutdown.epoch, _shutdown.timestamp);
+        // Shutdown is recorded before the sync so in-flight finalizations see it: mid-window epochs finalize
+        // with slash disabled, and disposal never requires a live oracle.
+        _syncGlobal();
     }
 
     /* USER ACTIONS */
@@ -269,8 +282,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         uint256 price = marginOracle.price();
         if (price == 0) revert LCCErrorsLib.OraclePriceInvalid();
 
-        uint256 marginValue = assets.mulDiv(price, ORACLE_PRICE_SCALE);
-        commitment = marginValue.mulDiv(BPS, marginRatioBps);
+        uint256 marginValue;
+        (marginValue, commitment) = _marginValueAndCommitment(assets, price);
         if (commitment == 0) revert LCCErrorsLib.InvalidAmount();
 
         if (
@@ -407,8 +420,8 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     }
 
     /// @inheritdoc ILeveragedCallableCreditVault
-    /// @dev Push-based third-party funding: the caller pays; released margin, the USD3 position (or escrow credit),
-    /// and funded status always accrue to `user`. Escrow credit is never refundable to the payer.
+    /// @dev Push-based third-party funding: the caller pays; released margin, wrapped nUSD3 delivery, and funded
+    /// status always accrue to `user`.
     function fundEpochCall(uint256 epoch, address user)
         external
         nonReentrant
@@ -420,9 +433,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     }
 
     /// @inheritdoc ILeveragedCallableCreditVault
-    /// @dev No escrow fallback for fillers — they are volunteers, not obligated funders: if USD3 cannot accept the
-    /// deposit (capacity, depositor whitelist, first-time minimum) the take reverts. Fills require the vault to be
-    /// on USD3's depositorWhitelist while commitment enforcement is active.
+    /// @dev If USD3 or the notification vault cannot deliver wrapped nUSD3, the take reverts.
     function takeAuction(uint256 epoch, uint256 maxFillAmount)
         external
         nonReentrant
@@ -455,45 +466,12 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         state.marginAwarded += marginAward;
 
         fundingAsset.safeTransferFrom(msg.sender, address(this), filledAmount);
-        _depositToUsd3(msg.sender, filledAmount);
+        _deliverWrapped(msg.sender, filledAmount);
         if (marginAward != 0) marginAsset.safeTransfer(msg.sender, marginAward);
 
         emit LCCEventsLib.AuctionFill(msg.sender, epoch, filledAmount, marginAward);
 
         if (state.filledAmount == state.shortfallAmount) _settleAuction(epoch);
-    }
-
-    /// @inheritdoc ILeveragedCallableCreditVault
-    function depositEscrowedFunding(address user) external nonReentrant synced returns (uint256 placedAmount) {
-        if (user == address(0)) revert LCCErrorsLib.ZeroAddress();
-
-        uint256 escrowAmount = escrowedFundingAmount[user];
-        if (escrowAmount == 0) revert LCCErrorsLib.NothingToClaim();
-
-        placedAmount = escrowAmount.min(usd3.maxDeposit(user));
-        if (placedAmount == 0) revert LCCErrorsLib.InvalidAmount();
-
-        _removeEscrow(user, placedAmount);
-        _depositToUsd3(user, placedAmount);
-
-        emit LCCEventsLib.EscrowedFundingPlaced(user, placedAmount);
-    }
-
-    /// @inheritdoc ILeveragedCallableCreditVault
-    /// @dev Returns escrowed funding to the funder after terminal shutdown, when USD3 placement can no longer be
-    /// forced.
-    function claimEscrowedFunding(address receiver) external nonReentrant synced returns (uint256 assets) {
-        if (!_shutdown.active) revert LCCErrorsLib.ShutdownRequired();
-        if (receiver == address(0)) revert LCCErrorsLib.ZeroAddress();
-
-        assets = escrowedFundingAmount[msg.sender];
-        if (assets == 0) revert LCCErrorsLib.NothingToClaim();
-
-        _removeEscrow(msg.sender, assets);
-
-        fundingAsset.safeTransfer(receiver, assets);
-
-        emit LCCEventsLib.EscrowedFundingClaimed(msg.sender, receiver, assets);
     }
 
     /// @inheritdoc ILeveragedCallableCreditVault
@@ -557,6 +535,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
             marginAsset: address(marginAsset),
             fundingAsset: address(fundingAsset),
             usd3: address(usd3),
+            notificationVault: address(notificationVault),
             marginOracle: address(marginOracle),
             treasury: treasury
         });
@@ -639,7 +618,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         _decreaseGlobalActive(releasedMargin, obligationAmount);
 
         fundingAsset.safeTransferFrom(payer, address(this), obligationAmount);
-        _fundOrEscrow(user, epoch, obligationAmount);
+        _deliverWrapped(user, obligationAmount);
 
         marginAsset.safeTransfer(user, releasedMargin);
 
@@ -647,38 +626,16 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         emit LCCEventsLib.MarginReleased(user, epoch, releasedMargin);
     }
 
-    /// @dev Funding success must not depend on USD3 accepting the deposit: when USD3 cannot take the full amount —
-    /// insufficient maxDeposit, or a pre-deposit hook revert invisible to maxDeposit (depositor whitelist,
-    /// first-time minimum deposit) — the funding asset is escrowed for the funder instead of reverting (which would
-    /// default honoring users at the deadline). Deployments should add the vault to USD3's depositorWhitelist so the
-    /// direct
-    /// path is the norm; escrow covers the failure if not.
-    function _fundOrEscrow(address user, uint256 epoch, uint256 fundingAmount) internal {
-        if (usd3.maxDeposit(user) >= fundingAmount) {
-            fundingAsset.forceApprove(address(usd3), fundingAmount);
-            try usd3.deposit(fundingAmount, user) returns (uint256) {
-                return;
-            } catch {
-                fundingAsset.forceApprove(address(usd3), 0);
-            }
-        }
-        _addEscrow(user, fundingAmount);
-        emit LCCEventsLib.EscrowedFundingCreated(user, epoch, fundingAmount);
-    }
-
-    function _depositToUsd3(address receiver, uint256 fundingAmount) internal {
+    /// @dev Delivers funded USDC as wrapped nUSD3. The LCC vault is the USD3 receiver, so deployments must grant
+    /// the vault the USD3 supply-cap exemption and, when enabled, the regular USD3 whitelist.
+    function _deliverWrapped(address receiver, uint256 fundingAmount) internal {
         fundingAsset.forceApprove(address(usd3), fundingAmount);
-        usd3.deposit(fundingAmount, receiver);
-    }
+        uint256 usd3Assets = usd3.deposit(fundingAmount, address(this));
+        fundingAsset.forceApprove(address(usd3), 0);
 
-    function _addEscrow(address user, uint256 fundingAmount) internal {
-        escrowedFundingAmount[user] += fundingAmount;
-        _totals.escrowedFunding += fundingAmount;
-    }
-
-    function _removeEscrow(address user, uint256 fundingAmount) internal {
-        escrowedFundingAmount[user] -= fundingAmount;
-        _totals.escrowedFunding -= fundingAmount;
+        IERC20(address(usd3)).forceApprove(address(notificationVault), usd3Assets);
+        notificationVault.deposit(usd3Assets, receiver);
+        IERC20(address(usd3)).forceApprove(address(notificationVault), 0);
     }
 
     /* SYNC, FOLD & SLASH INTERNALS */
@@ -749,6 +706,20 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         }
     }
 
+    /// @dev Exit commitment that has matured but not yet folded out of `_totals`, so it still inflates
+    /// `usedCommitment` when disposal computes cap headroom. The add-back never double-counts: disposal on
+    /// the sync path runs before `_foldDueMaturities`, and disposal from a mid-window full-fill settlement
+    /// runs after that transaction's folds, where due buckets are already zeroed and pruned so this sums 0.
+    /// Reordering `_syncGlobal` to fold maturities before finalization would break the first case into a
+    /// double-count that overstates headroom.
+    function _dueUnfoldedExitCommitment(uint256 current) internal view returns (uint256 commitment) {
+        uint256 length = exitMaturityList.length;
+        for (uint256 i = 0; i < length; ++i) {
+            uint256 maturity = exitMaturityList[i];
+            if (maturity <= current) commitment += exitBucketCommitmentByMaturity[maturity];
+        }
+    }
+
     function _foldActivation(uint256 epoch) internal {
         uint256 margin = pendingMarginByActivationEpoch[epoch];
         uint256 commitment = pendingCommitmentByActivationEpoch[epoch];
@@ -780,7 +751,9 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         EpochState storage state = epochs[epoch];
         if (!state.callOpened || state.slashFinalized) return;
 
-        bool disabled = _shutdown.active && _shutdown.timestamp <= _fundingDeadline(epoch);
+        // Slash is disabled only when shutdown landed strictly inside the funding window; at the deadline
+        // itself the window has closed and defaults are final.
+        bool disabled = _shutdown.active && _shutdown.timestamp < _fundingDeadline(epoch);
         state.slashFinalized = true;
         state.slashDisabledByShutdown = disabled;
 
@@ -792,6 +765,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         uint256 slashedMargin = state.marginAtCallOpen - state.marginReleased - state.fundedUsersRemainingMargin;
         uint256 slashedCommitment =
             state.commitmentDenominator - state.fundedAmount - state.fundedUsersRemainingCommitment;
+        state.slashedMargin = slashedMargin;
 
         _reduceExitBucketsForSlash(epoch);
 
@@ -814,7 +788,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
                 _syncState.pendingAuctionEpochPlusOne = (epoch + 1).toUint64();
                 emit LCCEventsLib.AuctionKicked(epoch, shortfallAmount, slashedMargin);
             } else {
-                marginAsset.safeTransfer(treasury, slashedMargin);
+                _disposeSlashSurplus(epoch, slashedMargin);
             }
         }
 
@@ -839,9 +813,73 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         _syncState.pendingAuctionEpochPlusOne = 0;
 
         uint256 remainder = state.marginPool - state.marginAwarded;
-        if (remainder != 0) marginAsset.safeTransfer(treasury, remainder);
+        _disposeSlashSurplus(epoch, remainder);
 
-        emit LCCEventsLib.AuctionSettled(epoch, state.filledAmount, state.marginAwarded, remainder);
+        emit LCCEventsLib.AuctionSettled(epoch, state.filledAmount, state.marginAwarded);
+    }
+
+    /// @dev Values `assets` of margin at `price` (scaled by ORACLE_PRICE_SCALE) and leverages the value into a
+    /// fundingAsset commitment via `marginRatioBps`.
+    function _marginValueAndCommitment(uint256 assets, uint256 price)
+        internal
+        view
+        returns (uint256 marginValue, uint256 commitment)
+    {
+        marginValue = assets.mulDiv(price, ORACLE_PRICE_SCALE);
+        commitment = marginValue.mulDiv(BPS, marginRatioBps);
+    }
+
+    function _disposeSlashSurplus(uint256 epoch, uint256 surplus) internal {
+        if (surplus == 0) return;
+
+        EpochState storage state = epochs[epoch];
+
+        uint256 fee = surplus.mulDiv(_riskConfig.slashFeeBps, BPS);
+        uint256 returnPool = surplus - fee;
+
+        uint256 returnCommitment;
+        // The oracle is consulted only when there is a return pool to value; a full-fee sweep never
+        // depends on oracle liveness.
+        if (returnPool != 0) {
+            uint256 price;
+            if (_shutdown.active) {
+                try marginOracle.price() returns (uint256 p) {
+                    price = p;
+                } catch {}
+                // A price large enough to overflow the valuation is treated like a dead oracle so
+                // shutdown wind-down can never brick on disposal.
+                if (price > type(uint256).max / returnPool) price = 0;
+            } else {
+                price = marginOracle.price();
+                if (price == 0) revert LCCErrorsLib.OraclePriceInvalid();
+            }
+
+            if (price == 0) {
+                returnPool = 0;
+            } else {
+                (, uint256 rawCommitment) = _marginValueAndCommitment(returnPool, price);
+                uint256 usedCommitment = uint256(_totals.activeCommitment) + uint256(_totals.pendingCommitment);
+                // Post-shutdown no call can ever open, so returned commitment bounds no callable
+                // exposure: clamping by the protocol cap would only divert defaulters' recoverable
+                // margin to the treasury. Bound it by the packed-totals width instead.
+                uint256 headroom = _shutdown.active
+                    ? uint256(type(uint128).max).saturatingSub(usedCommitment)
+                    : _riskConfig.protocolCommitmentCap.saturatingSub(usedCommitment)
+                        + _dueUnfoldedExitCommitment(_currentEpoch());
+                returnCommitment = rawCommitment.min(headroom);
+                if (returnCommitment < MIN_RETURN_COMMITMENT) returnCommitment = 0;
+                returnPool = returnCommitment == 0 ? 0 : returnPool.mulDiv(returnCommitment, rawCommitment);
+            }
+        }
+
+        if (returnPool == 0) returnCommitment = 0;
+
+        state.returnPool = returnPool;
+        state.returnCommitment = returnCommitment;
+        if (returnPool != 0) _increaseGlobalActive(returnPool, returnCommitment);
+        uint256 toTreasury = surplus - returnPool;
+        if (toTreasury != 0) marginAsset.safeTransfer(treasury, toTreasury);
+        emit LCCEventsLib.SlashSurplusDisposed(epoch, toTreasury, returnPool, returnCommitment);
     }
 
     /* ACCOUNT REPLAY INTERNALS */
@@ -866,6 +904,11 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
             LCCTypesLib.DefaultRecord memory record = replay.defaults[i];
             defaultedEpoch[record.epoch][user] = true;
             emit LCCEventsLib.UserDefaulted(user, record.epoch, record.slashedMargin, record.slashedCommitment);
+            if (record.returnMarginShare != 0) {
+                emit LCCEventsLib.ReturnPoolCredited(
+                    user, record.epoch, record.returnMarginShare, record.returnCommitmentShare
+                );
+            }
         }
     }
 
@@ -938,20 +981,27 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
                 unfinalizedEpoch = epoch;
                 break;
             }
+            if (_syncState.pendingAuctionEpochPlusOne == epoch + 1) break;
 
             replay.account.activatePendingForEpoch(epoch);
             replay.account.matureExitForEpoch(epoch);
 
             if (_shouldDefault(replay.account, state, epoch, user)) {
+                uint256 slashedMargin = replay.account.activeMargin;
+                uint256 slashedCommitment = replay.account.activeCommitment;
+                (uint256 marginShare, uint256 commitmentShare) = _pairedReturnPoolShare(epoch, slashedMargin);
                 if (bounded) {
                     if (replay.defaults.length == 0) replay.defaults = new LCCTypesLib.DefaultRecord[](maxSteps);
-                    replay.defaults[replay.defaultCount] =
-                        LCCTypesLib.DefaultRecord(epoch, replay.account.activeMargin, replay.account.activeCommitment);
+                    replay.defaults[replay.defaultCount] = LCCTypesLib.DefaultRecord(
+                        epoch, slashedMargin, slashedCommitment, marginShare, commitmentShare
+                    );
                     unchecked {
                         ++replay.defaultCount;
                     }
                 }
                 replay.account.defaultAccount();
+                replay.account.activeMargin += marginShare;
+                replay.account.activeCommitment += commitmentShare;
             }
 
             unchecked {
@@ -989,6 +1039,24 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
             return false;
         }
         return !account.exitRequested || account.exitMaturityEpoch > epoch;
+    }
+
+    function _pairedReturnPoolShare(uint256 epoch, uint256 slashedMargin)
+        internal
+        view
+        returns (uint256 marginShare, uint256 commitmentShare)
+    {
+        if (slashedMargin == 0) return (0, 0);
+
+        EpochState storage state = epochs[epoch];
+        uint256 aggregateSlashedMargin = state.slashedMargin;
+        if (aggregateSlashedMargin == 0 || state.returnPool == 0 || state.returnCommitment == 0) return (0, 0);
+
+        commitmentShare = state.returnCommitment.mulDiv(slashedMargin, aggregateSlashedMargin);
+        if (commitmentShare == 0) return (0, 0);
+
+        marginShare = state.returnPool.mulDiv(slashedMargin, aggregateSlashedMargin);
+        if (marginShare == 0) return (0, 0);
     }
 
     /* BUCKET & EXIT-EXPOSURE INTERNALS */

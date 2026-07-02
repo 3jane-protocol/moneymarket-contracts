@@ -17,6 +17,9 @@ contract LCCMaterializeTest is LCCBase {
     }
 
     function testClearedAccountCanDepositAfterManyMoreFinalizedCalls() public {
+        vm.prank(owner);
+        vault.setSlashFeeBps(10_000);
+
         _deposit(alice, 100e18);
         _openCall(100e18);
         _finishFunding();
@@ -77,8 +80,8 @@ contract LCCMaterializeTest is LCCBase {
         _syncAs(alice);
         ILeveragedCallableCreditVault.Account memory storedDerived = vault.getAccount(alice);
 
-        assertEq(derived.activeMargin, 0);
-        assertEq(storedDerived.activeMargin, 0);
+        assertEq(derived.activeMargin, 90e18);
+        assertEq(storedDerived.activeMargin, 90e18);
         assertEq(derived.calledEpochCursor, storedDerived.calledEpochCursor);
     }
 
@@ -110,9 +113,9 @@ contract LCCMaterializeTest is LCCBase {
 
         ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
         assertTrue(vault.defaultedEpoch(0, alice));
-        assertEq(account.activeMargin, 50e18);
-        assertEq(account.activeCommitment, 100e18);
-        assertEq(margin.balanceOf(treasury), 100e18);
+        assertEq(account.activeMargin, 140e18);
+        assertEq(account.activeCommitment, 280e18);
+        assertEq(margin.balanceOf(treasury), 10e18);
     }
 
     function testMaturedExiterIsNotDefaultedByLaterCall() public {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.22;
 
-import {LCCBase} from "./LCCBase.t.sol";
+import {LCCBase, LCCRevertingOracle} from "./LCCBase.t.sol";
 import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
 
 contract LCCShutdownTest is LCCBase {
@@ -20,7 +20,7 @@ contract LCCShutdownTest is LCCBase {
         assertEq(vault.totals().activeMargin, 100e18);
     }
 
-    function testShutdownAfterFundingDeadlineAllowsNormalSlash() public {
+    function testShutdownAtFundingDeadlineWithLiveOracleDisposesNormally() public {
         _deposit(alice, 100e18);
         _openCall(100e18);
         _finishFunding();
@@ -31,6 +31,53 @@ contract LCCShutdownTest is LCCBase {
         ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
         assertTrue(state.slashFinalized);
         assertFalse(state.slashDisabledByShutdown);
+        assertEq(margin.balanceOf(treasury), 10e18);
+        assertEq(state.returnPool, 90e18);
+        assertEq(state.returnCommitment, 180e18);
+    }
+
+    function testShutdownDisposalSkipsCapClampAndKeepsFullReturnPool() public {
+        ILeveragedCallableCreditVault.VaultParams memory params = _auctionParams();
+        params.protocolCommitmentCap = 200e18;
+        _deployVaultWithParams(params);
+
+        _deposit(alice, 99e18);
+        _deposit(bob, 1e18);
+        _openCall(200e18);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+
+        vm.warp(START + NORMAL + PRE_CALL + FUNDING + 1);
+        _deposit(carol, 100e18);
+
+        vm.warp(START + EPOCH);
+        vm.prank(owner);
+        vault.shutdown();
+
+        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(state.returnPool, 90e18);
+        assertEq(state.returnCommitment, 180e18);
+        assertEq(margin.balanceOf(treasury), 10e18);
+    }
+
+    function testShutdownWithDeadOracleAndPendingAuctionSweepsSurplus() public {
+        _deployAuctionVault();
+        _deposit(alice, 100e18);
+        _openCall(100e18);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
+
+        LCCRevertingOracle badOracle = new LCCRevertingOracle();
+        vm.etch(address(oracle), address(badOracle).code);
+
+        vm.prank(owner);
+        vault.shutdown();
+
+        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
+        assertEq(state.returnPool, 0);
+        assertEq(state.returnCommitment, 0);
         assertEq(margin.balanceOf(treasury), 100e18);
     }
 

@@ -145,7 +145,7 @@ contract LCCExitTest is LCCBase {
         _syncAs(alice);
 
         assertTrue(vault.defaultedEpoch(0, alice));
-        assertEq(margin.balanceOf(treasury), 100e18);
+        assertEq(margin.balanceOf(treasury), 10e18);
         assertEq(vault.claimableExitedMargin(alice), 0);
     }
 }

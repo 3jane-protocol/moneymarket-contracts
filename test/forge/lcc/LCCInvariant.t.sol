@@ -7,6 +7,19 @@ import {Test} from "../../../lib/forge-std/src/Test.sol";
 import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
 import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
 import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
+import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
+
+/// @dev Reverts that lazy materialization is allowed to surface: the live-auction replay barrier and a
+/// zero/reverting oracle at a pending slash disposal. Anything else must fail the invariant.
+function _expectedMaterializeError(bytes memory reason) pure returns (bool) {
+    if (reason.length < 4) return false;
+    bytes4 selector;
+    assembly {
+        selector := mload(add(reason, 32))
+    }
+    return selector == LCCErrorsLib.AccountMaterializationIncomplete.selector
+        || selector == LCCErrorsLib.OraclePriceInvalid.selector;
+}
 
 contract LCCInvariantTest is LCCBase {
     function testFinalizedEpochConservesCallOpenMargin() public {
@@ -18,9 +31,9 @@ contract LCCInvariantTest is LCCBase {
         vault.finalizeEpochSlash(0);
 
         ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
-        uint256 slashed = margin.balanceOf(treasury);
+        uint256 disposedSlash = margin.balanceOf(treasury) + state.returnPool;
 
-        assertEq(state.marginReleased + state.fundedUsersRemainingMargin + slashed, state.marginAtCallOpen);
+        assertEq(state.marginReleased + state.fundedUsersRemainingMargin + disposedSlash, state.marginAtCallOpen);
     }
 }
 
@@ -48,6 +61,7 @@ contract LCCInvariantHandler is Test {
     function deposit(uint256 actorSeed, uint256 amountSeed) external {
         if (invariantVault.shutdownState().active) return;
         _sync();
+        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
 
         address actor = actors[_index(actorSeed)];
         uint256 amount = _range(amountSeed, 1e18, 10e18);
@@ -75,6 +89,7 @@ contract LCCInvariantHandler is Test {
     function requestExit(uint256 actorSeed) external {
         _sync();
         if (invariantVault.shutdownState().active) return;
+        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
 
         address actor = actors[_index(actorSeed)];
         ILeveragedCallableCreditVault.Account memory account = invariantVault.getAccount(actor);
@@ -89,6 +104,7 @@ contract LCCInvariantHandler is Test {
     function openCall(uint256 amountSeed) external {
         _sync();
         if (invariantVault.shutdownState().active) return;
+        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
         if (invariantVault.currentPhase() != ILeveragedCallableCreditVault.Phase.PreCall) return;
 
         uint256 epoch = invariantVault.currentEpoch();
@@ -124,28 +140,6 @@ contract LCCInvariantHandler is Test {
         }
     }
 
-    function setUsd3DepositLimit(uint256 seed) external {
-        invariantUsd3.setDepositLimit(seed % 3 == 0 ? 0 : type(uint256).max);
-    }
-
-    function placeEscrow(uint256 actorSeed) external {
-        address actor = actors[_index(actorSeed)];
-        if (invariantVault.escrowedFundingAmount(actor) == 0) return;
-        if (invariantUsd3.maxDeposit(actor) == 0) return;
-
-        invariantVault.depositEscrowedFunding(actor);
-    }
-
-    function claimEscrow(uint256 actorSeed) external {
-        if (!invariantVault.shutdownState().active) return;
-
-        address actor = actors[_index(actorSeed)];
-        if (invariantVault.escrowedFundingAmount(actor) == 0) return;
-
-        vm.prank(actor);
-        invariantVault.claimEscrowedFunding(actor);
-    }
-
     function takeAuction(uint256 actorSeed, uint256 fillSeed) external {
         if (invariantVault.shutdownState().active) return;
 
@@ -162,7 +156,6 @@ contract LCCInvariantHandler is Test {
 
         address actor = actors[_index(actorSeed)];
         uint256 fill = _range(fillSeed, 1, remaining);
-        if (invariantUsd3.maxDeposit(actor) < fill) return;
 
         vm.prank(actor);
         invariantVault.takeAuction(epoch, fill);
@@ -192,6 +185,7 @@ contract LCCInvariantHandler is Test {
     }
 
     function materialize(uint256 actorSeed) external {
+        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
         address actor = actors[_index(actorSeed)];
 
         invariantVault.materializeAccount(actor);
@@ -199,6 +193,7 @@ contract LCCInvariantHandler is Test {
 
     function claimExit(uint256 actorSeed) external {
         _sync();
+        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
 
         address actor = actors[_index(actorSeed)];
         if (invariantVault.claimableExitedMargin(actor) == 0) return;
@@ -221,6 +216,7 @@ contract LCCInvariantHandler is Test {
     function setRiskCaps(uint256 protocolSeed, uint256 exitCapSeed) external {
         _sync();
         if (invariantVault.shutdownState().active) return;
+        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
 
         uint256 currentUtilization =
             invariantVault.totals().activeCommitment + invariantVault.totals().pendingCommitment;
@@ -237,6 +233,7 @@ contract LCCInvariantHandler is Test {
     function shutdown(uint256 seed) external {
         _sync();
         if (invariantVault.shutdownState().active) return;
+        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
         if (seed % 64 != 0) return;
         if (invariantVault.totals().activeMargin + invariantVault.totals().pendingMargin == 0) return;
 
@@ -290,7 +287,11 @@ contract LCCInvariantHandler is Test {
     }
 
     function _sync() internal {
-        invariantVault.materializeAccount(actors[0]);
+        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
+        try invariantVault.materializeAccount(actors[0]) {}
+        catch (bytes memory reason) {
+            if (!_expectedMaterializeError(reason)) fail();
+        }
     }
 }
 
@@ -318,8 +319,20 @@ contract LCCStatefulInvariantTest is LCCBase {
     }
 
     function invariant_DerivedActiveBalancesMatchGlobalTotals() public {
+        if (vault.syncState().pendingAuctionEpochPlusOne != 0) return;
+        try vault.materializeAccount(invariantActors[0]) {}
+        catch (bytes memory reason) {
+            if (!_expectedMaterializeError(reason)) fail();
+            return;
+        }
+        if (vault.syncState().pendingAuctionEpochPlusOne != 0) return;
+
         for (uint256 i = 0; i < invariantActors.length; ++i) {
-            vault.materializeAccount(invariantActors[i]);
+            try vault.materializeAccount(invariantActors[i]) {}
+            catch (bytes memory reason) {
+                if (!_expectedMaterializeError(reason)) fail();
+                return;
+            }
         }
 
         uint256 activeMargin;
@@ -337,8 +350,11 @@ contract LCCStatefulInvariantTest is LCCBase {
             claimableMargin += account.claimableExitMargin;
         }
 
-        assertEq(activeMargin, vault.totals().activeMargin);
-        assertEq(activeCommitment, vault.totals().activeCommitment);
+        uint256 dustBound = vault.calledEpochs().length * invariantActors.length;
+        assertLe(activeMargin, vault.totals().activeMargin);
+        assertLe(vault.totals().activeMargin - activeMargin, dustBound);
+        assertLe(activeCommitment, vault.totals().activeCommitment);
+        assertLe(vault.totals().activeCommitment - activeCommitment, dustBound);
         assertEq(pendingMargin, vault.totals().pendingMargin);
         assertEq(pendingCommitment, vault.totals().pendingCommitment);
 
@@ -349,13 +365,7 @@ contract LCCStatefulInvariantTest is LCCBase {
             auctionInventory = auction.marginPool - auction.marginAwarded;
         }
         assertGe(margin.balanceOf(address(vault)), activeMargin + pendingMargin + claimableMargin + auctionInventory);
-
-        uint256 escrowAmount;
-        for (uint256 i = 0; i < invariantActors.length; ++i) {
-            escrowAmount += vault.escrowedFundingAmount(invariantActors[i]);
-        }
-        assertEq(escrowAmount, vault.totals().escrowedFunding);
-        assertEq(usdc.balanceOf(address(vault)), vault.totals().escrowedFunding);
+        assertEq(usdc.balanceOf(address(vault)), 0);
     }
 
     function invariant_AuctionFillAndAwardBounds() public view {

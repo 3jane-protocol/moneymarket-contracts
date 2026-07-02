@@ -6,6 +6,7 @@ import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
 import {USD3} from "../../../src/usd3/USD3.sol";
 import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
 import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
+import {ProtocolConfigLib} from "../../../src/libraries/ProtocolConfigLib.sol";
 
 /**
  * @title USD3SupplyCapTest
@@ -27,6 +28,7 @@ contract USD3SupplyCapTest is Setup {
     uint256 constant SMALL_AMOUNT = 100e6; // 100 USDC
     uint256 constant MEDIUM_AMOUNT = 100_000e6; // 100K USDC
     uint256 constant LARGE_AMOUNT = 500_000e6; // 500K USDC
+    uint256 constant BPS = 10_000;
 
     // Storage key for USD3_SUPPLY_CAP in MockProtocolConfig
     bytes32 private constant USD3_SUPPLY_CAP = keccak256("USD3_SUPPLY_CAP");
@@ -69,9 +71,13 @@ contract USD3SupplyCapTest is Setup {
     }
 
     function _setSupplyCap(uint256 cap) internal {
+        _setConfig(USD3_SUPPLY_CAP, cap);
+    }
+
+    function _setConfig(bytes32 key, uint256 value) internal {
         address owner = protocolConfig.owner();
         vm.prank(owner);
-        protocolConfig.setConfig(USD3_SUPPLY_CAP, cap);
+        protocolConfig.setConfig(key, value);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -142,6 +148,87 @@ contract USD3SupplyCapTest is Setup {
         vm.prank(bob);
         vm.expectRevert();
         strategy.deposit(1, bob);
+    }
+
+    function test_supplyCap_exemptReceiverBypassesHeadroomOnly() public {
+        _setSupplyCap(TEST_CAP);
+
+        vm.prank(alice);
+        strategy.deposit(TEST_CAP, alice);
+
+        assertEq(usd3Strategy.availableDepositLimit(bob), 0, "non-exempt should be capped");
+
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        uint256 expectedLimit = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
+        assertEq(usd3Strategy.availableDepositLimit(bob), expectedLimit, "exempt should bypass cap headroom");
+
+        vm.prank(bob);
+        strategy.deposit(SMALL_AMOUNT, bob);
+
+        assertEq(strategy.totalAssets(), TEST_CAP + SMALL_AMOUNT, "exempt deposit may exceed cap");
+    }
+
+    function test_supplyCap_zeroCapBlocksExemptReceiver() public {
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        _setSupplyCap(0);
+
+        assertEq(usd3Strategy.availableDepositLimit(bob), 0, "emergency pause applies to exempt receivers");
+        vm.prank(bob);
+        vm.expectRevert();
+        strategy.deposit(SMALL_AMOUNT, bob);
+    }
+
+    function test_supplyCap_exemptionDoesNotBypassGeneralWhitelist() public {
+        _setSupplyCap(TEST_CAP);
+
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+        vm.prank(management);
+        usd3Strategy.setWhitelistEnabled(true);
+
+        assertEq(usd3Strategy.availableDepositLimit(bob), 0, "whitelist still binds exempt receiver");
+
+        vm.prank(management);
+        usd3Strategy.setWhitelist(bob, true);
+
+        uint256 expectedLimit = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
+        assertEq(usd3Strategy.availableDepositLimit(bob), expectedLimit, "whitelisted exempt receiver bypasses cap");
+    }
+
+    function test_supplyCapExemptBypassesFirstTimeMinDeposit() public {
+        vm.prank(management);
+        usd3Strategy.setMinDeposit(1_000e6);
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        vm.prank(bob);
+        uint256 shares = strategy.deposit(SMALL_AMOUNT, bob);
+
+        assertGt(shares, 0, "exempt receiver can deposit below first-time minimum");
+        assertEq(strategy.balanceOf(bob), shares);
+    }
+
+    function test_nonExemptReceiverStillEnforcesFirstTimeMinDeposit() public {
+        vm.prank(management);
+        usd3Strategy.setMinDeposit(1_000e6);
+
+        vm.prank(bob);
+        vm.expectRevert(bytes("<min"));
+        strategy.deposit(SMALL_AMOUNT, bob);
+    }
+
+    function test_setSupplyCapExempt_onlyManagement() public {
+        vm.expectRevert();
+        vm.prank(alice);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+        assertTrue(usd3Strategy.supplyCapExempt(bob));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -302,6 +389,53 @@ contract USD3SupplyCapTest is Setup {
         // Now below cap, should have capacity
         uint256 expectedCapacity = (TEST_CAP / 2) - 300_000e6;
         assertEq(usd3Strategy.availableDepositLimit(bob), expectedCapacity, "Should have capacity after withdrawal");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    REDEMPTION FLOOR TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_redemptionFloor_nominalLimitsWithdraws() public {
+        vm.prank(alice);
+        strategy.deposit(LARGE_AMOUNT, alice);
+
+        _setConfig(ProtocolConfigLib.USD3_REDEMPTION_FLOOR, 100_000e6);
+
+        assertEq(usd3Strategy.availableWithdrawLimit(alice), LARGE_AMOUNT - 100_000e6);
+    }
+
+    function test_redemptionFloor_bpsAndNominalUseMax() public {
+        vm.prank(alice);
+        strategy.deposit(LARGE_AMOUNT, alice);
+
+        _setConfig(ProtocolConfigLib.USD3_REDEMPTION_FLOOR, 100_000e6);
+        _setConfig(ProtocolConfigLib.USD3_REDEMPTION_FLOOR_BPS, 3_000);
+
+        uint256 expectedFloor = LARGE_AMOUNT * 3_000 / BPS;
+        assertEq(expectedFloor, 150_000e6);
+        assertEq(usd3Strategy.availableWithdrawLimit(alice), LARGE_AMOUNT - expectedFloor);
+    }
+
+    function test_redemptionFloor_bpsAboveMaxClampsToMaxBps() public {
+        vm.prank(alice);
+        strategy.deposit(LARGE_AMOUNT, alice);
+
+        _setConfig(ProtocolConfigLib.USD3_REDEMPTION_FLOOR_BPS, BPS + 1);
+
+        assertEq(usd3Strategy.availableWithdrawLimit(alice), 0);
+    }
+
+    function test_redemptionFloor_shutdownBypassesFloor() public {
+        vm.prank(alice);
+        strategy.deposit(LARGE_AMOUNT, alice);
+
+        _setConfig(ProtocolConfigLib.USD3_REDEMPTION_FLOOR, LARGE_AMOUNT);
+        assertEq(usd3Strategy.availableWithdrawLimit(alice), 0, "floor should block before shutdown");
+
+        vm.prank(emergencyAdmin);
+        strategy.shutdownStrategy();
+
+        assertEq(usd3Strategy.availableWithdrawLimit(alice), LARGE_AMOUNT, "shutdown bypasses redemption floor");
     }
 
     function test_supplyCap_removeCapAfterDeposits() public {

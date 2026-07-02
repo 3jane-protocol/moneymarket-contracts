@@ -38,6 +38,10 @@ library ProtocolConfigLib {
 
     // Supply Cap Keys
     bytes32 internal constant USD3_SUPPLY_CAP = keccak256("USD3_SUPPLY_CAP");
+    /// @notice Hard USD3 redemption ring-fence in asset units; set this whenever a fixed amount must remain reserved.
+    bytes32 internal constant USD3_REDEMPTION_FLOOR = keccak256("USD3_REDEMPTION_FLOOR");
+    /// @notice USD3 redemption scaling floor in bps; drains geometrically toward the nominal floor across redemptions.
+    bytes32 internal constant USD3_REDEMPTION_FLOOR_BPS = keccak256("USD3_REDEMPTION_FLOOR_BPS");
 
     // Tend Keys
     bytes32 internal constant TEND_DRIFT_THRESHOLD = keccak256("TEND_DRIFT_THRESHOLD");

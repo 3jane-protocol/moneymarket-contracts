@@ -10,13 +10,14 @@ import {LCCAuctionLib} from "../libraries/LCCAuctionLib.sol";
 /// ERC-4626, no transferable shares). Depositors post one ERC20 `marginAsset` as a performance bond; the vault
 /// values it through a trusted Morpho-style oracle and leverages it by `marginRatioBps` into a commitment
 /// denominated in `fundingAsset`. The owner opens at most one capital call per epoch; called users fund their
-/// pro-rata obligation all-or-nothing (the funding is deposited into USD3 for them) and get the backing margin
+/// pro-rata obligation all-or-nothing (the funding is delivered as wrapped nUSD3) and get the backing margin
 /// released proportionally. Unfunded obligations are slashed after the funding deadline, and the resulting
 /// shortfall is offered through an epoch-shortfall Dutch auction.
 /// @dev Unit convention: amount-like accounting values outside the margin family are denominated in `fundingAsset`
 /// unless documented otherwise; margin amounts are in `marginAsset`; `marginValue` is margin valued in
 /// `fundingAsset`; epoch fields are epoch indices; `*Bps` fields are basis points (out of 10_000). Events and
-/// errors are exposed through `LCCEventsLib` and `LCCErrorsLib`.
+/// errors are exposed through `LCCEventsLib` and `LCCErrorsLib`. Settlement consumers read `AuctionSettled` for
+/// fill totals and `SlashSurplusDisposed` for the disposal split.
 interface ILeveragedCallableCreditVault {
     /// @notice Timestamp-derived lifecycle phase within an epoch.
     /// @dev `Normal`: deposits activate immediately (until a call opens). `PreCall`: the owner may open the epoch
@@ -34,7 +35,7 @@ interface ILeveragedCallableCreditVault {
     /// @param marginAsset ERC20 posted as the performance bond. Must be standard (no fee-on-transfer / rebasing).
     /// @param fundingAsset ERC20 used to fund calls and auction fills (the spec's "callable asset"); must equal
     /// USD3's underlying asset.
-    /// @param usd3 ERC-4626 vault that funded amounts are deposited into for the funder.
+    /// @param notificationVault ERC-4626 wrapper over USD3 that receives funded amounts for the funder.
     /// @param marginOracle Trusted oracle returning the margin-to-fundingAsset price scaled by ORACLE_PRICE_SCALE.
     /// @param treasury Recipient of slashed margin (and unsold auction collateral).
     /// @param startTimestamp Epoch-zero start; the epoch clock is derived from this.
@@ -52,11 +53,12 @@ interface ILeveragedCallableCreditVault {
     /// @param auctionStepCount Number of price steps spanning the Closed window; 0 disables the auction entirely.
     /// @param auctionStepDecayRateBps Per-step decay of the protocol's retained pool share, in bps.
     /// @param maxAuctionAwardBps Oracle-valued collateral award cap per fundingAsset filled, in bps; 0 disables.
+    /// @param slashFeeBps Fee on unawarded slashed margin surplus, in bps.
     struct VaultParams {
         address owner;
         address marginAsset;
         address fundingAsset;
-        address usd3;
+        address notificationVault;
         address marginOracle;
         address treasury;
         uint256 startTimestamp;
@@ -73,18 +75,21 @@ interface ILeveragedCallableCreditVault {
         uint256 auctionStepCount;
         uint256 auctionStepDecayRateBps;
         uint256 maxAuctionAwardBps;
+        uint256 slashFeeBps;
     }
 
     /// @notice Immutable asset and integration addresses for this vault.
     /// @param marginAsset ERC20 posted as the performance bond.
     /// @param fundingAsset ERC20 used to fund calls and auction fills.
-    /// @param usd3 ERC-4626 vault that receives funded amounts.
+    /// @param usd3 ERC-4626 USD3 vault.
+    /// @param notificationVault ERC-4626 wrapper that receives funded amounts.
     /// @param marginOracle Trusted oracle for margin-to-fundingAsset pricing.
     /// @param treasury Recipient of slashed margin and unsold auction collateral.
     struct AssetConfig {
         address marginAsset;
         address fundingAsset;
         address usd3;
+        address notificationVault;
         address marginOracle;
         address treasury;
     }
@@ -123,28 +128,28 @@ interface ILeveragedCallableCreditVault {
     /// @param exitCapBps Per-epoch exit capacity fraction, in bps.
     /// @param minDepositAssets Minimum margin deposit.
     /// @param maxAuctionAwardBps Oracle-valued auction award cap per fundingAsset filled, in bps.
+    /// @param slashFeeBps Fee on unawarded slashed margin surplus, in bps.
     struct RiskConfig {
         uint256 protocolCommitmentCap;
         uint256 userCommitmentCap;
         uint256 exitCapBps;
         uint256 minDepositAssets;
         uint256 maxAuctionAwardBps;
+        uint256 slashFeeBps;
     }
 
-    /// @notice Packed aggregate margin/commitment totals plus unbounded escrow total.
+    /// @notice Packed aggregate margin/commitment totals.
     /// @dev Commitment totals are cap-bounded by `protocolCommitmentCap <= type(uint128).max`; margin totals rely on
     /// the aggregate deployment invariant documented on the vault and fail safely via SafeCast if exceeded.
     /// @param activeMargin Total active margin across all accounts (marginAsset).
     /// @param activeCommitment Total active commitment across all accounts (fundingAsset).
     /// @param pendingMargin Total pending margin across all accounts (marginAsset).
     /// @param pendingCommitment Total pending commitment across all accounts (fundingAsset).
-    /// @param escrowedFunding Total funding held in escrow across all accounts (fundingAsset).
     struct Totals {
         uint128 activeMargin;
         uint128 activeCommitment;
         uint128 pendingMargin;
         uint128 pendingCommitment;
-        uint256 escrowedFunding;
     }
 
     /// @notice Packed global sync cursors and live-auction slot.
@@ -217,6 +222,10 @@ interface ILeveragedCallableCreditVault {
     /// @param slashFinalized True once slashing for this epoch has been finalized.
     /// @param slashDisabledByShutdown True if shutdown landed before/within this epoch's funding window, so no
     /// slash is taken.
+    /// @param slashedMargin Aggregate margin slashed for this epoch (marginAsset).
+    /// @param returnPool Slashed surplus returned to defaulters after treasury fee, when backed by nonzero
+    /// settlement commitment (marginAsset).
+    /// @param returnCommitment Callable commitment created by `returnPool` at settlement (fundingAsset).
     struct EpochState {
         bool callOpened;
         uint256 commitmentDenominator;
@@ -228,6 +237,9 @@ interface ILeveragedCallableCreditVault {
         uint256 fundedUsersRemainingCommitment;
         bool slashFinalized;
         bool slashDisabledByShutdown;
+        uint256 slashedMargin;
+        uint256 returnPool;
+        uint256 returnCommitment;
     }
 
     /// @notice Current epoch index derived from the block timestamp.
@@ -289,16 +301,15 @@ interface ILeveragedCallableCreditVault {
     /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
     function fundEpochCall(uint256 epoch) external returns (uint256 obligationAmount);
     /// @notice Funds `user`'s current-epoch obligation with funding supplied by the caller (push-based).
-    /// @dev The caller pays; released margin, the USD3 position (or escrow credit), and funded status accrue to
-    /// `user`. Escrow credit is never refundable to the payer.
+    /// @dev The caller pays; released margin, wrapped nUSD3 delivery, and funded status accrue to `user`.
     /// @param epoch Epoch to fund (must be current).
     /// @param user Account whose obligation is funded.
     /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
     function fundEpochCall(uint256 epoch, address user) external returns (uint256 obligationAmount);
-    /// @notice Fills up to `maxFillAmount` of the live auction's shortfall in exchange for a USD3 position and a
+    /// @notice Fills up to `maxFillAmount` of the live auction's shortfall in exchange for wrapped nUSD3 and a
     /// collateral kicker.
-    /// @dev No escrow fallback for fillers: reverts if USD3 cannot accept the deposit. The award is the current
-    /// ramped pro-rata kicker, capped by `maxAuctionAwardBps` of the fill at the fill-time oracle price.
+    /// @dev Reverts if USD3 or the notification vault cannot accept delivery. The award is the current ramped
+    /// pro-rata kicker, capped by `maxAuctionAwardBps` of the fill at the fill-time oracle price.
     /// @param epoch Auctioned epoch (must be the live auction).
     /// @param maxFillAmount Maximum shortfall to fill (fundingAsset).
     /// @return filledAmount Shortfall actually filled (fundingAsset).
@@ -310,18 +321,13 @@ interface ILeveragedCallableCreditVault {
     /// @dev Reverts above BPS, when set nonzero while auctions are disabled, or while an auction is live.
     /// @param newMaxAuctionAwardBps New award cap per fundingAsset filled, in bps.
     function setMaxAuctionAwardBps(uint256 newMaxAuctionAwardBps) external;
+    /// @notice Owner update of the fee charged on unawarded slashed margin surplus.
+    /// @param newSlashFeeBps New fee in bps.
+    function setSlashFeeBps(uint256 newSlashFeeBps) external;
     /// @notice Auction state for an epoch.
     /// @param epoch Epoch to query.
     /// @return The auction state.
     function getAuctionState(uint256 epoch) external view returns (LCCAuctionLib.AuctionState memory);
-    /// @notice Deposits a user's escrowed funding into USD3, up to USD3's current capacity.
-    /// @param user Beneficiary whose escrow is placed.
-    /// @return placedAmount Amount deposited into USD3 (fundingAsset).
-    function depositEscrowedFunding(address user) external returns (uint256 placedAmount);
-    /// @notice Returns the caller's escrowed funding after shutdown, when USD3 placement can no longer be forced.
-    /// @param receiver Recipient of the returned funds.
-    /// @return assets Amount returned (fundingAsset).
-    function claimEscrowedFunding(address receiver) external returns (uint256 assets);
     /// @notice Permissionlessly finalizes an epoch's slash once eligible (also runs lazily on any state touch).
     /// @param epoch Epoch to finalize.
     function finalizeEpochSlash(uint256 epoch) external;
@@ -363,7 +369,7 @@ interface ILeveragedCallableCreditVault {
     /// @notice Mutable risk limits.
     /// @return The risk configuration.
     function riskConfig() external view returns (RiskConfig memory);
-    /// @notice Aggregate margin, commitment, and escrow totals.
+    /// @notice Aggregate margin and commitment totals.
     /// @return The aggregate totals.
     function totals() external view returns (Totals memory);
     /// @notice Global sync cursors and live-auction slot.
@@ -372,10 +378,6 @@ interface ILeveragedCallableCreditVault {
     /// @notice Terminal emergency shutdown state.
     /// @return The shutdown state.
     function shutdownState() external view returns (ShutdownState memory);
-    /// @notice Funding held in escrow for a specific user (fundingAsset).
-    /// @param user Account to query.
-    /// @return The escrowed funding for `user`.
-    function escrowedFundingAmount(address user) external view returns (uint256);
     /// @notice Whether `user` fully funded their obligation for `epoch`.
     /// @param epoch Epoch to query.
     /// @param user Account to query.

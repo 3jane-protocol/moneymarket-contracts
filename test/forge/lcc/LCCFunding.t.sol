@@ -7,7 +7,7 @@ import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILevera
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCFundingTest is LCCBase {
-    function testFundingPullsExactObligationDepositsUsd3AndReleasesMargin() public {
+    function testFundingPullsExactObligationDeliversNotificationVaultAndReleasesMargin() public {
         _deposit(alice, 100e18);
         _deposit(bob, 50e18);
         _openCall(75e18);
@@ -17,7 +17,7 @@ contract LCCFundingTest is LCCBase {
 
         assertEq(obligation, 50e18);
         assertEq(usdc.balanceOf(alice), aliceUsdcBefore - 50e18);
-        assertEq(usd3.balanceOf(alice), 50e18);
+        assertEq(notificationVault.balanceOf(alice), 50e18);
         assertEq(margin.balanceOf(alice), 1_000_000e18 - 75e18);
         assertTrue(vault.fundedEpoch(0, alice));
 
@@ -33,11 +33,55 @@ contract LCCFundingTest is LCCBase {
         uint256 obligation = _fund(alice);
 
         assertEq(obligation, 1);
-        assertEq(usd3.balanceOf(alice), 1);
+        assertEq(notificationVault.balanceOf(alice), 1);
 
         ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 1e18);
         assertEq(account.activeCommitment, 2e18 - 1);
+    }
+
+    function testSmallObligationBelowUsd3MinDepositSucceedsWhenVaultExempt() public {
+        usd3.setMinDeposit(100e18);
+        usd3.setSupplyCapExempt(address(vault), true);
+
+        _deposit(alice, 1e18);
+        _openCall(1);
+
+        uint256 obligation = _fund(alice);
+
+        assertEq(obligation, 1);
+        assertEq(notificationVault.balanceOf(alice), 1);
+        assertTrue(vault.fundedEpoch(0, alice));
+    }
+
+    function testSmallObligationBelowUsd3MinDepositRevertsWhenVaultNotExempt() public {
+        usd3.setMinDeposit(100e18);
+
+        _deposit(alice, 1e18);
+        _openCall(1);
+
+        vm.warp(START + NORMAL + PRE_CALL);
+        vm.expectRevert(bytes("<min"));
+        vm.prank(alice);
+        vault.fundEpochCall(0);
+    }
+
+    function testFundingRevertsWhenNotificationVaultRejectsAndRetrySucceeds() public {
+        _deposit(alice, 100e18);
+        _openCall(100e18);
+
+        notificationVault.setDepositHookReverts(true);
+        vm.warp(START + NORMAL + PRE_CALL);
+        vm.expectRevert(bytes("!notification"));
+        vm.prank(alice);
+        vault.fundEpochCall(0);
+
+        notificationVault.setDepositHookReverts(false);
+        uint256 obligation = _fund(alice);
+
+        assertEq(obligation, 100e18);
+        assertEq(notificationVault.balanceOf(alice), 100e18);
+        assertTrue(vault.fundedEpoch(0, alice));
     }
 
     function testAggregateFundingExceedsCallAmountFromCeilDust() public {
@@ -58,8 +102,8 @@ contract LCCFundingTest is LCCBase {
         assertEq(state.fundedAmount, 4);
         assertGt(state.fundedAmount, state.callAmount);
 
-        assertEq(usd3.balanceOf(alice), 2);
-        assertEq(usd3.balanceOf(bob), 2);
+        assertEq(notificationVault.balanceOf(alice), 2);
+        assertEq(notificationVault.balanceOf(bob), 2);
     }
 
     function testFundingDoesNotExtinguishOtherObligationAndSlashesNonFunder() public {
@@ -83,8 +127,9 @@ contract LCCFundingTest is LCCBase {
         uint256 treasuryBefore = margin.balanceOf(treasury);
         vault.finalizeEpochSlash(0);
 
-        // Bob forfeits his full margin; fundedAmount >= callAmount leaves no shortfall, so no auction is kicked.
-        assertEq(margin.balanceOf(treasury) - treasuryBefore, 1e18);
+        // Bob forfeits his full margin; fundedAmount >= callAmount leaves no shortfall, so only the slash fee is
+        // swept and the return pool is reactivated for lazy attribution.
+        assertEq(margin.balanceOf(treasury) - treasuryBefore, 0.1e18);
         assertEq(vault.getAuctionState(0).shortfallAmount, 0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }

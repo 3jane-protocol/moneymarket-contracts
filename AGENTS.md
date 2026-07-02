@@ -115,11 +115,11 @@ Targeted local command patterns for Jane changes:
 
 ## LCC Module Guide (`src/lcc/`)
 
-- `src/lcc/LeveragedCallableCreditVault.sol`: per-facility leveraged callable credit vault — margin deposits create USDC callable commitments, the owner opens one capital call per epoch, funding routes USDC into USD3 (with internal escrow fallback when USD3 cannot accept the deposit), missed obligations slash margin. State progression is lazy (no keeper); `materializeAccount` and `finalizeEpochSlash` are permissionless.
-- Slashed margin backs a step-decay shortfall auction during the epoch's `Closed` phase (pricing math in the externally linked `src/lcc/libraries/LCCAuctionLib.sol`); leftover collateral sweeps to treasury at lazy settlement. Disabled config (`auctionStepCount == 0`) restores direct-to-treasury slashing.
+- `src/lcc/LeveragedCallableCreditVault.sol`: per-facility leveraged callable credit vault — margin deposits create USDC callable commitments, the owner opens one capital call per epoch, funding routes USDC through USD3 into wrapped notification-vault shares for funders/fillers, and missed obligations slash margin. State progression is lazy (no keeper); `materializeAccount` and `finalizeEpochSlash` are permissionless.
+- Slashed margin backs a step-decay shortfall auction during the epoch's `Closed` phase (pricing math in the externally linked `src/lcc/libraries/LCCAuctionLib.sol`); unawarded collateral is split into a configurable treasury fee and a return pool that is lazily re-attributed to defaulters as active commitment. Disabled config (`auctionStepCount == 0`) uses the same surplus-disposal path without an auction.
 - `src/lcc/LeveragedCallableCreditVaultFactory.sol`: permissionless factory; registry confers no trust.
-- Vaults must be on USD3's `depositorWhitelist` for funding/fill deposits to land directly.
-- The vault compiles under a scoped `compilation_restrictions` entry in `foundry.toml` (`optimizer_runs = 200`) to stay below the bytecode size limit.
+- Vaults must be on USD3's `supplyCapExempt` list for funding/fill deposits to bypass supply-cap headroom and first-time minimum deposits; if USD3's general whitelist is enabled, vaults must also be whitelisted there.
+- The vault compiles under a scoped `compilation_restrictions` entry in `foundry.toml` (`optimizer_runs = 800`) to stay below the bytecode size limit.
 - Design notes: `docs/architecture.md` (LCC Domain section).
 
 Targeted local command for LCC changes:

@@ -29,7 +29,6 @@ interface INotificationVault is IStrategy {
         external
         view
         returns (uint256 cooldownEnd, uint256 windowEnd, uint256 shares);
-    function depositUSDC(uint256 usdcAmount, address receiver) external returns (uint256 shares);
     function setCooldownBypass(address account, bool allowed) external;
 
     function cooldowns(address user) external view returns (uint64 cooldownEnd, uint64 windowEnd, uint128 shares);

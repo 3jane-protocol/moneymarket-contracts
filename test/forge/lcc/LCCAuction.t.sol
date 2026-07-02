@@ -80,7 +80,7 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(WINDOW_END + 1);
         vault.finalizeEpochSlash(0);
 
-        assertEq(margin.balanceOf(treasury), 50e18);
+        assertEq(margin.balanceOf(treasury), 5e18);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
@@ -90,7 +90,7 @@ contract LCCAuctionTest is LCCBase {
 
         _setupShortfallAuction();
 
-        assertEq(margin.balanceOf(treasury), 50e18);
+        assertEq(margin.balanceOf(treasury), 5e18);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
@@ -103,7 +103,7 @@ contract LCCAuctionTest is LCCBase {
         vault.finalizeEpochSlash(0);
 
         // Alice's ceil-rounded obligation covered the full 1-wei call; bob still defaulted and was slashed.
-        assertEq(margin.balanceOf(treasury), 50e18);
+        assertEq(margin.balanceOf(treasury), 5e18);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
@@ -116,7 +116,7 @@ contract LCCAuctionTest is LCCBase {
 
         assertEq(filled, 10e18);
         assertEq(award, 0);
-        assertEq(usd3.balanceOf(carol), 10e18);
+        assertEq(notificationVault.balanceOf(carol), 10e18);
         assertEq(margin.balanceOf(carol), 1_000_000e18);
     }
 
@@ -137,11 +137,11 @@ contract LCCAuctionTest is LCCBase {
         assertEq(filled2, 25e18);
         assertEq(award2, 18.75e18);
 
-        // Full fill settles immediately: remainder to treasury.
+        // Full fill settles immediately: only the slash fee on the remainder goes to treasury.
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(margin.balanceOf(treasury), 50e18 - award1 - award2);
-        assertEq(usd3.balanceOf(carol), 25e18);
-        assertEq(usd3.balanceOf(bob), 25e18);
+        assertEq(margin.balanceOf(treasury), (50e18 - award1 - award2) / 10);
+        assertEq(notificationVault.balanceOf(carol), 25e18);
+        assertEq(notificationVault.balanceOf(bob), 25e18);
     }
 
     function testUnfilledAuctionSweepsLazilyAfterWindow() public {
@@ -154,11 +154,13 @@ contract LCCAuctionTest is LCCBase {
 
         vm.warp(WINDOW_END);
         vm.expectEmit(true, false, false, true, address(vault));
-        emit LCCEventsLib.AuctionSettled(0, 10e18, 5e18, 45e18);
+        emit LCCEventsLib.SlashSurplusDisposed(0, 4.5e18, 40.5e18, 81e18);
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit LCCEventsLib.AuctionSettled(0, 10e18, 5e18);
         vault.materializeAccount(carol);
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(margin.balanceOf(treasury), 45e18);
+        assertEq(margin.balanceOf(treasury), 4.5e18);
 
         vm.warp(WINDOW_END + 1);
         vm.expectRevert(LCCErrorsLib.AuctionNotLive.selector);
@@ -226,6 +228,19 @@ contract LCCAuctionTest is LCCBase {
         assertEq(margin.balanceOf(carol), 1_000_000e18);
     }
 
+    function testSmallFillBelowUsd3MinDepositSucceedsWhenVaultExempt() public {
+        _setupShortfallAuction();
+        usd3.setMinDeposit(100e18);
+        usd3.setSupplyCapExempt(address(vault), true);
+        vm.warp(DEADLINE + 5);
+
+        vm.prank(carol);
+        (uint256 filled,) = vault.takeAuction(0, 1);
+
+        assertEq(filled, 1);
+        assertEq(notificationVault.balanceOf(carol), 1);
+    }
+
     function testShutdownForceSettlesAndBlocksTakes() public {
         _setupShortfallAuction();
         vm.warp(DEADLINE + 5);
@@ -234,7 +249,10 @@ contract LCCAuctionTest is LCCBase {
         vault.shutdown();
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(margin.balanceOf(treasury), 50e18);
+        assertEq(margin.balanceOf(treasury), 5e18);
+        ILeveragedCallableCreditVault.EpochState memory epochState = vault.getEpochState(0);
+        assertEq(epochState.returnPool, 45e18);
+        assertEq(epochState.returnCommitment, 90e18);
 
         vm.expectRevert(LCCErrorsLib.ShutdownActive.selector);
         vm.prank(carol);
@@ -254,7 +272,7 @@ contract LCCAuctionTest is LCCBase {
         vault.openEpochCall(1, 100e18);
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(margin.balanceOf(treasury), 50e18);
+        assertEq(margin.balanceOf(treasury), 5e18);
 
         vm.warp(START + EPOCH + NORMAL + PRE_CALL);
         vm.prank(alice);
@@ -263,8 +281,9 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(START + EPOCH + NORMAL + PRE_CALL + FUNDING);
         vault.finalizeEpochSlash(1);
 
-        // Everyone honored epoch 1: no second auction.
-        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
+        // The epoch-0 defaulter's returned surplus is live commitment again for epoch 1, so Alice's funding
+        // does not cover the entire second call.
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 2);
     }
 
     function testExitingDefaulterFeedsPoolAndExitBucketCarved() public {
@@ -297,6 +316,14 @@ contract LCCAuctionTest is LCCBase {
         vm.expectRevert(LCCErrorsLib.InvalidPhase.selector);
         vm.prank(owner);
         vault.setMaxAuctionAwardBps(1_000);
+    }
+
+    function testSetSlashFeeBpsRevertsWhileAuctionLive() public {
+        _setupShortfallAuction();
+
+        vm.expectRevert(LCCErrorsLib.InvalidPhase.selector);
+        vm.prank(owner);
+        vault.setSlashFeeBps(500);
     }
 
     function testCannotEnableAwardCapWithoutMachinery() public {

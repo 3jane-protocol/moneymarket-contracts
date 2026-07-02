@@ -50,10 +50,14 @@ library LCCTypesLib {
     /// @param epoch Epoch the account defaulted on.
     /// @param slashedMargin Margin forfeited (marginAsset).
     /// @param slashedCommitment Commitment removed (fundingAsset).
+    /// @param returnMarginShare Return-pool margin credited back for this default (marginAsset).
+    /// @param returnCommitmentShare Return-pool commitment credited back for this default (fundingAsset).
     struct DefaultRecord {
         uint256 epoch;
         uint256 slashedMargin;
         uint256 slashedCommitment;
+        uint256 returnMarginShare;
+        uint256 returnCommitmentShare;
     }
 
     /// @notice Result of replaying an account forward over the called-epoch list.

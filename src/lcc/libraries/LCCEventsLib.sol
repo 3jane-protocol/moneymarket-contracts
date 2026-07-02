@@ -46,29 +46,28 @@ library LCCEventsLib {
     /// @param marginAssets Margin released (marginAsset).
     event MarginReleased(address indexed user, uint256 indexed epoch, uint256 marginAssets);
 
-    /// @notice Emitted when funding is escrowed because USD3 could not accept the deposit.
-    /// @param user Beneficiary the escrow is held for.
-    /// @param epoch Epoch the funding settled for.
-    /// @param fundingAmount Amount escrowed (fundingAsset).
-    event EscrowedFundingCreated(address indexed user, uint256 indexed epoch, uint256 fundingAmount);
-
-    /// @notice Emitted when previously escrowed funding is later deposited into USD3.
-    /// @param user Beneficiary of the USD3 deposit.
-    /// @param fundingAmount Amount moved from escrow into USD3 (fundingAsset).
-    event EscrowedFundingPlaced(address indexed user, uint256 fundingAmount);
-
-    /// @notice Emitted when escrowed funding is returned to its owner after shutdown.
-    /// @param user Owner of the escrow.
-    /// @param receiver Recipient of the returned funds.
-    /// @param fundingAmount Amount returned (fundingAsset).
-    event EscrowedFundingClaimed(address indexed user, address indexed receiver, uint256 fundingAmount);
-
     /// @notice Emitted when an account's unfunded obligation is materialized as a default.
     /// @param user Defaulted account.
     /// @param epoch Epoch defaulted on.
     /// @param slashedMargin Margin forfeited by this account (marginAsset).
     /// @param slashedCommitment Commitment removed by this default (fundingAsset).
     event UserDefaulted(address indexed user, uint256 indexed epoch, uint256 slashedMargin, uint256 slashedCommitment);
+
+    /// @notice Emitted when a defaulted account receives returned slash surplus during materialization.
+    /// @param user Defaulted account.
+    /// @param epoch Epoch whose return pool was attributed.
+    /// @param marginAssets Returned margin credited (marginAsset).
+    /// @param commitment Returned commitment credited (fundingAsset).
+    event ReturnPoolCredited(address indexed user, uint256 indexed epoch, uint256 marginAssets, uint256 commitment);
+
+    /// @notice Emitted when unawarded slashed margin is disposed.
+    /// @param epoch Epoch whose slash surplus was disposed.
+    /// @param treasuryAmount Margin swept to treasury, including fee and unbacked remainder (marginAsset).
+    /// @param returnPool Margin returned to defaulters for lazy attribution (marginAsset).
+    /// @param returnCommitment Callable commitment created by `returnPool` (fundingAsset).
+    event SlashSurplusDisposed(
+        uint256 indexed epoch, uint256 treasuryAmount, uint256 returnPool, uint256 returnCommitment
+    );
 
     /// @notice Emitted once an epoch's slash is finalized.
     /// @param epoch Epoch finalized.
@@ -135,10 +134,13 @@ library LCCEventsLib {
     /// @param epoch Settled epoch.
     /// @param filledAmount Total shortfall filled (fundingAsset).
     /// @param marginAwarded Total collateral awarded to fillers (marginAsset).
-    /// @param marginToTreasury Unsold collateral swept to treasury (marginAsset).
-    event AuctionSettled(uint256 indexed epoch, uint256 filledAmount, uint256 marginAwarded, uint256 marginToTreasury);
+    event AuctionSettled(uint256 indexed epoch, uint256 filledAmount, uint256 marginAwarded);
 
     /// @notice Emitted when the owner updates the oracle-valued auction award cap.
     /// @param maxAuctionAwardBps New award cap per fundingAsset filled, in bps.
     event AuctionAwardCapUpdated(uint256 maxAuctionAwardBps);
+
+    /// @notice Emitted when the owner updates the slash surplus fee.
+    /// @param slashFeeBps New fee on unawarded slashed margin surplus, in bps.
+    event SlashFeeUpdated(uint256 slashFeeBps);
 }

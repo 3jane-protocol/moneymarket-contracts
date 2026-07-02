@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {IERC20, SafeERC20} from "../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC4626} from "../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
+import {IERC20} from "../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
 import {IUSD3} from "./interfaces/IUSD3.sol";
@@ -14,23 +13,17 @@ import {IUSD3} from "./interfaces/IUSD3.sol";
  *         unwrappable within a cooldown window.
  * @dev Holds USD3 directly (1:1, no second yield layer) and intentionally disables reporting, so PPS
  *      stays exactly 1 and donations are never reconciled into share price. `usd3` is fixed at
- *      construction (one implementation per USD3) and `usdc` is derived from `usd3.asset()`, so both
- *      are immutable and cannot be misconfigured.
+ *      construction (one implementation per USD3).
  *
  *      Trust assumptions:
  *      - The underlying USD3 must remain commitment-free (`minCommitmentTime() == 0`), enforced at
- *        construction. If governance later re-enables a commitment, only `depositUSDC` breaks (it reverts
- *        atomically, see that function); plain nUSD3 redemptions are unaffected because the vault never
- *        holds USD3 carrying a non-zero `depositTimestamp`.
- *      - USDC and USD3 are trusted, callback-free tokens; `depositUSDC` relies on this (no `nonReentrant`).
+ *        construction. If governance later re-enables a commitment, wrap/unwrap flows can be blocked by USD3's
+ *        transfer hook.
  *      - USD3 sent directly to the vault is intentionally orphaned (no sweep). This is the same property
  *        that makes the wrapper immune to donation / share-price-inflation attacks.
  */
 contract NotificationVault is BaseHooksUpgradeable {
-    using SafeERC20 for IERC20;
-
     IUSD3 public immutable usd3;
-    IERC20 public immutable usdc;
 
     uint64 public cooldownDuration;
     uint64 public withdrawalWindow;
@@ -58,19 +51,17 @@ contract NotificationVault is BaseHooksUpgradeable {
     error Usd3CommitmentEnabled();
 
     /// @param _usd3 The USD3 strategy this vault wraps; bound for the life of the implementation.
-    /// @dev Sets the `usd3`/`usdc` immutables (USDC is `usd3.asset()`) and enforces the commitment-free
-    ///      precondition. Immutables live in the implementation bytecode and are read correctly through the
-    ///      proxy; `usdc` cannot be misconfigured because it is derived, not passed.
+    /// @dev Sets the `usd3` immutable and enforces the commitment-free precondition. Immutables live in the
+    ///      implementation bytecode and are read correctly through the proxy.
     /// @custom:oz-upgrades-unsafe-allow constructor state-variable-immutable
     constructor(address _usd3) {
         _disableInitializers();
         if (_usd3 == address(0)) revert InvalidAddress();
         if (IUSD3(_usd3).minCommitmentTime() != 0) revert Usd3CommitmentEnabled();
         usd3 = IUSD3(_usd3);
-        usdc = IERC20(IERC4626(_usd3).asset());
     }
 
-    /// @notice Initialize the proxy: roles and the fixed cooldown config (USD3/USDC come from the constructor).
+    /// @notice Initialize the proxy: roles and the fixed cooldown config (USD3 comes from the constructor).
     function initialize(address _management, address _keeper, uint64 _cooldownDuration, uint64 _withdrawalWindow)
         external
         initializer
@@ -194,28 +185,6 @@ contract NotificationVault is BaseHooksUpgradeable {
 
         uint256 cooledAssets = TokenizedStrategy.convertToAssets(cooldown.shares);
         return cooledAssets < idle ? cooledAssets : idle;
-    }
-
-    /// @notice Convenience entrypoint: pull USDC from the caller, deposit it into USD3, and mint nUSD3 to
-    ///         `receiver` in one transaction (the asset is USD3, so raw USDC cannot mint shares directly).
-    /// @dev Deposits USDC into USD3 with the vault as receiver (a self-deposit: `msg.sender == receiver`,
-    ///      which clears USD3's deposit gate without any whitelist), then re-deposits the received USD3 into
-    ///      this vault via a self-allowance + `this.deposit`. Reverts atomically if USD3 rejects the deposit
-    ///      (cap, minDeposit, or — if the commitment precondition is ever violated — the commitment transfer
-    ///      block); no allowance is left dangling.
-    function depositUSDC(uint256 usdcAmount, address receiver) external returns (uint256 shares) {
-        if (usdcAmount == 0) revert InvalidAmount();
-        if (receiver == address(0)) revert InvalidAddress();
-
-        usdc.safeTransferFrom(msg.sender, address(this), usdcAmount);
-        usdc.forceApprove(address(usd3), usdcAmount);
-        uint256 receivedUsd3Assets = usd3.deposit(usdcAmount, address(this));
-        usdc.forceApprove(address(usd3), 0);
-        if (receivedUsd3Assets == 0) revert InvalidAmount();
-
-        IERC20(address(usd3)).forceApprove(address(this), receivedUsd3Assets);
-        shares = this.deposit(receivedUsd3Assets, receiver);
-        IERC20(address(usd3)).forceApprove(address(this), 0);
     }
 
     /**

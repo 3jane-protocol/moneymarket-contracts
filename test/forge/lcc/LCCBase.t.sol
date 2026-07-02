@@ -22,7 +22,9 @@ contract LCCMockToken is ERC20 {
 
 contract LCCMockUSD3 is ERC4626 {
     uint256 internal depositLimit = type(uint256).max;
+    uint256 internal minDeposit;
     bool internal depositHookReverts;
+    mapping(address => bool) internal supplyCapExempt;
 
     constructor(IERC20 asset_) ERC20("Mock USD3", "mUSD3") ERC4626(asset_) {}
 
@@ -34,12 +36,36 @@ contract LCCMockUSD3 is ERC4626 {
         depositHookReverts = reverts;
     }
 
+    function setMinDeposit(uint256 minDeposit_) external {
+        minDeposit = minDeposit_;
+    }
+
+    function setSupplyCapExempt(address account, bool exempt) external {
+        supplyCapExempt[account] = exempt;
+    }
+
     function maxDeposit(address) public view override returns (uint256) {
         return depositLimit;
     }
 
     function deposit(uint256 assets, address receiver) public override returns (uint256) {
         require(!depositHookReverts, "!allowed");
+        if (balanceOf(receiver) == 0 && !supplyCapExempt[receiver]) require(assets >= minDeposit, "<min");
+        return super.deposit(assets, receiver);
+    }
+}
+
+contract LCCMockNotificationVault is ERC4626 {
+    bool internal depositHookReverts;
+
+    constructor(IERC20 asset_) ERC20("Mock Notification USD3", "mnUSD3") ERC4626(asset_) {}
+
+    function setDepositHookReverts(bool reverts) external {
+        depositHookReverts = reverts;
+    }
+
+    function deposit(uint256 assets, address receiver) public override returns (uint256) {
+        require(!depositHookReverts, "!notification");
         return super.deposit(assets, receiver);
     }
 }
@@ -67,6 +93,7 @@ contract LCCBase is Test {
     LCCMockToken internal margin;
     LCCMockToken internal usdc;
     LCCMockUSD3 internal usd3;
+    LCCMockNotificationVault internal notificationVault;
     OracleMock internal oracle;
     LeveragedCallableCreditVault internal vault;
 
@@ -75,6 +102,7 @@ contract LCCBase is Test {
         margin = new LCCMockToken("Margin", "MRG");
         usdc = new LCCMockToken("USD Coin", "USDC");
         usd3 = new LCCMockUSD3(IERC20(address(usdc)));
+        notificationVault = new LCCMockNotificationVault(IERC20(address(usd3)));
         oracle = new OracleMock();
         oracle.setPrice(ORACLE_PRICE_SCALE);
 
@@ -102,7 +130,7 @@ contract LCCBase is Test {
             owner: owner,
             marginAsset: address(margin),
             fundingAsset: address(usdc),
-            usd3: address(usd3),
+            notificationVault: address(notificationVault),
             marginOracle: oracle_,
             treasury: treasury,
             startTimestamp: START,
@@ -118,7 +146,8 @@ contract LCCBase is Test {
             minDepositAssets: 0,
             auctionStepCount: 0,
             auctionStepDecayRateBps: 0,
-            maxAuctionAwardBps: 0
+            maxAuctionAwardBps: 0,
+            slashFeeBps: 1_000
         });
     }
 
@@ -131,7 +160,11 @@ contract LCCBase is Test {
     }
 
     function _deployAuctionVault() internal {
-        vault = new LeveragedCallableCreditVault(_auctionParams());
+        _deployVaultWithParams(_auctionParams());
+    }
+
+    function _deployVaultWithParams(ILeveragedCallableCreditVault.VaultParams memory params) internal {
+        vault = new LeveragedCallableCreditVault(params);
         _mintAndApprove(alice, 0, 0);
         _mintAndApprove(bob, 0, 0);
         _mintAndApprove(carol, 0, 0);

@@ -37,8 +37,8 @@ contract LCCSyncTest is LCCBase {
         vm.prank(bob);
         vault.materializeAccount(bob);
 
-        assertEq(margin.balanceOf(treasury), 100e18);
-        assertEq(vault.totals().activeMargin, 0);
+        assertEq(margin.balanceOf(treasury), 10e18);
+        assertEq(vault.totals().activeMargin, 90e18);
     }
 
     function testSparseSyncSkipsLargeEmptyEpochGapWithBoundedGas() public {

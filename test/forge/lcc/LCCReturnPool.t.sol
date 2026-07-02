@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.22;
+
+import {LCCBase} from "./LCCBase.t.sol";
+import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
+import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
+import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
+
+contract LCCReturnPoolTest is LCCBase {
+    function testPendingDisposalRevertsOnZeroOracleAndRetriesAfterRecovery() public {
+        _deployAuctionVault();
+        _deposit(alice, 100e18);
+        _openCall(100e18);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
+
+        vm.warp(START + EPOCH);
+        oracle.setPrice(0);
+
+        vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
+        vault.materializeAccount(alice);
+
+        oracle.setPrice(ORACLE_PRICE_SCALE);
+        vault.materializeAccount(alice);
+
+        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
+        assertEq(margin.balanceOf(treasury), 10e18);
+        assertEq(state.returnPool, 90e18);
+        assertEq(state.returnCommitment, 180e18);
+    }
+
+    function testHeadroomZeroSendsWholeSurplusToTreasury() public {
+        _setupCapBoundSlash(200e18);
+        vault.materializeAccount(alice);
+
+        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(state.returnPool, 0);
+        assertEq(state.returnCommitment, 0);
+        assertEq(margin.balanceOf(treasury), 100e18);
+        assertEq(vault.totals().activeMargin, 100e18);
+        assertEq(vault.totals().activeCommitment, 200e18);
+        assertEq(vault.totals().pendingMargin, 0);
+    }
+
+    function testPairedShareGuardDoesNotCreditMarginWhenCommitmentShareFloorsToZero() public {
+        _setupCapBoundSlash(200e18 + 1);
+        vault.materializeAccount(alice);
+        vault.materializeAccount(bob);
+
+        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(state.returnPool, 0);
+        assertEq(state.returnCommitment, 0);
+        assertEq(margin.balanceOf(treasury), 100e18);
+
+        ILeveragedCallableCreditVault.Account memory aliceAccount = vault.getAccount(alice);
+        ILeveragedCallableCreditVault.Account memory bobAccount = vault.getAccount(bob);
+        assertEq(aliceAccount.activeMargin, 0);
+        assertEq(aliceAccount.activeCommitment, 0);
+        assertEq(bobAccount.activeMargin, 0);
+        assertEq(bobAccount.activeCommitment, 0);
+        assertEq(vault.totals().activeMargin, 100e18);
+        assertEq(vault.totals().activeCommitment, 200e18);
+        _assertAccountTotalsWithinDust(0);
+    }
+
+    function testLowPriceReturnCommitmentBelowThresholdSweepsSurplus() public {
+        _deployAuctionVault();
+        _deposit(alice, 100e18);
+        _openCall(100e18);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+
+        oracle.setPrice(5_555e18);
+        vm.warp(START + EPOCH);
+        vault.materializeAccount(alice);
+
+        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(state.returnPool, 0);
+        assertEq(state.returnCommitment, 0);
+        assertEq(margin.balanceOf(treasury), 100e18);
+        assertEq(vault.totals().activeMargin, 0);
+        assertEq(vault.totals().activeCommitment, 0);
+    }
+
+    function testReturnCommitmentAboveThresholdCreditsPairedShares() public {
+        _deposit(alice, 99e18);
+        _deposit(bob, 1e18);
+        _openCall(200e18);
+        _finishFunding();
+        oracle.setPrice(5_556e18);
+        vault.finalizeEpochSlash(0);
+
+        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(state.returnPool, 90e18);
+        assertEq(state.returnCommitment, 1_000_080);
+
+        vault.materializeAccount(alice);
+        vault.materializeAccount(bob);
+
+        ILeveragedCallableCreditVault.Account memory aliceAccount = vault.getAccount(alice);
+        ILeveragedCallableCreditVault.Account memory bobAccount = vault.getAccount(bob);
+        assertGt(aliceAccount.activeMargin, 0);
+        assertGt(aliceAccount.activeCommitment, 0);
+        assertGt(bobAccount.activeMargin, 0);
+        assertGt(bobAccount.activeCommitment, 0);
+        assertEq(aliceAccount.activeMargin + bobAccount.activeMargin, 90e18);
+        assertLe(vault.totals().activeCommitment - aliceAccount.activeCommitment - bobAccount.activeCommitment, 1);
+    }
+
+    function testDueExitMaturityCountsAsDisposalHeadroom() public {
+        _deployVaultWithParams(_params(200e18 + 500_000, 200e18 + 500_000));
+
+        _deposit(carol, 100e18);
+        _deposit(alice, 250_000);
+
+        vm.prank(carol);
+        uint256 maturity = vault.requestExit();
+        assertEq(maturity, 1);
+
+        _openCall(1);
+        _fund(carol);
+
+        oracle.setPrice(4 * ORACLE_PRICE_SCALE);
+        vm.warp(START + EPOCH);
+        vault.materializeAccount(alice);
+
+        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(state.returnPool, 225_000);
+        assertEq(state.returnCommitment, 1_800_000);
+        assertEq(margin.balanceOf(treasury), 25_000);
+        assertEq(vault.exitBucketCommitmentByMaturity(maturity), 0);
+    }
+
+    /// @dev Slashed epoch whose freed cap headroom is re-consumed by a fresh deposit before disposal:
+    /// alice and bob default on a 200e18 call, carol's deposit fills the cap back to `cap`, and time is
+    /// warped past the epoch so the next touch settles and disposes.
+    function _setupCapBoundSlash(uint256 cap) internal {
+        ILeveragedCallableCreditVault.VaultParams memory params = _auctionParams();
+        params.protocolCommitmentCap = cap;
+        _deployVaultWithParams(params);
+
+        _deposit(alice, 99e18);
+        _deposit(bob, 1e18);
+        _openCall(200e18);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+
+        vm.warp(START + NORMAL + PRE_CALL + FUNDING + 1);
+        _deposit(carol, 100e18);
+
+        vm.warp(START + EPOCH);
+    }
+
+    function _assertAccountTotalsWithinDust(uint256 dustBound) internal view {
+        ILeveragedCallableCreditVault.Totals memory totals = vault.totals();
+        address[3] memory users = [alice, bob, carol];
+        uint256 activeMargin;
+        uint256 activeCommitment;
+        for (uint256 i = 0; i < users.length; ++i) {
+            ILeveragedCallableCreditVault.Account memory account = vault.getAccount(users[i]);
+            activeMargin += account.activeMargin;
+            activeCommitment += account.activeCommitment;
+        }
+        assertLe(activeMargin, totals.activeMargin);
+        assertLe(uint256(totals.activeMargin) - activeMargin, dustBound);
+        assertLe(activeCommitment, totals.activeCommitment);
+        assertLe(uint256(totals.activeCommitment) - activeCommitment, dustBound);
+    }
+}
