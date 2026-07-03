@@ -17,7 +17,11 @@ import {LCCAuctionLib} from "../libraries/LCCAuctionLib.sol";
 /// unless documented otherwise; margin amounts are in `marginAsset`; `marginValue` is margin valued in
 /// `fundingAsset`; epoch fields are epoch indices; `*Bps` fields are basis points (out of 10_000). Events and
 /// errors are exposed through `LCCEventsLib` and `LCCErrorsLib`. Settlement consumers read `AuctionSettled` for
-/// fill totals and `SlashSurplusDisposed` for the disposal split.
+/// fill totals and `SlashSurplusDisposed` for the disposal split. Scheduled sunset is modeled by `maxEpochs`: when
+/// nonzero, epochs `0..maxEpochs-1` are callable and epoch `maxEpochs` starts a terminal withdraw-only phase.
+/// Wind-down surplus disposal uses the same non-bricking rules under shutdown or terminal. Accounts lagging more
+/// than 64 finalized calls may need permissionless `materializeAccount` batches before `claimRemainingMargin` can
+/// complete.
 interface ILCCVault {
     /// @notice Timestamp-derived lifecycle phase within an epoch.
     /// @dev `Normal`: deposits activate immediately (until a call opens). `PreCall`: the owner may open the epoch
@@ -39,6 +43,7 @@ interface ILCCVault {
     /// @param marginOracle Trusted oracle returning the margin-to-fundingAsset price scaled by ORACLE_PRICE_SCALE.
     /// @param treasury Recipient of slashed margin (and unsold auction collateral).
     /// @param startTimestamp Epoch-zero start; the epoch clock is derived from this.
+    /// @param maxEpochs Maximum callable epochs; 0 means perpetual.
     /// @param epochLength Total epoch duration in seconds (Normal + PreCall + Funding + Closed).
     /// @param normalDuration Seconds of the Normal phase.
     /// @param preCallDuration Seconds of the PreCall phase.
@@ -63,6 +68,7 @@ interface ILCCVault {
         address marginOracle;
         address treasury;
         uint256 startTimestamp;
+        uint256 maxEpochs;
         uint256 epochLength;
         uint256 normalDuration;
         uint256 preCallDuration;
@@ -97,6 +103,7 @@ interface ILCCVault {
 
     /// @notice Immutable epoch timing and commitment derivation configuration.
     /// @param startTimestamp Epoch-zero start timestamp.
+    /// @param maxEpochs Maximum callable epochs; 0 means perpetual.
     /// @param epochLength Total epoch duration in seconds.
     /// @param normalDuration Seconds of the Normal phase.
     /// @param preCallDuration Seconds of the PreCall phase.
@@ -105,6 +112,7 @@ interface ILCCVault {
     /// @param exitDelayEpochs Minimum epochs between exit request and earliest maturity.
     struct EpochConfig {
         uint256 startTimestamp;
+        uint256 maxEpochs;
         uint256 epochLength;
         uint256 normalDuration;
         uint256 preCallDuration;
@@ -165,7 +173,7 @@ interface ILCCVault {
         uint64 pendingAuctionEpochPlusOne;
     }
 
-    /// @notice Packed terminal emergency shutdown state.
+    /// @notice Packed emergency shutdown state.
     /// @param active Whether shutdown has been triggered.
     /// @param timestamp Block timestamp at which shutdown was triggered (0 if not shut down).
     /// @param epoch Epoch in which shutdown was triggered (0 if not shut down).
@@ -271,10 +279,13 @@ interface ILCCVault {
     /// @param receiver Recipient of the margin.
     /// @return assets Margin transferred (marginAsset).
     function claimExitedMargin(address receiver) external returns (uint256 assets);
-    /// @notice Withdraws safe (uncalled) margin through the emergency path after shutdown.
+    /// @notice Withdraws remaining margin after emergency shutdown or scheduled terminal sunset.
+    /// @dev Pays active margin, pending margin, and already-matured claimable exit margin. Like other
+    /// state-touching calls, this may revert with `AccountMaterializationIncomplete` until a lagging account is
+    /// brought within the bounded replay window by `materializeAccount`.
     /// @param receiver Recipient of the margin.
     /// @return assets Margin transferred (marginAsset).
-    function claimEmergencyMargin(address receiver) external returns (uint256 assets);
+    function claimRemainingMargin(address receiver) external returns (uint256 assets);
     /// @notice Owner update of mutable risk caps; applies to future deposits and exit assignments only.
     /// @param newProtocolCommitmentCap New vault-wide commitment cap (fundingAsset); must be in (0, uint128.max].
     /// @param newUserCommitmentCap New per-account commitment cap (fundingAsset).
@@ -286,7 +297,7 @@ interface ILCCVault {
         uint256 newExitCapBps,
         uint256 newMinDeposit
     ) external;
-    /// @notice Triggers terminal emergency shutdown: blocks new deposits/calls and enables emergency withdrawal.
+    /// @notice Triggers emergency shutdown: blocks new deposits/calls and enables remaining-margin withdrawal.
     function shutdown() external;
     /// @notice Owner opens the current epoch's capital call during PreCall.
     /// @dev Reverts unless in PreCall of `epoch`, if a prior call is unsettled, if already opened, or if
@@ -375,7 +386,7 @@ interface ILCCVault {
     /// @notice Global sync cursors and live-auction slot.
     /// @return The sync state.
     function syncState() external view returns (SyncState memory);
-    /// @notice Terminal emergency shutdown state.
+    /// @notice Emergency shutdown state.
     /// @return The shutdown state.
     function shutdownState() external view returns (ShutdownState memory);
     /// @notice Whether `user` fully funded their obligation for `epoch`.

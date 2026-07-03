@@ -81,7 +81,7 @@ contract LCCShutdownTest is LCCBase {
         assertEq(margin.balanceOf(treasury), 100e18);
     }
 
-    function testEmergencyClaimWithdrawsSafeMarginAndBlocksDeposits() public {
+    function testRemainingClaimWithdrawsSafeMarginAndBlocksDeposits() public {
         _deposit(alice, 100e18);
 
         vm.prank(owner);
@@ -92,14 +92,14 @@ contract LCCShutdownTest is LCCBase {
 
         uint256 beforeBalance = margin.balanceOf(alice);
         vm.prank(alice);
-        uint256 claimed = vault.claimEmergencyMargin(alice);
+        uint256 claimed = vault.claimRemainingMargin(alice);
 
         assertEq(claimed, 100e18);
         assertEq(margin.balanceOf(alice), beforeBalance + 100e18);
         assertEq(vault.totals().activeMargin, 0);
     }
 
-    function testEmergencyClaimClearsPendingExitBucket() public {
+    function testRemainingClaimClearsPendingExitBucket() public {
         _deposit(alice, 100e18);
 
         vm.prank(alice);
@@ -109,7 +109,7 @@ contract LCCShutdownTest is LCCBase {
         vault.shutdown();
 
         vm.prank(alice);
-        vault.claimEmergencyMargin(alice);
+        vault.claimRemainingMargin(alice);
 
         assertEq(vault.exitBucketMarginByMaturity(maturity), 0);
         assertEq(vault.exitBucketCommitmentByMaturity(maturity), 0);

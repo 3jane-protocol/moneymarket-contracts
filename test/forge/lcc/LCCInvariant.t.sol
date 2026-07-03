@@ -196,15 +196,17 @@ contract LCCInvariantHandler is Test {
         invariantVault.claimExitedMargin(actor);
     }
 
-    function claimEmergency(uint256 actorSeed) external {
+    function claimRemaining(uint256 actorSeed) external {
         if (!invariantVault.shutdownState().active) return;
 
         address actor = actors[_index(actorSeed)];
         ILCCVault.Account memory account = invariantVault.getAccount(actor);
-        if (account.activeMargin + account.pendingMargin == 0) return;
+        // Include claimableExitMargin so the matured-exiter payout branch of claimRemainingMargin is exercised,
+        // not just the active/pending legs.
+        if (account.activeMargin + account.pendingMargin + account.claimableExitMargin == 0) return;
 
         vm.prank(actor);
-        invariantVault.claimEmergencyMargin(actor);
+        invariantVault.claimRemainingMargin(actor);
     }
 
     function setRiskCaps(uint256 protocolSeed, uint256 exitCapSeed) external {

@@ -116,6 +116,7 @@ Targeted local command patterns for Jane changes:
 ## LCC Module Guide (`src/lcc/`)
 
 - `src/lcc/LCCVault.sol`: per-facility LCC vault — margin deposits create USDC callable commitments, the owner opens one capital call per epoch, funding routes USDC through USD3 into wrapped USD3 Notification Vault (`USD3n`) shares for funders/fillers, and missed obligations slash margin. State progression is lazy (no keeper); `materializeAccount` and `finalizeEpochSlash` are permissionless.
+- `maxEpochs` can schedule a vault sunset: `0` means perpetual, otherwise epochs `0..maxEpochs-1` are callable and epoch `maxEpochs` starts a terminal withdraw-only phase. `claimRemainingMargin` is the wind-down claim for shutdown or terminal sunset, while `claimExitedMargin` remains the normal maturity-gated exit claim.
 - Slashed margin backs a step-decay shortfall auction during the epoch's `Closed` phase (pricing math in the externally linked `src/lcc/libraries/LCCAuctionLib.sol`); unawarded collateral is split into a configurable treasury fee and a return pool that is lazily re-attributed to defaulters as active commitment. Disabled config (`auctionStepCount == 0`) uses the same surplus-disposal path without an auction.
 - `src/lcc/LCCVaultFactory.sol`: permissionless factory for `LCCVault`; registry confers no trust.
 - Vaults must be on USD3's `supplyCapExempt` list for funding/fill deposits to bypass supply-cap headroom and first-time minimum deposits; if USD3's general whitelist is enabled, vaults must also be whitelisted there.

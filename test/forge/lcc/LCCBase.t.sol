@@ -130,6 +130,7 @@ contract LCCBase is Test {
             marginOracle: oracle_,
             treasury: treasury,
             startTimestamp: START,
+            maxEpochs: 0,
             epochLength: EPOCH,
             normalDuration: NORMAL,
             preCallDuration: PRE_CALL,
@@ -153,6 +154,11 @@ contract LCCBase is Test {
         params.auctionStepCount = 4;
         params.auctionStepDecayRateBps = 5_000;
         params.maxAuctionAwardBps = 10_000;
+    }
+
+    function _termParams(uint256 maxEpochs) internal view returns (ILCCVault.VaultParams memory params) {
+        params = _params(CAP, CAP);
+        params.maxEpochs = maxEpochs;
     }
 
     function _deployAuctionVault() internal {

@@ -129,7 +129,7 @@ contract LCCSyncTest is LCCBase {
         assertEq(vault.claimableExitedMargin(carol), 100e18);
     }
 
-    function testSparseSyncEmergencyClaimAfterLargeDormantGap() public {
+    function testSparseSyncRemainingClaimAfterLargeDormantGap() public {
         _deposit(alice, 100e18);
 
         vm.warp(START + EPOCH * HUGE_EPOCH_GAP);
@@ -138,7 +138,7 @@ contract LCCSyncTest is LCCBase {
 
         uint256 beforeBalance = margin.balanceOf(alice);
         vm.prank(alice);
-        uint256 claimed = vault.claimEmergencyMargin(alice);
+        uint256 claimed = vault.claimRemainingMargin(alice);
 
         assertEq(claimed, 100e18);
         assertEq(margin.balanceOf(alice), beforeBalance + 100e18);

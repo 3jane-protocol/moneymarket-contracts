@@ -97,11 +97,11 @@ library LCCEventsLib {
     /// @param marginAssets Margin transferred (marginAsset).
     event ExitedMarginClaimed(address indexed user, address indexed receiver, uint256 marginAssets);
 
-    /// @notice Emitted when safe margin is withdrawn through the emergency path after shutdown.
+    /// @notice Emitted when remaining margin is withdrawn after shutdown or terminal sunset.
     /// @param user Withdrawing account.
     /// @param receiver Recipient of the margin.
     /// @param marginAssets Margin transferred (marginAsset).
-    event EmergencyMarginClaimed(address indexed user, address indexed receiver, uint256 marginAssets);
+    event RemainingMarginClaimed(address indexed user, address indexed receiver, uint256 marginAssets);
 
     /// @notice Emitted when the owner updates mutable risk caps.
     /// @param protocolCommitmentCap New vault-wide commitment cap (fundingAsset).
@@ -112,7 +112,7 @@ library LCCEventsLib {
         uint256 protocolCommitmentCap, uint256 userCommitmentCap, uint256 exitCapBps, uint256 minDepositAssets
     );
 
-    /// @notice Emitted when emergency shutdown is triggered (terminal).
+    /// @notice Emitted when emergency shutdown is triggered.
     /// @param epoch Epoch in which shutdown occurred.
     /// @param timestamp Block timestamp of shutdown.
     event EmergencyShutdown(uint256 indexed epoch, uint256 timestamp);

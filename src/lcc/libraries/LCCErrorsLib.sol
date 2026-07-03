@@ -12,6 +12,8 @@ library LCCErrorsLib {
     error InvalidParams();
     /// @notice Thrown when an action is attempted that is blocked by emergency shutdown.
     error ShutdownActive();
+    /// @notice Thrown when a new call, deposit, or exit request is attempted after scheduled sunset.
+    error VaultTerminal();
     /// @notice Thrown when depositing while the account has a pending or unclaimed exit.
     error ExitInProgress();
     /// @notice Thrown when a deposit would exceed the protocol-wide or per-account commitment cap.
@@ -38,8 +40,8 @@ library LCCErrorsLib {
     error ExitNotMature();
     /// @notice Thrown when finalizing a slash for an epoch that is not yet slash-eligible.
     error SlashNotEligible();
-    /// @notice Thrown when an emergency-only action is attempted while not shut down.
-    error ShutdownRequired();
+    /// @notice Thrown when a wind-down withdrawal is attempted before shutdown or terminal sunset.
+    error NotWithdrawable();
     /// @notice Thrown when taking an auction that is not currently live.
     error AuctionNotLive();
     /// @notice Thrown when requesting an exit while the account still holds a pending (not-yet-active) deposit.

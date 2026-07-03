@@ -37,6 +37,7 @@ library LCCConfigLib {
         if (params.exitCapBps == 0 || params.exitCapBps > BPS) revert LCCErrorsLib.InvalidParams();
         if (params.exitDelayEpochs == 0) revert LCCErrorsLib.InvalidParams();
         if (params.slashFeeBps > BPS) revert LCCErrorsLib.InvalidParams();
+        // maxEpochs is unconstrained here; zero means perpetual.
 
         if (params.auctionStepCount == 0) {
             if (params.auctionStepDecayRateBps != 0 || params.maxAuctionAwardBps != 0) {

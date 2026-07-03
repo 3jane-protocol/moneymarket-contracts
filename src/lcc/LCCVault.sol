@@ -59,6 +59,8 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
 
     /// @notice Epoch-zero start timestamp; the epoch clock derives from this.
     uint256 private immutable startTimestamp;
+    /// @notice Maximum callable epochs; 0 means perpetual.
+    uint256 private immutable maxEpochs;
     /// @notice Total epoch duration in seconds.
     uint256 private immutable epochLength;
     /// @notice Seconds of the Normal phase.
@@ -99,7 +101,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     /// _syncGlobal after _settleDueAuction has already swept E.
     SyncState internal _syncState;
 
-    /// @dev Packed terminal emergency shutdown state.
+    /// @dev Packed emergency shutdown state.
     ShutdownState internal _shutdown;
     /// @dev Per-epoch auction state, exposed via getAuctionState.
     mapping(uint256 => LCCAuctionLib.AuctionState) internal epochAuctions;
@@ -161,6 +163,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         IERC20(address(usd3)).forceApprove(address(notificationVault), type(uint256).max);
 
         startTimestamp = params.startTimestamp;
+        maxEpochs = params.maxEpochs;
         epochLength = params.epochLength;
         normalDuration = params.normalDuration;
         preCallDuration = params.preCallDuration;
@@ -281,6 +284,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     /// ORACLE_PRICE_SCALE, including any token decimal conversion.
     function deposit(uint256 assets) external nonReentrant synced returns (uint256 commitment) {
         if (_shutdown.active) revert LCCErrorsLib.ShutdownActive();
+        if (_terminal()) revert LCCErrorsLib.VaultTerminal();
         if (assets == 0 || assets < _riskConfig.minDepositAssets) revert LCCErrorsLib.InvalidAmount();
 
         Account memory account = _replayForUpdate(msg.sender);
@@ -317,6 +321,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
 
     /// @inheritdoc ILCCVault
     function requestExit() external nonReentrant synced returns (uint256 maturityEpoch) {
+        if (_terminal()) revert LCCErrorsLib.VaultTerminal();
         Account memory account = _replayForUpdate(msg.sender);
         if (account.exitRequested && !account.exitClaimed) revert LCCErrorsLib.ExitInProgress();
         if (account.pendingMargin != 0 || account.pendingCommitment != 0) revert LCCErrorsLib.PendingDepositExists();
@@ -364,13 +369,19 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     }
 
     /// @inheritdoc ILCCVault
-    function claimEmergencyMargin(address receiver) external nonReentrant synced returns (uint256 assets) {
-        if (!_shutdown.active) revert LCCErrorsLib.ShutdownRequired();
+    function claimRemainingMargin(address receiver) external nonReentrant synced returns (uint256 assets) {
+        if (!_shutdown.active && !_terminal()) revert LCCErrorsLib.NotWithdrawable();
         if (receiver == address(0)) revert LCCErrorsLib.ZeroAddress();
 
         Account memory account = _replayForUpdate(msg.sender);
 
-        assets = account.activeMargin + account.pendingMargin;
+        uint256 activeMargin = account.activeMargin;
+        uint256 activeCommitment = account.activeCommitment;
+        uint256 pendingMargin = account.pendingMargin;
+        uint256 pendingCommitment = account.pendingCommitment;
+        uint256 claimableExitMargin = account.claimableExitMargin;
+
+        assets = activeMargin + pendingMargin + claimableExitMargin;
         if (assets == 0) revert LCCErrorsLib.NothingToClaim();
 
         uint256 maturity = account.exitMaturityEpoch;
@@ -380,20 +391,21 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
             _pruneExitMaturityIfEmpty(maturity);
         }
 
-        _decreaseGlobalActive(account.activeMargin, account.activeCommitment);
-        _decreasePending(account, account.pendingMargin, account.pendingCommitment);
+        _decreaseGlobalActive(activeMargin, activeCommitment);
+        _decreasePending(account, pendingMargin, pendingCommitment);
 
         account.activeMargin = 0;
         account.activeCommitment = 0;
         account.pendingMargin = 0;
         account.pendingCommitment = 0;
         account.pendingActivationEpoch = 0;
+        account.claimableExitMargin = 0;
         account.clearExit();
         _storeAccount(msg.sender, account);
 
         marginAsset.safeTransfer(receiver, assets);
 
-        emit LCCEventsLib.EmergencyMarginClaimed(msg.sender, receiver, assets);
+        emit LCCEventsLib.RemainingMarginClaimed(msg.sender, receiver, assets);
     }
 
     /* CALL, FUNDING & AUCTION ACTIONS */
@@ -401,6 +413,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     /// @inheritdoc ILCCVault
     function openEpochCall(uint256 epoch, uint256 callAmount) external onlyOwner synced {
         if (_shutdown.active) revert LCCErrorsLib.ShutdownActive();
+        if (_terminal()) revert LCCErrorsLib.VaultTerminal();
         if (epoch != _currentEpoch()) revert LCCErrorsLib.InvalidEpoch();
         if (_phaseAt(block.timestamp) != Phase.PreCall) revert LCCErrorsLib.InvalidPhase();
         if (callAmount == 0) revert LCCErrorsLib.InvalidAmount();
@@ -446,6 +459,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     {
         if (_shutdown.active) revert LCCErrorsLib.ShutdownActive();
         // synced settled any past-window auction, so a live slot implies the window is open.
+        // Terminal needs no explicit guard: no terminal auction can be live after synced settlement.
         uint256 slot = _syncState.pendingAuctionEpochPlusOne;
         if (slot == 0) revert LCCErrorsLib.AuctionNotLive();
         uint256 epoch = slot - 1;
@@ -551,6 +565,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     function epochConfig() external view returns (EpochConfig memory) {
         return EpochConfig({
             startTimestamp: startTimestamp,
+            maxEpochs: maxEpochs,
             epochLength: epochLength,
             normalDuration: normalDuration,
             preCallDuration: preCallDuration,
@@ -596,6 +611,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         if (_phaseAt(block.timestamp) != Phase.Funding) revert LCCErrorsLib.InvalidPhase();
 
         EpochState storage state = epochs[epoch];
+        // Terminal needs no explicit guard: no call can open for epoch maxEpochs, so this check is inert.
         if (!state.callOpened || state.slashFinalized) revert LCCErrorsLib.InvalidEpoch();
         if (fundedEpoch[epoch][user]) revert LCCErrorsLib.AlreadyFunded();
 
@@ -842,13 +858,20 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         // The oracle is consulted only when there is a return pool to value; a full-fee sweep never
         // depends on oracle liveness.
         if (returnPool != 0) {
+            // Wind-down disposal skips the going-concern oracle-revert and protocol-cap clamp so recoverable
+            // margin is never bricked or diverted to treasury once no future call can ever use the returned
+            // commitment. That property is a function of the current clock, not the disposed epoch: it holds once
+            // the last epoch's call-opening window has passed (`_callWindowClosed`), which covers both an early
+            // settlement in the last epoch's own Closed phase and a lazy finalization of any older epoch disposed
+            // for the first time in that late window (or at/after terminal).
+            bool windDown = _shutdown.active || _callWindowClosed();
             uint256 price;
-            if (_shutdown.active) {
+            if (windDown) {
                 try marginOracle.price() returns (uint256 p) {
                     price = p;
                 } catch {}
                 // A price large enough to overflow the valuation is treated like a dead oracle so
-                // shutdown wind-down can never brick on disposal.
+                // wind-down can never brick on disposal.
                 if (price > type(uint256).max / returnPool) price = 0;
             } else {
                 price = marginOracle.price();
@@ -860,10 +883,10 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
             } else {
                 (, uint256 rawCommitment) = _marginValueAndCommitment(returnPool, price);
                 uint256 usedCommitment = uint256(_totals.activeCommitment) + uint256(_totals.pendingCommitment);
-                // Post-shutdown no call can ever open, so returned commitment bounds no callable
+                // During wind-down no call can ever open, so returned commitment bounds no callable
                 // exposure: clamping by the protocol cap would only divert defaulters' recoverable
                 // margin to the treasury. Bound it by the packed-totals width instead.
-                uint256 headroom = _shutdown.active
+                uint256 headroom = windDown
                     ? uint256(type(uint128).max).saturatingSub(usedCommitment)
                     : _riskConfig.protocolCommitmentCap.saturatingSub(usedCommitment)
                         + _dueUnfoldedExitCommitment(_currentEpoch());
@@ -1293,6 +1316,24 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     function _currentEpoch() internal view returns (uint256) {
         if (block.timestamp < startTimestamp) return 0;
         return (block.timestamp - startTimestamp) / epochLength;
+    }
+
+    function _terminal() internal view returns (bool) {
+        return maxEpochs != 0 && _currentEpoch() >= maxEpochs;
+    }
+
+    /// @dev True once no call can ever open again: calls open only in a PreCall phase, so once the last callable
+    /// epoch's PreCall window (`maxEpochs - 1`) has elapsed nothing can open a call. Perpetual vaults (`maxEpochs ==
+    /// 0`) never close. Past this point a returned slash commitment can never back a future call, so surplus disposal
+    /// drops the going-concern oracle-revert and protocol-cap clamp. Monotonic and strictly before the terminal
+    /// boundary, so this also covers every disposal that runs once terminal.
+    function _callWindowClosed() internal view returns (bool) {
+        if (maxEpochs == 0) return false;
+        uint256 current = _currentEpoch();
+        // No call can open past the last callable epoch's PreCall window: either terminal, or in epoch
+        // `maxEpochs - 1` with its PreCall phase already elapsed (calls open only during PreCall). Expressed via
+        // the epoch clock, which is bounded by block.timestamp, so an unbounded `maxEpochs` cannot overflow.
+        return current >= maxEpochs || (current == maxEpochs - 1 && _phaseAt(block.timestamp) >= Phase.Funding);
     }
 
     function _epochStart(uint256 epoch) internal view returns (uint256) {

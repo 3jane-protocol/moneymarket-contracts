@@ -18,6 +18,21 @@ contract LCCDepositTest is LCCBase {
         assertEq(vault.totals().activeCommitment, 200e18);
     }
 
+    function testDepositBeforeStartActivatesImmediatelyInEpochZero() public {
+        vm.warp(START - 1);
+        uint256 assets = 100e18;
+
+        uint256 commitment = _deposit(alice, assets);
+
+        assertEq(uint256(vault.currentPhase()), uint256(ILCCVault.Phase.Normal));
+        assertEq(vault.currentEpoch(), 0);
+        ILCCVault.Account memory account = vault.getAccount(alice);
+        assertEq(account.activeMargin, assets);
+        assertGt(account.activeCommitment, 0);
+        assertEq(account.activeCommitment, commitment);
+        assertEq(account.pendingMargin, 0);
+    }
+
     function testDepositStagesOutsideNormalAndAggregateBucketActivates() public {
         vm.warp(START + NORMAL);
         uint256 commitment = _deposit(alice, 100e18);

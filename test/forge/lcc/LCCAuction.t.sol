@@ -258,9 +258,9 @@ contract LCCAuctionTest is LCCBase {
         vm.prank(carol);
         vault.takeAuction(10e18);
 
-        // Honored funder's emergency claim is isolated from the swept inventory.
+        // Honored funder's remaining-margin claim is isolated from the swept inventory.
         vm.prank(alice);
-        assertEq(vault.claimEmergencyMargin(alice), 50e18);
+        assertEq(vault.claimRemainingMargin(alice), 50e18);
     }
 
     function testSequentialCallsSettlePriorAuctionBeforeNextKick() public {
