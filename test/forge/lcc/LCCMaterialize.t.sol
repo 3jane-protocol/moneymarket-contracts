@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
-import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 
 contract LCCMaterializeTest is LCCBase {
     function testFreshAccountCanDepositAfterManyFinalizedCalls() public {
@@ -11,7 +11,7 @@ contract LCCMaterializeTest is LCCBase {
         vm.warp(START + EPOCH * (MAX_MATERIALIZE_STEPS_PLUS_ONE() + 1));
         _deposit(bob, 10e18);
 
-        ILeveragedCallableCreditVault.Account memory account = vault.getAccount(bob);
+        ILCCVault.Account memory account = vault.getAccount(bob);
         assertEq(account.activeMargin, 10e18);
         assertEq(account.calledEpochCursor, vault.syncState().finalizedCallPrefix);
     }
@@ -31,7 +31,7 @@ contract LCCMaterializeTest is LCCBase {
         vm.warp(START + EPOCH * (MAX_MATERIALIZE_STEPS_PLUS_ONE() + 2));
         _deposit(alice, 10e18);
 
-        ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
+        ILCCVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 10e18);
         assertEq(account.calledEpochCursor, vault.syncState().finalizedCallPrefix);
     }
@@ -45,7 +45,7 @@ contract LCCMaterializeTest is LCCBase {
         vm.warp(START + EPOCH);
 
         assertEq(vault.claimableExitedMargin(alice), 0);
-        ILeveragedCallableCreditVault.Account memory derived = vault.getAccount(alice);
+        ILCCVault.Account memory derived = vault.getAccount(alice);
         assertEq(derived.claimableExitMargin, 0);
 
         _syncAs(alice);
@@ -61,9 +61,9 @@ contract LCCMaterializeTest is LCCBase {
         vm.warp(START + EPOCH);
         _syncAs(bob);
 
-        ILeveragedCallableCreditVault.Account memory derived = vault.getAccount(alice);
+        ILCCVault.Account memory derived = vault.getAccount(alice);
         _syncAs(alice);
-        ILeveragedCallableCreditVault.Account memory storedDerived = vault.getAccount(alice);
+        ILCCVault.Account memory storedDerived = vault.getAccount(alice);
 
         assertEq(derived.activeMargin, storedDerived.activeMargin);
         assertEq(derived.pendingMargin, storedDerived.pendingMargin);
@@ -76,9 +76,9 @@ contract LCCMaterializeTest is LCCBase {
         _finishFunding();
         vault.finalizeEpochSlash(0);
 
-        ILeveragedCallableCreditVault.Account memory derived = vault.getAccount(alice);
+        ILCCVault.Account memory derived = vault.getAccount(alice);
         _syncAs(alice);
-        ILeveragedCallableCreditVault.Account memory storedDerived = vault.getAccount(alice);
+        ILCCVault.Account memory storedDerived = vault.getAccount(alice);
 
         assertEq(derived.activeMargin, 90e18);
         assertEq(storedDerived.activeMargin, 90e18);
@@ -95,7 +95,7 @@ contract LCCMaterializeTest is LCCBase {
         vm.warp(START + EPOCH);
         _syncAs(bob);
 
-        ILeveragedCallableCreditVault.Account memory account = vault.getAccount(bob);
+        ILCCVault.Account memory account = vault.getAccount(bob);
         assertEq(account.activeMargin, 100e18);
         assertEq(account.activeCommitment, 200e18);
         assertFalse(vault.defaultedEpoch(0, bob));
@@ -111,7 +111,7 @@ contract LCCMaterializeTest is LCCBase {
         vm.warp(START + EPOCH);
         _syncAs(alice);
 
-        ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
+        ILCCVault.Account memory account = vault.getAccount(alice);
         assertTrue(vault.defaultedEpoch(0, alice));
         assertEq(account.activeMargin, 140e18);
         assertEq(account.activeCommitment, 280e18);

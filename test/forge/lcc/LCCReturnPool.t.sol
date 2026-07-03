@@ -2,8 +2,8 @@
 pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
-import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
-import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCVault} from "../../../src/lcc/LCCVault.sol";
+import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
 
@@ -26,7 +26,7 @@ contract LCCReturnPoolTest is LCCBase {
         oracle.setPrice(ORACLE_PRICE_SCALE);
         vault.materializeAccount(alice);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         assertEq(margin.balanceOf(treasury), 10e18);
         assertEq(state.returnPool, 90e18);
@@ -37,7 +37,7 @@ contract LCCReturnPoolTest is LCCBase {
         _setupCapBoundSlash(200e18);
         vault.materializeAccount(alice);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 0);
         assertEq(state.returnCommitment, 0);
         assertEq(margin.balanceOf(treasury), 100e18);
@@ -51,13 +51,13 @@ contract LCCReturnPoolTest is LCCBase {
         vault.materializeAccount(alice);
         vault.materializeAccount(bob);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 0);
         assertEq(state.returnCommitment, 0);
         assertEq(margin.balanceOf(treasury), 100e18);
 
-        ILeveragedCallableCreditVault.Account memory aliceAccount = vault.getAccount(alice);
-        ILeveragedCallableCreditVault.Account memory bobAccount = vault.getAccount(bob);
+        ILCCVault.Account memory aliceAccount = vault.getAccount(alice);
+        ILCCVault.Account memory bobAccount = vault.getAccount(bob);
         assertEq(aliceAccount.activeMargin, 0);
         assertEq(aliceAccount.activeCommitment, 0);
         assertEq(bobAccount.activeMargin, 0);
@@ -78,7 +78,7 @@ contract LCCReturnPoolTest is LCCBase {
         vm.warp(START + EPOCH);
         vault.materializeAccount(alice);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 0);
         assertEq(state.returnCommitment, 0);
         assertEq(margin.balanceOf(treasury), 100e18);
@@ -94,15 +94,15 @@ contract LCCReturnPoolTest is LCCBase {
         oracle.setPrice(5_556e18);
         vault.finalizeEpochSlash(0);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 90e18);
         assertEq(state.returnCommitment, 1_000_080);
 
         vault.materializeAccount(alice);
         vault.materializeAccount(bob);
 
-        ILeveragedCallableCreditVault.Account memory aliceAccount = vault.getAccount(alice);
-        ILeveragedCallableCreditVault.Account memory bobAccount = vault.getAccount(bob);
+        ILCCVault.Account memory aliceAccount = vault.getAccount(alice);
+        ILCCVault.Account memory bobAccount = vault.getAccount(bob);
         assertGt(aliceAccount.activeMargin, 0);
         assertGt(aliceAccount.activeCommitment, 0);
         assertGt(bobAccount.activeMargin, 0);
@@ -128,7 +128,7 @@ contract LCCReturnPoolTest is LCCBase {
         vm.warp(START + EPOCH);
         vault.materializeAccount(alice);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 225_000);
         assertEq(state.returnCommitment, 1_800_000);
         assertEq(margin.balanceOf(treasury), 25_000);
@@ -139,7 +139,7 @@ contract LCCReturnPoolTest is LCCBase {
     /// alice and bob default on a 200e18 call, carol's deposit fills the cap back to `cap`, and time is
     /// warped past the epoch so the next touch settles and disposes.
     function _setupCapBoundSlash(uint256 cap) internal {
-        ILeveragedCallableCreditVault.VaultParams memory params = _auctionParams();
+        ILCCVault.VaultParams memory params = _auctionParams();
         params.protocolCommitmentCap = cap;
         _deployVaultWithParams(params);
 
@@ -156,12 +156,12 @@ contract LCCReturnPoolTest is LCCBase {
     }
 
     function _assertAccountTotalsWithinDust(uint256 dustBound) internal view {
-        ILeveragedCallableCreditVault.Totals memory totals = vault.totals();
+        ILCCVault.Totals memory totals = vault.totals();
         address[3] memory users = [alice, bob, carol];
         uint256 activeMargin;
         uint256 activeCommitment;
         for (uint256 i = 0; i < users.length; ++i) {
-            ILeveragedCallableCreditVault.Account memory account = vault.getAccount(users[i]);
+            ILCCVault.Account memory account = vault.getAccount(users[i]);
             activeMargin += account.activeMargin;
             activeCommitment += account.activeCommitment;
         }

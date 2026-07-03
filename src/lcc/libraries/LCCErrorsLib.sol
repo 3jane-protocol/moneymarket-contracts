@@ -4,7 +4,7 @@ pragma solidity >=0.8.22 <0.9.0;
 /// @title LCCErrorsLib
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
-/// @notice Library exposing Leveraged Callable Credit vault errors.
+/// @notice Library exposing LCC vault errors.
 library LCCErrorsLib {
     /// @notice Thrown when a required address argument is the zero address.
     error ZeroAddress();

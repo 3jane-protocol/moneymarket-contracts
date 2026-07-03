@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.8.22 <0.9.0;
 
-import {ILeveragedCallableCreditVault} from "../interfaces/ILeveragedCallableCreditVault.sol";
+import {ILCCVault} from "../interfaces/ILCCVault.sol";
 
 /// @title LCCTypesLib
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
-/// @notice Library exposing implementation-only Leveraged Callable Credit vault types.
+/// @notice Library exposing implementation-only LCC vault types.
 library LCCTypesLib {
-    /// @notice Packed on-chain form of {ILeveragedCallableCreditVault.Account}.
+    /// @notice Packed on-chain form of {ILCCVault.Account}.
     /// @dev Fields carry the same meaning as `Account`; amounts pack into uint128 and epochs/cursor into uint64.
     /// Deposits revert on the cast if an amount exceeds its width.
     struct AccountStorage {
@@ -66,7 +66,7 @@ library LCCTypesLib {
     /// @param defaultCount Number of valid entries in `defaults`.
     /// @param complete True if replay caught the account up to the finalized prefix within the step bound.
     struct AccountReplay {
-        ILeveragedCallableCreditVault.Account account;
+        ILCCVault.Account account;
         DefaultRecord[] defaults;
         uint256 defaultCount;
         bool complete;

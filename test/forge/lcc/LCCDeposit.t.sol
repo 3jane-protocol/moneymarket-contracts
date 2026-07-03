@@ -2,15 +2,15 @@
 pragma solidity ^0.8.22;
 
 import {LCCBase, LCCRevertingOracle} from "./LCCBase.t.sol";
-import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
-import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCVault} from "../../../src/lcc/LCCVault.sol";
+import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCDepositTest is LCCBase {
     function testDepositValuesMarginAndActivatesDuringNormal() public {
         uint256 commitment = _deposit(alice, 100e18);
 
-        ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
+        ILCCVault.Account memory account = vault.getAccount(alice);
         assertEq(commitment, 200e18);
         assertEq(account.activeMargin, 100e18);
         assertEq(account.activeCommitment, 200e18);
@@ -32,13 +32,13 @@ contract LCCDepositTest is LCCBase {
         assertEq(vault.totals().pendingMargin, 0);
         assertEq(vault.totals().activeMargin, 100e18);
 
-        ILeveragedCallableCreditVault.Account memory derived = vault.getAccount(alice);
+        ILCCVault.Account memory derived = vault.getAccount(alice);
         assertEq(derived.activeMargin, 100e18);
         assertEq(derived.pendingMargin, 0);
     }
 
     function testCapsIncludePendingCommitment() public {
-        vault = new LeveragedCallableCreditVault(_params(400e18, 400e18));
+        vault = new LCCVault(_params(400e18, 400e18));
         vm.startPrank(alice);
         margin.approve(address(vault), type(uint256).max);
         vm.stopPrank();
@@ -51,9 +51,9 @@ contract LCCDepositTest is LCCBase {
     }
 
     function testMinDepositEnforced() public {
-        ILeveragedCallableCreditVault.VaultParams memory params = _params(CAP, CAP);
+        ILCCVault.VaultParams memory params = _params(CAP, CAP);
         params.minDepositAssets = 10e18;
-        vault = new LeveragedCallableCreditVault(params);
+        vault = new LCCVault(params);
         _mintAndApprove(alice, 0, 0);
 
         vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
@@ -83,7 +83,7 @@ contract LCCDepositTest is LCCBase {
 
     function testRevertingOracleBubbles() public {
         LCCRevertingOracle badOracle = new LCCRevertingOracle();
-        vault = new LeveragedCallableCreditVault(_params(address(badOracle), CAP, CAP, 2_000));
+        vault = new LCCVault(_params(address(badOracle), CAP, CAP, 2_000));
 
         vm.expectRevert("ORACLE_DOWN");
         _deposit(alice, 100e18);

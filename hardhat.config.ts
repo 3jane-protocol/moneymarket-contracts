@@ -81,9 +81,9 @@ const config: HardhatUserConfig = {
     // without letting 0.8.35 capture every other ^0.8.x source in the repo.
     overrides: Object.fromEntries(
       [
-        "src/lcc/LeveragedCallableCreditVault.sol",
-        "src/lcc/LeveragedCallableCreditVaultFactory.sol",
-        "src/lcc/interfaces/ILeveragedCallableCreditVault.sol",
+        "src/lcc/LCCVault.sol",
+        "src/lcc/LCCVaultFactory.sol",
+        "src/lcc/interfaces/ILCCVault.sol",
         "src/lcc/libraries/LCCAccountLib.sol",
         "src/lcc/libraries/LCCAuctionLib.sol",
         "src/lcc/libraries/LCCBucketListLib.sol",

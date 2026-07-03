@@ -18,17 +18,17 @@ import {LCCConfigLib} from "./libraries/LCCConfigLib.sol";
 import {LCCErrorsLib} from "./libraries/LCCErrorsLib.sol";
 import {LCCEventsLib} from "./libraries/LCCEventsLib.sol";
 import {LCCTypesLib} from "./libraries/LCCTypesLib.sol";
-import {ILeveragedCallableCreditVault} from "./interfaces/ILeveragedCallableCreditVault.sol";
+import {ILCCVault} from "./interfaces/ILCCVault.sol";
 
-/// @title LeveragedCallableCreditVault
+/// @title LCCVault
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
-/// @notice Per-facility leveraged callable credit vault. See {ILeveragedCallableCreditVault} for the external API
+/// @notice Per-facility LCC vault. See {ILCCVault} for the external API
 /// and accounting model; this contract holds the implementation, lazy materialization, and auction mechanics.
 /// @dev State progression is lazy and keeperless: every state-touching entrypoint calls `_syncGlobal` to advance
 /// the epoch clock, fold pending/matured buckets, and finalize eligible slashes. Per-account state is materialized
 /// on demand by replaying the sparse `calledEpochs` list from each account's cursor.
-contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable, ReentrancyGuard {
+contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using Math for uint256;
     using SafeCast for uint256;
@@ -50,7 +50,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     IERC20 private immutable fundingAsset;
     /// @notice The ERC-4626 USD3 vault that accepts fundingAsset deposits.
     IERC4626 private immutable usd3;
-    /// @notice The ERC-4626 notification wrapper that delivers nUSD3 to funders and fillers.
+    /// @notice The ERC-4626 notification wrapper that delivers USD3n to funders and fillers.
     IERC4626 private immutable notificationVault;
     /// @notice Trusted oracle quoting one marginAsset in fundingAsset, scaled by ORACLE_PRICE_SCALE.
     IOracle private immutable marginOracle;
@@ -111,17 +111,17 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     /// @dev Sparse, ordered list of epochs in which a call was opened; the replay/finalization spine.
     uint256[] internal calledEpochList;
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     mapping(uint256 => uint256) public pendingMarginByActivationEpoch;
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     mapping(uint256 => uint256) public pendingCommitmentByActivationEpoch;
     /// @dev Distinct activation epochs with nonzero pending buckets (swap-remove tracked; bounds the fold scan).
     uint256[] internal activationEpochList;
     /// @dev 1-based index of an activation epoch in `activationEpochList` (0 = absent).
     mapping(uint256 => uint256) internal activationEpochIndexPlusOne;
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     mapping(uint256 => uint256) public exitBucketMarginByMaturity;
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     mapping(uint256 => uint256) public exitBucketCommitmentByMaturity;
     /// @dev Distinct maturity epochs with nonzero exit buckets (swap-remove tracked; bounds the fold scan).
     uint256[] internal exitMaturityList;
@@ -133,9 +133,9 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     /// @dev Maturity epochs touched by each call, for slash-time bucket reconciliation.
     mapping(uint256 => uint256[]) internal exitMaturitiesByCall;
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     mapping(uint256 => mapping(address => bool)) public fundedEpoch;
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     mapping(uint256 => mapping(address => bool)) public defaultedEpoch;
 
     /* CONSTRUCTOR */
@@ -146,7 +146,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     /// trusted, construction-fixed USD3 and notification vault spenders. USD3 short-circuits max allowance as
     /// permanently infinite; USDC decrements max allowance, but type(uint256).max is inexhaustible in practice. The
     /// vault holds no fundingAsset or USD3 between transactions, so the allowances expose no idle balance.
-    /// @param params The facility configuration; see {ILeveragedCallableCreditVault.VaultParams}.
+    /// @param params The facility configuration; see {ILCCVault.VaultParams}.
     constructor(VaultParams memory params) Ownable(params.owner) {
         LCCConfigLib.validate(params);
 
@@ -197,17 +197,17 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     /* CLOCK VIEWS */
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function currentEpoch() external view returns (uint256) {
         return _currentEpoch();
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function currentPhase() external view returns (Phase) {
         return _phaseAt(block.timestamp);
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function phaseEndsAt(uint256 epoch, Phase phase) external view returns (uint256) {
         uint256 start = _epochStart(epoch);
         if (phase == Phase.Normal) return start + normalDuration;
@@ -218,7 +218,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     /* OWNER ACTIONS */
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     /// @dev Lowering caps below current utilization does not force existing positions or assigned exit buckets to
     /// unwind.
     function setRiskCaps(
@@ -242,7 +242,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         emit LCCEventsLib.RiskCapUpdated(newProtocolCommitmentCap, newUserCommitmentCap, newExitCapBps, newMinDeposit);
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function setMaxAuctionAwardBps(uint256 newMaxAuctionAwardBps) external onlyOwner synced {
         if (newMaxAuctionAwardBps > BPS) revert LCCErrorsLib.InvalidParams();
         if (newMaxAuctionAwardBps != 0 && auctionStepCount == 0) revert LCCErrorsLib.InvalidParams();
@@ -254,7 +254,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         emit LCCEventsLib.AuctionAwardCapUpdated(newMaxAuctionAwardBps);
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function setSlashFeeBps(uint256 newSlashFeeBps) external onlyOwner synced {
         if (newSlashFeeBps > BPS) revert LCCErrorsLib.InvalidParams();
         if (_syncState.pendingAuctionEpochPlusOne != 0) revert LCCErrorsLib.InvalidPhase();
@@ -262,7 +262,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         emit LCCEventsLib.SlashFeeUpdated(newSlashFeeBps);
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function shutdown() external onlyOwner {
         if (_shutdown.active) revert LCCErrorsLib.ShutdownActive();
         _shutdown.active = true;
@@ -276,7 +276,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     /* USER ACTIONS */
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     /// @dev The margin oracle is fully trusted to return a fresh marginAsset-to-fundingAsset price scaled by
     /// ORACLE_PRICE_SCALE, including any token decimal conversion.
     function deposit(uint256 assets) external nonReentrant synced returns (uint256 commitment) {
@@ -315,7 +315,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         emit LCCEventsLib.DepositCheckpointed(msg.sender, assets, marginValue, commitment, activationEpoch, immediate);
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function requestExit() external nonReentrant synced returns (uint256 maturityEpoch) {
         Account memory account = _replayForUpdate(msg.sender);
         if (account.exitRequested && !account.exitClaimed) revert LCCErrorsLib.ExitInProgress();
@@ -343,7 +343,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         emit LCCEventsLib.ExitRequested(msg.sender, maturityEpoch, accountMargin, accountCommitment);
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function claimExitedMargin(address receiver) external nonReentrant synced returns (uint256 assets) {
         if (receiver == address(0)) revert LCCErrorsLib.ZeroAddress();
 
@@ -363,7 +363,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         emit LCCEventsLib.ExitedMarginClaimed(msg.sender, receiver, assets);
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function claimEmergencyMargin(address receiver) external nonReentrant synced returns (uint256 assets) {
         if (!_shutdown.active) revert LCCErrorsLib.ShutdownRequired();
         if (receiver == address(0)) revert LCCErrorsLib.ZeroAddress();
@@ -398,7 +398,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     /* CALL, FUNDING & AUCTION ACTIONS */
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function openEpochCall(uint256 epoch, uint256 callAmount) external onlyOwner synced {
         if (_shutdown.active) revert LCCErrorsLib.ShutdownActive();
         if (epoch != _currentEpoch()) revert LCCErrorsLib.InvalidEpoch();
@@ -421,21 +421,21 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         emit LCCEventsLib.EpochCallOpened(epoch, callAmount, _totals.activeCommitment);
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function fundCall() external nonReentrant synced returns (uint256 obligationAmount) {
         return _fund(msg.sender, msg.sender);
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
-    /// @dev Push-based third-party funding: the caller pays; released margin, wrapped nUSD3 delivery, and funded
+    /// @inheritdoc ILCCVault
+    /// @dev Push-based third-party funding: the caller pays; released margin, wrapped USD3n delivery, and funded
     /// status always accrue to `user`.
     function fundCall(address user) external nonReentrant synced returns (uint256 obligationAmount) {
         if (user == address(0)) revert LCCErrorsLib.ZeroAddress();
         return _fund(msg.sender, user);
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
-    /// @dev If USD3 or the notification vault cannot deliver wrapped nUSD3, the take reverts. The fill targets
+    /// @inheritdoc ILCCVault
+    /// @dev If USD3 or the notification vault cannot deliver wrapped USD3n, the take reverts. The fill targets
     /// whichever auction is live, following Yearn-take semantics: `maxFillAmount` is the caller's only bound, and the
     /// award is the current ramped kicker.
     function takeAuction(uint256 maxFillAmount)
@@ -480,7 +480,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         if (state.filledAmount == state.shortfallAmount) _settleAuction(epoch);
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function finalizeEpochSlash(uint256 epoch) external nonReentrant synced {
         if (!epochs[epoch].slashFinalized) {
             if (!_slashEligible(epoch)) revert LCCErrorsLib.SlashNotEligible();
@@ -488,7 +488,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         }
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function materializeAccount(address user) external nonReentrant synced {
         if (user == address(0)) revert LCCErrorsLib.ZeroAddress();
         // Accounts with live historical exposure may need repeated calls; empty accounts fast-forward.
@@ -500,22 +500,22 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
 
     /* VIEWS */
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function getAccount(address user) external view returns (Account memory) {
         return _previewAccount(user);
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function getEpochState(uint256 epoch) external view returns (EpochState memory) {
         return epochs[epoch];
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function getAuctionState(uint256 epoch) external view returns (LCCAuctionLib.AuctionState memory) {
         return epochAuctions[epoch];
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function obligationOf(uint256 epoch, address user) external view returns (uint256) {
         EpochState storage state = epochs[epoch];
         if (!state.callOpened || state.slashFinalized || fundedEpoch[epoch][user]) return 0;
@@ -523,19 +523,19 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         return _obligation(state, account.activeCommitment);
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function claimableExitedMargin(address user) external view returns (uint256) {
         Account memory account = _previewAccount(user);
         if (!account.exitRequested || account.exitClaimed || _currentEpoch() < account.exitMaturityEpoch) return 0;
         return account.claimableExitMargin;
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function calledEpochs() external view returns (uint256[] memory) {
         return calledEpochList;
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function assetConfig() external view returns (AssetConfig memory) {
         return AssetConfig({
             marginAsset: address(marginAsset),
@@ -547,7 +547,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         });
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function epochConfig() external view returns (EpochConfig memory) {
         return EpochConfig({
             startTimestamp: startTimestamp,
@@ -560,7 +560,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         });
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function auctionConfig() external view returns (AuctionConfig memory) {
         return AuctionConfig({
             auctionStepCount: auctionStepCount,
@@ -569,22 +569,22 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         });
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function riskConfig() external view returns (RiskConfig memory) {
         return _riskConfig;
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function totals() external view returns (Totals memory) {
         return _totals;
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function syncState() external view returns (SyncState memory) {
         return _syncState;
     }
 
-    /// @inheritdoc ILeveragedCallableCreditVault
+    /// @inheritdoc ILCCVault
     function shutdownState() external view returns (ShutdownState memory) {
         return _shutdown;
     }
@@ -632,7 +632,7 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         emit LCCEventsLib.MarginReleased(user, epoch, releasedMargin);
     }
 
-    /// @dev Delivers funded USDC as wrapped nUSD3. The LCC vault is the USD3 receiver, so deployments must grant
+    /// @dev Delivers funded USDC as wrapped USD3n. The LCC vault is the USD3 receiver, so deployments must grant
     /// the vault the USD3 supply-cap exemption and, when enabled, the regular USD3 whitelist.
     function _deliverWrapped(address receiver, uint256 fundingAmount) internal {
         uint256 usd3Assets = usd3.deposit(fundingAmount, address(this));

@@ -4,15 +4,15 @@ pragma solidity >=0.8.22 <0.9.0;
 import {IERC4626} from "../../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 
 import {BPS} from "../../libraries/ConstantsLib.sol";
-import {ILeveragedCallableCreditVault} from "../interfaces/ILeveragedCallableCreditVault.sol";
+import {ILCCVault} from "../interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "./LCCErrorsLib.sol";
 
 /// @title LCCConfigLib
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
-/// @notice Constructor configuration validation for Leveraged Callable Credit vaults.
+/// @notice Constructor configuration validation for LCC vaults.
 library LCCConfigLib {
-    function validate(ILeveragedCallableCreditVault.VaultParams memory params) internal view {
+    function validate(ILCCVault.VaultParams memory params) internal view {
         if (
             params.owner == address(0) || params.marginAsset == address(0) || params.fundingAsset == address(0)
                 || params.notificationVault == address(0) || params.marginOracle == address(0)

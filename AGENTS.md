@@ -10,7 +10,7 @@ This repository contains Morpho Blue plus 3Jane-specific credit extensions for u
 - Credit-line and borrower-premium logic in `src/` and `src/libraries/`.
 - JANE token and rewards distribution modules in `src/jane/`.
 - USD3/sUSD3 strategy and lifecycle tests in `test/forge/usd3/`.
-- Leveraged Callable Credit (LCC) vault module in `src/lcc/` with tests in `test/forge/lcc/`.
+- LCC vault module in `src/lcc/` with tests in `test/forge/lcc/`.
 - Formal and symbolic test suites in `test/halmos/` and `certora/`.
 
 ## Golden Rules
@@ -115,9 +115,9 @@ Targeted local command patterns for Jane changes:
 
 ## LCC Module Guide (`src/lcc/`)
 
-- `src/lcc/LeveragedCallableCreditVault.sol`: per-facility leveraged callable credit vault — margin deposits create USDC callable commitments, the owner opens one capital call per epoch, funding routes USDC through USD3 into wrapped notification-vault shares for funders/fillers, and missed obligations slash margin. State progression is lazy (no keeper); `materializeAccount` and `finalizeEpochSlash` are permissionless.
+- `src/lcc/LCCVault.sol`: per-facility LCC vault — margin deposits create USDC callable commitments, the owner opens one capital call per epoch, funding routes USDC through USD3 into wrapped USD3 Notification Vault (`USD3n`) shares for funders/fillers, and missed obligations slash margin. State progression is lazy (no keeper); `materializeAccount` and `finalizeEpochSlash` are permissionless.
 - Slashed margin backs a step-decay shortfall auction during the epoch's `Closed` phase (pricing math in the externally linked `src/lcc/libraries/LCCAuctionLib.sol`); unawarded collateral is split into a configurable treasury fee and a return pool that is lazily re-attributed to defaulters as active commitment. Disabled config (`auctionStepCount == 0`) uses the same surplus-disposal path without an auction.
-- `src/lcc/LeveragedCallableCreditVaultFactory.sol`: permissionless factory; registry confers no trust.
+- `src/lcc/LCCVaultFactory.sol`: permissionless factory for `LCCVault`; registry confers no trust.
 - Vaults must be on USD3's `supplyCapExempt` list for funding/fill deposits to bypass supply-cap headroom and first-time minimum deposits; if USD3's general whitelist is enabled, vaults must also be whitelisted there.
 - The LCC vault/factory compile under scoped `compilation_restrictions` in `foundry.toml` (`optimizer_runs = 600`, pinned to solc `0.8.35`) to stay below the bytecode size limit; USD3 is likewise pinned at `optimizer_runs = 200`. The LCC sources use a version-range pragma so Hardhat compiles them via per-file `overrides` in `hardhat.config.ts`.
 - Design notes: `docs/architecture.md` (LCC Domain section).

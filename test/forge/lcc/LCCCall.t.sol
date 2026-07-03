@@ -2,8 +2,8 @@
 pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
-import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
-import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCVault} from "../../../src/lcc/LCCVault.sol";
+import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCCallTest is LCCBase {
@@ -15,7 +15,7 @@ contract LCCCallTest is LCCBase {
         vm.prank(owner);
         vault.openEpochCall(1, 100e18);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(1);
+        ILCCVault.EpochState memory state = vault.getEpochState(1);
         assertEq(state.commitmentDenominator, 200e18);
         assertEq(state.marginAtCallOpen, 100e18);
     }
@@ -60,7 +60,7 @@ contract LCCCallTest is LCCBase {
         vm.prank(owner);
         vault.openEpochCall(1, 100e18);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(1);
+        ILCCVault.EpochState memory state = vault.getEpochState(1);
         assertEq(state.commitmentDenominator, 180e18);
         assertEq(state.marginAtCallOpen, 90e18);
     }

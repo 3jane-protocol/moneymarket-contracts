@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
-import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 
 contract LCCSlashTest is LCCBase {
     function testSlashConservationAndTreasuryReceivesOnce() public {
@@ -14,7 +14,7 @@ contract LCCSlashTest is LCCBase {
 
         vault.finalizeEpochSlash(0);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(
             state.marginReleased + state.fundedUsersRemainingMargin + margin.balanceOf(treasury) + state.returnPool,
             200e18
@@ -37,7 +37,7 @@ contract LCCSlashTest is LCCBase {
         _finishFunding();
         vault.finalizeEpochSlash(0);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(margin.balanceOf(treasury), 0);
         assertEq(state.returnPool, 100e18);
         assertEq(vault.totals().activeMargin, 100e18);
@@ -53,7 +53,7 @@ contract LCCSlashTest is LCCBase {
         _finishFunding();
         vault.finalizeEpochSlash(0);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(margin.balanceOf(treasury), 100e18);
         assertEq(state.returnPool, 0);
         assertEq(vault.totals().activeMargin, 0);

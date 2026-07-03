@@ -65,8 +65,8 @@ contract NotificationVaultTest is Setup {
 
     function test_initialization() public {
         assertEq(ITokenizedStrategy(address(vault)).asset(), address(usd3));
-        assertEq(vault.symbol(), "nUSD3");
-        assertEq(ITokenizedStrategy(address(vault)).name(), "Notification USD3");
+        assertEq(vault.symbol(), "USD3n");
+        assertEq(ITokenizedStrategy(address(vault)).name(), "USD3 Notification Vault");
         assertEq(ITokenizedStrategy(address(vault)).management(), management);
         assertEq(ITokenizedStrategy(address(vault)).keeper(), keeper);
         assertEq(ITokenizedStrategy(address(vault)).performanceFeeRecipient(), management);

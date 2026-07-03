@@ -2,14 +2,14 @@
 pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
-import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
-import {LeveragedCallableCreditVaultFactory} from "../../../src/lcc/LeveragedCallableCreditVaultFactory.sol";
-import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCVault} from "../../../src/lcc/LCCVault.sol";
+import {LCCVaultFactory} from "../../../src/lcc/LCCVaultFactory.sol";
+import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCFactoryTest is LCCBase {
     function testFactoryCreatesAndTracksVault() public {
-        LeveragedCallableCreditVaultFactory factory = new LeveragedCallableCreditVaultFactory();
+        LCCVaultFactory factory = new LCCVaultFactory();
 
         address created = factory.createVault(_params(CAP, CAP));
 
@@ -19,7 +19,7 @@ contract LCCFactoryTest is LCCBase {
     }
 
     function testFactoryTracksMultipleVaults() public {
-        LeveragedCallableCreditVaultFactory factory = new LeveragedCallableCreditVaultFactory();
+        LCCVaultFactory factory = new LCCVaultFactory();
 
         address first = factory.createVault(_params(CAP, CAP));
         address second = factory.createVault(_params(CAP, CAP));
@@ -31,16 +31,16 @@ contract LCCFactoryTest is LCCBase {
     }
 
     function testConstructorValidation() public {
-        ILeveragedCallableCreditVault.VaultParams memory badAsset = _params(CAP, CAP);
+        ILCCVault.VaultParams memory badAsset = _params(CAP, CAP);
         badAsset.fundingAsset = address(margin);
 
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LeveragedCallableCreditVault(badAsset);
+        new LCCVault(badAsset);
 
-        ILeveragedCallableCreditVault.VaultParams memory zeroTreasury = _params(CAP, CAP);
+        ILCCVault.VaultParams memory zeroTreasury = _params(CAP, CAP);
         zeroTreasury.treasury = address(0);
 
         vm.expectRevert(LCCErrorsLib.ZeroAddress.selector);
-        new LeveragedCallableCreditVault(zeroTreasury);
+        new LCCVault(zeroTreasury);
     }
 }

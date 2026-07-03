@@ -2,8 +2,8 @@
 pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
-import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
-import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCVault} from "../../../src/lcc/LCCVault.sol";
+import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCExitTest is LCCBase {
@@ -46,7 +46,7 @@ contract LCCExitTest is LCCBase {
         uint256 claimed = vault.claimExitedMargin(alice);
         assertEq(claimed, 0);
 
-        ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
+        ILCCVault.Account memory account = vault.getAccount(alice);
         assertFalse(account.exitRequested);
 
         _deposit(alice, 100e18);
@@ -67,7 +67,7 @@ contract LCCExitTest is LCCBase {
     }
 
     function testFifoExitAssignmentAndOversizedExit() public {
-        vault = new LeveragedCallableCreditVault(_params(address(oracle), 1_000e18, 2_000e18, 1_000));
+        vault = new LCCVault(_params(address(oracle), 1_000e18, 2_000e18, 1_000));
         vm.startPrank(alice);
         margin.approve(address(vault), type(uint256).max);
         vm.stopPrank();

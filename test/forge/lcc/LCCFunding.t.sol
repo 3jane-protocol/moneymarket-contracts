@@ -2,8 +2,8 @@
 pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
-import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
-import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCVault} from "../../../src/lcc/LCCVault.sol";
+import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCFundingTest is LCCBase {
@@ -21,7 +21,7 @@ contract LCCFundingTest is LCCBase {
         assertEq(margin.balanceOf(alice), 1_000_000e18 - 75e18);
         assertTrue(vault.fundedEpoch(0, alice));
 
-        ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
+        ILCCVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 75e18);
         assertEq(account.activeCommitment, 150e18);
     }
@@ -35,7 +35,7 @@ contract LCCFundingTest is LCCBase {
         assertEq(obligation, 1);
         assertEq(notificationVault.balanceOf(alice), 1);
 
-        ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
+        ILCCVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 1e18);
         assertEq(account.activeCommitment, 2e18 - 1);
     }
@@ -97,7 +97,7 @@ contract LCCFundingTest is LCCBase {
         assertEq(aliceObligation, 2);
         assertEq(bobObligation, 2);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.callAmount, 3);
         assertEq(state.fundedAmount, 4);
         assertGt(state.fundedAmount, state.callAmount);
@@ -120,7 +120,7 @@ contract LCCFundingTest is LCCBase {
         // Alice fully covering the call does not release Bob from his own all-or-nothing obligation.
         assertEq(vault.obligationOf(0, bob), 1);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.fundedAmount, state.callAmount);
 
         _finishFunding();

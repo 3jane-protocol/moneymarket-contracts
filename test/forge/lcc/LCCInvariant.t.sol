@@ -4,8 +4,8 @@ pragma solidity ^0.8.22;
 import {LCCBase} from "./LCCBase.t.sol";
 import {LCCMockToken, LCCMockUSD3} from "./LCCBase.t.sol";
 import {Test} from "../../../lib/forge-std/src/Test.sol";
-import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
-import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCVault} from "../../../src/lcc/LCCVault.sol";
+import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
@@ -30,7 +30,7 @@ contract LCCInvariantTest is LCCBase {
         _finishFunding();
         vault.finalizeEpochSlash(0);
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         uint256 disposedSlash = margin.balanceOf(treasury) + state.returnPool;
 
         assertEq(state.marginReleased + state.fundedUsersRemainingMargin + disposedSlash, state.marginAtCallOpen);
@@ -38,19 +38,13 @@ contract LCCInvariantTest is LCCBase {
 }
 
 contract LCCInvariantHandler is Test {
-    LeveragedCallableCreditVault internal invariantVault;
+    LCCVault internal invariantVault;
     LCCMockToken internal invariantMargin;
     LCCMockUSD3 internal invariantUsd3;
     address internal invariantOwner;
     address[] internal actors;
 
-    constructor(
-        LeveragedCallableCreditVault vault_,
-        LCCMockToken margin_,
-        LCCMockUSD3 usd3_,
-        address owner_,
-        address[] memory actors_
-    ) {
+    constructor(LCCVault vault_, LCCMockToken margin_, LCCMockUSD3 usd3_, address owner_, address[] memory actors_) {
         invariantVault = vault_;
         invariantMargin = margin_;
         invariantUsd3 = usd3_;
@@ -65,7 +59,7 @@ contract LCCInvariantHandler is Test {
 
         address actor = actors[_index(actorSeed)];
         uint256 amount = _range(amountSeed, 1e18, 10e18);
-        ILeveragedCallableCreditVault.Account memory account = invariantVault.getAccount(actor);
+        ILCCVault.Account memory account = invariantVault.getAccount(actor);
         if (account.exitRequested && !account.exitClaimed) return;
 
         uint256 commitment = amount * 10_000 / invariantVault.epochConfig().marginRatioBps;
@@ -92,7 +86,7 @@ contract LCCInvariantHandler is Test {
         if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
 
         address actor = actors[_index(actorSeed)];
-        ILeveragedCallableCreditVault.Account memory account = invariantVault.getAccount(actor);
+        ILCCVault.Account memory account = invariantVault.getAccount(actor);
         if (account.exitRequested && !account.exitClaimed) return;
         if (account.pendingMargin != 0 || account.pendingCommitment != 0) return;
         if (account.activeMargin == 0 || account.activeCommitment == 0) return;
@@ -105,7 +99,7 @@ contract LCCInvariantHandler is Test {
         _sync();
         if (invariantVault.shutdownState().active) return;
         if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
-        if (invariantVault.currentPhase() != ILeveragedCallableCreditVault.Phase.PreCall) return;
+        if (invariantVault.currentPhase() != ILCCVault.Phase.PreCall) return;
 
         uint256 epoch = invariantVault.currentEpoch();
         if (invariantVault.getEpochState(epoch).callOpened) return;
@@ -122,11 +116,11 @@ contract LCCInvariantHandler is Test {
     function fund(uint256 actorSeed) external {
         _sync();
         if (invariantVault.shutdownState().active) return;
-        if (invariantVault.currentPhase() != ILeveragedCallableCreditVault.Phase.Funding) return;
+        if (invariantVault.currentPhase() != ILCCVault.Phase.Funding) return;
 
         address actor = actors[_index(actorSeed)];
         uint256 epoch = invariantVault.currentEpoch();
-        ILeveragedCallableCreditVault.EpochState memory state = invariantVault.getEpochState(epoch);
+        ILCCVault.EpochState memory state = invariantVault.getEpochState(epoch);
         if (!state.callOpened || state.slashFinalized || invariantVault.fundedEpoch(epoch, actor)) return;
         if (invariantVault.obligationOf(epoch, actor) == 0) return;
 
@@ -146,7 +140,7 @@ contract LCCInvariantHandler is Test {
         uint256 slot = invariantVault.syncState().pendingAuctionEpochPlusOne;
         if (slot == 0) return;
         uint256 epoch = slot - 1;
-        if (block.timestamp >= invariantVault.phaseEndsAt(epoch, ILeveragedCallableCreditVault.Phase.Closed)) {
+        if (block.timestamp >= invariantVault.phaseEndsAt(epoch, ILCCVault.Phase.Closed)) {
             return;
         }
 
@@ -163,8 +157,8 @@ contract LCCInvariantHandler is Test {
 
     function warpIntoClosed(uint256 seed) external {
         uint256 epoch = invariantVault.currentEpoch();
-        uint256 fundingEnd = invariantVault.phaseEndsAt(epoch, ILeveragedCallableCreditVault.Phase.Funding);
-        uint256 epochEnd = invariantVault.phaseEndsAt(epoch, ILeveragedCallableCreditVault.Phase.Closed);
+        uint256 fundingEnd = invariantVault.phaseEndsAt(epoch, ILCCVault.Phase.Funding);
+        uint256 epochEnd = invariantVault.phaseEndsAt(epoch, ILCCVault.Phase.Closed);
         if (epochEnd <= fundingEnd + 1) return;
 
         uint256 target = fundingEnd + _range(seed, 0, epochEnd - fundingEnd - 1);
@@ -177,9 +171,9 @@ contract LCCInvariantHandler is Test {
         if (called.length == 0) return;
 
         uint256 epoch = called[epochSeed % called.length];
-        ILeveragedCallableCreditVault.EpochState memory state = invariantVault.getEpochState(epoch);
+        ILCCVault.EpochState memory state = invariantVault.getEpochState(epoch);
         if (!state.callOpened || state.slashFinalized) return;
-        if (block.timestamp < invariantVault.phaseEndsAt(epoch, ILeveragedCallableCreditVault.Phase.Funding)) return;
+        if (block.timestamp < invariantVault.phaseEndsAt(epoch, ILCCVault.Phase.Funding)) return;
 
         invariantVault.finalizeEpochSlash(epoch);
     }
@@ -206,7 +200,7 @@ contract LCCInvariantHandler is Test {
         if (!invariantVault.shutdownState().active) return;
 
         address actor = actors[_index(actorSeed)];
-        ILeveragedCallableCreditVault.Account memory account = invariantVault.getAccount(actor);
+        ILCCVault.Account memory account = invariantVault.getAccount(actor);
         if (account.activeMargin + account.pendingMargin == 0) return;
 
         vm.prank(actor);
@@ -243,27 +237,27 @@ contract LCCInvariantHandler is Test {
 
     function warpToPreCall() external {
         uint256 epoch = invariantVault.currentEpoch();
-        uint256 target = invariantVault.phaseEndsAt(epoch, ILeveragedCallableCreditVault.Phase.Normal);
+        uint256 target = invariantVault.phaseEndsAt(epoch, ILCCVault.Phase.Normal);
         if (block.timestamp > target) {
-            target = invariantVault.phaseEndsAt(epoch + 1, ILeveragedCallableCreditVault.Phase.Normal);
+            target = invariantVault.phaseEndsAt(epoch + 1, ILCCVault.Phase.Normal);
         }
         vm.warp(target);
     }
 
     function warpToFunding() external {
         uint256 epoch = invariantVault.currentEpoch();
-        uint256 target = invariantVault.phaseEndsAt(epoch, ILeveragedCallableCreditVault.Phase.PreCall);
+        uint256 target = invariantVault.phaseEndsAt(epoch, ILCCVault.Phase.PreCall);
         if (block.timestamp > target) {
-            target = invariantVault.phaseEndsAt(epoch + 1, ILeveragedCallableCreditVault.Phase.PreCall);
+            target = invariantVault.phaseEndsAt(epoch + 1, ILCCVault.Phase.PreCall);
         }
         vm.warp(target);
     }
 
     function warpPastFunding() external {
         uint256 epoch = invariantVault.currentEpoch();
-        uint256 target = invariantVault.phaseEndsAt(epoch, ILeveragedCallableCreditVault.Phase.Funding);
+        uint256 target = invariantVault.phaseEndsAt(epoch, ILCCVault.Phase.Funding);
         if (block.timestamp > target) {
-            target = invariantVault.phaseEndsAt(epoch + 1, ILeveragedCallableCreditVault.Phase.Funding);
+            target = invariantVault.phaseEndsAt(epoch + 1, ILCCVault.Phase.Funding);
         }
         vm.warp(target);
     }
@@ -342,7 +336,7 @@ contract LCCStatefulInvariantTest is LCCBase {
         uint256 claimableMargin;
 
         for (uint256 i = 0; i < invariantActors.length; ++i) {
-            ILeveragedCallableCreditVault.Account memory account = vault.getAccount(invariantActors[i]);
+            ILCCVault.Account memory account = vault.getAccount(invariantActors[i]);
             activeMargin += account.activeMargin;
             activeCommitment += account.activeCommitment;
             pendingMargin += account.pendingMargin;

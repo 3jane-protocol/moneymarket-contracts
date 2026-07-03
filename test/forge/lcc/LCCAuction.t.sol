@@ -2,8 +2,8 @@
 pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
-import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
-import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCVault} from "../../../src/lcc/LCCVault.sol";
+import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
@@ -250,7 +250,7 @@ contract LCCAuctionTest is LCCBase {
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         assertEq(margin.balanceOf(treasury), 5e18);
-        ILeveragedCallableCreditVault.EpochState memory epochState = vault.getEpochState(0);
+        ILCCVault.EpochState memory epochState = vault.getEpochState(0);
         assertEq(epochState.returnPool, 45e18);
         assertEq(epochState.returnCommitment, 90e18);
 
@@ -327,7 +327,7 @@ contract LCCAuctionTest is LCCBase {
     }
 
     function testCannotEnableAwardCapWithoutMachinery() public {
-        vault = new LeveragedCallableCreditVault(_params(CAP, CAP));
+        vault = new LCCVault(_params(CAP, CAP));
 
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         vm.prank(owner);
@@ -335,55 +335,55 @@ contract LCCAuctionTest is LCCBase {
     }
 
     function testConstructorValidationMatrix() public {
-        ILeveragedCallableCreditVault.VaultParams memory params = _params(CAP, CAP);
+        ILCCVault.VaultParams memory params = _params(CAP, CAP);
 
         params.auctionStepDecayRateBps = 1;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LeveragedCallableCreditVault(params);
+        new LCCVault(params);
 
         // Disabled auction (stepCount 0) still rejects a nonzero award cap.
         params.auctionStepDecayRateBps = 0;
         params.maxAuctionAwardBps = 1;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LeveragedCallableCreditVault(params);
+        new LCCVault(params);
 
         // A one-step auction would offer zero collateral for its entire window.
         params = _auctionParams();
         params.auctionStepCount = 1;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LeveragedCallableCreditVault(params);
+        new LCCVault(params);
 
         params = _auctionParams();
         params.auctionStepDecayRateBps = 0;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LeveragedCallableCreditVault(params);
+        new LCCVault(params);
 
         params = _auctionParams();
         params.auctionStepDecayRateBps = 10_001;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LeveragedCallableCreditVault(params);
+        new LCCVault(params);
 
         params = _auctionParams();
         params.maxAuctionAwardBps = 10_001;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LeveragedCallableCreditVault(params);
+        new LCCVault(params);
 
         // Auction-enabled vaults need a nonzero Closed window.
         params = _auctionParams();
         params.fundingDuration = EPOCH - NORMAL - PRE_CALL;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LeveragedCallableCreditVault(params);
+        new LCCVault(params);
 
         // At least one second per step: stepCount cannot exceed the Closed window.
         params = _auctionParams();
         params.auctionStepCount = EPOCH - NORMAL - PRE_CALL - FUNDING + 1;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LeveragedCallableCreditVault(params);
+        new LCCVault(params);
 
         params = _params(CAP, CAP);
         params.protocolCommitmentCap = uint256(type(uint128).max) + 1;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LeveragedCallableCreditVault(params);
+        new LCCVault(params);
     }
 
     function testSetRiskCapsRejectsCapAboveUint128() public {

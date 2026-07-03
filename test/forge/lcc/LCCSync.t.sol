@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
-import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
+import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 
 contract LCCSyncTest is LCCBase {
     uint256 internal constant HUGE_EPOCH_GAP = 20_000;
@@ -98,8 +98,7 @@ contract LCCSyncTest is LCCBase {
     }
 
     function testSparseSyncMaturityPruningDoesNotSkipSwapRemovedDueBucket() public {
-        LeveragedCallableCreditVault tightExitVault =
-            new LeveragedCallableCreditVault(_params(address(oracle), 1_000e18, CAP, 2_000));
+        LCCVault tightExitVault = new LCCVault(_params(address(oracle), 1_000e18, CAP, 2_000));
         vault = tightExitVault;
         _mintAndApprove(alice, 1_000_000e18, 1_000_000e18);
         _mintAndApprove(bob, 1_000_000e18, 1_000_000e18);

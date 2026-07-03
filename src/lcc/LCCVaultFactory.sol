@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.8.22 <0.9.0;
 
-import {LeveragedCallableCreditVault} from "./LeveragedCallableCreditVault.sol";
-import {ILeveragedCallableCreditVault} from "./interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCVault} from "./LCCVault.sol";
+import {ILCCVault} from "./interfaces/ILCCVault.sol";
 
-/// @title LeveragedCallableCreditVaultFactory
+/// @title LCCVaultFactory
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
-/// @notice Deploys {LeveragedCallableCreditVault} instances and records them in a provenance registry.
+/// @notice Deploys {LCCVault} instances and records them in a provenance registry.
 /// @dev Vault creation is permissionless with arbitrary parameters; registry membership (isVault/allVaults) records
 /// provenance only and confers no trust in a vault's owner, oracle, or assets.
-contract LeveragedCallableCreditVaultFactory {
+contract LCCVaultFactory {
     /// @notice Emitted when a vault is deployed through this factory.
     /// @param vault The newly deployed vault.
     /// @param owner The vault's configured owner.
@@ -22,10 +22,10 @@ contract LeveragedCallableCreditVaultFactory {
     address[] internal vaultList;
 
     /// @notice Deploys a new vault with the given parameters and records it in the registry.
-    /// @param params The facility configuration; see {ILeveragedCallableCreditVault.VaultParams}.
+    /// @param params The facility configuration; see {ILCCVault.VaultParams}.
     /// @return vault The address of the newly deployed vault.
-    function createVault(ILeveragedCallableCreditVault.VaultParams calldata params) external returns (address vault) {
-        vault = address(new LeveragedCallableCreditVault(params));
+    function createVault(ILCCVault.VaultParams calldata params) external returns (address vault) {
+        vault = address(new LCCVault(params));
         isVault[vault] = true;
         vaultList.push(vault);
 

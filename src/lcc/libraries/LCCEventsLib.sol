@@ -4,7 +4,7 @@ pragma solidity >=0.8.22 <0.9.0;
 /// @title LCCEventsLib
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
-/// @notice Library exposing Leveraged Callable Credit vault events.
+/// @notice Library exposing LCC vault events.
 library LCCEventsLib {
     /// @notice Emitted when a deposit is checkpointed (immediately active or staged as pending).
     /// @param user Account credited with the deposit.

@@ -6,8 +6,8 @@ import {ERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC4626} from "../../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {IERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {LeveragedCallableCreditVault} from "../../../src/lcc/LeveragedCallableCreditVault.sol";
-import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {LCCVault} from "../../../src/lcc/LCCVault.sol";
+import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
 import {IOracle} from "../../../src/interfaces/IOracle.sol";
@@ -95,7 +95,7 @@ contract LCCBase is Test {
     LCCMockUSD3 internal usd3;
     LCCMockNotificationVault internal notificationVault;
     OracleMock internal oracle;
-    LeveragedCallableCreditVault internal vault;
+    LCCVault internal vault;
 
     function setUp() public virtual {
         vm.warp(START);
@@ -106,27 +106,23 @@ contract LCCBase is Test {
         oracle = new OracleMock();
         oracle.setPrice(ORACLE_PRICE_SCALE);
 
-        vault = new LeveragedCallableCreditVault(_params(address(oracle), CAP, CAP, 2_000));
+        vault = new LCCVault(_params(address(oracle), CAP, CAP, 2_000));
 
         _mintAndApprove(alice, 1_000_000e18, 1_000_000e18);
         _mintAndApprove(bob, 1_000_000e18, 1_000_000e18);
         _mintAndApprove(carol, 1_000_000e18, 1_000_000e18);
     }
 
-    function _params(uint256 protocolCap, uint256 userCap)
-        internal
-        view
-        returns (ILeveragedCallableCreditVault.VaultParams memory)
-    {
+    function _params(uint256 protocolCap, uint256 userCap) internal view returns (ILCCVault.VaultParams memory) {
         return _params(address(oracle), protocolCap, userCap, 2_000);
     }
 
     function _params(address oracle_, uint256 protocolCap, uint256 userCap, uint256 exitCapBps)
         internal
         view
-        returns (ILeveragedCallableCreditVault.VaultParams memory)
+        returns (ILCCVault.VaultParams memory)
     {
-        return ILeveragedCallableCreditVault.VaultParams({
+        return ILCCVault.VaultParams({
             owner: owner,
             marginAsset: address(margin),
             fundingAsset: address(usdc),
@@ -151,7 +147,7 @@ contract LCCBase is Test {
         });
     }
 
-    function _auctionParams() internal view returns (ILeveragedCallableCreditVault.VaultParams memory params) {
+    function _auctionParams() internal view returns (ILCCVault.VaultParams memory params) {
         params = _params(CAP, CAP);
         // 20s Closed window split into 4 steps of 5s, halving the retained share each step.
         params.auctionStepCount = 4;
@@ -163,8 +159,8 @@ contract LCCBase is Test {
         _deployVaultWithParams(_auctionParams());
     }
 
-    function _deployVaultWithParams(ILeveragedCallableCreditVault.VaultParams memory params) internal {
-        vault = new LeveragedCallableCreditVault(params);
+    function _deployVaultWithParams(ILCCVault.VaultParams memory params) internal {
+        vault = new LCCVault(params);
         _mintAndApprove(alice, 0, 0);
         _mintAndApprove(bob, 0, 0);
         _mintAndApprove(carol, 0, 0);

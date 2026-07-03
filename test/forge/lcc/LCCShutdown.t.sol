@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {LCCBase, LCCRevertingOracle} from "./LCCBase.t.sol";
-import {ILeveragedCallableCreditVault} from "../../../src/lcc/interfaces/ILeveragedCallableCreditVault.sol";
+import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 
 contract LCCShutdownTest is LCCBase {
     function testShutdownDuringFundingDisablesSlash() public {
@@ -13,7 +13,7 @@ contract LCCShutdownTest is LCCBase {
         vm.prank(owner);
         vault.shutdown();
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertTrue(state.slashFinalized);
         assertTrue(state.slashDisabledByShutdown);
         assertEq(margin.balanceOf(treasury), 0);
@@ -28,7 +28,7 @@ contract LCCShutdownTest is LCCBase {
         vm.prank(owner);
         vault.shutdown();
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertTrue(state.slashFinalized);
         assertFalse(state.slashDisabledByShutdown);
         assertEq(margin.balanceOf(treasury), 10e18);
@@ -37,7 +37,7 @@ contract LCCShutdownTest is LCCBase {
     }
 
     function testShutdownDisposalSkipsCapClampAndKeepsFullReturnPool() public {
-        ILeveragedCallableCreditVault.VaultParams memory params = _auctionParams();
+        ILCCVault.VaultParams memory params = _auctionParams();
         params.protocolCommitmentCap = 200e18;
         _deployVaultWithParams(params);
 
@@ -54,7 +54,7 @@ contract LCCShutdownTest is LCCBase {
         vm.prank(owner);
         vault.shutdown();
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 90e18);
         assertEq(state.returnCommitment, 180e18);
         assertEq(margin.balanceOf(treasury), 10e18);
@@ -74,7 +74,7 @@ contract LCCShutdownTest is LCCBase {
         vm.prank(owner);
         vault.shutdown();
 
-        ILeveragedCallableCreditVault.EpochState memory state = vault.getEpochState(0);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         assertEq(state.returnPool, 0);
         assertEq(state.returnCommitment, 0);

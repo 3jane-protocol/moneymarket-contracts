@@ -3,14 +3,14 @@ pragma solidity >=0.8.22 <0.9.0;
 
 import {LCCAuctionLib} from "../libraries/LCCAuctionLib.sol";
 
-/// @title ILeveragedCallableCreditVault
+/// @title ILCCVault
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
-/// @notice Interface for the Leveraged Callable Credit vault: a per-facility callable-credit primitive (not
+/// @notice Interface for the LCC vault: a per-facility callable-credit primitive (not
 /// ERC-4626, no transferable shares). Depositors post one ERC20 `marginAsset` as a performance bond; the vault
 /// values it through a trusted Morpho-style oracle and leverages it by `marginRatioBps` into a commitment
 /// denominated in `fundingAsset`. The owner opens at most one capital call per epoch; called users fund their
-/// pro-rata obligation all-or-nothing (the funding is delivered as wrapped nUSD3) and get the backing margin
+/// pro-rata obligation all-or-nothing (the funding is delivered as wrapped USD3n) and get the backing margin
 /// released proportionally. Unfunded obligations are slashed after the funding deadline, and the resulting
 /// shortfall is offered through an epoch-shortfall Dutch auction.
 /// @dev Unit convention: amount-like accounting values outside the margin family are denominated in `fundingAsset`
@@ -18,7 +18,7 @@ import {LCCAuctionLib} from "../libraries/LCCAuctionLib.sol";
 /// `fundingAsset`; epoch fields are epoch indices; `*Bps` fields are basis points (out of 10_000). Events and
 /// errors are exposed through `LCCEventsLib` and `LCCErrorsLib`. Settlement consumers read `AuctionSettled` for
 /// fill totals and `SlashSurplusDisposed` for the disposal split.
-interface ILeveragedCallableCreditVault {
+interface ILCCVault {
     /// @notice Timestamp-derived lifecycle phase within an epoch.
     /// @dev `Normal`: deposits activate immediately (until a call opens). `PreCall`: the owner may open the epoch
     /// call. `Funding`: called users fund their obligations. `Closed`: funding deadline passed; slashing and the
@@ -303,12 +303,12 @@ interface ILeveragedCallableCreditVault {
     /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
     function fundCall() external returns (uint256 obligationAmount);
     /// @notice Funds `user`'s current-epoch obligation with funding supplied by the caller (push-based).
-    /// @dev The caller pays; released margin, wrapped nUSD3 delivery, and funded status accrue to `user`. The
+    /// @dev The caller pays; released margin, wrapped USD3n delivery, and funded status accrue to `user`. The
     /// Funding phase is the timing guard, as on {fundCall}.
     /// @param user Account whose obligation is funded.
     /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
     function fundCall(address user) external returns (uint256 obligationAmount);
-    /// @notice Fills up to `maxFillAmount` of the live auction's shortfall in exchange for wrapped nUSD3 and a
+    /// @notice Fills up to `maxFillAmount` of the live auction's shortfall in exchange for wrapped USD3n and a
     /// collateral kicker.
     /// @dev Targets whichever auction is live, following Yearn-take semantics. `maxFillAmount` is the caller's only
     /// bound; the award is the current ramped pro-rata kicker, capped by `maxAuctionAwardBps` of the fill at the
