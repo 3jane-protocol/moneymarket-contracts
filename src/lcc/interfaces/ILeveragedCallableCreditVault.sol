@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity 0.8.35;
+pragma solidity >=0.8.22 <0.9.0;
 
 import {LCCAuctionLib} from "../libraries/LCCAuctionLib.sol";
 
@@ -50,7 +50,8 @@ interface ILeveragedCallableCreditVault {
     /// @param exitCapBps Per-epoch exit capacity as a fraction of `protocolCommitmentCap`, in bps.
     /// @param exitDelayEpochs Minimum epochs between an exit request and its earliest maturity.
     /// @param minDepositAssets Minimum margin deposit, in marginAsset units.
-    /// @param auctionStepCount Number of price steps spanning the Closed window; 0 disables the auction entirely.
+    /// @param auctionStepCount Number of price steps spanning the Closed window; 0 disables the auction entirely,
+    /// otherwise must be at least 2 (the final step boundary coincides with settlement and is never live).
     /// @param auctionStepDecayRateBps Per-step decay of the protocol's retained pool share, in bps.
     /// @param maxAuctionAwardBps Oracle-valued collateral award cap per fundingAsset filled, in bps; 0 disables.
     /// @param slashFeeBps Fee on unawarded slashed margin surplus, in bps.
@@ -253,14 +254,14 @@ interface ILeveragedCallableCreditVault {
     /// @param phase Phase whose end is requested.
     /// @return The phase-end timestamp.
     function phaseEndsAt(uint256 epoch, Phase phase) external view returns (uint256);
-    /// @notice Deposits margin for `receiver`, creating a leveraged commitment.
-    /// @dev Pulls `assets` of marginAsset from the caller. Activates immediately during Normal (before a call
-    /// opens), otherwise stages as pending for the next epoch. Reverts under shutdown, on a pending-blocking exit,
-    /// on a zero/sub-minimum amount, on a zero oracle price, or if a cap would be exceeded.
+    /// @notice Deposits margin for the caller, creating a leveraged commitment.
+    /// @dev Pulls `assets` of marginAsset from the caller and credits the caller's own account (self-deposit only,
+    /// since a deposit creates a callable obligation). Activates immediately during Normal (before a call opens),
+    /// otherwise stages as pending for the next epoch. Reverts under shutdown, on a pending-blocking exit, on a
+    /// zero/sub-minimum amount, on a zero oracle price, or if a cap would be exceeded.
     /// @param assets Margin to deposit (marginAsset).
-    /// @param receiver Account credited with the deposit.
     /// @return commitment Commitment created (fundingAsset).
-    function deposit(uint256 assets, address receiver) external returns (uint256 commitment);
+    function deposit(uint256 assets) external returns (uint256 commitment);
     /// @notice Requests a full-account exit, assigning the earliest maturity epoch with available exit capacity.
     /// @dev The account stays callable until maturity. Reverts if an exit is already pending, if the account holds
     /// pending margin, or if it has no active position.

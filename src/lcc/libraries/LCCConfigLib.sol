@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity 0.8.35;
+pragma solidity >=0.8.22 <0.9.0;
 
 import {IERC4626} from "../../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 
@@ -43,6 +43,9 @@ library LCCConfigLib {
                 revert LCCErrorsLib.InvalidParams();
             }
         } else {
+            // Takes are only live strictly before the epoch end, so the step-N boundary is never reachable and a
+            // one-step auction would offer zero collateral for its entire window; at least two steps are required.
+            if (params.auctionStepCount == 1) revert LCCErrorsLib.InvalidParams();
             if (params.auctionStepDecayRateBps == 0 || params.auctionStepDecayRateBps > BPS) {
                 revert LCCErrorsLib.InvalidParams();
             }

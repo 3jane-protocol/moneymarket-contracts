@@ -32,6 +32,17 @@ contract LCCCallTest is LCCBase {
         vault.openEpochCall(0, 100e18);
     }
 
+    function testDepositCreditsCallerOnly() public {
+        // deposit is self-only: there is no receiver argument to credit a third party's obligation.
+        vm.startPrank(alice);
+        margin.approve(address(vault), type(uint256).max);
+        vault.deposit(100e18);
+        vm.stopPrank();
+
+        assertEq(vault.getAccount(alice).activeMargin, 100e18);
+        assertEq(vault.getAccount(bob).activeMargin, 0);
+    }
+
     function testOpenCallRejectsNonCurrentEpoch() public {
         _deposit(alice, 100e18);
 

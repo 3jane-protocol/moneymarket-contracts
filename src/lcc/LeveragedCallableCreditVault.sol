@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity 0.8.35;
+pragma solidity >=0.8.22 <0.9.0;
 
 import {Ownable} from "../../lib/openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -71,10 +71,12 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     uint256 private immutable marginRatioBps;
     /// @notice Minimum epochs between an exit request and its earliest maturity.
     uint256 private immutable exitDelayEpochs;
-    /// @notice Number of price steps spanning the Closed-window auction (0 disables auctions).
+    /// @notice Number of price steps spanning the Closed-window auction (0 disables auctions; otherwise >= 2).
     /// @dev The auction window (the Closed phase) is divided into auctionStepCount price steps; the protocol's
-    /// retained share of the pool decays by auctionStepDecayRateBps each step, so the curve completes exactly over
-    /// every auction window. auctionStepCount == 0 permanently disables the auction machinery.
+    /// retained share of the pool decays by auctionStepDecayRateBps each completed step. Takes are live strictly
+    /// before the epoch end, so the reachable steps are 1..auctionStepCount-1 and the maximum live offer is
+    /// pool * (1 - (1 - decay)^(auctionStepCount - 1)); the step-N boundary coincides with settlement.
+    /// auctionStepCount == 0 permanently disables the auction machinery.
     uint256 private immutable auctionStepCount;
     /// @notice Per-step decay of the protocol's retained pool share, in bps.
     uint256 private immutable auctionStepDecayRateBps;
@@ -277,12 +279,11 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
     /// @inheritdoc ILeveragedCallableCreditVault
     /// @dev The margin oracle is fully trusted to return a fresh marginAsset-to-fundingAsset price scaled by
     /// ORACLE_PRICE_SCALE, including any token decimal conversion.
-    function deposit(uint256 assets, address receiver) external nonReentrant synced returns (uint256 commitment) {
+    function deposit(uint256 assets) external nonReentrant synced returns (uint256 commitment) {
         if (_shutdown.active) revert LCCErrorsLib.ShutdownActive();
-        if (receiver == address(0)) revert LCCErrorsLib.ZeroAddress();
         if (assets == 0 || assets < _riskConfig.minDepositAssets) revert LCCErrorsLib.InvalidAmount();
 
-        Account memory account = _replayForUpdate(receiver);
+        Account memory account = _replayForUpdate(msg.sender);
         if (account.exitRequested && !account.exitClaimed) revert LCCErrorsLib.ExitInProgress();
 
         uint256 price = marginOracle.price();
@@ -309,9 +310,9 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         } else {
             _addPending(account, assets, commitment, activationEpoch);
         }
-        _storeAccount(receiver, account);
+        _storeAccount(msg.sender, account);
 
-        emit LCCEventsLib.DepositCheckpointed(receiver, assets, marginValue, commitment, activationEpoch, immediate);
+        emit LCCEventsLib.DepositCheckpointed(msg.sender, assets, marginValue, commitment, activationEpoch, immediate);
     }
 
     /// @inheritdoc ILeveragedCallableCreditVault
@@ -350,14 +351,14 @@ contract LeveragedCallableCreditVault is ILeveragedCallableCreditVault, Ownable,
         if (!account.exitRequested || account.exitClaimed) revert LCCErrorsLib.NoExitRequested();
         if (_currentEpoch() < account.exitMaturityEpoch) revert LCCErrorsLib.ExitNotMature();
 
+        // A fully-funded exiter matures with nothing claimable; still clear the exit so the account is reusable
+        // (otherwise it stays exitRequested forever and can neither deposit nor re-exit).
         assets = account.claimableExitMargin;
-        if (assets == 0) revert LCCErrorsLib.NothingToClaim();
-
         account.claimableExitMargin = 0;
         account.clearExit();
         _storeAccount(msg.sender, account);
 
-        marginAsset.safeTransfer(receiver, assets);
+        if (assets != 0) marginAsset.safeTransfer(receiver, assets);
 
         emit LCCEventsLib.ExitedMarginClaimed(msg.sender, receiver, assets);
     }

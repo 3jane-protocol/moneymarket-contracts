@@ -26,6 +26,33 @@ contract LCCExitTest is LCCBase {
         assertEq(vault.totals().activeMargin, 0);
     }
 
+    function testFullyFundedExiterClearsExitWithZeroClaimable() public {
+        _deposit(alice, 100e18);
+
+        vm.prank(alice);
+        uint256 maturity = vault.requestExit();
+        assertEq(maturity, 1);
+
+        // Call consumes the exiter's entire commitment; funding releases all margin, leaving nothing to claim.
+        _openCall(200e18);
+        uint256 obligation = _fund(alice);
+        assertEq(obligation, 200e18);
+
+        vm.warp(START + EPOCH);
+        assertEq(vault.claimableExitedMargin(alice), 0);
+
+        // The exit still clears, so the account is reusable rather than bricked in exitRequested.
+        vm.prank(alice);
+        uint256 claimed = vault.claimExitedMargin(alice);
+        assertEq(claimed, 0);
+
+        ILeveragedCallableCreditVault.Account memory account = vault.getAccount(alice);
+        assertFalse(account.exitRequested);
+
+        _deposit(alice, 100e18);
+        assertEq(vault.getAccount(alice).activeMargin, 100e18);
+    }
+
     function testExitBlocksNewDepositsAndRemainsCallableUntilMaturity() public {
         _deposit(alice, 100e18);
 

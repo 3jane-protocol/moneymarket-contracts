@@ -83,7 +83,7 @@ contract LCCInvariantHandler is Test {
         }
 
         vm.prank(actor);
-        invariantVault.deposit(amount, actor);
+        invariantVault.deposit(amount);
     }
 
     function requestExit(uint256 actorSeed) external {

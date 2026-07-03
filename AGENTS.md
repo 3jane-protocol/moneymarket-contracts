@@ -119,7 +119,7 @@ Targeted local command patterns for Jane changes:
 - Slashed margin backs a step-decay shortfall auction during the epoch's `Closed` phase (pricing math in the externally linked `src/lcc/libraries/LCCAuctionLib.sol`); unawarded collateral is split into a configurable treasury fee and a return pool that is lazily re-attributed to defaulters as active commitment. Disabled config (`auctionStepCount == 0`) uses the same surplus-disposal path without an auction.
 - `src/lcc/LeveragedCallableCreditVaultFactory.sol`: permissionless factory; registry confers no trust.
 - Vaults must be on USD3's `supplyCapExempt` list for funding/fill deposits to bypass supply-cap headroom and first-time minimum deposits; if USD3's general whitelist is enabled, vaults must also be whitelisted there.
-- The vault compiles under a scoped `compilation_restrictions` entry in `foundry.toml` (`optimizer_runs = 800`) to stay below the bytecode size limit.
+- The LCC vault/factory compile under scoped `compilation_restrictions` in `foundry.toml` (`optimizer_runs = 600`, pinned to solc `0.8.35`) to stay below the bytecode size limit; USD3 is likewise pinned at `optimizer_runs = 200`. The LCC sources use a version-range pragma so Hardhat compiles them via per-file `overrides` in `hardhat.config.ts`.
 - Design notes: `docs/architecture.md` (LCC Domain section).
 
 Targeted local command for LCC changes:

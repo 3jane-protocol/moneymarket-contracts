@@ -341,8 +341,15 @@ contract LCCAuctionTest is LCCBase {
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         new LeveragedCallableCreditVault(params);
 
+        // Disabled auction (stepCount 0) still rejects a nonzero award cap.
         params.auctionStepDecayRateBps = 0;
         params.maxAuctionAwardBps = 1;
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
+        new LeveragedCallableCreditVault(params);
+
+        // A one-step auction would offer zero collateral for its entire window.
+        params = _auctionParams();
+        params.auctionStepCount = 1;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         new LeveragedCallableCreditVault(params);
 

@@ -77,6 +77,35 @@ const config: HardhatUserConfig = {
         },
       },
     ],
+    // LCC module only: mirrors the foundry lcc-size profile (solc 0.8.35, runs 600, shanghai)
+    // without letting 0.8.35 capture every other ^0.8.x source in the repo.
+    overrides: Object.fromEntries(
+      [
+        "src/lcc/LeveragedCallableCreditVault.sol",
+        "src/lcc/LeveragedCallableCreditVaultFactory.sol",
+        "src/lcc/interfaces/ILeveragedCallableCreditVault.sol",
+        "src/lcc/libraries/LCCAccountLib.sol",
+        "src/lcc/libraries/LCCAuctionLib.sol",
+        "src/lcc/libraries/LCCBucketListLib.sol",
+        "src/lcc/libraries/LCCConfigLib.sol",
+        "src/lcc/libraries/LCCErrorsLib.sol",
+        "src/lcc/libraries/LCCEventsLib.sol",
+        "src/lcc/libraries/LCCTypesLib.sol",
+      ].map((path) => [
+        path,
+        {
+          version: "0.8.35",
+          settings: {
+            optimizer: {
+              enabled: true,
+              runs: 600,
+            },
+            viaIR: true,
+            evmVersion: "shanghai",
+          },
+        },
+      ]),
+    ),
   },
   mocha: {
     timeout: 3000000,
