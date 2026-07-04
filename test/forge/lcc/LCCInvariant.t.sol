@@ -54,6 +54,7 @@ contract LCCInvariantHandler is Test {
 
     function deposit(uint256 actorSeed, uint256 amountSeed) external {
         if (invariantVault.shutdownState().active) return;
+        if (_terminal()) return;
         _sync();
         if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
 
@@ -83,6 +84,7 @@ contract LCCInvariantHandler is Test {
     function requestExit(uint256 actorSeed) external {
         _sync();
         if (invariantVault.shutdownState().active) return;
+        if (_terminal()) return;
         if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
 
         address actor = actors[_index(actorSeed)];
@@ -98,6 +100,7 @@ contract LCCInvariantHandler is Test {
     function openCall(uint256 amountSeed) external {
         _sync();
         if (invariantVault.shutdownState().active) return;
+        if (_terminal()) return;
         if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
         if (invariantVault.currentPhase() != ILCCVault.Phase.PreCall) return;
 
@@ -179,7 +182,7 @@ contract LCCInvariantHandler is Test {
     }
 
     function materialize(uint256 actorSeed) external {
-        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
+        if (_liveAuction()) return;
         address actor = actors[_index(actorSeed)];
 
         invariantVault.materializeAccount(actor);
@@ -197,12 +200,17 @@ contract LCCInvariantHandler is Test {
     }
 
     function claimRemaining(uint256 actorSeed) external {
-        if (!invariantVault.shutdownState().active) return;
+        if (!invariantVault.shutdownState().active && !_terminal()) return;
+        if (_liveAuction()) return;
 
         address actor = actors[_index(actorSeed)];
+        // Sync before the guard: getAccount is a read-only preview that stops at an unfinalized slash-eligible
+        // epoch and shows pre-default margin, but claimRemainingMargin's synced replay applies the default first.
+        // Materializing here finalizes that epoch so the guard matches the claim and cannot pass on stale margin
+        // (which would revert NothingToClaim and trip fail_on_revert).
+        invariantVault.materializeAccount(actor);
         ILCCVault.Account memory account = invariantVault.getAccount(actor);
-        // Include claimableExitMargin so the matured-exiter payout branch of claimRemainingMargin is exercised,
-        // not just the active/pending legs.
+        // claimableExitMargin is included so the matured-exiter payout branch is exercised, not just active/pending.
         if (account.activeMargin + account.pendingMargin + account.claimableExitMargin == 0) return;
 
         vm.prank(actor);
@@ -264,6 +272,14 @@ contract LCCInvariantHandler is Test {
         vm.warp(target);
     }
 
+    function warpToTerminal(uint256 seed) external {
+        uint256 me = invariantVault.epochConfig().maxEpochs;
+        if (me == 0) return;
+        uint256 target = invariantVault.phaseEndsAt(me - 1, ILCCVault.Phase.Closed) + _range(seed, 0, 300);
+        if (target <= block.timestamp) return;
+        vm.warp(target);
+    }
+
     function warp(uint256 secondsSeed) external {
         vm.warp(block.timestamp + _range(secondsSeed, 1, 80));
     }
@@ -280,6 +296,16 @@ contract LCCInvariantHandler is Test {
         uint256[] memory called = invariantVault.calledEpochs();
         uint256 finalizedPrefix = invariantVault.syncState().finalizedCallPrefix;
         return finalizedPrefix < called.length && called[finalizedPrefix] < epoch;
+    }
+
+    function _terminal() internal view returns (bool) {
+        uint256 me = invariantVault.epochConfig().maxEpochs;
+        return me != 0 && invariantVault.currentEpoch() >= me;
+    }
+
+    function _liveAuction() internal view returns (bool) {
+        uint256 slot = invariantVault.syncState().pendingAuctionEpochPlusOne;
+        return slot != 0 && block.timestamp < invariantVault.phaseEndsAt(slot - 1, ILCCVault.Phase.Closed);
     }
 
     function _sync() internal {
@@ -379,5 +405,48 @@ contract LCCAuctionStatefulInvariantTest is LCCStatefulInvariantTest {
         LCCBase.setUp();
         _deployAuctionVault();
         _setupHandler();
+    }
+}
+
+contract LCCTerminalStatefulInvariantTest is LCCStatefulInvariantTest {
+    function setUp() public override {
+        LCCBase.setUp();
+        ILCCVault.VaultParams memory params = _auctionParams();
+        params.maxEpochs = 4;
+        _deployVaultWithParams(params);
+        _deposit(alice, 100e18);
+        _deposit(bob, 100e18);
+        _setupHandler();
+    }
+
+    function afterInvariant() public {
+        // Warp past the last epoch's Closed window (terminal) and drain every actor, asserting no margin is stranded.
+        uint256 terminalStart = vault.phaseEndsAt(vault.epochConfig().maxEpochs - 1, ILCCVault.Phase.Closed);
+        if (block.timestamp <= terminalStart + 300) {
+            vm.warp(terminalStart + 301);
+        }
+
+        for (uint256 i = 0; i < invariantActors.length; ++i) {
+            address actor = invariantActors[i];
+            // Settles any pending auction and finalizes slashes so the has-margin check below matches the claim's
+            // own synced replay; one call suffices given the vault has at most maxEpochs called epochs.
+            vault.materializeAccount(actor);
+
+            ILCCVault.Account memory account = vault.getAccount(actor);
+            if (account.activeMargin + account.pendingMargin + account.claimableExitMargin == 0) continue;
+
+            vm.prank(actor);
+            vault.claimRemainingMargin(actor);
+        }
+
+        uint256 claimableMargin;
+        for (uint256 i = 0; i < invariantActors.length; ++i) {
+            claimableMargin += vault.getAccount(invariantActors[i]).claimableExitMargin;
+        }
+
+        uint256 dustBound = vault.calledEpochs().length * invariantActors.length;
+        assertLe(
+            uint256(vault.totals().activeMargin) + uint256(vault.totals().pendingMargin) + claimableMargin, dustBound
+        );
     }
 }
