@@ -35,6 +35,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     using LCCAccountLib for Account;
 
     uint256 internal constant MAX_MATERIALIZE_STEPS = 64;
+    uint256 internal constant MAX_EXIT_MATURITY_BUCKETS = 2 * LCCConfigLib.MAX_EXIT_DELAY_EPOCHS;
     /// @notice Minimum returned funding commitment retained for attribution, assuming 6-decimal USDC funding units.
     uint256 internal constant MIN_RETURN_COMMITMENT = 1e6;
 
@@ -233,7 +234,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         if (newProtocolCommitmentCap == 0 || newProtocolCommitmentCap > type(uint128).max) {
             revert LCCErrorsLib.InvalidParams();
         }
-        if (newUserCommitmentCap == 0 || newExitCapBps == 0 || newExitCapBps > BPS) {
+        if (newUserCommitmentCap == 0 || newExitCapBps < LCCConfigLib.MIN_EXIT_CAP_BPS || newExitCapBps > BPS) {
             revert LCCErrorsLib.InvalidParams();
         }
 
@@ -331,6 +332,9 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         if (accountCommitment == 0 || accountMargin == 0) revert LCCErrorsLib.InvalidAmount();
 
         maturityEpoch = _assignExitMaturity(accountCommitment);
+        if (exitMaturityIndexPlusOne[maturityEpoch] == 0 && exitMaturityList.length >= MAX_EXIT_MATURITY_BUCKETS) {
+            revert LCCErrorsLib.ExitCapacityReached();
+        }
         account.exitRequested = true;
         account.exitMaturityEpoch = maturityEpoch;
         account.exitClaimed = false;

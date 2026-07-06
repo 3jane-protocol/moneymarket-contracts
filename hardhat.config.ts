@@ -77,7 +77,7 @@ const config: HardhatUserConfig = {
         },
       },
     ],
-    // LCC module only: mirrors the foundry lcc-size profile (solc 0.8.35, runs 600, shanghai)
+    // LCC module only: mirrors the foundry lcc-size profile (solc 0.8.35, runs 400, shanghai)
     // without letting 0.8.35 capture every other ^0.8.x source in the repo.
     overrides: Object.fromEntries(
       [
@@ -98,7 +98,7 @@ const config: HardhatUserConfig = {
           settings: {
             optimizer: {
               enabled: true,
-              runs: 600,
+              runs: 400,
             },
             viaIR: true,
             evmVersion: "shanghai",

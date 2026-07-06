@@ -12,6 +12,9 @@ import {LCCErrorsLib} from "./LCCErrorsLib.sol";
 /// @custom:contact support@3jane.xyz
 /// @notice Constructor configuration validation for LCC vaults.
 library LCCConfigLib {
+    uint256 internal constant MAX_EXIT_DELAY_EPOCHS = 64;
+    uint256 internal constant MIN_EXIT_CAP_BPS = (2 * BPS + MAX_EXIT_DELAY_EPOCHS - 1) / MAX_EXIT_DELAY_EPOCHS;
+
     function validate(ILCCVault.VaultParams memory params) internal view {
         if (
             params.owner == address(0) || params.marginAsset == address(0) || params.fundingAsset == address(0)
@@ -34,8 +37,13 @@ library LCCConfigLib {
         // Commitment totals are bounded by the (historical) protocol cap; capping it at uint128 keeps the auction
         // kick's casts from ever reverting inside sync.
         if (params.protocolCommitmentCap > type(uint128).max) revert LCCErrorsLib.InvalidParams();
-        if (params.exitCapBps == 0 || params.exitCapBps > BPS) revert LCCErrorsLib.InvalidParams();
-        if (params.exitDelayEpochs == 0) revert LCCErrorsLib.InvalidParams();
+        // Floor exitCapBps so full-cap exit demand plus the max temporal spread fits within the maturity-bucket cap.
+        if (params.exitCapBps < MIN_EXIT_CAP_BPS || params.exitCapBps > BPS) {
+            revert LCCErrorsLib.InvalidParams();
+        }
+        if (params.exitDelayEpochs == 0 || params.exitDelayEpochs > MAX_EXIT_DELAY_EPOCHS) {
+            revert LCCErrorsLib.InvalidParams();
+        }
         if (params.slashFeeBps > BPS) revert LCCErrorsLib.InvalidParams();
         // maxEpochs is unconstrained here; zero means perpetual.
 

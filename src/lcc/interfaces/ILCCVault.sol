@@ -52,8 +52,9 @@ interface ILCCVault {
     /// @param protocolCommitmentCap Vault-wide cap on active+pending commitment (fundingAsset); also the base for
     /// per-epoch exit capacity. Bounded by type(uint128).max.
     /// @param userCommitmentCap Per-account cap on active+pending commitment (fundingAsset).
-    /// @param exitCapBps Per-epoch exit capacity as a fraction of `protocolCommitmentCap`, in bps.
-    /// @param exitDelayEpochs Minimum epochs between an exit request and its earliest maturity.
+    /// @param exitCapBps Per-epoch exit capacity as a fraction of `protocolCommitmentCap`, in bps; must satisfy
+    /// `exitCapBps * 64 >= 2 * BPS` (>= 313) and `<= BPS` so honest exit demand stays within the maturity-bucket cap.
+    /// @param exitDelayEpochs Minimum epochs between an exit request and its earliest maturity; at most 64.
     /// @param minDepositAssets Minimum margin deposit, in marginAsset units.
     /// @param auctionStepCount Number of price steps spanning the Closed window; 0 disables the auction entirely,
     /// otherwise must be at least 2 (the final step boundary coincides with settlement and is never live).
