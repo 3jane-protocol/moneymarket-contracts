@@ -5,6 +5,7 @@ import {Ownable} from "../../lib/openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC4626} from "../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
+import {Initializable} from "../../lib/openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {ReentrancyGuard} from "../../lib/openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "../../lib/openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -28,7 +29,7 @@ import {ILCCVault} from "./interfaces/ILCCVault.sol";
 /// @dev State progression is lazy and keeperless: every state-touching entrypoint calls `_syncGlobal` to advance
 /// the epoch clock, fold pending/matured buckets, and finalize eligible slashes. Per-account state is materialized
 /// on demand by replaying the sparse `calledEpochs` list from each account's cursor.
-contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
+contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using Math for uint256;
     using SafeCast for uint256;
@@ -41,51 +42,34 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
 
     /* STORAGE */
 
-    /// @notice The ERC20 posted as the performance bond.
-    /// @dev Must be a standard ERC20: fee-on-transfer and rebasing tokens break margin conservation. Deployments
-    /// must also keep the maximum margin balance reachable under the commitment caps below type(uint128).max (a
-    /// constraint on margin decimals, the oracle price floor, marginRatioBps, and protocolCommitmentCap) or
-    /// deposits revert on the packed-storage cast.
-    IERC20 private immutable marginAsset;
-    /// @notice The ERC20 used to fund calls and auction fills; equals USD3's underlying asset.
-    IERC20 private immutable fundingAsset;
-    /// @notice The ERC-4626 USD3 vault that accepts fundingAsset deposits.
-    IERC4626 private immutable usd3;
     /// @notice The ERC-4626 notification wrapper that delivers USD3n to funders and fillers.
     IERC4626 private immutable notificationVault;
-    /// @notice Trusted oracle quoting one marginAsset in fundingAsset, scaled by ORACLE_PRICE_SCALE.
-    IOracle private immutable marginOracle;
-    /// @notice Recipient of slashed margin and unsold auction collateral.
+    /// @notice The ERC-4626 USD3 vault that accepts fundingAsset deposits.
+    IERC4626 private immutable usd3;
+    /// @notice The ERC20 used to fund calls and auction fills; equals USD3's underlying asset.
+    IERC20 private immutable fundingAsset;
+    /// @notice Protocol-wide recipient of slashed margin and unsold auction collateral.
     address private immutable treasury;
 
-    /// @notice Epoch-zero start timestamp; the epoch clock derives from this.
-    uint256 private immutable startTimestamp;
-    /// @notice Maximum callable epochs; 0 means perpetual.
-    uint256 private immutable maxEpochs;
-    /// @notice Total epoch duration in seconds.
-    uint256 private immutable epochLength;
-    /// @notice Seconds of the Normal phase.
-    uint256 private immutable normalDuration;
-    /// @notice Seconds of the PreCall phase.
-    uint256 private immutable preCallDuration;
-    /// @notice Seconds of the Funding phase.
-    uint256 private immutable fundingDuration;
-    /// @notice Leverage ratio in bps: commitment = marginValue * BPS / marginRatioBps.
-    uint256 private immutable marginRatioBps;
-    /// @notice Minimum epochs between an exit request and its earliest maturity.
-    uint256 private immutable exitDelayEpochs;
-    /// @notice Number of price steps spanning the Closed-window auction (0 disables auctions; otherwise >= 2).
-    /// @dev The auction window (the Closed phase) is divided into auctionStepCount price steps; the protocol's
-    /// retained share of the pool decays by auctionStepDecayRateBps each completed step. Takes are live strictly
-    /// before the epoch end, so the reachable steps are 1..auctionStepCount-1 and the maximum live offer is
-    /// pool * (1 - (1 - decay)^(auctionStepCount - 1)); the step-N boundary coincides with settlement.
-    /// auctionStepCount == 0 permanently disables the auction machinery.
-    uint256 private immutable auctionStepCount;
-    /// @notice Per-step decay of the protocol's retained pool share, in bps.
-    uint256 private immutable auctionStepDecayRateBps;
-    /// @notice Duration of each auction price step, in seconds.
-    /// @dev Derived: closed-window seconds / auctionStepCount.
-    uint256 private immutable auctionStepDuration;
+    // Sequential proxy storage starts after Ownable's _owner and ReentrancyGuard's _status. The guard slot reads 0
+    // on a fresh proxy; only ENTERED (2) is blocked, so the first proxy call is safe without initialization.
+
+    /// @dev Packed per-facility epoch clock: startTimestamp, maxEpochs (0 = perpetual), epochLength, and the
+    /// Normal/PreCall/Funding phase durations. Written once in initialize.
+    LCCTypesLib.ClockConfig internal _clockConfig;
+    /// @dev Packed per-facility margin config: marginAsset (the ERC20 performance bond), marginRatioBps, and
+    /// exitDelayEpochs. The margin asset must be a standard ERC20: fee-on-transfer and rebasing tokens break margin
+    /// conservation. Deployments must also keep the maximum margin balance reachable under the commitment caps
+    /// below type(uint128).max (a constraint on margin decimals, the oracle price floor, marginRatioBps, and
+    /// protocolCommitmentCap) or deposits revert on the packed-storage cast.
+    LCCTypesLib.AssetConfigStorage internal _assetConfig;
+    /// @dev Packed per-facility oracle + auction config: marginOracle, auctionStepCount, auctionStepDecayRateBps,
+    /// and the derived auctionStepDuration. The auction window (the Closed phase) is divided into auctionStepCount
+    /// price steps; the protocol's retained share of the pool decays by auctionStepDecayRateBps each completed
+    /// step. Takes are live strictly before the epoch end, so the reachable steps are 1..auctionStepCount-1 and the
+    /// maximum live offer is pool * (1 - (1 - decay)^(auctionStepCount - 1)); the step-N boundary coincides with
+    /// settlement. auctionStepCount == 0 permanently disables the auction machinery.
+    LCCTypesLib.AuctionConfigStorage internal _auctionConfig;
 
     /// @dev Mutable risk configuration. Per-epoch exit capacity is `protocolCommitmentCap * exitCapBps / BPS`.
     /// The protocol cap is used as the base (rather than live active commitment) so bucket assignment is
@@ -141,42 +125,63 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     /// @inheritdoc ILCCVault
     mapping(uint256 => mapping(address => bool)) public defaultedEpoch;
 
-    /* CONSTRUCTOR */
+    /// @dev Reserved storage for future versions. New storage must be appended by consuming gap slots.
+    uint256[50] private __gap;
 
-    /// @notice Deploys a vault with immutable facility parameters and initial mutable risk caps.
-    /// @dev Validates `params` and derives the auction step duration from the Closed
-    /// window. The epoch clock starts at `params.startTimestamp`. The vault grants standing max allowances to the
-    /// trusted, construction-fixed USD3 and notification vault spenders. USD3 short-circuits max allowance as
-    /// permanently infinite; USDC decrements max allowance, but type(uint256).max is inexhaustible in practice. The
-    /// vault holds no fundingAsset or USD3 between transactions, so the allowances expose no idle balance.
-    /// @param params The facility configuration; see {ILCCVault.VaultParams}.
-    constructor(VaultParams memory params) Ownable(params.owner) {
+    /* CONSTRUCTOR / INITIALIZER */
+
+    /// @notice Deploys the shared beacon implementation with protocol-wide integration addresses.
+    /// @dev The implementation is not usable directly; beacon proxies are initialized atomically by the factory.
+    /// @param notificationVault_ ERC-4626 wrapper over USD3 that receives funded amounts.
+    /// @param treasury_ Protocol-wide recipient of slashed margin and unsold auction collateral.
+    constructor(address notificationVault_, address treasury_) Ownable(address(1)) {
+        if (notificationVault_ == address(0) || treasury_ == address(0)) revert LCCErrorsLib.ZeroAddress();
+
+        notificationVault = IERC4626(notificationVault_);
+        address usd3_ = notificationVault.asset();
+        if (usd3_ == address(0)) revert LCCErrorsLib.InvalidParams();
+        usd3 = IERC4626(usd3_);
+        address fundingAsset_ = usd3.asset();
+        if (fundingAsset_ == address(0)) revert LCCErrorsLib.InvalidParams();
+        fundingAsset = IERC20(fundingAsset_);
+        treasury = treasury_;
+
+        _disableInitializers();
+    }
+
+    /// @inheritdoc ILCCVault
+    /// @dev Grants standing max allowances to the trusted USD3 and notification vault spenders. USD3 short-circuits
+    /// max allowance as permanently infinite; USDC decrements max allowance, but type(uint256).max is inexhaustible
+    /// in practice. The vault holds no fundingAsset or USD3 between transactions, so the allowances expose no idle
+    /// balance.
+    function initialize(VaultParams memory params) external initializer {
         LCCConfigLib.validate(params);
+        _transferOwnership(params.owner);
 
-        marginAsset = IERC20(params.marginAsset);
-        fundingAsset = IERC20(params.fundingAsset);
-        notificationVault = IERC4626(params.notificationVault);
-        usd3 = IERC4626(notificationVault.asset());
-        marginOracle = IOracle(params.marginOracle);
-        treasury = params.treasury;
+        uint256 auctionStepDuration_ = LCCConfigLib.auctionStepDuration(params);
 
         fundingAsset.forceApprove(address(usd3), type(uint256).max);
         IERC20(address(usd3)).forceApprove(address(notificationVault), type(uint256).max);
 
-        startTimestamp = params.startTimestamp;
-        maxEpochs = params.maxEpochs;
-        epochLength = params.epochLength;
-        normalDuration = params.normalDuration;
-        preCallDuration = params.preCallDuration;
-        fundingDuration = params.fundingDuration;
-        marginRatioBps = params.marginRatioBps;
-        exitDelayEpochs = params.exitDelayEpochs;
-        auctionStepCount = params.auctionStepCount;
-        auctionStepDecayRateBps = params.auctionStepDecayRateBps;
-        auctionStepDuration = params.auctionStepCount == 0
-            ? 0
-            : (params.epochLength - params.normalDuration - params.preCallDuration - params.fundingDuration)
-                / params.auctionStepCount;
+        _clockConfig = LCCTypesLib.ClockConfig({
+            startTimestamp: uint64(params.startTimestamp),
+            maxEpochs: uint64(params.maxEpochs),
+            epochLength: uint32(params.epochLength),
+            normalDuration: uint32(params.normalDuration),
+            preCallDuration: uint32(params.preCallDuration),
+            fundingDuration: uint32(params.fundingDuration)
+        });
+        _assetConfig = LCCTypesLib.AssetConfigStorage({
+            marginAsset: params.marginAsset,
+            marginRatioBps: uint16(params.marginRatioBps),
+            exitDelayEpochs: uint16(params.exitDelayEpochs)
+        });
+        _auctionConfig = LCCTypesLib.AuctionConfigStorage({
+            marginOracle: params.marginOracle,
+            auctionStepCount: uint32(params.auctionStepCount),
+            auctionStepDecayRateBps: uint16(params.auctionStepDecayRateBps),
+            auctionStepDuration: uint32(auctionStepDuration_)
+        });
 
         _riskConfig = RiskConfig({
             protocolCommitmentCap: params.protocolCommitmentCap,
@@ -214,10 +219,11 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     /// @inheritdoc ILCCVault
     function phaseEndsAt(uint256 epoch, Phase phase) external view returns (uint256) {
         uint256 start = _epochStart(epoch);
-        if (phase == Phase.Normal) return start + normalDuration;
-        if (phase == Phase.PreCall) return start + normalDuration + preCallDuration;
+        LCCTypesLib.ClockConfig memory clock = _clockConfig;
+        if (phase == Phase.Normal) return start + clock.normalDuration;
+        if (phase == Phase.PreCall) return start + clock.normalDuration + clock.preCallDuration;
         if (phase == Phase.Funding) return _fundingDeadline(epoch);
-        return start + epochLength;
+        return start + clock.epochLength;
     }
 
     /* OWNER ACTIONS */
@@ -249,7 +255,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     /// @inheritdoc ILCCVault
     function setMaxAuctionAwardBps(uint256 newMaxAuctionAwardBps) external onlyOwner synced {
         if (newMaxAuctionAwardBps > BPS) revert LCCErrorsLib.InvalidParams();
-        if (newMaxAuctionAwardBps != 0 && auctionStepCount == 0) revert LCCErrorsLib.InvalidParams();
+        if (newMaxAuctionAwardBps != 0 && _auctionConfig.auctionStepCount == 0) revert LCCErrorsLib.InvalidParams();
         // No repricing while fillers are mid-auction.
         if (_syncState.pendingAuctionEpochPlusOne != 0) revert LCCErrorsLib.InvalidPhase();
 
@@ -291,7 +297,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         Account memory account = _replayForUpdate(msg.sender);
         if (account.exitRequested && !account.exitClaimed) revert LCCErrorsLib.ExitInProgress();
 
-        uint256 price = marginOracle.price();
+        uint256 price = IOracle(_auctionConfig.marginOracle).price();
         if (price == 0) revert LCCErrorsLib.OraclePriceInvalid();
 
         uint256 marginValue;
@@ -305,7 +311,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
             revert LCCErrorsLib.CapExceeded();
         }
 
-        marginAsset.safeTransferFrom(msg.sender, address(this), assets);
+        IERC20(_assetConfig.marginAsset).safeTransferFrom(msg.sender, address(this), assets);
 
         (uint256 activationEpoch, bool immediate) = _depositActivation();
         if (immediate) {
@@ -367,7 +373,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         account.clearExit();
         _storeAccount(msg.sender, account);
 
-        if (assets != 0) marginAsset.safeTransfer(receiver, assets);
+        if (assets != 0) IERC20(_assetConfig.marginAsset).safeTransfer(receiver, assets);
 
         emit LCCEventsLib.ExitedMarginClaimed(msg.sender, receiver, assets);
     }
@@ -407,7 +413,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         account.clearExit();
         _storeAccount(msg.sender, account);
 
-        marginAsset.safeTransfer(receiver, assets);
+        IERC20(_assetConfig.marginAsset).safeTransfer(receiver, assets);
 
         emit LCCEventsLib.RemainingMarginClaimed(msg.sender, receiver, assets);
     }
@@ -473,15 +479,15 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         filledAmount = maxFillAmount < remainingShortfallAmount ? maxFillAmount : remainingShortfallAmount;
         if (filledAmount == 0) revert LCCErrorsLib.InvalidAmount();
 
-        uint256 price = marginOracle.price();
+        uint256 price = IOracle(_auctionConfig.marginOracle).price();
         if (price == 0) revert LCCErrorsLib.OraclePriceInvalid();
 
         marginAward = LCCAuctionLib.computeAward(
             state,
             filledAmount,
             block.timestamp - _fundingDeadline(epoch),
-            auctionStepDuration,
-            auctionStepDecayRateBps,
+            _auctionConfig.auctionStepDuration,
+            _auctionConfig.auctionStepDecayRateBps,
             _riskConfig.maxAuctionAwardBps,
             price
         );
@@ -491,7 +497,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
 
         fundingAsset.safeTransferFrom(msg.sender, address(this), filledAmount);
         _deliverWrapped(msg.sender, filledAmount);
-        if (marginAward != 0) marginAsset.safeTransfer(msg.sender, marginAward);
+        if (marginAward != 0) IERC20(_assetConfig.marginAsset).safeTransfer(msg.sender, marginAward);
 
         emit LCCEventsLib.AuctionFill(msg.sender, epoch, filledAmount, marginAward);
 
@@ -556,11 +562,11 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     /// @inheritdoc ILCCVault
     function assetConfig() external view returns (AssetConfig memory) {
         return AssetConfig({
-            marginAsset: address(marginAsset),
+            marginAsset: _assetConfig.marginAsset,
             fundingAsset: address(fundingAsset),
             usd3: address(usd3),
             notificationVault: address(notificationVault),
-            marginOracle: address(marginOracle),
+            marginOracle: _auctionConfig.marginOracle,
             treasury: treasury
         });
     }
@@ -568,23 +574,23 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     /// @inheritdoc ILCCVault
     function epochConfig() external view returns (EpochConfig memory) {
         return EpochConfig({
-            startTimestamp: startTimestamp,
-            maxEpochs: maxEpochs,
-            epochLength: epochLength,
-            normalDuration: normalDuration,
-            preCallDuration: preCallDuration,
-            fundingDuration: fundingDuration,
-            marginRatioBps: marginRatioBps,
-            exitDelayEpochs: exitDelayEpochs
+            startTimestamp: _clockConfig.startTimestamp,
+            maxEpochs: _clockConfig.maxEpochs,
+            epochLength: _clockConfig.epochLength,
+            normalDuration: _clockConfig.normalDuration,
+            preCallDuration: _clockConfig.preCallDuration,
+            fundingDuration: _clockConfig.fundingDuration,
+            marginRatioBps: _assetConfig.marginRatioBps,
+            exitDelayEpochs: _assetConfig.exitDelayEpochs
         });
     }
 
     /// @inheritdoc ILCCVault
     function auctionConfig() external view returns (AuctionConfig memory) {
         return AuctionConfig({
-            auctionStepCount: auctionStepCount,
-            auctionStepDecayRateBps: auctionStepDecayRateBps,
-            auctionStepDuration: auctionStepDuration
+            auctionStepCount: _auctionConfig.auctionStepCount,
+            auctionStepDecayRateBps: _auctionConfig.auctionStepDecayRateBps,
+            auctionStepDuration: _auctionConfig.auctionStepDuration
         });
     }
 
@@ -646,7 +652,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         fundingAsset.safeTransferFrom(payer, address(this), obligationAmount);
         _deliverWrapped(user, obligationAmount);
 
-        marginAsset.safeTransfer(user, releasedMargin);
+        IERC20(_assetConfig.marginAsset).safeTransfer(user, releasedMargin);
 
         emit LCCEventsLib.CallFunded(user, epoch, obligationAmount);
         emit LCCEventsLib.MarginReleased(user, epoch, releasedMargin);
@@ -798,7 +804,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
             // falls through to treasury and the shortfall fails cleanly.
             if (
                 shortfallAmount != 0 && _riskConfig.maxAuctionAwardBps != 0 && !_shutdown.active
-                    && block.timestamp < _epochStart(epoch) + epochLength
+                    && block.timestamp < _epochStart(epoch) + _clockConfig.epochLength
             ) {
                 epochAuctions[epoch] = LCCAuctionLib.AuctionState({
                     shortfallAmount: shortfallAmount.toUint128(),
@@ -825,7 +831,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         if (slot == 0) return;
 
         uint256 epoch = slot - 1;
-        if (!_shutdown.active && block.timestamp < _epochStart(epoch) + epochLength) return;
+        if (!_shutdown.active && block.timestamp < _epochStart(epoch) + _clockConfig.epochLength) return;
         _settleAuction(epoch);
     }
 
@@ -847,7 +853,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         returns (uint256 marginValue, uint256 commitment)
     {
         marginValue = assets.mulDiv(price, ORACLE_PRICE_SCALE);
-        commitment = marginValue.mulDiv(BPS, marginRatioBps);
+        commitment = marginValue.mulDiv(BPS, _assetConfig.marginRatioBps);
     }
 
     function _disposeSlashSurplus(uint256 epoch, uint256 surplus) internal {
@@ -871,14 +877,14 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
             bool windDown = _shutdown.active || _callWindowClosed();
             uint256 price;
             if (windDown) {
-                try marginOracle.price() returns (uint256 p) {
+                try IOracle(_auctionConfig.marginOracle).price() returns (uint256 p) {
                     price = p;
                 } catch {}
                 // A price large enough to overflow the valuation is treated like a dead oracle so
                 // wind-down can never brick on disposal.
                 if (price > type(uint256).max / returnPool) price = 0;
             } else {
-                price = marginOracle.price();
+                price = IOracle(_auctionConfig.marginOracle).price();
                 if (price == 0) revert LCCErrorsLib.OraclePriceInvalid();
             }
 
@@ -906,7 +912,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         state.returnCommitment = returnCommitment;
         if (returnPool != 0) _increaseGlobalActive(returnPool, returnCommitment);
         uint256 toTreasury = surplus - returnPool;
-        if (toTreasury != 0) marginAsset.safeTransfer(treasury, toTreasury);
+        if (toTreasury != 0) IERC20(_assetConfig.marginAsset).safeTransfer(treasury, toTreasury);
         emit LCCEventsLib.SlashSurplusDisposed(epoch, toTreasury, returnPool, returnCommitment);
     }
 
@@ -1262,7 +1268,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
         uint256 capacity = _riskConfig.protocolCommitmentCap.mulDiv(_riskConfig.exitCapBps, BPS);
         if (capacity == 0) revert LCCErrorsLib.InvalidParams();
 
-        maturityEpoch = _currentEpoch() + exitDelayEpochs;
+        maturityEpoch = _currentEpoch() + _assetConfig.exitDelayEpochs;
         while (true) {
             uint256 assigned = exitBucketCommitmentByMaturity[maturityEpoch];
             if (assigned < capacity) {
@@ -1310,19 +1316,24 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     }
 
     function _phaseAt(uint256 timestamp) internal view returns (Phase) {
-        uint256 elapsed = timestamp >= startTimestamp ? (timestamp - startTimestamp) % epochLength : 0;
-        if (elapsed < normalDuration) return Phase.Normal;
-        if (elapsed < normalDuration + preCallDuration) return Phase.PreCall;
-        if (elapsed < normalDuration + preCallDuration + fundingDuration) return Phase.Funding;
+        LCCTypesLib.ClockConfig memory clock = _clockConfig;
+        uint256 startTimestamp = clock.startTimestamp;
+        uint256 elapsed = timestamp >= startTimestamp ? (timestamp - startTimestamp) % clock.epochLength : 0;
+        if (elapsed < clock.normalDuration) return Phase.Normal;
+        if (elapsed < clock.normalDuration + clock.preCallDuration) return Phase.PreCall;
+        if (elapsed < clock.normalDuration + clock.preCallDuration + clock.fundingDuration) return Phase.Funding;
         return Phase.Closed;
     }
 
     function _currentEpoch() internal view returns (uint256) {
+        LCCTypesLib.ClockConfig memory clock = _clockConfig;
+        uint256 startTimestamp = clock.startTimestamp;
         if (block.timestamp < startTimestamp) return 0;
-        return (block.timestamp - startTimestamp) / epochLength;
+        return (block.timestamp - startTimestamp) / clock.epochLength;
     }
 
     function _terminal() internal view returns (bool) {
+        uint256 maxEpochs = _clockConfig.maxEpochs;
         return maxEpochs != 0 && _currentEpoch() >= maxEpochs;
     }
 
@@ -1332,6 +1343,7 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     /// drops the going-concern oracle-revert and protocol-cap clamp. Monotonic and strictly before the terminal
     /// boundary, so this also covers every disposal that runs once terminal.
     function _callWindowClosed() internal view returns (bool) {
+        uint256 maxEpochs = _clockConfig.maxEpochs;
         if (maxEpochs == 0) return false;
         uint256 current = _currentEpoch();
         // No call can open past the last callable epoch's PreCall window: either terminal, or in epoch
@@ -1341,10 +1353,12 @@ contract LCCVault is ILCCVault, Ownable, ReentrancyGuard {
     }
 
     function _epochStart(uint256 epoch) internal view returns (uint256) {
-        return startTimestamp + epoch * epochLength;
+        LCCTypesLib.ClockConfig memory clock = _clockConfig;
+        return uint256(clock.startTimestamp) + epoch * uint256(clock.epochLength);
     }
 
     function _fundingDeadline(uint256 epoch) internal view returns (uint256) {
-        return _epochStart(epoch) + normalDuration + preCallDuration + fundingDuration;
+        LCCTypesLib.ClockConfig memory clock = _clockConfig;
+        return _epochStart(epoch) + clock.normalDuration + clock.preCallDuration + clock.fundingDuration;
     }
 }

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.8.22 <0.9.0;
 
-import {IERC4626} from "../../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
-
 import {BPS} from "../../libraries/ConstantsLib.sol";
 import {ILCCVault} from "../interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "./LCCErrorsLib.sol";
@@ -10,19 +8,32 @@ import {LCCErrorsLib} from "./LCCErrorsLib.sol";
 /// @title LCCConfigLib
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
-/// @notice Constructor configuration validation for LCC vaults.
+/// @notice Initializer configuration validation for LCC vaults.
 library LCCConfigLib {
     uint256 internal constant MAX_EXIT_DELAY_EPOCHS = 64;
     uint256 internal constant MIN_EXIT_CAP_BPS = (2 * BPS + MAX_EXIT_DELAY_EPOCHS - 1) / MAX_EXIT_DELAY_EPOCHS;
 
-    function validate(ILCCVault.VaultParams memory params) internal view {
+    /// @dev Seconds per auction price step: the Closed window divided by the step count (0 when auctions are
+    /// disabled). Kept next to `validate`'s window/step-count constraints so the formula and its bounds move
+    /// together.
+    function auctionStepDuration(ILCCVault.VaultParams memory params) internal pure returns (uint256) {
+        if (params.auctionStepCount == 0) return 0;
+        uint256 phaseDurations = params.normalDuration + params.preCallDuration + params.fundingDuration;
+        return (params.epochLength - phaseDurations) / params.auctionStepCount;
+    }
+
+    function validate(ILCCVault.VaultParams memory params) internal pure {
+        if (params.owner == address(0) || params.marginAsset == address(0) || params.marginOracle == address(0)) {
+            revert LCCErrorsLib.ZeroAddress();
+        }
+        // Width bounds for the packed per-vault config. auctionStepCount and the derived auctionStepDuration are
+        // transitively bounded below uint32 by `epochLength <= type(uint32).max` plus the step-count-vs-window
+        // checks below.
         if (
-            params.owner == address(0) || params.marginAsset == address(0) || params.fundingAsset == address(0)
-                || params.notificationVault == address(0) || params.marginOracle == address(0)
-                || params.treasury == address(0)
-        ) revert LCCErrorsLib.ZeroAddress();
-        address usd3 = IERC4626(params.notificationVault).asset();
-        if (params.fundingAsset != IERC4626(usd3).asset()) revert LCCErrorsLib.InvalidParams();
+            params.startTimestamp > type(uint64).max || params.maxEpochs > type(uint64).max
+                || params.epochLength > type(uint32).max || params.normalDuration > type(uint32).max
+                || params.preCallDuration > type(uint32).max || params.fundingDuration > type(uint32).max
+        ) revert LCCErrorsLib.InvalidParams();
         if (params.marginRatioBps == 0 || params.marginRatioBps > BPS) revert LCCErrorsLib.InvalidParams();
         if (params.epochLength == 0 || params.normalDuration == 0 || params.preCallDuration == 0) {
             revert LCCErrorsLib.InvalidParams();
@@ -45,7 +56,7 @@ library LCCConfigLib {
             revert LCCErrorsLib.InvalidParams();
         }
         if (params.slashFeeBps > BPS) revert LCCErrorsLib.InvalidParams();
-        // maxEpochs is unconstrained here; zero means perpetual.
+        // maxEpochs has no lower bound; zero means perpetual.
 
         if (params.auctionStepCount == 0) {
             if (params.auctionStepDecayRateBps != 0 || params.maxAuctionAwardBps != 0) {

@@ -53,7 +53,7 @@ contract LCCDepositTest is LCCBase {
     }
 
     function testCapsIncludePendingCommitment() public {
-        vault = new LCCVault(_params(400e18, 400e18));
+        vault = _newVault(_params(400e18, 400e18));
         vm.startPrank(alice);
         margin.approve(address(vault), type(uint256).max);
         vm.stopPrank();
@@ -68,7 +68,7 @@ contract LCCDepositTest is LCCBase {
     function testMinDepositEnforced() public {
         ILCCVault.VaultParams memory params = _params(CAP, CAP);
         params.minDepositAssets = 10e18;
-        vault = new LCCVault(params);
+        vault = _newVault(params);
         _mintAndApprove(alice, 0, 0);
 
         vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
@@ -98,7 +98,7 @@ contract LCCDepositTest is LCCBase {
 
     function testRevertingOracleBubbles() public {
         LCCRevertingOracle badOracle = new LCCRevertingOracle();
-        vault = new LCCVault(_params(address(badOracle), CAP, CAP, 2_000));
+        vault = _newVault(_params(address(badOracle), CAP, CAP, 2_000));
 
         vm.expectRevert("ORACLE_DOWN");
         _deposit(alice, 100e18);

@@ -76,7 +76,7 @@ contract LCCExitTest is LCCBase {
     }
 
     function testFifoExitAssignmentAndOversizedExit() public {
-        vault = new LCCVault(_params(address(oracle), 1_000e18, 2_000e18, 1_000));
+        vault = _newVault(_params(address(oracle), 1_000e18, 2_000e18, 1_000));
         vm.startPrank(alice);
         margin.approve(address(vault), type(uint256).max);
         vm.stopPrank();

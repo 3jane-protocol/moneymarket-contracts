@@ -8,6 +8,31 @@ import {ILCCVault} from "../interfaces/ILCCVault.sol";
 /// @custom:contact support@3jane.xyz
 /// @notice Library exposing implementation-only LCC vault types.
 library LCCTypesLib {
+    /// @notice Packed epoch clock and phase durations.
+    struct ClockConfig {
+        uint64 startTimestamp;
+        uint64 maxEpochs;
+        uint32 epochLength;
+        uint32 normalDuration;
+        uint32 preCallDuration;
+        uint32 fundingDuration;
+    }
+
+    /// @notice Packed facility asset parameters.
+    struct AssetConfigStorage {
+        address marginAsset;
+        uint16 marginRatioBps;
+        uint16 exitDelayEpochs;
+    }
+
+    /// @notice Packed facility oracle and auction parameters.
+    struct AuctionConfigStorage {
+        address marginOracle;
+        uint32 auctionStepCount;
+        uint16 auctionStepDecayRateBps;
+        uint32 auctionStepDuration;
+    }
+
     /// @notice Packed on-chain form of {ILCCVault.Account}.
     /// @dev Fields carry the same meaning as `Account`; amounts pack into uint128 and epochs/cursor into uint64.
     /// Deposits revert on the cast if an amount exceeds its width.

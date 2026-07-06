@@ -7,17 +7,16 @@ optimizer = true
 optimizer_runs = 999999
 bytecode_hash = "none"
 evm_version = "shanghai"
-# The LCC vault/factory and USD3 exceed the bytecode size limit at max runs. Compile them at reduced runs while
-# keeping the default profile optimized for the rest of the repo. The LCC module pins solc 0.8.35 here (its
+# The LCCVault implementation and USD3 exceed the bytecode size limit at max runs. Compile them at reduced runs
+# while keeping the default profile optimized for the rest of the repo. The LCC module pins solc 0.8.35 here (its
 # pragma is a range so Hardhat's macOS binary, which self-reports 0.8.35-pre, can also compile it).
 additional_compiler_profiles = [
-    { name = "lcc-size", optimizer_runs = 400 },
+    { name = "lcc-vault-size", optimizer_runs = 400 },
     { name = "usd3-size", optimizer_runs = 200 },
 ]
 compilation_restrictions = [
     { paths = "src/lcc/**", version = "=0.8.35" },
     { paths = "src/lcc/LCCVault.sol", optimizer_runs = 400 },
-    { paths = "src/lcc/LCCVaultFactory.sol", optimizer_runs = 400 },
     { paths = "src/usd3/USD3.sol", optimizer_runs = 200 },
 ]
 

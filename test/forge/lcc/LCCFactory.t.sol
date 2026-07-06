@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.22;
 
-import {LCCBase} from "./LCCBase.t.sol";
+import {LCCAssetOnlyVault, LCCBase} from "./LCCBase.t.sol";
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {LCCVaultFactory} from "../../../src/lcc/LCCVaultFactory.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
@@ -12,7 +12,7 @@ contract LCCFactoryTest is LCCBase {
     address internal outsider = makeAddr("outsider");
 
     function testFactoryCreatesAndTracksVault() public {
-        LCCVaultFactory factory = new LCCVaultFactory(factoryOwner);
+        LCCVaultFactory factory = new LCCVaultFactory(factoryOwner, address(beacon));
 
         vm.prank(factoryOwner);
         address created = factory.createVault(_params(CAP, CAP));
@@ -23,7 +23,7 @@ contract LCCFactoryTest is LCCBase {
     }
 
     function testFactoryTracksMultipleVaults() public {
-        LCCVaultFactory factory = new LCCVaultFactory(factoryOwner);
+        LCCVaultFactory factory = new LCCVaultFactory(factoryOwner, address(beacon));
 
         vm.startPrank(factoryOwner);
         address first = factory.createVault(_params(CAP, CAP));
@@ -38,11 +38,31 @@ contract LCCFactoryTest is LCCBase {
 
     function testFactoryRejectsZeroOwner() public {
         vm.expectRevert(LCCErrorsLib.ZeroAddress.selector);
-        new LCCVaultFactory(address(0));
+        new LCCVaultFactory(address(0), address(beacon));
+    }
+
+    function testFactoryRejectsZeroBeacon() public {
+        vm.expectRevert(LCCErrorsLib.ZeroAddress.selector);
+        new LCCVaultFactory(factoryOwner, address(0));
+    }
+
+    function testFactoryRejectsNonBeaconAddresses() public {
+        // EOA: the probe staticcall succeeds with empty returndata.
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
+        new LCCVaultFactory(factoryOwner, outsider);
+
+        // Contract without implementation(): the probe staticcall reverts.
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
+        new LCCVaultFactory(factoryOwner, address(margin));
+
+        // Beacon-shaped contract reporting no implementation.
+        address zeroImplBeacon = address(new LCCZeroImplBeacon());
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
+        new LCCVaultFactory(factoryOwner, zeroImplBeacon);
     }
 
     function testFactoryRejectsNonOwnerCreateVault() public {
-        LCCVaultFactory factory = new LCCVaultFactory(factoryOwner);
+        LCCVaultFactory factory = new LCCVaultFactory(factoryOwner, address(beacon));
 
         vm.expectRevert(LCCErrorsLib.NotOwner.selector);
         vm.prank(outsider);
@@ -50,9 +70,10 @@ contract LCCFactoryTest is LCCBase {
     }
 
     function testFactoryOwnerCreatesAndRegistersVault() public {
-        LCCVaultFactory factory = new LCCVaultFactory(factoryOwner);
+        LCCVaultFactory factory = new LCCVaultFactory(factoryOwner, address(beacon));
 
         assertEq(factory.owner(), factoryOwner);
+        assertEq(factory.beacon(), address(beacon));
 
         vm.prank(factoryOwner);
         address created = factory.createVault(_params(CAP, CAP));
@@ -62,41 +83,46 @@ contract LCCFactoryTest is LCCBase {
         assertEq(factory.allVaults()[0], created);
     }
 
-    function testConstructorValidation() public {
-        ILCCVault.VaultParams memory badAsset = _params(CAP, CAP);
-        badAsset.fundingAsset = address(margin);
-
-        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LCCVault(badAsset);
-
-        ILCCVault.VaultParams memory zeroTreasury = _params(CAP, CAP);
-        zeroTreasury.treasury = address(0);
+    function testImplementationConstructorValidation() public {
+        vm.expectRevert(LCCErrorsLib.ZeroAddress.selector);
+        new LCCVault(address(0), treasury);
 
         vm.expectRevert(LCCErrorsLib.ZeroAddress.selector);
-        new LCCVault(zeroTreasury);
+        new LCCVault(address(notificationVault), address(0));
 
+        LCCAssetOnlyVault noUsd3 = new LCCAssetOnlyVault(address(0));
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
+        new LCCVault(address(noUsd3), treasury);
+
+        LCCAssetOnlyVault noFundingAsset = new LCCAssetOnlyVault(address(0));
+        LCCAssetOnlyVault badNotificationVault = new LCCAssetOnlyVault(address(noFundingAsset));
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
+        new LCCVault(address(badNotificationVault), treasury);
+    }
+
+    function testInitializerValidation() public {
         ILCCVault.VaultParams memory excessiveExitDelay = _params(CAP, CAP);
         excessiveExitDelay.exitDelayEpochs = 65;
 
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LCCVault(excessiveExitDelay);
+        _newVault(excessiveExitDelay);
 
         ILCCVault.VaultParams memory maxExitDelay = _params(CAP, CAP);
         maxExitDelay.exitDelayEpochs = 64;
 
-        LCCVault maxDelayVault = new LCCVault(maxExitDelay);
+        LCCVault maxDelayVault = _newVault(maxExitDelay);
         assertEq(maxDelayVault.epochConfig().exitDelayEpochs, 64);
 
         ILCCVault.VaultParams memory belowFloorExitCap = _params(CAP, CAP);
         belowFloorExitCap.exitCapBps = 312;
 
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LCCVault(belowFloorExitCap);
+        _newVault(belowFloorExitCap);
 
         ILCCVault.VaultParams memory floorExitCap = _params(CAP, CAP);
         floorExitCap.exitCapBps = 313;
 
-        LCCVault floorVault = new LCCVault(floorExitCap);
+        LCCVault floorVault = _newVault(floorExitCap);
         assertEq(floorVault.riskConfig().exitCapBps, 313);
     }
 
@@ -108,5 +134,11 @@ contract LCCFactoryTest is LCCBase {
         vm.prank(owner);
         vault.setRiskCaps(CAP, CAP, 313, 0);
         assertEq(vault.riskConfig().exitCapBps, 313);
+    }
+}
+
+contract LCCZeroImplBeacon {
+    function implementation() external pure returns (address) {
+        return address(0);
     }
 }

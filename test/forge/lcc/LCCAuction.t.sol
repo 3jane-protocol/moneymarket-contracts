@@ -327,63 +327,63 @@ contract LCCAuctionTest is LCCBase {
     }
 
     function testCannotEnableAwardCapWithoutMachinery() public {
-        vault = new LCCVault(_params(CAP, CAP));
+        vault = _newVault(_params(CAP, CAP));
 
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         vm.prank(owner);
         vault.setMaxAuctionAwardBps(1);
     }
 
-    function testConstructorValidationMatrix() public {
+    function testInitializerValidationMatrix() public {
         ILCCVault.VaultParams memory params = _params(CAP, CAP);
 
         params.auctionStepDecayRateBps = 1;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LCCVault(params);
+        _newVault(params);
 
         // Disabled auction (stepCount 0) still rejects a nonzero award cap.
         params.auctionStepDecayRateBps = 0;
         params.maxAuctionAwardBps = 1;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LCCVault(params);
+        _newVault(params);
 
         // A one-step auction would offer zero collateral for its entire window.
         params = _auctionParams();
         params.auctionStepCount = 1;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LCCVault(params);
+        _newVault(params);
 
         params = _auctionParams();
         params.auctionStepDecayRateBps = 0;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LCCVault(params);
+        _newVault(params);
 
         params = _auctionParams();
         params.auctionStepDecayRateBps = 10_001;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LCCVault(params);
+        _newVault(params);
 
         params = _auctionParams();
         params.maxAuctionAwardBps = 10_001;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LCCVault(params);
+        _newVault(params);
 
         // Auction-enabled vaults need a nonzero Closed window.
         params = _auctionParams();
         params.fundingDuration = EPOCH - NORMAL - PRE_CALL;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LCCVault(params);
+        _newVault(params);
 
         // At least one second per step: stepCount cannot exceed the Closed window.
         params = _auctionParams();
         params.auctionStepCount = EPOCH - NORMAL - PRE_CALL - FUNDING + 1;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LCCVault(params);
+        _newVault(params);
 
         params = _params(CAP, CAP);
         params.protocolCommitmentCap = uint256(type(uint128).max) + 1;
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
-        new LCCVault(params);
+        _newVault(params);
     }
 
     function testSetRiskCapsRejectsCapAboveUint128() public {

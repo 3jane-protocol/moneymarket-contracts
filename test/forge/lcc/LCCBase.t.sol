@@ -2,6 +2,8 @@
 pragma solidity ^0.8.22;
 
 import {Test} from "../../../lib/forge-std/src/Test.sol";
+import {BeaconProxy} from "../../../lib/openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
+import {UpgradeableBeacon} from "../../../lib/openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {ERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC4626} from "../../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {IERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -76,6 +78,18 @@ contract LCCRevertingOracle is IOracle {
     }
 }
 
+contract LCCAssetOnlyVault {
+    address internal immutable asset_;
+
+    constructor(address asset__) {
+        asset_ = asset__;
+    }
+
+    function asset() external view returns (address) {
+        return asset_;
+    }
+}
+
 contract LCCBase is Test {
     uint256 internal constant START = 1_000;
     uint256 internal constant EPOCH = 100;
@@ -95,6 +109,8 @@ contract LCCBase is Test {
     LCCMockUSD3 internal usd3;
     LCCMockNotificationVault internal notificationVault;
     OracleMock internal oracle;
+    LCCVault internal vaultImplementation;
+    UpgradeableBeacon internal beacon;
     LCCVault internal vault;
 
     function setUp() public virtual {
@@ -105,8 +121,10 @@ contract LCCBase is Test {
         notificationVault = new LCCMockNotificationVault(IERC20(address(usd3)));
         oracle = new OracleMock();
         oracle.setPrice(ORACLE_PRICE_SCALE);
+        vaultImplementation = new LCCVault(address(notificationVault), treasury);
+        beacon = new UpgradeableBeacon(address(vaultImplementation), owner);
 
-        vault = new LCCVault(_params(address(oracle), CAP, CAP, 2_000));
+        vault = _newVault(_params(address(oracle), CAP, CAP, 2_000));
 
         _mintAndApprove(alice, 1_000_000e18, 1_000_000e18);
         _mintAndApprove(bob, 1_000_000e18, 1_000_000e18);
@@ -125,10 +143,7 @@ contract LCCBase is Test {
         return ILCCVault.VaultParams({
             owner: owner,
             marginAsset: address(margin),
-            fundingAsset: address(usdc),
-            notificationVault: address(notificationVault),
             marginOracle: oracle_,
-            treasury: treasury,
             startTimestamp: START,
             maxEpochs: 0,
             epochLength: EPOCH,
@@ -166,10 +181,14 @@ contract LCCBase is Test {
     }
 
     function _deployVaultWithParams(ILCCVault.VaultParams memory params) internal {
-        vault = new LCCVault(params);
+        vault = _newVault(params);
         _mintAndApprove(alice, 0, 0);
         _mintAndApprove(bob, 0, 0);
         _mintAndApprove(carol, 0, 0);
+    }
+
+    function _newVault(ILCCVault.VaultParams memory params) internal returns (LCCVault) {
+        return LCCVault(address(new BeaconProxy(address(beacon), abi.encodeCall(ILCCVault.initialize, (params)))));
     }
 
     function _mintAndApprove(address user, uint256 marginAmount, uint256 usdcAmount) internal {

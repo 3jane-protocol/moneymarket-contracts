@@ -21,7 +21,10 @@ import {LCCAuctionLib} from "../libraries/LCCAuctionLib.sol";
 /// nonzero, epochs `0..maxEpochs-1` are callable and epoch `maxEpochs` starts a terminal withdraw-only phase.
 /// Wind-down surplus disposal uses the same non-bricking rules under shutdown or terminal. Accounts lagging more
 /// than 64 finalized calls may need permissionless `materializeAccount` batches before `claimRemainingMargin` can
-/// complete.
+/// complete. LCC vaults are deployed as BeaconProxy instances behind an UpgradeableBeacon controlled by 3Jane's
+/// 7-day timelock; the beacon owner can replace logic for every beacon-backed vault after the timelock delay.
+/// Factory registry membership records owner-vetted provenance, not exclusive deployability: non-factory proxies can
+/// point at the public beacon and remain unregistered.
 interface ILCCVault {
     /// @notice Timestamp-derived lifecycle phase within an epoch.
     /// @dev `Normal`: deposits activate immediately (until a call opens). `PreCall`: the owner may open the epoch
@@ -34,20 +37,16 @@ interface ILCCVault {
         Closed
     }
 
-    /// @notice Immutable (and initial-mutable) facility configuration consumed by the constructor.
+    /// @notice Facility configuration consumed by the initializer.
     /// @param owner Vault owner: opens calls, tunes risk caps, and can trigger emergency shutdown.
     /// @param marginAsset ERC20 posted as the performance bond. Must be standard (no fee-on-transfer / rebasing).
-    /// @param fundingAsset ERC20 used to fund calls and auction fills (the spec's "callable asset"); must equal
-    /// USD3's underlying asset.
-    /// @param notificationVault ERC-4626 wrapper over USD3 that receives funded amounts for the funder.
     /// @param marginOracle Trusted oracle returning the margin-to-fundingAsset price scaled by ORACLE_PRICE_SCALE.
-    /// @param treasury Recipient of slashed margin (and unsold auction collateral).
-    /// @param startTimestamp Epoch-zero start; the epoch clock is derived from this.
-    /// @param maxEpochs Maximum callable epochs; 0 means perpetual.
-    /// @param epochLength Total epoch duration in seconds (Normal + PreCall + Funding + Closed).
-    /// @param normalDuration Seconds of the Normal phase.
-    /// @param preCallDuration Seconds of the PreCall phase.
-    /// @param fundingDuration Seconds of the Funding phase.
+    /// @param startTimestamp Epoch-zero start; the epoch clock is derived from this. Bounded to uint64.
+    /// @param maxEpochs Maximum callable epochs; 0 means perpetual. Bounded to uint64.
+    /// @param epochLength Total epoch duration in seconds (Normal + PreCall + Funding + Closed). Bounded to uint32.
+    /// @param normalDuration Seconds of the Normal phase. Bounded to uint32.
+    /// @param preCallDuration Seconds of the PreCall phase. Bounded to uint32.
+    /// @param fundingDuration Seconds of the Funding phase. Bounded to uint32.
     /// @param marginRatioBps Leverage ratio in bps: commitment = marginValue * BPS / marginRatioBps.
     /// @param protocolCommitmentCap Vault-wide cap on active+pending commitment (fundingAsset); also the base for
     /// per-epoch exit capacity. Bounded by type(uint128).max.
@@ -57,17 +56,15 @@ interface ILCCVault {
     /// @param exitDelayEpochs Minimum epochs between an exit request and its earliest maturity; at most 64.
     /// @param minDepositAssets Minimum margin deposit, in marginAsset units.
     /// @param auctionStepCount Number of price steps spanning the Closed window; 0 disables the auction entirely,
-    /// otherwise must be at least 2 (the final step boundary coincides with settlement and is never live).
+    /// otherwise must be at least 2 (the final step boundary coincides with settlement and is never live). Bounded to
+    /// uint32, and its derived step duration is also bounded to uint32.
     /// @param auctionStepDecayRateBps Per-step decay of the protocol's retained pool share, in bps.
     /// @param maxAuctionAwardBps Oracle-valued collateral award cap per fundingAsset filled, in bps; 0 disables.
     /// @param slashFeeBps Fee on unawarded slashed margin surplus, in bps.
     struct VaultParams {
         address owner;
         address marginAsset;
-        address fundingAsset;
-        address notificationVault;
         address marginOracle;
-        address treasury;
         uint256 startTimestamp;
         uint256 maxEpochs;
         uint256 epochLength;
@@ -85,6 +82,10 @@ interface ILCCVault {
         uint256 maxAuctionAwardBps;
         uint256 slashFeeBps;
     }
+
+    /// @notice Initializes a beacon proxy vault with per-facility configuration.
+    /// @param params The facility configuration.
+    function initialize(VaultParams memory params) external;
 
     /// @notice Immutable asset and integration addresses for this vault.
     /// @param marginAsset ERC20 posted as the performance bond.

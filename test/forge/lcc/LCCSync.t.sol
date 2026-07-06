@@ -98,7 +98,7 @@ contract LCCSyncTest is LCCBase {
     }
 
     function testSparseSyncMaturityPruningDoesNotSkipSwapRemovedDueBucket() public {
-        LCCVault tightExitVault = new LCCVault(_params(address(oracle), 1_000e18, CAP, 2_000));
+        LCCVault tightExitVault = _newVault(_params(address(oracle), 1_000e18, CAP, 2_000));
         vault = tightExitVault;
         _mintAndApprove(alice, 1_000_000e18, 1_000_000e18);
         _mintAndApprove(bob, 1_000_000e18, 1_000_000e18);
