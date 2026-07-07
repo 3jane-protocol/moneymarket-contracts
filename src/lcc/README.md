@@ -429,8 +429,7 @@ stateDiagram-v2
     [*] --> Pending: deposit when call open or not Normal
     [*] --> Active: deposit in Normal before call
     Pending --> Active: activation epoch folded
-    Active --> Active: fundCall amortize
-    Active --> Active: fundCall roll
+    Active --> Active: fundCall amortize or roll
     Active --> Defaulted: call unfunded past deadline
     Defaulted --> Active: return-pool recredit
     Active --> ExitRequested: requestExit
