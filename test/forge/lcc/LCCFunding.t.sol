@@ -127,9 +127,9 @@ contract LCCFundingTest is LCCBase {
         uint256 treasuryBefore = margin.balanceOf(treasury);
         vault.finalizeEpochSlash(0);
 
-        // Bob forfeits his full margin; fundedAmount >= callAmount leaves no shortfall, so only the slash fee is
-        // swept and the return pool is reactivated for lazy attribution.
-        assertEq(margin.balanceOf(treasury) - treasuryBefore, 0.1e18);
+        // Bob forfeits his full margin; fundedAmount >= callAmount leaves no shortfall, so no auction award creates a
+        // fee basis and the return pool is reactivated for lazy attribution.
+        assertEq(margin.balanceOf(treasury) - treasuryBefore, 0);
         assertEq(vault.getAuctionState(0).shortfallAmount, 0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }

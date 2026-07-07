@@ -17,13 +17,12 @@ contract LCCMaterializeTest is LCCBase {
     }
 
     function testClearedAccountCanDepositAfterManyMoreFinalizedCalls() public {
-        vm.prank(owner);
-        vault.setSlashFeeBps(10_000);
-
         _deposit(alice, 100e18);
         _openCall(100e18);
         _finishFunding();
+        oracle.setPrice(4_999e18);
         _syncAs(alice);
+        oracle.setPrice(1e36);
 
         vm.warp(START + EPOCH);
         _createFundedCallHistoryFromEpoch(bob, 1, MAX_MATERIALIZE_STEPS_PLUS_ONE());
@@ -80,8 +79,8 @@ contract LCCMaterializeTest is LCCBase {
         _syncAs(alice);
         ILCCVault.Account memory storedDerived = vault.getAccount(alice);
 
-        assertEq(derived.activeMargin, 90e18);
-        assertEq(storedDerived.activeMargin, 90e18);
+        assertEq(derived.activeMargin, 100e18);
+        assertEq(storedDerived.activeMargin, 100e18);
         assertEq(derived.calledEpochCursor, storedDerived.calledEpochCursor);
     }
 
@@ -113,9 +112,9 @@ contract LCCMaterializeTest is LCCBase {
 
         ILCCVault.Account memory account = vault.getAccount(alice);
         assertTrue(vault.defaultedEpoch(0, alice));
-        assertEq(account.activeMargin, 140e18);
-        assertEq(account.activeCommitment, 280e18);
-        assertEq(margin.balanceOf(treasury), 10e18);
+        assertEq(account.activeMargin, 150e18);
+        assertEq(account.activeCommitment, 300e18);
+        assertEq(margin.balanceOf(treasury), 0);
     }
 
     function testMaturedExiterIsNotDefaultedByLaterCall() public {

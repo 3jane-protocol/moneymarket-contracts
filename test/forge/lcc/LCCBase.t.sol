@@ -159,7 +159,7 @@ contract LCCBase is Test {
             auctionStepCount: 0,
             auctionStepDecayRateBps: 0,
             maxAuctionAwardBps: 0,
-            slashFeeBps: 1_000
+            slashFeeBps: 0
         });
     }
 
@@ -169,6 +169,7 @@ contract LCCBase is Test {
         params.auctionStepCount = 4;
         params.auctionStepDecayRateBps = 5_000;
         params.maxAuctionAwardBps = 10_000;
+        params.slashFeeBps = 1_000;
     }
 
     function _termParams(uint256 maxEpochs) internal view returns (ILCCVault.VaultParams memory params) {

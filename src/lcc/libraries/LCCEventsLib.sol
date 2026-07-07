@@ -60,7 +60,7 @@ library LCCEventsLib {
     /// @param commitment Returned commitment credited (fundingAsset).
     event ReturnPoolCredited(address indexed user, uint256 indexed epoch, uint256 marginAssets, uint256 commitment);
 
-    /// @notice Emitted when unawarded slashed margin is disposed.
+    /// @notice Emitted when unawarded slashed margin is disposed after any auction-award-based fee.
     /// @param epoch Epoch whose slash surplus was disposed.
     /// @param treasuryAmount Margin swept to treasury, including fee and unbacked remainder (marginAsset).
     /// @param returnPool Margin returned to defaulters for lazy attribution (marginAsset).
@@ -140,7 +140,7 @@ library LCCEventsLib {
     /// @param maxAuctionAwardBps New award cap per fundingAsset filled, in bps.
     event AuctionAwardCapUpdated(uint256 maxAuctionAwardBps);
 
-    /// @notice Emitted when the owner updates the slash surplus fee.
-    /// @param slashFeeBps New fee on unawarded slashed margin surplus, in bps.
+    /// @notice Emitted when the owner updates the auction-award-based slash surplus fee.
+    /// @param slashFeeBps New fee on auction-awarded slashed margin, clamped to unawarded surplus, in bps.
     event SlashFeeUpdated(uint256 slashFeeBps);
 }

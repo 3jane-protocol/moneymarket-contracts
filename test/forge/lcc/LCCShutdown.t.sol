@@ -31,9 +31,9 @@ contract LCCShutdownTest is LCCBase {
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertTrue(state.slashFinalized);
         assertFalse(state.slashDisabledByShutdown);
-        assertEq(margin.balanceOf(treasury), 10e18);
-        assertEq(state.returnPool, 90e18);
-        assertEq(state.returnCommitment, 180e18);
+        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(state.returnPool, 100e18);
+        assertEq(state.returnCommitment, 200e18);
     }
 
     function testShutdownDisposalSkipsCapClampAndKeepsFullReturnPool() public {
@@ -55,9 +55,9 @@ contract LCCShutdownTest is LCCBase {
         vault.shutdown();
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(state.returnPool, 90e18);
-        assertEq(state.returnCommitment, 180e18);
-        assertEq(margin.balanceOf(treasury), 10e18);
+        assertEq(state.returnPool, 100e18);
+        assertEq(state.returnCommitment, 200e18);
+        assertEq(margin.balanceOf(treasury), 0);
     }
 
     function testShutdownWithDeadOracleAndPendingAuctionSweepsSurplus() public {

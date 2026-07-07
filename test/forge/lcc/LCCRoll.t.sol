@@ -93,6 +93,7 @@ contract LCCRollTest is LCCBase {
         assertEq(award, 50e18);
 
         state = vault.getEpochState(0);
+        // fee = min(awarded 50e18 x 10%, surplus 50e18) = 5e18.
         assertEq(state.returnPool, 45e18);
         assertEq(state.returnCommitment, 90e18);
         assertEq(margin.balanceOf(treasury), 5e18);

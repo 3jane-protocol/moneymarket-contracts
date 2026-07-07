@@ -59,7 +59,9 @@ library LCCConfigLib {
         // maxEpochs has no lower bound; zero means perpetual.
 
         if (params.auctionStepCount == 0) {
-            if (params.auctionStepDecayRateBps != 0 || params.maxAuctionAwardBps != 0) {
+            // With auctions disabled nothing is ever awarded, so a nonzero decay, award cap, or slash fee is dead
+            // configuration; reject it like the other auction-only parameters.
+            if (params.auctionStepDecayRateBps != 0 || params.maxAuctionAwardBps != 0 || params.slashFeeBps != 0) {
                 revert LCCErrorsLib.InvalidParams();
             }
         } else {

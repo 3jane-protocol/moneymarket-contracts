@@ -60,7 +60,7 @@ interface ILCCVault {
     /// uint32, and its derived step duration is also bounded to uint32.
     /// @param auctionStepDecayRateBps Per-step decay of the protocol's retained pool share, in bps.
     /// @param maxAuctionAwardBps Oracle-valued collateral award cap per fundingAsset filled, in bps; 0 disables.
-    /// @param slashFeeBps Fee on unawarded slashed margin surplus, in bps.
+    /// @param slashFeeBps Fee on auction-awarded slashed margin, clamped to the unawarded surplus, in bps.
     struct VaultParams {
         address owner;
         address marginAsset;
@@ -139,7 +139,7 @@ interface ILCCVault {
     /// @param exitCapBps Per-epoch exit capacity fraction, in bps.
     /// @param minDepositAssets Minimum margin deposit.
     /// @param maxAuctionAwardBps Oracle-valued auction award cap per fundingAsset filled, in bps.
-    /// @param slashFeeBps Fee on unawarded slashed margin surplus, in bps.
+    /// @param slashFeeBps Fee on auction-awarded slashed margin, clamped to the unawarded surplus, in bps.
     struct RiskConfig {
         uint256 protocolCommitmentCap;
         uint256 userCommitmentCap;
@@ -343,7 +343,7 @@ interface ILCCVault {
     /// @dev Reverts above BPS, when set nonzero while auctions are disabled, or while an auction is live.
     /// @param newMaxAuctionAwardBps New award cap per fundingAsset filled, in bps.
     function setMaxAuctionAwardBps(uint256 newMaxAuctionAwardBps) external;
-    /// @notice Owner update of the fee charged on unawarded slashed margin surplus.
+    /// @notice Owner update of the fee charged on auction-awarded slashed margin, clamped to unawarded surplus.
     /// @param newSlashFeeBps New fee in bps.
     function setSlashFeeBps(uint256 newSlashFeeBps) external;
     /// @notice Auction state for an epoch.

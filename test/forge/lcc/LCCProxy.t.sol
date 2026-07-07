@@ -10,7 +10,6 @@ import {LCCBase} from "./LCCBase.t.sol";
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {LCCVaultFactory} from "../../../src/lcc/LCCVaultFactory.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
-import {BPS} from "../../../src/libraries/ConstantsLib.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCVaultV2 is LCCVault {
@@ -75,7 +74,7 @@ contract LCCProxyTest is LCCBase {
 
     function testFactoryVaultsShareImmutableTreasury() public {
         ILCCVault.VaultParams memory params = _params(CAP, CAP);
-        params.slashFeeBps = BPS;
+        params.maxEpochs = 1;
 
         LCCVaultFactory factory = new LCCVaultFactory(owner, address(beacon));
         vm.startPrank(owner);
@@ -98,6 +97,8 @@ contract LCCProxyTest is LCCBase {
         vm.stopPrank();
 
         _finishFunding();
+        oracle.setPrice(0);
+        vm.warp(START + EPOCH);
         first.finalizeEpochSlash(0);
         second.finalizeEpochSlash(0);
 

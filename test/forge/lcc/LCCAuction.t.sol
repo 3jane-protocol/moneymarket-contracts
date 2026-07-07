@@ -80,7 +80,7 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(WINDOW_END + 1);
         vault.finalizeEpochSlash(0);
 
-        assertEq(margin.balanceOf(treasury), 5e18);
+        assertEq(margin.balanceOf(treasury), 0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
@@ -90,7 +90,7 @@ contract LCCAuctionTest is LCCBase {
 
         _setupShortfallAuction();
 
-        assertEq(margin.balanceOf(treasury), 5e18);
+        assertEq(margin.balanceOf(treasury), 0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
@@ -103,7 +103,7 @@ contract LCCAuctionTest is LCCBase {
         vault.finalizeEpochSlash(0);
 
         // Alice's ceil-rounded obligation covered the full 1-wei call; bob still defaulted and was slashed.
-        assertEq(margin.balanceOf(treasury), 5e18);
+        assertEq(margin.balanceOf(treasury), 0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
@@ -137,9 +137,11 @@ contract LCCAuctionTest is LCCBase {
         assertEq(filled2, 25e18);
         assertEq(award2, 18.75e18);
 
-        // Full fill settles immediately: only the slash fee on the remainder goes to treasury.
+        // Full fill settles immediately: the slash fee is charged on awarded margin and capped by the remainder.
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(margin.balanceOf(treasury), (50e18 - award1 - award2) / 10);
+        uint256 feeOnAward = (award1 + award2) / 10;
+        uint256 remainder = 50e18 - award1 - award2;
+        assertEq(margin.balanceOf(treasury), feeOnAward < remainder ? feeOnAward : remainder);
         assertEq(notificationVault.balanceOf(carol), 25e18);
         assertEq(notificationVault.balanceOf(bob), 25e18);
     }
@@ -154,13 +156,13 @@ contract LCCAuctionTest is LCCBase {
 
         vm.warp(WINDOW_END);
         vm.expectEmit(true, false, false, true, address(vault));
-        emit LCCEventsLib.SlashSurplusDisposed(0, 4.5e18, 40.5e18, 81e18);
+        emit LCCEventsLib.SlashSurplusDisposed(0, 0.5e18, 44.5e18, 89e18);
         vm.expectEmit(true, false, false, true, address(vault));
         emit LCCEventsLib.AuctionSettled(0, 10e18, 5e18);
         vault.materializeAccount(carol);
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(margin.balanceOf(treasury), 4.5e18);
+        assertEq(margin.balanceOf(treasury), 0.5e18);
 
         vm.warp(WINDOW_END + 1);
         vm.expectRevert(LCCErrorsLib.AuctionNotLive.selector);
@@ -249,10 +251,10 @@ contract LCCAuctionTest is LCCBase {
         vault.shutdown();
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(margin.balanceOf(treasury), 5e18);
+        assertEq(margin.balanceOf(treasury), 0);
         ILCCVault.EpochState memory epochState = vault.getEpochState(0);
-        assertEq(epochState.returnPool, 45e18);
-        assertEq(epochState.returnCommitment, 90e18);
+        assertEq(epochState.returnPool, 50e18);
+        assertEq(epochState.returnCommitment, 100e18);
 
         vm.expectRevert(LCCErrorsLib.ShutdownActive.selector);
         vm.prank(carol);
@@ -272,7 +274,7 @@ contract LCCAuctionTest is LCCBase {
         vault.openEpochCall(1, 100e18);
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(margin.balanceOf(treasury), 5e18);
+        assertEq(margin.balanceOf(treasury), 0);
 
         vm.warp(START + EPOCH + NORMAL + PRE_CALL);
         vm.prank(alice);

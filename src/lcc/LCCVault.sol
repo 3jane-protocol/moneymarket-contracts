@@ -74,7 +74,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
     /// @dev Mutable risk configuration. Per-epoch exit capacity is `protocolCommitmentCap * exitCapBps / BPS`.
     /// The protocol cap is used as the base (rather than live active commitment) so bucket assignment is
     /// deterministic and not path-dependent. `maxAuctionAwardBps` is the runtime auction-kicker off-switch.
-    /// `slashFeeBps` is charged on unawarded slashed margin surplus.
+    /// `slashFeeBps` is charged on auction-awarded slashed margin and capped by the unawarded surplus.
     RiskConfig internal _riskConfig;
 
     /// @dev Packed aggregate totals. Commitment totals are cap-bounded by `protocolCommitmentCap <=
@@ -267,6 +267,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
     /// @inheritdoc ILCCVault
     function setSlashFeeBps(uint256 newSlashFeeBps) external onlyOwner synced {
         if (newSlashFeeBps > BPS) revert LCCErrorsLib.InvalidParams();
+        // The fee basis is auction-awarded margin, so a nonzero fee on an auction-disabled vault is dead config.
+        if (newSlashFeeBps != 0 && _auctionConfig.auctionStepCount == 0) revert LCCErrorsLib.InvalidParams();
         if (_syncState.pendingAuctionEpochPlusOne != 0) revert LCCErrorsLib.InvalidPhase();
         _riskConfig.slashFeeBps = newSlashFeeBps;
         emit LCCEventsLib.SlashFeeUpdated(newSlashFeeBps);
@@ -818,7 +820,10 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
                 _syncState.pendingAuctionEpochPlusOne = (epoch + 1).toUint64();
                 emit LCCEventsLib.AuctionKicked(epoch, shortfallAmount, slashedMargin);
             } else {
-                _disposeSlashSurplus(epoch, slashedMargin);
+                // No auction was kicked for this epoch, so its recorded award is zero. Reading it from storage
+                // rather than passing a literal keeps the optimizer from specializing a second copy of the
+                // disposal body for the constant-zero argument (~600 bytes of runtime code).
+                _disposeSlashSurplus(epoch, slashedMargin, epochAuctions[epoch].marginAwarded);
             }
         }
 
@@ -843,7 +848,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
         _syncState.pendingAuctionEpochPlusOne = 0;
 
         uint256 remainder = state.marginPool - state.marginAwarded;
-        _disposeSlashSurplus(epoch, remainder);
+        _disposeSlashSurplus(epoch, remainder, state.marginAwarded);
 
         emit LCCEventsLib.AuctionSettled(epoch, state.filledAmount, state.marginAwarded);
     }
@@ -859,17 +864,21 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
         commitment = marginValue.mulDiv(BPS, _assetConfig.marginRatioBps);
     }
 
-    function _disposeSlashSurplus(uint256 epoch, uint256 surplus) internal {
+    /// @dev Charges the slash fee on auction-awarded collateral and caps it by the unawarded surplus being disposed.
+    /// Any surplus not consumed by the fee still needs a going-concern oracle valuation, so full-fee configs can
+    /// revert until the oracle recovers when no auction filled or when a partial-fill lazy settlement leaves surplus;
+    /// wind-down disposal remains oracle-free. When protocol-cap headroom binds, removing the fee does not increase
+    /// defaulter recovery because the cap clamp diverts the excess to treasury; owners manage headroom with risk caps.
+    function _disposeSlashSurplus(uint256 epoch, uint256 surplus, uint256 auctionedMargin) internal {
         if (surplus == 0) return;
 
         EpochState storage state = epochs[epoch];
 
-        uint256 fee = surplus.mulDiv(_riskConfig.slashFeeBps, BPS);
+        uint256 fee = auctionedMargin.mulDiv(_riskConfig.slashFeeBps, BPS).min(surplus);
         uint256 returnPool = surplus - fee;
 
         uint256 returnCommitment;
-        // The oracle is consulted only when there is a return pool to value; a full-fee sweep never
-        // depends on oracle liveness.
+        // The oracle is consulted only when there is a return pool to value.
         if (returnPool != 0) {
             // Wind-down disposal skips the going-concern oracle-revert and protocol-cap clamp so recoverable
             // margin is never bricked or diverted to treasury once no future call can ever use the returned

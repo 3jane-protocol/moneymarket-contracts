@@ -28,9 +28,9 @@ contract LCCReturnPoolTest is LCCBase {
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(margin.balanceOf(treasury), 10e18);
-        assertEq(state.returnPool, 90e18);
-        assertEq(state.returnCommitment, 180e18);
+        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(state.returnPool, 100e18);
+        assertEq(state.returnCommitment, 200e18);
     }
 
     function testHeadroomZeroSendsWholeSurplusToTreasury() public {
@@ -74,7 +74,7 @@ contract LCCReturnPoolTest is LCCBase {
         _finishFunding();
         vault.finalizeEpochSlash(0);
 
-        oracle.setPrice(5_555e18);
+        oracle.setPrice(4_999e18);
         vm.warp(START + EPOCH);
         vault.materializeAccount(alice);
 
@@ -95,8 +95,8 @@ contract LCCReturnPoolTest is LCCBase {
         vault.finalizeEpochSlash(0);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(state.returnPool, 90e18);
-        assertEq(state.returnCommitment, 1_000_080);
+        assertEq(state.returnPool, 100e18);
+        assertEq(state.returnCommitment, 1_111_200);
 
         vault.materializeAccount(alice);
         vault.materializeAccount(bob);
@@ -107,7 +107,7 @@ contract LCCReturnPoolTest is LCCBase {
         assertGt(aliceAccount.activeCommitment, 0);
         assertGt(bobAccount.activeMargin, 0);
         assertGt(bobAccount.activeCommitment, 0);
-        assertEq(aliceAccount.activeMargin + bobAccount.activeMargin, 90e18);
+        assertEq(aliceAccount.activeMargin + bobAccount.activeMargin, 100e18);
         assertLe(vault.totals().activeCommitment - aliceAccount.activeCommitment - bobAccount.activeCommitment, 1);
     }
 
@@ -129,9 +129,9 @@ contract LCCReturnPoolTest is LCCBase {
         vault.materializeAccount(alice);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(state.returnPool, 225_000);
-        assertEq(state.returnCommitment, 1_800_000);
-        assertEq(margin.balanceOf(treasury), 25_000);
+        assertEq(state.returnPool, 250_000);
+        assertEq(state.returnCommitment, 2_000_000);
+        assertEq(margin.balanceOf(treasury), 0);
         assertEq(vault.exitBucketCommitmentByMaturity(maturity), 0);
     }
 

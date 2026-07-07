@@ -66,14 +66,14 @@ contract LCCTerminalTest is LCCBase {
         vm.warp(START + EPOCH);
         uint256 bobBefore = margin.balanceOf(bob);
         vm.prank(bob);
-        assertEq(vault.claimRemainingMargin(bob), 45e18);
+        assertEq(vault.claimRemainingMargin(bob), 50e18);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(state.returnPool, 45e18);
-        assertEq(state.returnCommitment, 90e18);
-        assertEq(margin.balanceOf(treasury), 5e18);
-        assertEq(margin.balanceOf(bob), bobBefore + 45e18);
+        assertEq(state.returnPool, 50e18);
+        assertEq(state.returnCommitment, 100e18);
+        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(margin.balanceOf(bob), bobBefore + 50e18);
 
         uint256 aliceBefore = margin.balanceOf(alice);
         vm.prank(alice);
@@ -120,12 +120,12 @@ contract LCCTerminalTest is LCCBase {
 
         vm.warp(START + EPOCH);
         vm.prank(bob);
-        assertEq(vault.claimRemainingMargin(bob), 0.9e18);
+        assertEq(vault.claimRemainingMargin(bob), 1e18);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(state.returnPool, 90e18);
-        assertEq(state.returnCommitment, 360e18);
-        assertEq(margin.balanceOf(treasury), 10e18);
+        assertEq(state.returnPool, 100e18);
+        assertEq(state.returnCommitment, 400e18);
+        assertEq(margin.balanceOf(treasury), 0);
     }
 
     function testLastEpochEarlyFullFillDoesNotDivertReturnPool() public {
@@ -159,11 +159,11 @@ contract LCCTerminalTest is LCCBase {
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        // Wind-down applies (disposed epoch == maxEpochs-1): the full 90e18 returnPool is preserved for
-        // defaulters rather than clamped to 0 and swept to treasury. Treasury gets only the 10e18 fee.
-        assertEq(state.returnPool, 90e18);
-        assertEq(state.returnCommitment, 360e18);
-        assertEq(margin.balanceOf(treasury), 10e18);
+        // Wind-down applies (disposed epoch == maxEpochs-1): the full 100e18 returnPool is preserved for
+        // defaulters rather than clamped to 0 and swept to treasury. With a zero award, there is no fee basis.
+        assertEq(state.returnPool, 100e18);
+        assertEq(state.returnCommitment, 400e18);
+        assertEq(margin.balanceOf(treasury), 0);
     }
 
     function testOlderEpochSettledInLastEpochClosedIsWindDown() public {
