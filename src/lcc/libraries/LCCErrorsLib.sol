@@ -42,6 +42,8 @@ library LCCErrorsLib {
     error NoExitRequested();
     /// @notice Thrown when claiming an exit before its maturity epoch.
     error ExitNotMature();
+    /// @notice Thrown when requesting an exit before the minimum commitment period has elapsed.
+    error CommitmentNotMature();
     /// @notice Thrown when finalizing a slash for an epoch that is not yet slash-eligible.
     error SlashNotEligible();
     /// @notice Thrown when a wind-down withdrawal is attempted before shutdown or terminal sunset.

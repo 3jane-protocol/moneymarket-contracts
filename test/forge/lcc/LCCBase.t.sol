@@ -155,6 +155,7 @@ contract LCCBase is Test {
             userCommitmentCap: userCap,
             exitCapBps: exitCapBps,
             exitDelayEpochs: 1,
+            minCommitmentEpochs: 0,
             minDepositAssets: 0,
             auctionStepCount: 0,
             auctionStepDecayRateBps: 0,

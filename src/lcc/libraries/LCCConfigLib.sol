@@ -55,6 +55,8 @@ library LCCConfigLib {
         if (params.exitDelayEpochs == 0 || params.exitDelayEpochs > MAX_EXIT_DELAY_EPOCHS) {
             revert LCCErrorsLib.InvalidParams();
         }
+        // Zero disables the minimum-commitment exit gate.
+        if (params.minCommitmentEpochs > MAX_EXIT_DELAY_EPOCHS) revert LCCErrorsLib.InvalidParams();
         if (params.slashFeeBps > BPS) revert LCCErrorsLib.InvalidParams();
         // maxEpochs has no lower bound; zero means perpetual.
 

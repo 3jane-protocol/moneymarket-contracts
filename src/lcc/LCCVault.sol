@@ -174,7 +174,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
         _assetConfig = LCCTypesLib.AssetConfigStorage({
             marginAsset: params.marginAsset,
             marginRatioBps: uint16(params.marginRatioBps),
-            exitDelayEpochs: uint16(params.exitDelayEpochs)
+            exitDelayEpochs: uint16(params.exitDelayEpochs),
+            minCommitmentEpochs: uint16(params.minCommitmentEpochs)
         });
         _auctionConfig = LCCTypesLib.AuctionConfigStorage({
             marginOracle: params.marginOracle,
@@ -323,6 +324,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
         } else {
             _addPending(account, assets, commitment, activationEpoch);
         }
+        // Every deposit restarts the minimum-commitment exit clock from its activation epoch.
+        account.commitmentStartEpoch = activationEpoch;
         _storeAccount(msg.sender, account);
 
         emit LCCEventsLib.DepositCheckpointed(msg.sender, assets, marginValue, commitment, activationEpoch, immediate);
@@ -338,6 +341,9 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
         uint256 accountCommitment = account.activeCommitment;
         uint256 accountMargin = account.activeMargin;
         if (accountCommitment == 0 || accountMargin == 0) revert LCCErrorsLib.InvalidAmount();
+        if (_currentEpoch() < account.commitmentStartEpoch + _assetConfig.minCommitmentEpochs) {
+            revert LCCErrorsLib.CommitmentNotMature();
+        }
 
         maturityEpoch = _assignExitMaturity(accountCommitment);
         if (exitMaturityIndexPlusOne[maturityEpoch] == 0 && exitMaturityList.length >= MAX_EXIT_MATURITY_BUCKETS) {
@@ -583,7 +589,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
             preCallDuration: _clockConfig.preCallDuration,
             fundingDuration: _clockConfig.fundingDuration,
             marginRatioBps: _assetConfig.marginRatioBps,
-            exitDelayEpochs: _assetConfig.exitDelayEpochs
+            exitDelayEpochs: _assetConfig.exitDelayEpochs,
+            minCommitmentEpochs: _assetConfig.minCommitmentEpochs
         });
     }
 
@@ -973,6 +980,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
         account.exitMaturityEpoch = stored.exitMaturityEpoch;
         account.exitClaimed = stored.exitClaimed;
         account.exitMatured = stored.exitMatured;
+        account.commitmentStartEpoch = stored.commitmentStartEpoch;
     }
 
     function _storeAccount(address user, Account memory account) internal {
@@ -989,7 +997,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
             exitMaturityEpoch: account.exitMaturityEpoch.toUint64(),
             exitRequested: account.exitRequested,
             exitClaimed: account.exitClaimed,
-            exitMatured: account.exitMatured
+            exitMatured: account.exitMatured,
+            commitmentStartEpoch: account.commitmentStartEpoch.toUint64()
         });
     }
 

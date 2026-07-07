@@ -92,6 +92,10 @@ contract LCCInvariantHandler is Test {
         if (account.exitRequested && !account.exitClaimed) return;
         if (account.pendingMargin != 0 || account.pendingCommitment != 0) return;
         if (account.activeMargin == 0 || account.activeCommitment == 0) return;
+        if (
+            invariantVault.currentEpoch()
+                < account.commitmentStartEpoch + invariantVault.epochConfig().minCommitmentEpochs
+        ) return;
 
         vm.prank(actor);
         invariantVault.requestExit();
@@ -414,12 +418,15 @@ contract LCCAuctionStatefulInvariantTest is LCCStatefulInvariantTest {
 contract LCCTerminalStatefulInvariantTest is LCCStatefulInvariantTest {
     function setUp() public override {
         LCCBase.setUp();
-        ILCCVault.VaultParams memory params = _auctionParams();
-        params.maxEpochs = 4;
-        _deployVaultWithParams(params);
+        _deployVaultWithParams(_terminalParams());
         _deposit(alice, 100e18);
         _deposit(bob, 100e18);
         _setupHandler();
+    }
+
+    function _terminalParams() internal view virtual returns (ILCCVault.VaultParams memory params) {
+        params = _auctionParams();
+        params.maxEpochs = 4;
     }
 
     function afterInvariant() public {
@@ -451,5 +458,12 @@ contract LCCTerminalStatefulInvariantTest is LCCStatefulInvariantTest {
         assertLe(
             uint256(vault.totals().activeMargin) + uint256(vault.totals().pendingMargin) + claimableMargin, dustBound
         );
+    }
+}
+
+contract LCCMinCommitmentStatefulInvariantTest is LCCTerminalStatefulInvariantTest {
+    function _terminalParams() internal view override returns (ILCCVault.VaultParams memory params) {
+        params = super._terminalParams();
+        params.minCommitmentEpochs = 2;
     }
 }

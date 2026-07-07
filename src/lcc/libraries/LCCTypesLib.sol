@@ -23,6 +23,7 @@ library LCCTypesLib {
         address marginAsset;
         uint16 marginRatioBps;
         uint16 exitDelayEpochs;
+        uint16 minCommitmentEpochs;
     }
 
     /// @notice Packed facility oracle and auction parameters.
@@ -50,6 +51,8 @@ library LCCTypesLib {
         bool exitRequested;
         bool exitClaimed;
         bool exitMatured;
+        // Activation epoch of the account's latest deposit; funding of any kind never touches it.
+        uint64 commitmentStartEpoch;
     }
 
     /// @notice Per-(call epoch, maturity epoch) snapshot of exiting users' exposure, used to carve defaulted
