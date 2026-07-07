@@ -276,7 +276,7 @@ contract LCCAuctionTest is LCCBase {
 
         vm.warp(START + EPOCH + NORMAL + PRE_CALL);
         vm.prank(alice);
-        vault.fundCall();
+        vault.fundCall(false);
 
         vm.warp(START + EPOCH + NORMAL + PRE_CALL + FUNDING);
         vault.finalizeEpochSlash(1);

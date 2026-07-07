@@ -132,8 +132,11 @@ contract LCCInvariantHandler is Test {
             vm.prank(payer);
             invariantVault.fundCall(actor);
         } else {
+            bool roll = (actorSeed / 32) % 2 == 0;
+            ILCCVault.Account memory account = invariantVault.getAccount(actor);
+            if (roll && account.exitRequested && !account.exitClaimed) roll = false;
             vm.prank(actor);
-            invariantVault.fundCall();
+            invariantVault.fundCall(roll);
         }
     }
 

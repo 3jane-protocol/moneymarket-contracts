@@ -207,15 +207,33 @@ contract LCCBase is Test {
     }
 
     function _openCall(uint256 amount) internal {
-        vm.warp(START + NORMAL);
+        _openCallAtEpoch(0, amount);
+    }
+
+    function _openCallAtEpoch(uint256 epoch, uint256 amount) internal {
+        vm.warp(START + EPOCH * epoch + NORMAL);
         vm.prank(owner);
-        vault.openEpochCall(0, amount);
+        vault.openEpochCall(epoch, amount);
     }
 
     function _fund(address user) internal returns (uint256 obligation) {
-        vm.warp(START + NORMAL + PRE_CALL);
+        return _fundAtEpoch(user, 0);
+    }
+
+    function _fundAtEpoch(address user, uint256 epoch) internal returns (uint256 obligation) {
+        vm.warp(START + EPOCH * epoch + NORMAL + PRE_CALL);
         vm.prank(user);
-        obligation = vault.fundCall();
+        obligation = vault.fundCall(false);
+    }
+
+    function _fundRolling(address user) internal returns (uint256 obligation) {
+        return _fundRollingAtEpoch(user, 0);
+    }
+
+    function _fundRollingAtEpoch(address user, uint256 epoch) internal returns (uint256 obligation) {
+        vm.warp(START + EPOCH * epoch + NORMAL + PRE_CALL);
+        vm.prank(user);
+        obligation = vault.fundCall(true);
     }
 
     function _fundFor(address payer, address user) internal returns (uint256 obligation) {
@@ -225,7 +243,11 @@ contract LCCBase is Test {
     }
 
     function _finishFunding() internal {
-        vm.warp(START + NORMAL + PRE_CALL + FUNDING);
+        _finishFundingAtEpoch(0);
+    }
+
+    function _finishFundingAtEpoch(uint256 epoch) internal {
+        vm.warp(START + EPOCH * epoch + NORMAL + PRE_CALL + FUNDING);
     }
 
     function _syncAs(address user) internal {

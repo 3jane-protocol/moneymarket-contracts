@@ -253,7 +253,7 @@ contract LCCExitTest is LCCBase {
         vm.warp(START + NORMAL + PRE_CALL);
         for (uint256 i = 0; i < MAX_EXIT_MATURITY_BUCKETS; ++i) {
             vm.prank(_actor(i));
-            vault.fundCall();
+            vault.fundCall(false);
         }
 
         vm.warp(START + EPOCH + NORMAL);

@@ -226,10 +226,10 @@ interface ILCCVault {
     /// @param fundedAmount Cumulative funded obligations this epoch (fundingAsset). May exceed `callAmount` by up to
     /// ~(number of funding accounts - 1) units of rounding dust from per-account ceil obligations.
     /// @param marginReleased Cumulative margin released to funders this epoch (marginAsset).
-    /// @param fundedUsersRemainingMargin Margin of fully-funded users that stays callable past this call
+    /// @param fundedUsersRemainingMargin Margin of fully-funded users retained for settlement after this call
     /// (marginAsset).
-    /// @param fundedUsersRemainingCommitment Commitment of fully-funded users that stays active past this call
-    /// (fundingAsset).
+    /// @param fundedUsersRemainingCommitment Settlement counter for fully-funded users' commitment net of funded
+    /// obligations, not a live-position aggregate (fundingAsset).
     /// @param slashFinalized True once slashing for this epoch has been finalized.
     /// @param slashDisabledByShutdown True if shutdown landed before/within this epoch's funding window, so no
     /// slash is taken.
@@ -312,12 +312,21 @@ interface ILCCVault {
     function openEpochCall(uint256 epoch, uint256 callAmount) external;
     /// @notice Funds the caller's own current-epoch obligation, all-or-nothing.
     /// @dev The Funding phase is the timing guard. A delayed transaction landing in another epoch's Funding phase
-    /// would need to cross epoch end, Normal, and PreCall first.
+    /// would need to cross epoch end, Normal, and PreCall first. With `roll = false`, funding amortizes the position
+    /// by releasing proportional margin and reducing callable commitment. With `roll = true`, funding pays the
+    /// obligation and delivers wrapped USD3n while retaining the caller's full margin and full callable commitment;
+    /// that exposure re-arms each epoch, the caller's pro-rata share of successive calls grows as amortizers decay,
+    /// and lifetime funding obligations are unbounded while rolling. A live exiter cannot roll and reverts with
+    /// `ExitInProgress`; a live exiter may still fund with `roll = false`.
+    /// @param roll Whether to retain full margin and commitment after paying this call.
     /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
-    function fundCall() external returns (uint256 obligationAmount);
+    function fundCall(bool roll) external returns (uint256 obligationAmount);
     /// @notice Funds `user`'s current-epoch obligation with funding supplied by the caller (push-based).
     /// @dev The caller pays; released margin, wrapped USD3n delivery, and funded status accrue to `user`. The
-    /// Funding phase is the timing guard, as on {fundCall}.
+    /// Funding phase is the timing guard, as on {fundCall}. Push funding always amortizes because the payer must not
+    /// control whether the user's margin remains locked and callable. A push fund can front-run and deny the user's
+    /// intended roll for that epoch: the payer donates the obligation, the user receives wrapped USD3n and released
+    /// margin, and the user can restore commitment by re-depositing the released margin.
     /// @param user Account whose obligation is funded.
     /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
     function fundCall(address user) external returns (uint256 obligationAmount);

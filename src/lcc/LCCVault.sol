@@ -445,8 +445,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
     }
 
     /// @inheritdoc ILCCVault
-    function fundCall() external nonReentrant synced returns (uint256 obligationAmount) {
-        return _fund(msg.sender, msg.sender);
+    function fundCall(bool roll) external nonReentrant synced returns (uint256 obligationAmount) {
+        return _fund(msg.sender, msg.sender, roll);
     }
 
     /// @inheritdoc ILCCVault
@@ -454,7 +454,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
     /// status always accrue to `user`.
     function fundCall(address user) external nonReentrant synced returns (uint256 obligationAmount) {
         if (user == address(0)) revert LCCErrorsLib.ZeroAddress();
-        return _fund(msg.sender, user);
+        return _fund(msg.sender, user, false);
     }
 
     /// @inheritdoc ILCCVault
@@ -616,7 +616,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
 
     /* FUNDING INTERNALS */
 
-    function _fund(address payer, address user) internal returns (uint256 obligationAmount) {
+    function _fund(address payer, address user, bool roll) internal returns (uint256 obligationAmount) {
         uint256 epoch = _currentEpoch();
         if (_phaseAt(block.timestamp) != Phase.Funding) revert LCCErrorsLib.InvalidPhase();
 
@@ -630,15 +630,18 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
         uint256 activeCommitment = account.activeCommitment;
         obligationAmount = _obligation(state, activeCommitment);
         if (obligationAmount == 0) revert LCCErrorsLib.InvalidAmount();
+        if (roll && account.exitRequested && !account.exitClaimed) revert LCCErrorsLib.ExitInProgress();
 
-        uint256 releasedMargin = activeMargin.mulDiv(obligationAmount, activeCommitment);
+        uint256 releasedMargin = roll ? 0 : activeMargin.mulDiv(obligationAmount, activeCommitment);
         uint256 remainingMargin = activeMargin - releasedMargin;
         uint256 remainingCommitment = activeCommitment - obligationAmount;
 
         _recordExitingFund(epoch, account, obligationAmount, releasedMargin, remainingMargin, remainingCommitment);
 
-        account.activeMargin = remainingMargin;
-        account.activeCommitment = remainingCommitment;
+        if (!roll) {
+            account.activeMargin = remainingMargin;
+            account.activeCommitment = remainingCommitment;
+        }
         _storeAccount(user, account);
         fundedEpoch[epoch][user] = true;
 
@@ -647,12 +650,12 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
         state.fundedUsersRemainingMargin += remainingMargin;
         state.fundedUsersRemainingCommitment += remainingCommitment;
 
-        _decreaseGlobalActive(releasedMargin, obligationAmount);
+        if (!roll) _decreaseGlobalActive(releasedMargin, obligationAmount);
 
         fundingAsset.safeTransferFrom(payer, address(this), obligationAmount);
         _deliverWrapped(user, obligationAmount);
 
-        IERC20(_assetConfig.marginAsset).safeTransfer(user, releasedMargin);
+        if (releasedMargin != 0) IERC20(_assetConfig.marginAsset).safeTransfer(user, releasedMargin);
 
         emit LCCEventsLib.CallFunded(user, epoch, obligationAmount);
         emit LCCEventsLib.MarginReleased(user, epoch, releasedMargin);

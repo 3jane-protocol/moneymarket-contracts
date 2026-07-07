@@ -58,8 +58,11 @@ library LCCTypesLib {
     /// @param commitment Exiting commitment exposed to the call at snapshot (fundingAsset).
     /// @param fundedAmount Of that exposure, the portion funded before maturity (fundingAsset).
     /// @param marginReleased Margin released to those funders (marginAsset).
-    /// @param fundedUsersRemainingMargin Remaining callable margin of those funders (marginAsset).
-    /// @param fundedUsersRemainingCommitment Remaining active commitment of those funders (fundingAsset).
+    /// @param fundedUsersRemainingMargin Remaining margin of those funders after their proportional release
+    /// (marginAsset).
+    /// @param fundedUsersRemainingCommitment Remaining commitment of those funders after funding (fundingAsset).
+    /// Rolled funding never appears in this struct — a live exiter cannot roll — so unlike the epoch-level
+    /// counter these are exact live-position values, which the slash carve-out relies on.
     /// @param listed Whether this maturity has been recorded for the call (avoids duplicate tracking).
     struct ExitExposure {
         uint256 margin;
