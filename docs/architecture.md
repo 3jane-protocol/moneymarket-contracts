@@ -50,6 +50,7 @@ This repository extends Morpho Blue with 3Jane credit primitives and USD3/sUSD3 
 - Trust model: the vault owner and margin oracle are fully trusted; the margin asset must be a standard ERC20 (no fee-on-transfer/rebasing). The beacon owner can replace logic under every beacon-backed LCC vault; this fleet-upgrade authority is mitigated by the 7-day timelock delay.
 - Operational requirement: each LCC vault must be added to USD3's `supplyCapExempt` list so funding and auction-fill deposits bypass supply-cap headroom and first-time minimum deposits. If USD3's regular whitelist is enabled, the vault must also be whitelisted there. A zero USD3 supply cap remains an emergency pause and blocks even exempt vaults. The legacy general whitelist machinery is expected to stay disabled in production and is a deferred bytecode-size simplification candidate.
 - Upgrade safety checklist: never reorder storage variables or base contracts; append new state into `__gap`; treat the packed structs in `LCCTypesLib` as upgrade-frozen layout; keep `_disableInitializers()` in implementation constructors; re-link `LCCAuctionLib` whenever a new implementation is deployed. Reviewers should compare `forge inspect LCCVault storageLayout` output for every implementation change before upgrade approval.
+- Audit-oriented walkthrough with diagrams: `src/lcc/README.md` (phase machine, funding/slash/auction flows, worked examples).
 
 ## USD3 / sUSD3 Domain
 
