@@ -160,6 +160,13 @@ contract SetProtocolConfigSafe is Script, SafeHelper, TimelockHelper {
         );
         _checkAndAddConfig(
             protocolConfig,
+            "SUSD3_NOMINAL_BACKING_FLOOR",
+            ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR,
+            "sUSD3 nominal backing floor (USDC)",
+            true
+        );
+        _checkAndAddConfig(
+            protocolConfig,
             "FULL_MARKDOWN_DURATION",
             ProtocolConfigLib.FULL_MARKDOWN_DURATION,
             "Full markdown duration",
@@ -178,7 +185,7 @@ contract SetProtocolConfigSafe is Script, SafeHelper, TimelockHelper {
 
         console2.log("=== Configuration Updates ===");
         for (uint256 i = 0; i < updates.length; i++) {
-            console2.log("%d. %s", i + 1, updates[i].description);
+            _logConfigUpdate(i);
 
             // Add to batch
             bytes memory setConfigCall = abi.encodeCall(IProtocolConfig.setConfig, (updates[i].key, updates[i].value));
@@ -255,7 +262,7 @@ contract SetProtocolConfigSafe is Script, SafeHelper, TimelockHelper {
 
         console2.log("=== Configuration Updates ===");
         for (uint256 i = 0; i < updates.length; i++) {
-            console2.log("%d. %s", i + 1, updates[i].description);
+            _logConfigUpdate(i);
         }
         console2.log("");
 
@@ -350,7 +357,7 @@ contract SetProtocolConfigSafe is Script, SafeHelper, TimelockHelper {
 
         console2.log("=== Configuration Updates ===");
         for (uint256 i = 0; i < updates.length; i++) {
-            console2.log("%d. %s", i + 1, updates[i].description);
+            _logConfigUpdate(i);
         }
         console2.log("");
 
@@ -420,7 +427,7 @@ contract SetProtocolConfigSafe is Script, SafeHelper, TimelockHelper {
 
         console2.log("=== Configuration Updates ===");
         for (uint256 i = 0; i < updates.length; i++) {
-            console2.log("%d. %s", i + 1, updates[i].description);
+            _logConfigUpdate(i);
         }
         console2.log("");
 
@@ -538,6 +545,13 @@ contract SetProtocolConfigSafe is Script, SafeHelper, TimelockHelper {
         );
         _checkAndAddConfig(
             protocolConfig,
+            "SUSD3_NOMINAL_BACKING_FLOOR",
+            ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR,
+            "sUSD3 nominal backing floor (USDC)",
+            true
+        );
+        _checkAndAddConfig(
+            protocolConfig,
             "FULL_MARKDOWN_DURATION",
             ProtocolConfigLib.FULL_MARKDOWN_DURATION,
             "Full markdown duration",
@@ -577,6 +591,14 @@ contract SetProtocolConfigSafe is Script, SafeHelper, TimelockHelper {
             return keccak256(abi.encodePacked("ProtocolConfig Update: ", packed, nonce));
         }
         return keccak256(abi.encodePacked("ProtocolConfig Update: ", packed));
+    }
+
+    /**
+     * @notice Log a config update with the raw keccak key for reference
+     */
+    function _logConfigUpdate(uint256 index) private view {
+        console2.log("%d. %s", index + 1, updates[index].description);
+        console2.log("   key: %s", vm.toString(updates[index].key));
     }
 
     /**
@@ -637,7 +659,7 @@ contract SetProtocolConfigSafe is Script, SafeHelper, TimelockHelper {
                 string(abi.encodePacked(baseDesc, ": ", _formatUSDC(previousValue), unicode" → ", _formatUSDC(value)));
         } else if (
             keyHash == keccak256("MAX_CREDIT_LINE") || keyHash == keccak256("MIN_CREDIT_LINE")
-                || keyHash == keccak256("MIN_BORROW")
+                || keyHash == keccak256("MIN_BORROW") || keyHash == keccak256("SUSD3_NOMINAL_BACKING_FLOOR")
         ) {
             // Format as USDC values
             return
