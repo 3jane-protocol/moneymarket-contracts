@@ -11,13 +11,11 @@ import {
 } from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {console2} from "forge-std/console2.sol";
-import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
-import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
 
 /**
  * @title BypassAttempts
- * @notice Tests for commitment and lock period bypass attempts
- * @dev Ensures that time-based restrictions cannot be circumvented
+ * @notice Tests for sUSD3 lock and cooldown bypass attempts
+ * @dev Ensures that sUSD3 time-based restrictions cannot be circumvented
  */
 contract BypassAttempts is Setup {
     USD3 public usd3Strategy;
@@ -48,169 +46,16 @@ contract BypassAttempts is Setup {
         susd3Strategy = sUSD3(address(susd3Proxy));
 
         // Link strategies
-        // Set commitment period via protocol config
-        address morphoAddress = address(usd3Strategy.morphoCredit());
-        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
-        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
-
-        // Configure commitment and lock periods
         vm.prank(management);
         usd3Strategy.setSUSD3(address(susd3Strategy));
 
-        // Set config as the owner (test contract in this case)
-        MockProtocolConfig(protocolConfigAddress).setConfig(USD3_COMMITMENT_TIME, 7 days);
-
         vm.prank(management);
         usd3Strategy.setMinDeposit(100e6);
-
-        // Set lock duration via protocol config (90 days is already the default)
-        // No need to change it unless we want a different value
 
         // Setup test users
         airdrop(asset, alice, 10000e6);
         airdrop(asset, bob, 10000e6);
         airdrop(asset, charlie, 10000e6);
-    }
-
-    // USD3 Commitment Bypass Tests
-
-    function test_cannot_bypass_commitment_with_mint() public {
-        // Alice deposits using deposit()
-        vm.startPrank(alice);
-        asset.approve(address(usd3Strategy), 1000e6);
-        usd3Strategy.deposit(1000e6, alice);
-
-        // Alice cannot withdraw before commitment period
-        vm.expectRevert();
-        usd3Strategy.withdraw(100e6, alice, alice);
-        vm.stopPrank();
-
-        // Bob tries to bypass using mint()
-        vm.startPrank(bob);
-        asset.approve(address(usd3Strategy), 1000e6);
-        uint256 sharesToMint = ITokenizedStrategy(address(usd3Strategy)).previewDeposit(1000e6);
-        usd3Strategy.mint(sharesToMint, bob);
-
-        // Bob also cannot withdraw before commitment period
-        vm.expectRevert();
-        usd3Strategy.withdraw(100e6, bob, bob);
-        vm.stopPrank();
-
-        // Both should have commitment timestamps set
-        assertGt(usd3Strategy.depositTimestamp(alice), 0);
-        assertGt(usd3Strategy.depositTimestamp(bob), 0);
-    }
-
-    function test_cannot_bypass_commitment_with_transferFrom() public {
-        // Alice deposits and gets shares
-        vm.startPrank(alice);
-        asset.approve(address(usd3Strategy), 1000e6);
-        usd3Strategy.deposit(1000e6, alice);
-        uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
-        vm.stopPrank();
-
-        // Alice approves Bob to spend her shares
-        vm.prank(alice);
-        IERC20(address(usd3Strategy)).approve(bob, aliceShares);
-
-        // Bob CANNOT transfer Alice's shares during commitment
-        vm.prank(bob);
-        vm.expectRevert(bytes("!transfer"));
-        IERC20(address(usd3Strategy)).transferFrom(alice, bob, aliceShares);
-
-        // Verify Alice still has her shares
-        assertEq(IERC20(address(usd3Strategy)).balanceOf(alice), aliceShares);
-        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), 0);
-
-        // Skip commitment period
-        skip(7 days);
-
-        // Now Bob CAN transfer
-        vm.prank(bob);
-        IERC20(address(usd3Strategy)).transferFrom(alice, bob, aliceShares);
-        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), aliceShares);
-        assertEq(IERC20(address(usd3Strategy)).balanceOf(alice), 0);
-    }
-
-    function test_commitment_extends_on_subsequent_deposits() public {
-        // Alice makes first deposit
-        vm.startPrank(alice);
-        asset.approve(address(usd3Strategy), 2000e6);
-        usd3Strategy.deposit(500e6, alice);
-        uint256 firstTimestamp = usd3Strategy.depositTimestamp(alice);
-        vm.stopPrank();
-
-        // Time passes but not enough to complete commitment
-        skip(3 days);
-
-        // Alice makes second deposit
-        vm.prank(alice);
-        usd3Strategy.deposit(500e6, alice);
-        uint256 secondTimestamp = usd3Strategy.depositTimestamp(alice);
-
-        // Commitment should be extended
-        assertGt(secondTimestamp, firstTimestamp);
-
-        // Alice still cannot withdraw
-        vm.prank(alice);
-        vm.expectRevert();
-        usd3Strategy.withdraw(100e6, alice, alice);
-
-        // After full commitment from second deposit
-        skip(7 days);
-
-        // Now Alice can withdraw
-        vm.prank(alice);
-        uint256 withdrawn = usd3Strategy.withdraw(100e6, alice, alice);
-        assertGt(withdrawn, 0);
-    }
-
-    function test_commitment_clears_on_full_withdrawal() public {
-        // Alice deposits
-        vm.startPrank(alice);
-        asset.approve(address(usd3Strategy), 1000e6);
-        usd3Strategy.deposit(1000e6, alice);
-        assertGt(usd3Strategy.depositTimestamp(alice), 0);
-        vm.stopPrank();
-
-        // Wait for commitment period
-        skip(7 days);
-
-        // Alice withdraws everything she can
-        vm.startPrank(alice);
-        uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
-
-        // Check maximum redeemable (accounts for subordination ratio)
-        uint256 maxRedeemable = ITokenizedStrategy(address(usd3Strategy)).maxRedeem(alice);
-
-        if (maxRedeemable == aliceShares) {
-            // Can withdraw everything
-            IERC20(address(usd3Strategy)).approve(address(usd3Strategy), aliceShares);
-            usd3Strategy.redeem(aliceShares, alice, alice);
-
-            // Commitment timestamp should be cleared
-            assertEq(usd3Strategy.depositTimestamp(alice), 0);
-            assertEq(IERC20(address(usd3Strategy)).balanceOf(alice), 0);
-        } else if (maxRedeemable > 0) {
-            // Can only withdraw partial amount due to subordination limits
-            IERC20(address(usd3Strategy)).approve(address(usd3Strategy), maxRedeemable);
-            usd3Strategy.redeem(maxRedeemable, alice, alice);
-
-            // Check remaining balance
-            uint256 remainingShares = IERC20(address(usd3Strategy)).balanceOf(alice);
-            if (remainingShares == 0) {
-                // Fully withdrawn
-                assertEq(usd3Strategy.depositTimestamp(alice), 0);
-            } else {
-                // Still has shares, timestamp should remain
-                assertGt(usd3Strategy.depositTimestamp(alice), 0);
-            }
-        } else {
-            // Cannot withdraw anything due to subordination limits
-            assertEq(maxRedeemable, 0, "Should not be able to withdraw");
-        }
-
-        vm.stopPrank();
     }
 
     // sUSD3 Lock Period Bypass Tests
@@ -411,42 +256,11 @@ contract BypassAttempts is Setup {
         assertEq(remainingCooldownShares, totalShares / 4); // Half minus quarter
     }
 
-    function test_cannot_game_commitment_with_multiple_accounts() public {
-        // Alice deposits with commitment
-        vm.startPrank(alice);
-        asset.approve(address(usd3Strategy), 1000e6);
-        usd3Strategy.deposit(1000e6, alice);
-        vm.stopPrank();
-
-        // Alice cannot withdraw immediately
-        vm.prank(alice);
-        vm.expectRevert();
-        usd3Strategy.withdraw(100e6, alice, alice);
-
-        // Alice CANNOT transfer shares during commitment period
-        vm.prank(alice);
-        vm.expectRevert(bytes("!transfer"));
-        IERC20(address(usd3Strategy)).transfer(bob, 500e6);
-
-        // Verify shares didn't move
-        assertGt(IERC20(address(usd3Strategy)).balanceOf(alice), 0);
-        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), 0);
-
-        // After commitment period, transfers work
-        skip(7 days);
-        vm.prank(alice);
-        IERC20(address(usd3Strategy)).transfer(bob, 500e6);
-        assertEq(IERC20(address(usd3Strategy)).balanceOf(bob), 500e6);
-    }
-
     function test_cannot_transfer_during_lock_period() public {
         // Setup: Get USD3 first
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), 1000e6);
         usd3Strategy.deposit(1000e6, alice);
-
-        // Wait for commitment to pass
-        skip(7 days);
 
         // Deposit USD3 into sUSD3
         IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 150e6);
@@ -473,8 +287,6 @@ contract BypassAttempts is Setup {
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), 1000e6);
         usd3Strategy.deposit(1000e6, alice);
-        skip(7 days); // Pass USD3 commitment
-
         IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 150e6);
         susd3Strategy.deposit(150e6, alice);
         skip(90 days); // Pass sUSD3 lock
@@ -527,8 +339,6 @@ contract BypassAttempts is Setup {
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), 1000e6);
         usd3Strategy.deposit(1000e6, alice);
-        skip(7 days); // Pass USD3 commitment period
-
         // Alice deposits into sUSD3 and gets locked
         IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 150e6);
         susd3Strategy.deposit(150e6, alice);
@@ -625,8 +435,6 @@ contract BypassAttempts is Setup {
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), 1000e6);
         usd3Strategy.deposit(1000e6, alice);
-        skip(7 days); // Pass USD3 commitment
-
         IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 150e6);
         susd3Strategy.deposit(150e6, alice);
         uint256 aliceShares = IERC20(address(susd3Strategy)).balanceOf(alice);

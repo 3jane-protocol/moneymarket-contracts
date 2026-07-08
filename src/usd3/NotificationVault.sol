@@ -16,9 +16,6 @@ import {IUSD3} from "./interfaces/IUSD3.sol";
  *      construction (one implementation per USD3).
  *
  *      Trust assumptions:
- *      - The underlying USD3 must remain commitment-free (`minCommitmentTime() == 0`), enforced at
- *        construction. If governance later re-enables a commitment, wrap/unwrap flows can be blocked by USD3's
- *        transfer hook.
  *      - USD3 sent directly to the vault is intentionally orphaned (no sweep). This is the same property
  *        that makes the wrapper immune to donation / share-price-inflation attacks.
  */
@@ -48,16 +45,14 @@ contract NotificationVault is BaseHooksUpgradeable {
     error NoActiveCooldown();
     error InsufficientShares();
     error ReportsDisabled();
-    error Usd3CommitmentEnabled();
 
     /// @param _usd3 The USD3 strategy this vault wraps; bound for the life of the implementation.
-    /// @dev Sets the `usd3` immutable and enforces the commitment-free precondition. Immutables live in the
-    ///      implementation bytecode and are read correctly through the proxy.
+    /// @dev Sets the `usd3` immutable. Immutables live in the implementation bytecode and are read correctly
+    ///      through the proxy.
     /// @custom:oz-upgrades-unsafe-allow constructor state-variable-immutable
     constructor(address _usd3) {
         _disableInitializers();
         if (_usd3 == address(0)) revert InvalidAddress();
-        if (IUSD3(_usd3).minCommitmentTime() != 0) revert Usd3CommitmentEnabled();
         usd3 = IUSD3(_usd3);
     }
 

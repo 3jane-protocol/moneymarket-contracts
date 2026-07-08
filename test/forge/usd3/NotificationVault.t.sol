@@ -5,7 +5,6 @@ import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
 import {NotificationVault} from "../../../src/usd3/NotificationVault.sol";
 import {INotificationVault} from "../../../src/usd3/interfaces/INotificationVault.sol";
 import {USD3} from "../../../src/usd3/USD3.sol";
-import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {
     TransparentUpgradeableProxy
@@ -91,14 +90,6 @@ contract NotificationVaultTest is Setup {
             abi.encodeCall(NotificationVault.initialize, (address(0), keeper, COOLDOWN, WINDOW));
         vm.expectRevert(INotificationVault.InvalidAddress.selector);
         new TransparentUpgradeableProxy(address(implementation), address(proxyAdmin), zeroManagement);
-    }
-
-    function test_constructorRejectsCommittedUsd3() public {
-        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
-        testProtocolConfig.setConfig(USD3_COMMITMENT_TIME, 1 days);
-
-        vm.expectRevert(INotificationVault.Usd3CommitmentEnabled.selector);
-        new NotificationVault(address(usd3));
     }
 
     function test_noCooldownSetters() public {

@@ -671,7 +671,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
     }
 
     /// @dev Delivers funded USDC as wrapped USD3n. The LCC vault is the USD3 receiver, so deployments must grant
-    /// the vault the USD3 supply-cap exemption and, when enabled, the regular USD3 whitelist.
+    /// the vault the USD3 supply-cap exemption.
     function _deliverWrapped(address receiver, uint256 fundingAmount) internal {
         uint256 usd3Assets = usd3.deposit(fundingAmount, address(this));
         notificationVault.deposit(usd3Assets, receiver);

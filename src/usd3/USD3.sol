@@ -10,7 +10,7 @@ import {MorphoBalancesLib} from "../libraries/periphery/MorphoBalancesLib.sol";
 import {SharesMathLib} from "../libraries/SharesMathLib.sol";
 import {IERC4626} from "../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Pausable} from "../../lib/openzeppelin/contracts/utils/Pausable.sol";
-import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
+import {TokenizedStrategyStorageLib} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 
@@ -36,8 +36,7 @@ interface IWaUSDC is IERC4626 {
  * - Configurable deployment ratio to credit markets (maxOnCredit)
  * - Automatic yield distribution to sUSD3 via performance fees
  * - Loss absorption through direct share burning of sUSD3 holdings
- * - Commitment period enforcement for deposits
- * - Optional whitelist for controlled access
+ * - Supply-cap exemptions for protocol-controlled deposit receivers
  * - Dynamic fee adjustment via ProtocolConfig integration
  *
  * Yield Distribution Mechanism:
@@ -83,21 +82,16 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Used for loss absorption and yield distribution
     address public sUSD3;
 
-    /// @notice Whether whitelist is enforced for deposits
-    bool public whitelistEnabled;
+    bool private __deprecated_whitelistEnabled;
 
-    /// @notice Whitelist status for addresses
-    mapping(address => bool) public whitelist;
+    mapping(address => bool) private __deprecated_whitelist;
 
-    /// @notice Whitelist of depositors allowed to 3rd party deposit
-    mapping(address => bool) public depositorWhitelist;
+    mapping(address => bool) private __deprecated_depositorWhitelist;
 
     /// @notice Minimum deposit amount required
     uint256 public minDeposit;
 
-    /// @notice Timestamp of last deposit for each user
-    /// @dev Used to enforce commitment periods
-    mapping(address => uint256) public depositTimestamp;
+    mapping(address => uint256) private __deprecated_depositTimestamp;
 
     /// @notice Receivers that bypass USD3 supply-cap headroom and first-time minimum-deposit checks.
     mapping(address => bool) public supplyCapExempt;
@@ -106,8 +100,6 @@ contract USD3 is BaseHooksUpgradeable {
                             EVENTS
     //////////////////////////////////////////////////////////////*/
     event SUSD3StrategyUpdated(address oldStrategy, address newStrategy);
-    event WhitelistUpdated(address indexed user, bool allowed);
-    event DepositorWhitelistUpdated(address indexed depositor, bool allowed);
     event SupplyCapExemptUpdated(address indexed account, bool exempt);
     event MinDepositUpdated(uint256 newMinDeposit);
     event TrancheShareSynced(uint256 trancheShare);
@@ -138,48 +130,15 @@ contract USD3 is BaseHooksUpgradeable {
         require(params.loanToken != address(0), "Invalid market");
         _marketParams = params;
 
+        address underlyingAsset = WAUSDC.asset();
+
         // Initialize BaseStrategy with management as temporary performanceFeeRecipient
         // It will be updated to sUSD3 address after sUSD3 is deployed
-        __BaseStrategy_init(params.loanToken, "USD3", _management, _management, _keeper);
+        __BaseStrategy_init(underlyingAsset, "USD3", _management, _management, _keeper);
 
-        // Approve Morpho
-        IERC20(asset).forceApprove(address(morphoCredit), type(uint256).max);
+        IERC20(underlyingAsset).forceApprove(address(WAUSDC), type(uint256).max);
+        IERC20(params.loanToken).forceApprove(address(morphoCredit), type(uint256).max);
     }
-
-    /**
-     * @notice Legacy v2 migration hook that switched the strategy asset from waUSDC to USDC.
-     * @dev This function was used during the one-time migration from the previous USD3 implementation.
-     *      The migration is complete and this reinitializer is already consumed in production.
-     *      Historical migration sequence:
-     *      1. Set performance fee to 0 (via setPerformanceFee)
-     *      2. Set profit unlock time to 0 (via setProfitMaxUnlockTime)
-     *      3. Call report() on OLD implementation to finalize state before upgrade
-     *      4. Upgrade proxy to new implementation
-     *      5. Call reinitialize() to switch the underlying asset
-     *      6. Call report() on NEW implementation to update totalAssets with new asset
-     *      7. Call syncTrancheShare() to restore performance fees
-     *      8. Restore profit unlock time to previous value
-     *      This ensures totalAssets reflects the true USDC value before users can withdraw.
-     *      Without both report() calls, users would lose value as totalAssets would not
-     *      account for waUSDC appreciation or the asset switch.
-     */
-    function reinitialize() external reinitializer(2) {
-        address usdc = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-        asset = ERC20(usdc);
-        TokenizedStrategyStorageLib.StrategyData storage strategyData = TokenizedStrategyStorageLib.getStrategyStorage();
-        strategyData.asset = ERC20(usdc);
-        IERC20(usdc).forceApprove(address(WAUSDC), type(uint256).max);
-    }
-
-    // /**
-    //  * @notice Legacy restart hook for the completed v3 emergency restart.
-    //  * @dev This reinitializer was consumed in production during the controlled
-    //  *      ProxyAdmin.upgradeAndCall restart flow and is retained only for
-    //  *      deployed implementation compatibility.
-    //  */
-    // function restartStrategy() external reinitializer(3) {
-    //     TokenizedStrategyStorageLib.getStrategyStorage().shutdown = false;
-    // }
 
     /*//////////////////////////////////////////////////////////////
                         EXTERNAL VIEW FUNCTIONS
@@ -466,13 +425,12 @@ contract USD3 is BaseHooksUpgradeable {
                     PUBLIC VIEW FUNCTIONS (OVERRIDES)
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Returns the withdrawable assets for an owner after liquidity, commitment-time, and floor checks.
+    /// @notice Returns the withdrawable assets for an owner after liquidity and floor checks.
     /// @dev The bps floor is a scaling/rate knob applied to then-current total assets, so repeated redemptions drain
     /// geometrically toward the nominal floor. The nominal floor is the hard ring-fence and should be set alongside
     /// the bps floor whenever a fixed asset amount must remain reserved.
-    /// @param _owner Address to check limit for
     /// @return Maximum amount that can be withdrawn
-    function availableWithdrawLimit(address _owner) public view override returns (uint256) {
+    function availableWithdrawLimit(address) public view override returns (uint256) {
         // Get available liquidity first
         uint256 idleAsset = asset.balanceOf(address(this));
         uint256 totalAssets = TokenizedStrategy.totalAssets();
@@ -508,15 +466,6 @@ contract USD3 is BaseHooksUpgradeable {
             return availableLiquidity;
         }
 
-        // Check commitment time
-        uint256 commitTime = minCommitmentTime();
-        if (commitTime > 0) {
-            uint256 depositTime = depositTimestamp[_owner];
-            if (depositTime > 0 && block.timestamp < depositTime + commitTime) {
-                return 0; // Commitment period not met
-            }
-        }
-
         IProtocolConfig config = _protocolConfig();
         uint256 nominalFloor = config.config(ProtocolConfigLib.USD3_REDEMPTION_FLOOR);
         uint256 floorBps = config.config(ProtocolConfigLib.USD3_REDEMPTION_FLOOR_BPS);
@@ -527,15 +476,10 @@ contract USD3 is BaseHooksUpgradeable {
         return Math.min(availableLiquidity, Math.saturatingSub(totalAssets, floor));
     }
 
-    /// @dev Returns available deposit limit, enforcing whitelist and supply cap
+    /// @dev Returns available deposit limit, enforcing borrower restrictions and supply cap
     /// @param _owner Address to check limit for
     /// @return Maximum amount that can be deposited
     function availableDepositLimit(address _owner) public view override returns (uint256) {
-        // Check whitelist if enabled
-        if (whitelistEnabled && !whitelist[_owner]) {
-            return 0;
-        }
-
         uint256 maxDeposit = WAUSDC.maxDeposit(address(this));
 
         if (Pausable(address(WAUSDC)).paused() || maxDeposit == 0) {
@@ -566,7 +510,7 @@ contract USD3 is BaseHooksUpgradeable {
                         HOOKS IMPLEMENTATION
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Pre-deposit hook to enforce minimum deposit and track commitment time
+    /// @dev Pre-deposit hook to enforce the first-time minimum deposit
     function _preDepositHook(uint256 assets, uint256 shares, address receiver) internal override {
         if (assets == 0 && shares > 0) {
             assets = TokenizedStrategy.previewMint(shares);
@@ -581,26 +525,6 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 currentBalance = TokenizedStrategy.balanceOf(receiver);
         if (currentBalance == 0 && !supplyCapExempt[receiver]) {
             require(assets >= minDeposit, "<min");
-        }
-
-        // Prevent commitment bypass and griefing attacks
-        if (minCommitmentTime() > 0) {
-            // Only allow self-deposits or whitelisted depositors
-            require(msg.sender == receiver || depositorWhitelist[msg.sender], "!allowed");
-
-            // Always extend commitment for valid deposits
-            depositTimestamp[receiver] = block.timestamp;
-        }
-    }
-
-    /// @dev Post-withdraw hook to clear commitment on full exit
-    function _postWithdrawHook(uint256 assets, uint256 shares, address receiver, address owner, uint256 maxLoss)
-        internal
-        override
-    {
-        // Clear commitment timestamp if user fully exited
-        if (TokenizedStrategy.balanceOf(owner) == 0) {
-            delete depositTimestamp[owner];
         }
     }
 
@@ -647,25 +571,6 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         _tend(asset.balanceOf(address(this)));
-    }
-
-    /**
-     * @notice Prevent transfers during commitment period
-     * @dev Override from BaseHooksUpgradeable to enforce commitment
-     * @param from Address transferring shares
-     * @param to Address receiving shares
-     * @param amount Amount of shares being transferred
-     */
-    function _preTransferHook(address from, address to, uint256 amount) internal override {
-        // Allow minting (from == 0) and burning (to == 0)
-        if (from == address(0) || to == address(0)) return;
-
-        // Allow transfers to/from sUSD3 (staking and withdrawals)
-        if (to == sUSD3 || from == sUSD3) return;
-
-        // Check commitment period
-        uint256 commitmentEnd = depositTimestamp[from] + minCommitmentTime();
-        require(block.timestamp >= commitmentEnd || depositTimestamp[from] == 0, "!transfer");
     }
 
     /// @dev Post-transfer hook that rebalances deployment after sUSD3 unstakes.
@@ -760,15 +665,6 @@ contract USD3 is BaseHooksUpgradeable {
         return config.getMaxOnCredit();
     }
 
-    /**
-     * @notice Get the minimum commitment time from ProtocolConfig
-     * @return Minimum commitment time in seconds
-     */
-    function minCommitmentTime() public view returns (uint256) {
-        IProtocolConfig config = _protocolConfig();
-        return config.getUsd3CommitmentTime();
-    }
-
     /*//////////////////////////////////////////////////////////////
                         MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -788,34 +684,6 @@ contract USD3 is BaseHooksUpgradeable {
         // NOTE: After calling this, management should also call:
         // ITokenizedStrategy(usd3Address).setPerformanceFeeRecipient(_sUSD3)
         // to ensure yield distribution goes to sUSD3
-    }
-
-    /**
-     * @notice Enable or disable whitelist requirement
-     * @param _enabled True to enable whitelist, false to disable
-     */
-    function setWhitelistEnabled(bool _enabled) external onlyManagement {
-        whitelistEnabled = _enabled;
-    }
-
-    /**
-     * @notice Update whitelist status for an address
-     * @param _user Address to update
-     * @param _allowed True to whitelist, false to remove from whitelist
-     */
-    function setWhitelist(address _user, bool _allowed) external onlyManagement {
-        whitelist[_user] = _allowed;
-        emit WhitelistUpdated(_user, _allowed);
-    }
-
-    /**
-     * @notice Update depositor whitelist status for an address
-     * @param _depositor Address to update
-     * @param _allowed True to allow extending commitments, false to disallow
-     */
-    function setDepositorWhitelist(address _depositor, bool _allowed) external onlyManagement {
-        depositorWhitelist[_depositor] = _allowed;
-        emit DepositorWhitelistUpdated(_depositor, _allowed);
     }
 
     /**

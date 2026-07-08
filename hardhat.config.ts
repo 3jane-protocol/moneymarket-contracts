@@ -77,34 +77,37 @@ const config: HardhatUserConfig = {
         },
       },
     ],
-    // LCC module only: mirrors the foundry settings (solc 0.8.35, shanghai; runs 400 for the size-restricted
-    // LCCVault.sol, default 999999 for the rest) without letting 0.8.35 capture every other ^0.8.x source.
+    // Mirrors the foundry size settings without letting 0.8.35 capture every other ^0.8.x source.
     overrides: Object.fromEntries(
-      [
-        ["src/lcc/LCCVault.sol", 400],
-        ["src/lcc/LCCVaultFactory.sol", 999999],
-        ["src/lcc/interfaces/ILCCVault.sol", 999999],
-        ["src/lcc/libraries/LCCAccountLib.sol", 999999],
-        ["src/lcc/libraries/LCCAuctionLib.sol", 999999],
-        ["src/lcc/libraries/LCCBucketListLib.sol", 999999],
-        ["src/lcc/libraries/LCCConfigLib.sol", 999999],
-        ["src/lcc/libraries/LCCErrorsLib.sol", 999999],
-        ["src/lcc/libraries/LCCEventsLib.sol", 999999],
-        ["src/lcc/libraries/LCCTypesLib.sol", 999999],
-      ].map(([path, runs]) => [
-        path,
-        {
-          version: "0.8.35",
-          settings: {
-            optimizer: {
-              enabled: true,
-              runs,
+      ([
+        ["src/usd3/USD3.sol", "0.8.22", 200],
+        ["src/usd3/USD3_v2.sol", "0.8.22", 200],
+        ["src/lcc/LCCVault.sol", "0.8.35", 400],
+        ["src/lcc/LCCVaultFactory.sol", "0.8.35", 999999],
+        ["src/lcc/interfaces/ILCCVault.sol", "0.8.35", 999999],
+        ["src/lcc/libraries/LCCAccountLib.sol", "0.8.35", 999999],
+        ["src/lcc/libraries/LCCAuctionLib.sol", "0.8.35", 999999],
+        ["src/lcc/libraries/LCCBucketListLib.sol", "0.8.35", 999999],
+        ["src/lcc/libraries/LCCConfigLib.sol", "0.8.35", 999999],
+        ["src/lcc/libraries/LCCErrorsLib.sol", "0.8.35", 999999],
+        ["src/lcc/libraries/LCCEventsLib.sol", "0.8.35", 999999],
+        ["src/lcc/libraries/LCCTypesLib.sol", "0.8.35", 999999],
+      ] as const).map(([path, version, runs]) => {
+        return [
+          path,
+          {
+            version,
+            settings: {
+              optimizer: {
+                enabled: true,
+                runs,
+              },
+              viaIR: true,
+              evmVersion: "shanghai",
             },
-            viaIR: true,
-            evmVersion: "shanghai",
           },
-        },
-      ]),
+        ];
+      }),
     ),
   },
   mocha: {

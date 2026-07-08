@@ -216,10 +216,6 @@ contract USD3BorrowerRestrictionTest is Setup {
         // Setup borrower with active loan
         _setupBorrowerWithLoan(borrower, BORROW_AMOUNT);
 
-        // Whitelist borrower for USD3 (required for hop)
-        vm.prank(management);
-        usd3Strategy.setWhitelist(borrower, true);
-
         // Try to deposit through Helper with hop - should fail
         vm.prank(borrower);
         vm.expectRevert("Deposit exceeds limit");

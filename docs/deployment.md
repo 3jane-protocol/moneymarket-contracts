@@ -28,7 +28,7 @@ This repository is a contracts codebase. "Deployment" here primarily means CI ex
 - Schedule: deep invariants (core + usd3) + fork tests
 - Manual dispatch: all jobs (non-invariant + IRM + fast/deep invariants + fork tests)
 - Fork tests also triggered by PR label `ci/run-fork-tests`
-- The `fork-tests` job still runs `test:forge:fork:upgrade` as a historical regression suite for the completed waUSDC -> USDC migration.
+- The `fork-tests` job still runs `test:forge:fork:upgrade` to exercise the current USD3 upgrade path.
 
 ### Doc Gardening
 

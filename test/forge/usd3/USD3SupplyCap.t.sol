@@ -182,23 +182,6 @@ contract USD3SupplyCapTest is Setup {
         strategy.deposit(SMALL_AMOUNT, bob);
     }
 
-    function test_supplyCap_exemptionDoesNotBypassGeneralWhitelist() public {
-        _setSupplyCap(TEST_CAP);
-
-        vm.prank(management);
-        usd3Strategy.setSupplyCapExempt(bob, true);
-        vm.prank(management);
-        usd3Strategy.setWhitelistEnabled(true);
-
-        assertEq(usd3Strategy.availableDepositLimit(bob), 0, "whitelist still binds exempt receiver");
-
-        vm.prank(management);
-        usd3Strategy.setWhitelist(bob, true);
-
-        uint256 expectedLimit = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
-        assertEq(usd3Strategy.availableDepositLimit(bob), expectedLimit, "whitelisted exempt receiver bypasses cap");
-    }
-
     function test_supplyCapExemptBypassesFirstTimeMinDeposit() public {
         vm.prank(management);
         usd3Strategy.setMinDeposit(1_000e6);
@@ -459,55 +442,6 @@ contract USD3SupplyCapTest is Setup {
         vm.prank(bob);
         strategy.deposit(depositAmount, bob);
         assertEq(strategy.totalAssets(), TEST_CAP + depositAmount, "Should exceed previous cap");
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                    WHITELIST INTEGRATION TESTS
-    //////////////////////////////////////////////////////////////*/
-
-    function test_supplyCap_withWhitelistEnabled() public {
-        _setSupplyCap(TEST_CAP);
-
-        // Enable whitelist and add alice
-        vm.prank(management);
-        usd3Strategy.setWhitelistEnabled(true);
-        vm.prank(management);
-        usd3Strategy.setWhitelist(alice, true);
-
-        // Alice can deposit up to cap
-        assertEq(usd3Strategy.availableDepositLimit(alice), TEST_CAP, "Alice should see cap");
-
-        // Bob not whitelisted, should see 0
-        assertEq(usd3Strategy.availableDepositLimit(bob), 0, "Bob should see 0 (not whitelisted)");
-
-        // Alice deposits
-        vm.prank(alice);
-        strategy.deposit(LARGE_AMOUNT, alice);
-
-        // Add bob to whitelist
-        vm.prank(management);
-        usd3Strategy.setWhitelist(bob, true);
-
-        // Bob should see remaining capacity
-        assertEq(usd3Strategy.availableDepositLimit(bob), TEST_CAP - LARGE_AMOUNT, "Bob should see remaining capacity");
-    }
-
-    function test_supplyCap_whitelistPriorityOverCap() public {
-        _setSupplyCap(TEST_CAP);
-
-        // Enable whitelist but don't add anyone
-        vm.prank(management);
-        usd3Strategy.setWhitelistEnabled(true);
-
-        // Even with capacity, non-whitelisted users see 0
-        assertEq(usd3Strategy.availableDepositLimit(alice), 0, "Should be 0 due to whitelist");
-
-        // Add alice
-        vm.prank(management);
-        usd3Strategy.setWhitelist(alice, true);
-
-        // Now alice sees the cap
-        assertEq(usd3Strategy.availableDepositLimit(alice), TEST_CAP, "Alice should see cap after whitelisting");
     }
 
     /*//////////////////////////////////////////////////////////////

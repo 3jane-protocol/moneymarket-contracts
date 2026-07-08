@@ -69,8 +69,8 @@ over the shared `LCCBase` harness.
 - **Beacon owner** — 3Jane's 7-day timelock; can replace logic under every beacon-backed vault after the delay.
 
 Operational requirements: the `marginAsset` must be a standard ERC20 (fee-on-transfer or rebasing tokens break
-margin conservation), and each vault must be on USD3's `supplyCapExempt` list (and, if USD3's general whitelist is
-enabled, whitelisted there) so funding and fill deposits bypass supply-cap headroom and first-time minimums.
+margin conservation), and each vault must be on USD3's `supplyCapExempt` list so funding and fill deposits bypass
+supply-cap headroom and first-time minimums.
 
 ### Configuration parameters
 

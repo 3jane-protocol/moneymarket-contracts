@@ -41,7 +41,10 @@ Without atomic batching, `totalAssets()` can be stale during the transition wind
 
 ### Reference test
 
-- `test/forge/usd3/integration/USD3UpgradeMultisigBatch.t.sol`
+- The migration executed on mainnet and its `reinitialize()` hook has since been removed from the
+  implementation, so no live test replays the historical batch; the sequence above is the record.
+- `test/forge/usd3/integration/USD3UpgradeMultisigBatch.t.sol` and `test/forge/usd3/fork/USD3UpgradeForkTest.t.sol`
+  cover the implementation upgrade from the frozen v2 logic to the cleaned implementation.
 
 ## Canonical Commands
 
@@ -121,7 +124,7 @@ Targeted local command patterns for Jane changes:
 - Slashed margin backs a step-decay shortfall auction during the epoch's `Closed` phase (pricing math in the externally linked `src/lcc/libraries/LCCAuctionLib.sol`); the treasury fee is charged on auction-awarded collateral and capped by the unawarded surplus, with the remainder forming a return pool that is lazily re-attributed to defaulters as active commitment. Disabled config (`auctionStepCount == 0`) uses the same surplus-disposal path without an auction but has no auction-award fee basis.
 - LCC deployment topology: `LCCAuctionLib` is externally linked into a shared `LCCVault` implementation, an `UpgradeableBeacon` owned by 3Jane's existing 7-day timelock points at that implementation, and `LCCVaultFactory` deploys per-facility `BeaconProxy` instances with atomic initializer calldata. The implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury`; per-facility params live in proxy storage.
 - `src/lcc/LCCVaultFactory.sol`: owner-gated factory for LCC `BeaconProxy` vaults (`createVault` is restricted to the immutable factory owner); registry membership records owner-vetted provenance. The beacon is public, so non-factory proxies can point at it and remain unregistered.
-- Vaults must be on USD3's `supplyCapExempt` list for funding/fill deposits to bypass supply-cap headroom and first-time minimum deposits; if USD3's general whitelist is enabled, vaults must also be whitelisted there.
+- Vaults must be on USD3's `supplyCapExempt` list for funding/fill deposits to bypass supply-cap headroom and first-time minimum deposits.
 - The LCC module is pinned to solc `0.8.35`; `LCCVault.sol` alone uses scoped `optimizer_runs = 400` to preserve bytecode headroom while the factory compiles at the repo default. USD3 is pinned at `optimizer_runs = 200`. The LCC sources use a version-range pragma so Hardhat compiles them via per-file `overrides` in `hardhat.config.ts`.
 - LCC upgrade safety: the beacon owner can replace logic under every beacon-backed vault after the 7-day timelock. Never reorder storage variables or base contracts; append new state into `__gap`; treat `LCCTypesLib` packed structs as upgrade-frozen layout; keep `_disableInitializers()` in implementation constructors; re-link `LCCAuctionLib` on implementation redeploys. A `forge inspect LCCVault storageLayout` snapshot is the manual review gate for implementation changes.
 - Design notes: `docs/architecture.md` (LCC Domain section).

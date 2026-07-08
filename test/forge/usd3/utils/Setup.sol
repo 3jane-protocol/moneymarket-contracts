@@ -20,8 +20,7 @@ import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
-    TransparentUpgradeableProxy,
-    ITransparentUpgradeableProxy
+    TransparentUpgradeableProxy
 } from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
@@ -171,9 +170,6 @@ contract Setup is Test, IEvents {
         TransparentUpgradeableProxy usd3Proxy =
             new TransparentUpgradeableProxy(address(usd3Implementation), address(usd3ProxyAdmin), usd3InitData);
 
-        // Upgrade and call reinitialize in a separate internal function to avoid stack too deep
-        _upgradeAndReinitialize(address(usd3Proxy), proxyAdminOwner, address(usd3ProxyAdmin));
-
         // Set emergency admin
         vm.prank(management);
         IUSD3(address(usd3Proxy)).setEmergencyAdmin(emergencyAdmin);
@@ -293,7 +289,7 @@ contract Setup is Test, IEvents {
     }
 
     function _setTokenAddrs() internal {
-        // Deploy mock USDC at the mainnet address expected by reinitialize()
+        // Deploy mock USDC at the mainnet address; the frozen USD3_v2 reinitialize() hardcodes it.
         address expectedUsdcAddress = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
         // Deploy the mock USDC
@@ -327,12 +323,6 @@ contract Setup is Test, IEvents {
         // Label for debugging
         vm.label(expectedAddress, "TokenizedStrategy");
         vm.label(address(mockFactory), "MockStrategyFactory");
-    }
-
-    function _upgradeAndReinitialize(address usd3Proxy, address proxyAdminOwner, address proxyAdmin) internal {
-        // Since reinitializer(2) is used, we can call it directly after initialize()
-        // No need to upgrade the implementation for testing
-        USD3(usd3Proxy).reinitialize();
     }
 
     function _deployWaUSDC() internal {

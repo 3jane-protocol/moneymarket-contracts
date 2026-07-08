@@ -10,8 +10,6 @@ interface IUSD3 is IStrategy {
     //////////////////////////////////////////////////////////////*/
 
     event SUSD3StrategyUpdated(address oldStrategy, address newStrategy);
-    event WhitelistUpdated(address indexed user, bool allowed);
-    event DepositorWhitelistUpdated(address indexed depositor, bool allowed);
     event SupplyCapExemptUpdated(address indexed account, bool exempt);
     event MinDepositUpdated(uint256 newMinDeposit);
     event TrancheShareSynced(uint256 trancheShare);
@@ -30,13 +28,8 @@ interface IUSD3 is IStrategy {
     // Configuration parameters
     function maxOnCredit() external view returns (uint256);
     function sUSD3() external view returns (address);
-    function whitelistEnabled() external view returns (bool);
-    function whitelist(address user) external view returns (bool);
-    function depositorWhitelist(address depositor) external view returns (bool);
     function supplyCapExempt(address account) external view returns (bool);
     function minDeposit() external view returns (uint256);
-    function minCommitmentTime() external view returns (uint256);
-    function depositTimestamp(address user) external view returns (uint256);
     function maxSubordinationRatio() external view returns (uint256);
 
     /*//////////////////////////////////////////////////////////////
@@ -44,9 +37,6 @@ interface IUSD3 is IStrategy {
     //////////////////////////////////////////////////////////////*/
 
     function setSUSD3(address _sUSD3) external;
-    function setWhitelistEnabled(bool _enabled) external;
-    function setWhitelist(address _user, bool _allowed) external;
-    function setDepositorWhitelist(address _depositor, bool _allowed) external;
     function setSupplyCapExempt(address _account, bool _exempt) external;
     function setMinDeposit(uint256 _minDeposit) external;
 
