@@ -5,9 +5,13 @@ pragma solidity >=0.5.0;
 /// @notice Interface for OpenZeppelin's TimelockController
 interface ITimelockController {
     /// @notice Role identifiers
+    function DEFAULT_ADMIN_ROLE() external view returns (bytes32);
     function PROPOSER_ROLE() external view returns (bytes32);
     function EXECUTOR_ROLE() external view returns (bytes32);
     function CANCELLER_ROLE() external view returns (bytes32);
+    function hasRole(bytes32 role, address account) external view returns (bool);
+    function grantRole(bytes32 role, address account) external;
+    function revokeRole(bytes32 role, address account) external;
 
     /// @notice Operation states
     enum OperationState {
