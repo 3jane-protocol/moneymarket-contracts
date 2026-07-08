@@ -8,6 +8,8 @@ import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
+import {BPS} from "../../../src/libraries/ConstantsLib.sol";
+import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 
 /// @dev Reverts that lazy materialization is allowed to surface: the live-auction replay barrier and a
 /// zero/reverting oracle at a pending slash disposal. Anything else must fail the invariant.
@@ -43,6 +45,8 @@ contract LCCInvariantHandler is Test {
     LCCMockUSD3 internal invariantUsd3;
     address internal invariantOwner;
     address[] internal actors;
+    uint256 public ghostCumDeposited;
+    uint256 public ghostCumMarginOut;
 
     constructor(LCCVault vault_, LCCMockToken margin_, LCCMockUSD3 usd3_, address owner_, address[] memory actors_) {
         invariantVault = vault_;
@@ -50,6 +54,7 @@ contract LCCInvariantHandler is Test {
         invariantUsd3 = usd3_;
         invariantOwner = owner_;
         actors = actors_;
+        ghostCumDeposited = margin_.balanceOf(address(vault_)) + margin_.balanceOf(vault_.assetConfig().treasury);
     }
 
     function deposit(uint256 actorSeed, uint256 amountSeed) external {
@@ -79,6 +84,9 @@ contract LCCInvariantHandler is Test {
 
         vm.prank(actor);
         invariantVault.deposit(amount);
+        // marginAsset enters the vault only via deposit; count the exact amount pulled in. A synced slash-fee
+        // disposal in the same tx moves margin to the treasury, which the ledger's treasury term accounts for.
+        ghostCumDeposited += amount;
     }
 
     function requestExit(uint256 actorSeed) external {
@@ -133,14 +141,20 @@ contract LCCInvariantHandler is Test {
 
         if (actorSeed % 4 == 0) {
             address payer = actors[(actorSeed / 4) % actors.length];
+            uint256 vaultBalanceBefore = invariantMargin.balanceOf(address(invariantVault));
+            uint256 treasuryBalanceBefore = invariantMargin.balanceOf(_treasury());
             vm.prank(payer);
             invariantVault.fundCall(actor);
+            _recordMarginOut(vaultBalanceBefore, treasuryBalanceBefore);
         } else {
             bool roll = (actorSeed / 32) % 2 == 0;
             ILCCVault.Account memory account = invariantVault.getAccount(actor);
             if (roll && account.exitRequested && !account.exitClaimed) roll = false;
+            uint256 vaultBalanceBefore = invariantMargin.balanceOf(address(invariantVault));
+            uint256 treasuryBalanceBefore = invariantMargin.balanceOf(_treasury());
             vm.prank(actor);
             invariantVault.fundCall(roll);
+            _recordMarginOut(vaultBalanceBefore, treasuryBalanceBefore);
         }
     }
 
@@ -161,8 +175,11 @@ contract LCCInvariantHandler is Test {
         address actor = actors[_index(actorSeed)];
         uint256 fill = _range(fillSeed, 1, remaining);
 
+        uint256 vaultBalanceBefore = invariantMargin.balanceOf(address(invariantVault));
+        uint256 treasuryBalanceBefore = invariantMargin.balanceOf(_treasury());
         vm.prank(actor);
         invariantVault.takeAuction(fill);
+        _recordMarginOut(vaultBalanceBefore, treasuryBalanceBefore);
     }
 
     function warpIntoClosed(uint256 seed) external {
@@ -202,8 +219,11 @@ contract LCCInvariantHandler is Test {
         address actor = actors[_index(actorSeed)];
         if (invariantVault.claimableExitedMargin(actor) == 0) return;
 
+        uint256 vaultBalanceBefore = invariantMargin.balanceOf(address(invariantVault));
+        uint256 treasuryBalanceBefore = invariantMargin.balanceOf(_treasury());
         vm.prank(actor);
         invariantVault.claimExitedMargin(actor);
+        _recordMarginOut(vaultBalanceBefore, treasuryBalanceBefore);
     }
 
     function claimRemaining(uint256 actorSeed) external {
@@ -220,8 +240,11 @@ contract LCCInvariantHandler is Test {
         // claimableExitMargin is included so the matured-exiter payout branch is exercised, not just active/pending.
         if (account.activeMargin + account.pendingMargin + account.claimableExitMargin == 0) return;
 
+        uint256 vaultBalanceBefore = invariantMargin.balanceOf(address(invariantVault));
+        uint256 treasuryBalanceBefore = invariantMargin.balanceOf(_treasury());
         vm.prank(actor);
         invariantVault.claimRemainingMargin(actor);
+        _recordMarginOut(vaultBalanceBefore, treasuryBalanceBefore);
     }
 
     function setRiskCaps(uint256 protocolSeed, uint256 exitCapSeed) external {
@@ -315,6 +338,21 @@ contract LCCInvariantHandler is Test {
         return slot != 0 && block.timestamp < invariantVault.phaseEndsAt(slot - 1, ILCCVault.Phase.Closed);
     }
 
+    function _treasury() internal view returns (address) {
+        return invariantVault.assetConfig().treasury;
+    }
+
+    /// @dev Records margin that left the vault to a non-treasury recipient (funder release, filler award, exit
+    /// payout). A slash-fee disposal to the treasury can piggyback on any synced action; the ledger already
+    /// subtracts the treasury balance, so the treasury portion is excluded here to avoid double-counting.
+    function _recordMarginOut(uint256 vaultBalanceBefore, uint256 treasuryBalanceBefore) internal {
+        uint256 vaultBalanceAfter = invariantMargin.balanceOf(address(invariantVault));
+        if (vaultBalanceAfter >= vaultBalanceBefore) return;
+        uint256 vaultDecrease = vaultBalanceBefore - vaultBalanceAfter;
+        uint256 treasuryIncrease = invariantMargin.balanceOf(_treasury()) - treasuryBalanceBefore;
+        ghostCumMarginOut += vaultDecrease - treasuryIncrease;
+    }
+
     function _sync() internal {
         if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
         try invariantVault.materializeAccount(actors[0]) {}
@@ -327,6 +365,7 @@ contract LCCInvariantHandler is Test {
 contract LCCStatefulInvariantTest is LCCBase {
     LCCInvariantHandler internal handler;
     address[] internal invariantActors;
+    uint256 internal initialTreasuryMargin;
 
     function setUp() public virtual override {
         super.setUp();
@@ -343,6 +382,9 @@ contract LCCStatefulInvariantTest is LCCBase {
             _mintAndApprove(actor, 1_000_000e18, 1_000_000e18);
         }
 
+        // Baseline the treasury margin the same moment the handler seeds its ghost ledger, so the treasury
+        // reconciliation and the ghost-flow ledger agree on the pre-run treasury balance.
+        initialTreasuryMargin = margin.balanceOf(treasury);
         handler = new LCCInvariantHandler(vault, margin, usd3, owner, invariantActors);
         targetContract(address(handler));
     }
@@ -379,13 +421,19 @@ contract LCCStatefulInvariantTest is LCCBase {
             claimableMargin += account.claimableExitMargin;
         }
 
-        uint256 dustBound = vault.calledEpochs().length * invariantActors.length;
-        assertLe(activeMargin, vault.totals().activeMargin);
-        assertLe(vault.totals().activeMargin - activeMargin, dustBound);
-        assertLe(activeCommitment, vault.totals().activeCommitment);
-        assertLe(vault.totals().activeCommitment - activeCommitment, dustBound);
-        assertEq(pendingMargin, vault.totals().pendingMargin);
-        assertEq(pendingCommitment, vault.totals().pendingCommitment);
+        uint256[] memory called = vault.calledEpochs();
+        // Single pass over the called epochs: asserts treasury + per-epoch conservation and returns the count of
+        // return-pool epochs, whose per-account flooring bounds the derived-active-vs-totals gap below.
+        uint256 returnPoolEpochs = _assertTreasuryAndEpochConservation(called);
+
+        ILCCVault.Totals memory totals = vault.totals();
+        uint256 dustBound = returnPoolEpochs * invariantActors.length;
+        assertLe(activeMargin, totals.activeMargin);
+        assertLe(uint256(totals.activeMargin) - activeMargin, dustBound);
+        assertLe(activeCommitment, totals.activeCommitment);
+        assertLe(uint256(totals.activeCommitment) - activeCommitment, dustBound);
+        assertEq(pendingMargin, totals.pendingMargin);
+        assertEq(pendingCommitment, totals.pendingCommitment);
 
         uint256 auctionInventory;
         uint256 slot = vault.syncState().pendingAuctionEpochPlusOne;
@@ -393,8 +441,54 @@ contract LCCStatefulInvariantTest is LCCBase {
             LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(slot - 1);
             auctionInventory = auction.marginPool - auction.marginAwarded;
         }
-        assertGe(margin.balanceOf(address(vault)), activeMargin + pendingMargin + claimableMargin + auctionInventory);
+        assertEq(
+            margin.balanceOf(address(vault)),
+            uint256(totals.activeMargin) + uint256(totals.pendingMargin) + claimableMargin + auctionInventory
+        );
+        _assertGhostFlowLedger();
         assertEq(usdc.balanceOf(address(vault)), 0);
+    }
+
+    function _assertTreasuryAndEpochConservation(uint256[] memory called)
+        internal
+        view
+        returns (uint256 returnPoolEpochs)
+    {
+        uint256 expectedTreasury;
+        uint256 liveAuctionSlot = vault.syncState().pendingAuctionEpochPlusOne;
+        ILCCVault.RiskConfig memory riskConfig = vault.riskConfig();
+
+        for (uint256 i = 0; i < called.length; ++i) {
+            uint256 epoch = called[i];
+            ILCCVault.EpochState memory state = vault.getEpochState(epoch);
+            if (state.returnPool != 0) ++returnPoolEpochs;
+            if (!state.slashFinalized || state.slashDisabledByShutdown || liveAuctionSlot == epoch + 1) continue;
+
+            LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(epoch);
+            assertEq(
+                state.marginReleased + state.fundedUsersRemainingMargin + state.slashedMargin, state.marginAtCallOpen
+            );
+
+            assertLe(auction.marginAwarded, state.slashedMargin);
+            uint256 surplus = state.slashedMargin - auction.marginAwarded;
+            assertLe(state.returnPool, surplus);
+
+            uint256 toTreasury = surplus - state.returnPool;
+            if (state.returnPool != 0) {
+                uint256 minimumFee = Math.min(Math.mulDiv(auction.marginAwarded, riskConfig.slashFeeBps, BPS), surplus);
+                assertGe(toTreasury, minimumFee);
+            }
+            expectedTreasury += toTreasury;
+        }
+
+        assertEq(margin.balanceOf(treasury), initialTreasuryMargin + expectedTreasury);
+    }
+
+    function _assertGhostFlowLedger() internal view {
+        assertEq(
+            margin.balanceOf(address(vault)),
+            handler.ghostCumDeposited() - handler.ghostCumMarginOut() - margin.balanceOf(treasury)
+        );
     }
 
     function invariant_AuctionFillAndAwardBounds() public view {
