@@ -9,21 +9,15 @@ import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {
-    TransparentUpgradeableProxy,
     ITransparentUpgradeableProxy
 } from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
-import {ERC1967Utils} from "../../../../lib/openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 
 /**
  * @title USD3 Upgrade Multisig Batch Test
  * @notice Tests the current USD3 implementation upgrade from frozen old logic to ring-fence logic.
  */
 contract USD3UpgradeMultisigBatchTest is Setup {
-    // OZ v5 Initializable ERC-7201 storage location; low 64 bits hold _initialized.
-    bytes32 internal constant INITIALIZABLE_STORAGE_SLOT =
-        0xf0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00;
-
     address public alice;
 
     uint256 public constant INITIAL_DEPOSIT = 1000e6;
@@ -54,10 +48,7 @@ contract USD3UpgradeMultisigBatchTest is Setup {
         oldUsd3.setWhitelistEnabled(true);
         assertEq(ITokenizedStrategy(address(oldUsd3)).maxDeposit(alice), 0, "v2 whitelist gate blocks alice");
 
-        // Mirror the live proxy's consumed reinitializer(3): mainnet's version-3 state was written by a
-        // transient restart implementation the deployed logic no longer carries, so the storage write is the
-        // faithful model.
-        vm.store(address(oldUsd3), INITIALIZABLE_STORAGE_SLOT, bytes32(uint256(3)));
+        _forceMainnetInitializerVersion(address(oldUsd3));
 
         address sUSD3Before = oldUsd3.sUSD3();
         uint256 minDepositBefore = oldUsd3.minDeposit();
@@ -139,20 +130,11 @@ contract USD3UpgradeMultisigBatchTest is Setup {
     }
 
     function _deployFrozenCurrentProxy() internal returns (USD3_old oldUsd3, ProxyAdmin proxyAdmin, address owner) {
-        USD3_old oldImplementation = new USD3_old();
         owner = makeAddr("FrozenProxyAdminOwner");
-
-        bytes memory initData = abi.encodeWithSelector(
-            USD3_old.initialize.selector,
+        (oldUsd3, proxyAdmin) = _deployFrozenUsd3Proxy(
             address(USD3(address(strategy)).morphoCredit()),
             MarketParamsLib.id(USD3(address(strategy)).marketParams()),
-            management,
-            keeper
+            owner
         );
-
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(oldImplementation), owner, initData);
-        proxyAdmin = ProxyAdmin(address(uint160(uint256(vm.load(address(proxy), ERC1967Utils.ADMIN_SLOT)))));
-        oldUsd3 = USD3_old(address(proxy));
-        oldUsd3.reinitialize();
     }
 }

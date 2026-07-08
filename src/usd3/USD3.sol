@@ -2,7 +2,7 @@
 pragma solidity 0.8.22;
 
 import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
-import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {IMorpho, IMorphoCredit, MarketParams, Id} from "../interfaces/IMorpho.sol";
 import {MorphoLib} from "../libraries/periphery/MorphoLib.sol";
@@ -52,7 +52,6 @@ interface IWaUSDC is IERC4626 {
  * - Losses exceeding sUSD3 balance shared proportionally among USD3 holders
  */
 contract USD3 is BaseHooksUpgradeable {
-    using SafeERC20 for IERC20;
     using MorphoLib for IMorpho;
     using MorphoBalancesLib for IMorpho;
     using SharesMathLib for uint256;
@@ -116,37 +115,6 @@ contract USD3 is BaseHooksUpgradeable {
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
-    }
-
-    /**
-     * @notice Initialize the USD3 strategy
-     * @param _morphoCredit Address of the MorphoCredit lending contract
-     * @param _marketId Market ID for the lending market
-     * @param _management Management address for the strategy
-     * @param _keeper Keeper address for automated operations
-     */
-    function initialize(address _morphoCredit, Id _marketId, address _management, address _keeper)
-        external
-        initializer
-    {
-        require(_morphoCredit != address(0), "!morpho");
-
-        morphoCredit = IMorpho(_morphoCredit);
-        marketId = _marketId;
-
-        // Get and cache market params
-        MarketParams memory params = morphoCredit.idToMarketParams(_marketId);
-        require(params.loanToken != address(0), "Invalid market");
-        _marketParams = params;
-
-        address underlyingAsset = WAUSDC.asset();
-
-        // Initialize BaseStrategy with management as temporary performanceFeeRecipient
-        // It will be updated to sUSD3 address after sUSD3 is deployed
-        __BaseStrategy_init(underlyingAsset, "USD3", _management, _management, _keeper);
-
-        IERC20(underlyingAsset).forceApprove(address(WAUSDC), type(uint256).max);
-        IERC20(params.loanToken).forceApprove(address(morphoCredit), type(uint256).max);
     }
 
     /*//////////////////////////////////////////////////////////////
