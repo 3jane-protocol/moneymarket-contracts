@@ -273,7 +273,7 @@ contract StaleMarkdownBurnBaselineTest is Test {
         // After fix: Burns should be proportional to current holdings
         // Both episodes have same time in default (10 days), so burn amounts should be proportional to holdings
         uint256 expectedBurnRatio = (janeBurnedSecondEpisode * INITIAL_JANE) / janeBeforeSecondDefault; // Normalize to
-            // original holdings
+        // original holdings
         uint256 actualBurnRatio = janeBurnedFirstEpisode;
 
         // Allow 1% tolerance for rounding

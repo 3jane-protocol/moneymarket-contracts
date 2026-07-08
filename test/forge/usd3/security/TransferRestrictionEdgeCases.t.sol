@@ -101,7 +101,7 @@ contract TransferRestrictionEdgeCases is Setup {
 
         // Transfer should fail
         vm.prank(alice);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(bob, aliceShares / 2);
 
         // One second later should work
@@ -121,7 +121,7 @@ contract TransferRestrictionEdgeCases is Setup {
         // Zero amount transfer during commitment is still blocked by the hook
         // The hook checks commitment before checking amount
         vm.prank(alice);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(bob, 0);
 
         // After commitment, zero transfers work (though they're no-ops)
@@ -148,7 +148,7 @@ contract TransferRestrictionEdgeCases is Setup {
 
         // Bob cannot transfer during commitment even with infinite approval
         vm.prank(bob);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transferFrom(alice, charlie, aliceShares / 2);
 
         // After commitment period
@@ -196,7 +196,7 @@ contract TransferRestrictionEdgeCases is Setup {
         airdrop(asset, address(attacker), 10000e6);
 
         // Attacker tries to deposit and immediately transfer
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         attacker.attack();
     }
 
@@ -216,7 +216,7 @@ contract TransferRestrictionEdgeCases is Setup {
 
         // Alice still cannot transfer during commitment (shutdown doesn't bypass transfer restrictions)
         vm.prank(alice);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(bob, aliceShares);
 
         // After commitment, transfer works
@@ -349,7 +349,7 @@ contract TransferRestrictionEdgeCases is Setup {
         uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
 
         // Transfer to self should still be blocked during commitment
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(alice, aliceShares);
         vm.stopPrank();
     }
@@ -391,7 +391,7 @@ contract TransferRestrictionEdgeCases is Setup {
         // This should now be blocked entirely (not just prevent commitment extension)
         vm.startPrank(bob);
         underlyingAsset.approve(address(usd3Strategy), 1);
-        vm.expectRevert("USD3: Only self or whitelisted deposits allowed");
+        vm.expectRevert(bytes("!allowed"));
         usd3Strategy.deposit(1, alice); // Attempt to deposit to Alice
         vm.stopPrank();
 
@@ -494,7 +494,7 @@ contract TransferRestrictionEdgeCases is Setup {
 
         // Alice should NOT be able to transfer yet
         vm.startPrank(alice);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(bob, 1);
         vm.stopPrank();
 
@@ -525,7 +525,7 @@ contract TransferRestrictionEdgeCases is Setup {
         vm.warp(block.timestamp + 4 days + 1); // Original would have ended
 
         // Should still be locked
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(bob, 1);
 
         // After new period ends, can transfer
@@ -546,7 +546,7 @@ contract TransferRestrictionEdgeCases is Setup {
         underlyingAsset.approve(address(usd3Strategy), 100e6);
 
         // This should be blocked - can't deposit to a different address
-        vm.expectRevert("USD3: Only self or whitelisted deposits allowed");
+        vm.expectRevert(bytes("!allowed"));
         usd3Strategy.deposit(100e6, bob);
         vm.stopPrank();
 
@@ -563,7 +563,7 @@ contract TransferRestrictionEdgeCases is Setup {
 
         // Alice cannot transfer during commitment
         vm.startPrank(alice);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(bob, 50e6);
         vm.stopPrank();
     }
@@ -584,7 +584,7 @@ contract TransferRestrictionEdgeCases is Setup {
         // Test 2: Users cannot deposit to others
         vm.startPrank(bob);
         underlyingAsset.approve(address(usd3Strategy), 100e6);
-        vm.expectRevert("USD3: Only self or whitelisted deposits allowed");
+        vm.expectRevert(bytes("!allowed"));
         usd3Strategy.deposit(100e6, alice);
         vm.stopPrank();
 
@@ -609,7 +609,7 @@ contract TransferRestrictionEdgeCases is Setup {
 
         // Test 6: Charlie can no longer deposit for others
         vm.startPrank(charlie);
-        vm.expectRevert("USD3: Only self or whitelisted deposits allowed");
+        vm.expectRevert(bytes("!allowed"));
         usd3Strategy.deposit(50e6, alice);
         vm.stopPrank();
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.18;
 
-import {BaseHooksUpgradeable, IERC20, IMorphoCredit, IProtocolConfig, Math, SafeERC20, USD3} from "./USD3.sol";
+import {BaseHooksUpgradeable, IERC20, IMorphoCredit, IProtocolConfig, Math, USD3} from "./USD3.sol";
 import {IStrategy} from "@tokenized-strategy/interfaces/IStrategy.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 
@@ -141,11 +141,12 @@ contract sUSD3 is BaseHooksUpgradeable {
             msg.sender == receiver || depositorWhitelist[msg.sender], "sUSD3: Only self or whitelisted deposits allowed"
         );
 
-        // Always extend lock period for valid deposits
+        // Extend lock period for valid deposits when configured.
         if (assets > 0 || shares > 0) {
-            // Read lock duration from ProtocolConfig
             uint256 duration = lockDuration();
-            lockedUntil[receiver] = block.timestamp + duration;
+            if (duration > 0) {
+                lockedUntil[receiver] = block.timestamp + duration;
+            }
         }
     }
 
@@ -275,10 +276,22 @@ contract sUSD3 is BaseHooksUpgradeable {
     /// @param _owner Address to check limit for
     /// @return Maximum withdrawal amount allowed in assets
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
+        uint256 currentUSD3Holdings = asset.balanceOf(address(this));
+
+        // Block withdraws if sUSD3 has unrealized losses
+        if (currentUSD3Holdings + 2 < TokenizedStrategy.totalAssets()) {
+            return 0;
+        }
+
+        // Block withdraws if USD3 has unrealized losses
+        if (USD3(address(asset)).nav() + 2 < IStrategy(address(asset)).totalAssets()) {
+            return 0;
+        }
+
         // During shutdown, bypass all checks and return available assets
         if (TokenizedStrategy.isShutdown()) {
             // Return all available USD3 (entire balance since sUSD3 holds USD3 directly)
-            return asset.balanceOf(address(this));
+            return currentUSD3Holdings;
         }
 
         // Check initial lock period
@@ -286,33 +299,39 @@ contract sUSD3 is BaseHooksUpgradeable {
             return 0;
         }
 
-        UserCooldown memory cooldown = cooldowns[_owner];
+        // Determine withdrawal limit based on cooldown state
+        uint256 userWithdrawLimit;
+        if (cooldownDuration() == 0) {
+            // No cooldown required
+            userWithdrawLimit = type(uint256).max;
+        } else {
+            UserCooldown memory cooldown = cooldowns[_owner];
 
-        // No cooldown started - cannot withdraw
-        if (cooldown.shares == 0) {
-            return 0;
+            // No cooldown started - cannot withdraw
+            if (cooldown.shares == 0) {
+                return 0;
+            }
+
+            // Still in cooldown period
+            if (block.timestamp < cooldown.cooldownEnd) {
+                return 0;
+            }
+
+            // Window expired - must restart cooldown
+            if (block.timestamp > cooldown.windowEnd) {
+                return 0;
+            }
+
+            userWithdrawLimit = TokenizedStrategy.convertToAssets(cooldown.shares);
         }
 
-        // Still in cooldown period
-        if (block.timestamp < cooldown.cooldownEnd) {
-            return 0;
-        }
-
-        // Window expired - must restart cooldown
-        if (block.timestamp > cooldown.windowEnd) {
-            return 0;
-        }
-
-        // Within valid withdrawal window - check backing requirement
-        uint256 cooldownAmount = TokenizedStrategy.convertToAssets(cooldown.shares);
-
+        // Check backing requirement
         uint256 subordinatedDebtFloorUSDC = getSubordinatedDebtFloorInUSDC();
 
         if (subordinatedDebtFloorUSDC == 0) {
-            return cooldownAmount;
+            return userWithdrawLimit;
         }
 
-        uint256 currentUSD3Holdings = asset.balanceOf(address(this));
         uint256 currentAssetsUSDC = IStrategy(address(asset)).convertToAssets(currentUSD3Holdings);
 
         if (currentAssetsUSDC <= subordinatedDebtFloorUSDC) {
@@ -326,8 +345,8 @@ contract sUSD3 is BaseHooksUpgradeable {
         // Convert back to USD3 shares for withdrawal
         uint256 maxWithdrawableUSD3 = IStrategy(address(asset)).convertToShares(maxWithdrawable);
 
-        // Return minimum of cooldown amount and max withdrawable
-        return Math.min(cooldownAmount, maxWithdrawableUSD3);
+        // Return minimum of withdrawal limit and max withdrawable
+        return Math.min(userWithdrawLimit, maxWithdrawableUSD3);
     }
 
     /**
@@ -356,9 +375,7 @@ contract sUSD3 is BaseHooksUpgradeable {
      */
     function lockDuration() public view returns (uint256) {
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
-
-        uint256 duration = config.getSusd3LockDuration();
-        return duration > 0 ? duration : 90 days; // Default to 90 days if not set
+        return config.getSusd3LockDuration();
     }
 
     /**
@@ -367,9 +384,7 @@ contract sUSD3 is BaseHooksUpgradeable {
      */
     function cooldownDuration() public view returns (uint256) {
         IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
-
-        uint256 duration = config.getSusd3CooldownPeriod();
-        return duration > 0 ? duration : 7 days; // Default to 7 days if not set
+        return config.getSusd3CooldownPeriod();
     }
 
     /**
@@ -416,6 +431,16 @@ contract sUSD3 is BaseHooksUpgradeable {
     }
 
     /**
+     * @notice Get the nominal backing floor from ProtocolConfig
+     * @dev If set above achievable sUSD3 backing capacity, withdrawals can remain blocked.
+     * @return Nominal backing floor, expressed in USDC
+     */
+    function nominalBackingFloor() public view returns (uint256) {
+        IProtocolConfig config = IProtocolConfig(IMorphoCredit(morphoCredit).protocolConfig());
+        return config.config(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR);
+    }
+
+    /**
      * @notice Calculate maximum sUSD3 deposits allowed based on debt and subordination ratio
      * @dev Returns the cap amount for subordinated debt based on actual or potential market debt
      * @return Maximum subordinated debt cap, expressed in USDC
@@ -449,24 +474,24 @@ contract sUSD3 is BaseHooksUpgradeable {
 
     /**
      * @notice Calculate minimum sUSD3 backing required for current market debt
-     * @dev Returns the floor amount of sUSD3 assets needed based on MIN_SUSD3_BACKING_RATIO
+     * @dev Returns the greater of the ratio-based floor and nominal backing floor
      * @return Minimum backing amount required, expressed in USDC
      */
     function getSubordinatedDebtFloorInUSDC() public view returns (uint256) {
-        // Get minimum backing ratio
+        uint256 nominalFloor = nominalBackingFloor();
         uint256 backingRatio = minBackingRatio();
 
-        // If backing ratio is 0, no minimum backing required
-        if (backingRatio == 0) return 0;
+        uint256 ratioFloor;
+        if (backingRatio > 0) {
+            USD3 usd3 = USD3(address(asset));
 
-        USD3 usd3 = USD3(address(asset));
+            (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
+            uint256 debtUSDC = usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
 
-        // Get actual borrowed amount
-        (,, uint256 totalBorrowAssetsWaUSDC,) = usd3.getMarketLiquidity();
-        uint256 debtUSDC = usd3.WAUSDC().convertToAssets(totalBorrowAssetsWaUSDC);
+            ratioFloor = (debtUSDC * backingRatio) / MAX_BPS;
+        }
 
-        // Calculate minimum required backing
-        return (debtUSDC * backingRatio) / MAX_BPS;
+        return Math.max(ratioFloor, nominalFloor);
     }
 
     /*//////////////////////////////////////////////////////////////

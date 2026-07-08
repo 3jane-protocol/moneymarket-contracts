@@ -22,6 +22,7 @@ interface IUSD3 is IStrategy {
     function morphoCredit() external view returns (IMorpho);
     function marketId() external view returns (Id);
     function marketParams() external view returns (MarketParams memory);
+    function nav() external view returns (uint256);
     function symbol() external pure returns (string memory);
 
     // Configuration parameters

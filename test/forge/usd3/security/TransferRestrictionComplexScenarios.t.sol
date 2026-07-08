@@ -104,7 +104,7 @@ contract TransferRestrictionComplexScenarios is Setup {
 
         // Alice still cannot transfer
         vm.prank(alice);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(dave, 100e6);
 
         skip(2 days);
@@ -115,11 +115,11 @@ contract TransferRestrictionComplexScenarios is Setup {
 
         // But Bob and Charlie still cannot
         vm.prank(bob);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(dave, 100e6);
 
         vm.prank(charlie);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(dave, 100e6);
     }
 
@@ -139,7 +139,7 @@ contract TransferRestrictionComplexScenarios is Setup {
         // Alice -> Bob -> Charlie -> Alice
 
         vm.prank(alice);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(bob, 100e6);
 
         // Skip commitment
@@ -194,7 +194,7 @@ contract TransferRestrictionComplexScenarios is Setup {
 
         // But Bob cannot participate in the chain
         vm.prank(bob);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(eve, 100e6);
 
         // Verify final distribution
@@ -443,7 +443,7 @@ contract TransferRestrictionComplexScenarios is Setup {
         usd3Strategy.deposit(1000e6, alice);
 
         // Cannot transfer immediately
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(bob, 100e6);
 
         skip(7 days);
@@ -455,7 +455,7 @@ contract TransferRestrictionComplexScenarios is Setup {
         usd3Strategy.deposit(1000e6, alice);
 
         // Cannot transfer again
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(bob, 100e6);
 
         skip(7 days);

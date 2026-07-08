@@ -115,7 +115,7 @@ contract BypassAttempts is Setup {
 
         // Bob CANNOT transfer Alice's shares during commitment
         vm.prank(bob);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transferFrom(alice, bob, aliceShares);
 
         // Verify Alice still has her shares
@@ -397,7 +397,7 @@ contract BypassAttempts is Setup {
         // Withdraw partial amount (within cooldown)
         require(withdrawLimit > 0, "No withdrawal available");
         uint256 sharesToRedeem = totalShares / 4; // Redeem a quarter of total shares
-            // Need to approve the strategy to burn shares on behalf of alice
+        // Need to approve the strategy to burn shares on behalf of alice
         vm.startPrank(alice);
         IERC20(address(susd3Strategy)).approve(address(susd3Strategy), sharesToRedeem);
         susd3Strategy.redeem(sharesToRedeem, alice, alice);
@@ -425,7 +425,7 @@ contract BypassAttempts is Setup {
 
         // Alice CANNOT transfer shares during commitment period
         vm.prank(alice);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         IERC20(address(usd3Strategy)).transfer(bob, 500e6);
 
         // Verify shares didn't move
@@ -497,12 +497,12 @@ contract BypassAttempts is Setup {
         // Try to deposit below minimum via deposit() as first deposit
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), 1000e6);
-        vm.expectRevert("Below minimum deposit");
+        vm.expectRevert(bytes("<min"));
         usd3Strategy.deposit(50e6, alice); // Below 100e6 minimum
 
         // Try to bypass via mint()
         uint256 sharesToMint = ITokenizedStrategy(address(usd3Strategy)).previewDeposit(50e6);
-        vm.expectRevert("Below minimum deposit");
+        vm.expectRevert(bytes("<min"));
         usd3Strategy.mint(sharesToMint, alice);
         vm.stopPrank();
 

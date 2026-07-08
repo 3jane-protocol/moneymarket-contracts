@@ -2,6 +2,7 @@ pragma solidity ^0.8.18;
 
 import "forge-std/console2.sol";
 import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
+import {USD3} from "../../../src/usd3/USD3.sol";
 
 contract ShutdownTest is Setup {
     function setUp() public virtual override {
@@ -78,6 +79,68 @@ contract ShutdownTest is Setup {
         } else {
             assertGe(asset.balanceOf(user), balanceBefore + _amount, "!final balance");
         }
+    }
+
+    function test_reportDoesNotRedeployFreedFundsAfterShutdown() public {
+        uint256 amount = 100_000e6;
+        USD3 usd3Strategy = USD3(address(strategy));
+
+        mintAndDepositIntoStrategy(strategy, user, amount);
+        assertGt(usd3Strategy.suppliedWaUSDC(), 0, "funds should start deployed");
+
+        vm.prank(emergencyAdmin);
+        strategy.shutdownStrategy();
+
+        vm.prank(emergencyAdmin);
+        strategy.emergencyWithdraw(amount);
+
+        uint256 idleBeforeReport = asset.balanceOf(address(strategy));
+        assertEq(usd3Strategy.suppliedWaUSDC(), 0, "emergency withdraw should free Morpho supply");
+        assertEq(usd3Strategy.balanceOfWaUSDC(), 0, "freed waUSDC should be unwrapped");
+        assertGt(idleBeforeReport, 0, "strategy should hold idle USDC");
+
+        vm.prank(keeper);
+        strategy.report();
+
+        assertEq(usd3Strategy.suppliedWaUSDC(), 0, "report should not redeploy during shutdown");
+        assertEq(usd3Strategy.balanceOfWaUSDC(), 0, "report should not wrap idle USDC during shutdown");
+        assertEq(asset.balanceOf(address(strategy)), idleBeforeReport, "idle USDC should remain idle");
+    }
+
+    function test_tendDoesNotRebalanceAfterShutdown() public {
+        uint256 amount = 100_000e6;
+        USD3 usd3Strategy = USD3(address(strategy));
+
+        mintAndDepositIntoStrategy(strategy, user, amount);
+        uint256 deployedBeforeShutdown = usd3Strategy.suppliedWaUSDC();
+        assertGt(deployedBeforeShutdown, 0, "funds should start deployed");
+
+        setMaxOnCredit(5000);
+
+        vm.prank(emergencyAdmin);
+        strategy.shutdownStrategy();
+
+        vm.prank(keeper);
+        strategy.tend();
+
+        assertEq(usd3Strategy.suppliedWaUSDC(), deployedBeforeShutdown, "tend should be a no-op during shutdown");
+        assertEq(usd3Strategy.balanceOfWaUSDC(), 0, "tend should not pull funds during shutdown");
+    }
+
+    function test_tendTriggerFalseAfterShutdown() public {
+        uint256 amount = 100_000e6;
+
+        mintAndDepositIntoStrategy(strategy, user, amount);
+        setMaxOnCredit(5000);
+
+        (bool shouldTendBeforeShutdown,) = strategy.tendTrigger();
+        assertTrue(shouldTendBeforeShutdown, "deployment drift should trigger tend before shutdown");
+
+        vm.prank(emergencyAdmin);
+        strategy.shutdownStrategy();
+
+        (bool shouldTendAfterShutdown,) = strategy.tendTrigger();
+        assertFalse(shouldTendAfterShutdown, "shutdown should suppress tend trigger");
     }
 
     // TODO: Add tests for any emergency function added.

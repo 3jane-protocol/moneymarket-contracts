@@ -313,7 +313,7 @@ contract CommitmentEdgeCasesTest is Setup {
 
         // Alice CANNOT transfer shares during commitment period
         vm.prank(alice);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         ERC20(address(usd3Strategy)).transfer(bob, shares);
 
         // Fast forward 3 more days (7 days from Alice's deposit - commitment complete)
@@ -406,7 +406,7 @@ contract CommitmentEdgeCasesTest is Setup {
 
         // Alice CANNOT transfer shares during commitment period
         vm.prank(alice);
-        vm.expectRevert("USD3: Cannot transfer during commitment period");
+        vm.expectRevert(bytes("!transfer"));
         ERC20(address(usd3Strategy)).transfer(bob, aliceShares);
 
         // Skip commitment period
@@ -456,7 +456,7 @@ contract CommitmentEdgeCasesTest is Setup {
             underlyingAsset.approve(address(usd3Strategy), 200e6);
 
             // All must meet minimum for first deposit
-            vm.expectRevert("Below minimum deposit");
+            vm.expectRevert(bytes("<min"));
             usd3Strategy.deposit(50e6, users[i]);
 
             // Deposit at minimum

@@ -7,11 +7,15 @@ out/
 /broadcast/*/31337/
 /broadcast/**/dry-run/
 
-# Docs
-docs/
-
 # Dotenv file
 .env
+.env.*
+
+# Force-track agent docs/commands even when globally ignored.
+!CLAUDE.md
+!.claude/
+!.claude/**
+.claude/settings.local.json
 
 # Node modules
 /node_modules
@@ -24,3 +28,30 @@ emv-*-certora*
 /types
 /cache_hardhat
 /artifacts
+
+/data
+
+# Local foundry install artifact (submodules are source of truth).
+foundry.lock
+
+# Deployment run artifacts and local logs (kept local, not tracked)
+/broadcast/
+/deployments/
+*.log
+.deployment_progress
+
+# Local planning / scratch docs (do not commit)
+/COMPOUNDING_ANALYSIS.md
+/JANE_PRE_RELEASE_DEPLOYMENT.md
+/PLAN.md
+/PLAN-PR-9.md
+/PR-43-CHANGES.md
+/PRODUCTION_TESTING_PLAN.md
+/REFACTORING_SUMMARY.md
+/sepolia-deployment.md
+/repayments.json
+/morpho-blue-whitepaper.txt
+/audit-diffs/
+
+# Local agent worktrees
+.claude/worktrees/

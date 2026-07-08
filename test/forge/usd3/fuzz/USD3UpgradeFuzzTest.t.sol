@@ -475,11 +475,9 @@ contract USD3UpgradeFuzzTest is Setup {
     /**
      * @notice Fuzz test new USDC deposits after upgrade
      */
-    function testFuzz_newDepositsAfterUpgrade(
-        uint256 preUpgradeDeposit,
-        uint256 postUpgradeDeposit,
-        uint256 sharePrice
-    ) public {
+    function testFuzz_newDepositsAfterUpgrade(uint256 preUpgradeDeposit, uint256 postUpgradeDeposit, uint256 sharePrice)
+        public
+    {
         // Skip edge case where unbounded value is max uint256 (causes mock issues)
         vm.assume(postUpgradeDeposit < type(uint256).max / 2);
 

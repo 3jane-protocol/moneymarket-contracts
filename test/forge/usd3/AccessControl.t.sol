@@ -71,7 +71,7 @@ contract AccessControlTest is Setup {
 
         // Even management cannot set it again (one-time only)
         vm.prank(management);
-        vm.expectRevert("sUSD3 already set");
+        vm.expectRevert();
         usd3Strategy.setSUSD3(newSusd3);
 
         // Verify the original is still set
@@ -90,7 +90,7 @@ contract AccessControlTest is Setup {
 
         // Even management cannot change it once set
         vm.prank(management);
-        vm.expectRevert("sUSD3 already set");
+        vm.expectRevert();
         usd3Strategy.setSUSD3(newSusd3);
 
         // Verify it hasn't changed

@@ -42,7 +42,7 @@ contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
      * @param _initialOwner Address that will be the contract owner
      * @param _distributor Address that will receive redistributed tokens from defaulted borrowers
      */
-    constructor(address _initialOwner, address _distributor) ERC20("JANE", "JANE") ERC20Permit("JANE") {
+    constructor(address _initialOwner, address _distributor) ERC20("Jane", "JANE") ERC20Permit("JANE") {
         if (_initialOwner == address(0)) revert InvalidAddress();
         _grantRole(OWNER_ROLE, _initialOwner);
         _setRoleAdmin(MINTER_ROLE, OWNER_ROLE);
