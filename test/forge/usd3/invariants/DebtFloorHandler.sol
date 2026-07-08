@@ -16,6 +16,8 @@ contract DebtFloorHandler is Test {
     sUSD3 public immutable susd3Strategy;
     IERC20 public immutable underlyingAsset;
     address public immutable keeper;
+    address public immutable management;
+    address public immutable conduit;
 
     address[] public actors;
 
@@ -36,18 +38,28 @@ contract DebtFloorHandler is Test {
     uint256 public successfulReport;
     uint256 public attemptedSkipTime;
     uint256 public successfulSkipTime;
+    uint256 public attemptedConduitDeposit;
+    uint256 public successfulConduitDeposit;
+    uint256 public attemptedManagementRelease;
+    uint256 public successfulManagementRelease;
+    uint256 public sumFenced;
+    uint256 public sumReleased;
 
     constructor(
         address _usd3Strategy,
         address _susd3Strategy,
         address _underlyingAsset,
         address _keeper,
+        address _management,
+        address _conduit,
         address[] memory _actors
     ) {
         usd3Strategy = USD3(_usd3Strategy);
         susd3Strategy = sUSD3(_susd3Strategy);
         underlyingAsset = IERC20(_underlyingAsset);
         keeper = _keeper;
+        management = _management;
+        conduit = _conduit;
         actors = _actors;
     }
 
@@ -169,6 +181,52 @@ contract DebtFloorHandler is Test {
         uint256 timeToSkip = timeSeed % 2 == 0 ? bound(timeSeed, 1 hours, 14 days) : bound(timeSeed, 1 days, 120 days);
         skip(timeToSkip);
         ++successfulSkipTime;
+    }
+
+    function conduitDeposit(uint256 amountSeed) public {
+        uint256 maxDeposit = usd3Strategy.availableDepositLimit(conduit);
+        if (maxDeposit == 0) return;
+        ++attemptedConduitDeposit;
+
+        uint256 maxAssets = maxDeposit < 1_000_000e6 ? maxDeposit : 1_000_000e6;
+        uint256 minAssets = maxAssets < 1e6 ? maxAssets : 1e6;
+        uint256 assets = bound(amountSeed, minAssets, maxAssets);
+
+        uint256 balance = underlyingAsset.balanceOf(conduit);
+        if (balance < assets) deal(address(underlyingAsset), conduit, assets);
+
+        vm.startPrank(conduit);
+        underlyingAsset.approve(address(usd3Strategy), assets);
+        if (amountSeed % 3 == 0) {
+            uint256 shares = ITokenizedStrategy(address(usd3Strategy)).previewDeposit(assets);
+            if (shares == 0) {
+                vm.stopPrank();
+                return;
+            }
+            try ITokenizedStrategy(address(usd3Strategy)).mint(shares, conduit) returns (uint256 assetsPaid) {
+                ++successfulConduitDeposit;
+                sumFenced += assetsPaid;
+            } catch {}
+        } else {
+            try usd3Strategy.deposit(assets, conduit) returns (uint256) {
+                ++successfulConduitDeposit;
+                sumFenced += assets;
+            } catch {}
+        }
+        vm.stopPrank();
+    }
+
+    function managementRelease(uint256 amountSeed) public {
+        uint256 fenced = usd3Strategy.ringFencedLiquidity();
+        if (fenced == 0) return;
+        ++attemptedManagementRelease;
+
+        uint256 assets = bound(amountSeed, 1, fenced);
+        vm.prank(management);
+        try usd3Strategy.releaseRingFence(assets) {
+            ++successfulManagementRelease;
+            sumReleased += assets;
+        } catch {}
     }
 
     function actorCount() external view returns (uint256) {

@@ -15,7 +15,7 @@ import {console2} from "forge-std/console2.sol";
 
 /**
  * @title USD3UpgradeForkTest
- * @notice Fork tests for the current USD3 cleanup upgrade.
+ * @notice Fork tests for the current USD3 ring-fence upgrade.
  */
 contract USD3UpgradeForkTest is MainnetForkBase {
     function test_currentUpgradePreservesLiveState() public requiresFork {
@@ -49,6 +49,9 @@ contract USD3UpgradeForkTest is MainnetForkBase {
         assertEq(usd3View.minDeposit(), minDepositBefore, "minDeposit preserved");
         assertFalse(usd3View.supplyCapExempt(USD3_PROXY), "new supplyCapExempt mapping starts empty");
         assertFalse(usd3View.supplyCapExempt(WAUSDC), "new supplyCapExempt mapping starts empty");
+        assertEq(usd3View.ringFencedLiquidity(), 0, "ringFencedLiquidity starts zero");
+        assertFalse(usd3View.ringFenceConduit(USD3_PROXY), "ringFenceConduit mapping starts empty");
+        assertFalse(usd3View.ringFenceConduit(WAUSDC), "ringFenceConduit mapping starts empty");
         assertEq(usd3.totalAssets(), totalAssetsBefore, "totalAssets preserved");
         assertEq(usd3.totalSupply(), totalSupplyBefore, "totalSupply preserved");
         if (totalSupplyBefore > 0) {

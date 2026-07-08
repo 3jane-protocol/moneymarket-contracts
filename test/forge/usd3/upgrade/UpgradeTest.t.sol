@@ -365,6 +365,23 @@ contract UpgradeTest is Setup {
             susd3StrategyAddr == address(0) || susd3StrategyAddr != address(0),
             "sUSD3 strategy reference should be valid"
         );
+
+        assertFalse(usd3Strategy.ringFenceConduit(alice), "ring-fence conduit defaults false");
+        assertEq(usd3Strategy.ringFencedLiquidity(), 0, "ring-fenced liquidity defaults zero");
+
+        vm.prank(management);
+        usd3Strategy.setRingFenceConduit(alice, true);
+
+        bytes32 ringFenceConduitSlot = keccak256(abi.encode(alice, uint256(64)));
+        assertEq(uint256(vm.load(address(usd3Strategy), ringFenceConduitSlot)), 1, "ringFenceConduit slot");
+        assertFalse(usd3Strategy.supplyCapExempt(alice), "supplyCapExempt slot unchanged");
+
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1e6);
+        usd3Strategy.deposit(1e6, alice);
+        vm.stopPrank();
+
+        assertEq(uint256(vm.load(address(usd3Strategy), bytes32(uint256(65)))), 1e6, "ringFencedLiquidity slot");
     }
 
     function test_shareCalculationStability() public {

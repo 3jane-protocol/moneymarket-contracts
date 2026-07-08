@@ -96,11 +96,20 @@ contract USD3 is BaseHooksUpgradeable {
     /// @notice Receivers that bypass USD3 supply-cap headroom and first-time minimum-deposit checks.
     mapping(address => bool) public supplyCapExempt;
 
+    /// @notice Conduits whose self-deposits add to the ring-fenced liquidity accumulator.
+    mapping(address => bool) public ringFenceConduit;
+
+    /// @notice Fenced capital-call cash in USDC asset units.
+    uint256 public ringFencedLiquidity;
+
     /*//////////////////////////////////////////////////////////////
                             EVENTS
     //////////////////////////////////////////////////////////////*/
     event SUSD3StrategyUpdated(address oldStrategy, address newStrategy);
     event SupplyCapExemptUpdated(address indexed account, bool exempt);
+    event RingFenceConduitUpdated(address indexed conduit, bool enabled);
+    event RingFencedLiquidityIncreased(address indexed conduit, uint256 assets, uint256 newTotal);
+    event RingFenceReleased(uint256 assets, uint256 newTotal);
     event MinDepositUpdated(uint256 newMinDeposit);
     event TrancheShareSynced(uint256 trancheShare);
 
@@ -466,6 +475,8 @@ contract USD3 is BaseHooksUpgradeable {
             return availableLiquidity;
         }
 
+        availableLiquidity = Math.saturatingSub(availableLiquidity, ringFencedLiquidity);
+
         IProtocolConfig config = _protocolConfig();
         uint256 nominalFloor = config.config(ProtocolConfigLib.USD3_REDEMPTION_FLOOR);
         uint256 floorBps = config.config(ProtocolConfigLib.USD3_REDEMPTION_FLOOR_BPS);
@@ -525,6 +536,15 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 currentBalance = TokenizedStrategy.balanceOf(receiver);
         if (currentBalance == 0 && !supplyCapExempt[receiver]) {
             require(assets >= minDeposit, "<min");
+        }
+    }
+
+    /// @dev Accumulates ring-fenced liquidity for conduit self-deposits.
+    function _postDepositHook(uint256 assets, uint256 shares, address receiver) internal override {
+        if (msg.sender == receiver && ringFenceConduit[receiver]) {
+            if (assets == type(uint256).max) assets = TokenizedStrategy.convertToAssets(shares);
+            ringFencedLiquidity += assets;
+            emit RingFencedLiquidityIncreased(receiver, assets, ringFencedLiquidity);
         }
     }
 
@@ -698,6 +718,26 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /**
+     * @notice Update whether a conduit self-deposit adds to ring-fenced liquidity.
+     * @param _conduit Receiver address to update.
+     * @param _enabled True to accumulate self-deposits into the ring fence, false to disable accumulation.
+     */
+    function setRingFenceConduit(address _conduit, bool _enabled) external onlyManagement {
+        ringFenceConduit[_conduit] = _enabled;
+        emit RingFenceConduitUpdated(_conduit, _enabled);
+    }
+
+    /**
+     * @notice Release ring-fenced liquidity back into the withdrawable liquidity calculation.
+     * @param _assets Amount of fenced liquidity to release, in USDC asset units.
+     */
+    function releaseRingFence(uint256 _assets) external onlyManagement {
+        require(_assets <= ringFencedLiquidity, "!fence");
+        ringFencedLiquidity -= _assets;
+        emit RingFenceReleased(_assets, ringFencedLiquidity);
+    }
+
+    /**
      * @notice Set minimum deposit amount
      * @param _minDeposit Minimum amount required for deposits
      */
@@ -765,5 +805,5 @@ contract USD3 is BaseHooksUpgradeable {
      * variables without shifting down storage in the inheritance chain.
      * See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
      */
-    uint256[39] private __gap;
+    uint256[37] private __gap;
 }

@@ -11,6 +11,9 @@ interface IUSD3 is IStrategy {
 
     event SUSD3StrategyUpdated(address oldStrategy, address newStrategy);
     event SupplyCapExemptUpdated(address indexed account, bool exempt);
+    event RingFenceConduitUpdated(address indexed conduit, bool enabled);
+    event RingFencedLiquidityIncreased(address indexed conduit, uint256 assets, uint256 newTotal);
+    event RingFenceReleased(uint256 assets, uint256 newTotal);
     event MinDepositUpdated(uint256 newMinDeposit);
     event TrancheShareSynced(uint256 trancheShare);
 
@@ -29,6 +32,8 @@ interface IUSD3 is IStrategy {
     function maxOnCredit() external view returns (uint256);
     function sUSD3() external view returns (address);
     function supplyCapExempt(address account) external view returns (bool);
+    function ringFenceConduit(address conduit) external view returns (bool);
+    function ringFencedLiquidity() external view returns (uint256);
     function minDeposit() external view returns (uint256);
     function maxSubordinationRatio() external view returns (uint256);
 
@@ -38,6 +43,8 @@ interface IUSD3 is IStrategy {
 
     function setSUSD3(address _sUSD3) external;
     function setSupplyCapExempt(address _account, bool _exempt) external;
+    function setRingFenceConduit(address _conduit, bool _enabled) external;
+    function releaseRingFence(uint256 _assets) external;
     function setMinDeposit(uint256 _minDeposit) external;
 
     /*//////////////////////////////////////////////////////////////

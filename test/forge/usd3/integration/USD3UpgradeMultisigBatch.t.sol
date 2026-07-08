@@ -17,7 +17,7 @@ import {ERC1967Utils} from "../../../../lib/openzeppelin/contracts/proxy/ERC1967
 
 /**
  * @title USD3 Upgrade Multisig Batch Test
- * @notice Tests the current USD3 implementation upgrade from frozen v2 logic to cleaned logic.
+ * @notice Tests the current USD3 implementation upgrade from frozen v2 logic to ring-fence logic.
  */
 contract USD3UpgradeMultisigBatchTest is Setup {
     // OZ v5 Initializable ERC-7201 storage location; low 64 bits hold _initialized.
@@ -81,6 +81,8 @@ contract USD3UpgradeMultisigBatchTest is Setup {
         assertEq(upgraded.sUSD3(), sUSD3Before, "sUSD3 preserved");
         assertEq(upgraded.minDeposit(), minDepositBefore, "minDeposit preserved");
         assertEq(upgraded.supplyCapExempt(exemptReceiver), exemptBefore, "supplyCapExempt preserved");
+        assertEq(upgraded.ringFencedLiquidity(), 0, "ringFencedLiquidity defaults zero");
+        assertFalse(upgraded.ringFenceConduit(exemptReceiver), "ringFenceConduit defaults false");
         assertEq(ITokenizedStrategy(address(upgraded)).totalAssets(), totalAssetsBefore, "totalAssets preserved");
         assertEq(ITokenizedStrategy(address(upgraded)).totalSupply(), totalSupplyBefore, "totalSupply preserved");
         assertEq(
@@ -125,14 +127,22 @@ contract USD3UpgradeMultisigBatchTest is Setup {
     ///      ordering them before the upgrade would misconfigure or revert).
     function _executeUpgradeBatch(ProxyAdmin proxyAdmin, address proxyAdminOwner, address proxy) internal {
         USD3 newImplementation = new USD3();
+        address postUpgradeConduit = makeAddr("postUpgradeConduit");
 
         vm.prank(proxyAdminOwner);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(proxy), address(newImplementation), "");
 
-        vm.prank(management);
-        USD3(proxy).setSupplyCapExempt(makeAddr("postUpgradeConduit"), true);
+        assertEq(USD3(proxy).ringFencedLiquidity(), 0, "ringFencedLiquidity starts zero");
+        assertFalse(USD3(proxy).ringFenceConduit(postUpgradeConduit), "ringFenceConduit starts false");
 
-        assertTrue(USD3(proxy).supplyCapExempt(makeAddr("postUpgradeConduit")), "post-upgrade governance call applied");
+        vm.prank(management);
+        USD3(proxy).setSupplyCapExempt(postUpgradeConduit, true);
+
+        vm.prank(management);
+        USD3(proxy).setRingFenceConduit(postUpgradeConduit, true);
+
+        assertTrue(USD3(proxy).supplyCapExempt(postUpgradeConduit), "post-upgrade supply-cap call applied");
+        assertTrue(USD3(proxy).ringFenceConduit(postUpgradeConduit), "post-upgrade ring-fence call applied");
     }
 
     function _deployFrozenCurrentProxy() internal returns (USD3_v2 oldUsd3, ProxyAdmin proxyAdmin, address owner) {

@@ -257,7 +257,8 @@ contract TransferRestrictionHandler is Test {
 
         address recipient = users[recipientSeed % users.length];
         if (recipient == sender && users.length > 1) {
-            recipient = users[(recipientSeed + 1) % users.length];
+            uint256 nextIndex = (recipientSeed % users.length + 1) % users.length;
+            recipient = users[nextIndex];
         }
 
         uint256 balance = IERC20(address(usd3)).balanceOf(sender);
