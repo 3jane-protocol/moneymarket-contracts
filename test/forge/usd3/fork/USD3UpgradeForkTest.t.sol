@@ -3,7 +3,7 @@ pragma solidity ^0.8.18;
 
 import {MainnetForkBase} from "./MainnetForkBase.t.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
-import {USD3_v2} from "../../../../src/usd3/USD3_v2.sol";
+import {USD3_old} from "../../../../src/usd3/USD3_old.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {
@@ -39,7 +39,7 @@ contract USD3UpgradeForkTest is MainnetForkBase {
         // matches the frozen v2 ABI for the whitelist surface.
         address management = usd3.management();
         vm.prank(management);
-        USD3_v2(USD3_PROXY).setWhitelistEnabled(true);
+        USD3_old(USD3_PROXY).setWhitelistEnabled(true);
         assertEq(usd3.maxDeposit(address(0x1234)), 0, "deployed impl whitelist gate active");
 
         _upgradeProxyToCleanup();

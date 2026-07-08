@@ -23,7 +23,7 @@ interface IWaUSDC is IERC4626 {
 }
 
 /**
- * @title USD3_v2
+ * @title USD3_old
  * @author 3Jane Protocol
  * @notice Senior tranche strategy for USDC-based lending on 3Jane's credit markets
  * @dev Implements Yearn V3 tokenized strategy pattern for unsecured lending via MorphoCredit.
@@ -52,7 +52,7 @@ interface IWaUSDC is IERC4626 {
  * - USD3 holders protected up to total sUSD3 holdings
  * - Losses exceeding sUSD3 balance shared proportionally among USD3 holders
  */
-contract USD3_v2 is BaseHooksUpgradeable {
+contract USD3_old is BaseHooksUpgradeable {
     using SafeERC20 for IERC20;
     using MorphoLib for IMorpho;
     using MorphoBalancesLib for IMorpho;
@@ -99,16 +99,12 @@ contract USD3_v2 is BaseHooksUpgradeable {
     /// @dev Used to enforce commitment periods
     mapping(address => uint256) public depositTimestamp;
 
-    /// @notice Receivers that bypass USD3 supply-cap headroom and first-time minimum-deposit checks.
-    mapping(address => bool) public supplyCapExempt;
-
     /*//////////////////////////////////////////////////////////////
                             EVENTS
     //////////////////////////////////////////////////////////////*/
     event SUSD3StrategyUpdated(address oldStrategy, address newStrategy);
     event WhitelistUpdated(address indexed user, bool allowed);
     event DepositorWhitelistUpdated(address indexed depositor, bool allowed);
-    event SupplyCapExemptUpdated(address indexed account, bool exempt);
     event MinDepositUpdated(uint256 newMinDeposit);
     event TrancheShareSynced(uint256 trancheShare);
 
@@ -466,18 +462,14 @@ contract USD3_v2 is BaseHooksUpgradeable {
                     PUBLIC VIEW FUNCTIONS (OVERRIDES)
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Returns the withdrawable assets for an owner after liquidity, commitment-time, and floor checks.
-    /// @dev The bps floor is a scaling/rate knob applied to then-current total assets, so repeated redemptions drain
-    /// geometrically toward the nominal floor. The nominal floor is the hard ring-fence and should be set alongside
-    /// the bps floor whenever a fixed asset amount must remain reserved.
+    /// @dev Returns available withdraw limit, enforcing commitment time
     /// @param _owner Address to check limit for
     /// @return Maximum amount that can be withdrawn
     function availableWithdrawLimit(address _owner) public view override returns (uint256) {
         // Get available liquidity first
         uint256 idleAsset = asset.balanceOf(address(this));
-        uint256 totalAssets = TokenizedStrategy.totalAssets();
 
-        if (nav() + 2 < totalAssets) {
+        if (nav() + 2 < TokenizedStrategy.totalAssets()) {
             return 0;
         }
 
@@ -503,7 +495,7 @@ contract USD3_v2 is BaseHooksUpgradeable {
 
         uint256 availableLiquidity = idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
 
-        // During shutdown, bypass the going-concern redemption constraints below.
+        // During shutdown, bypass all checks
         if (TokenizedStrategy.isShutdown()) {
             return availableLiquidity;
         }
@@ -517,14 +509,7 @@ contract USD3_v2 is BaseHooksUpgradeable {
             }
         }
 
-        IProtocolConfig config = _protocolConfig();
-        uint256 nominalFloor = config.config(ProtocolConfigLib.USD3_REDEMPTION_FLOOR);
-        uint256 floorBps = config.config(ProtocolConfigLib.USD3_REDEMPTION_FLOOR_BPS);
-        if (floorBps > MAX_BPS) floorBps = MAX_BPS;
-        uint256 bpsFloor = totalAssets.mulDiv(floorBps, MAX_BPS);
-        uint256 floor = Math.max(nominalFloor, bpsFloor);
-
-        return Math.min(availableLiquidity, Math.saturatingSub(totalAssets, floor));
+        return availableLiquidity;
     }
 
     /// @dev Returns available deposit limit, enforcing whitelist and supply cap
@@ -551,7 +536,7 @@ contract USD3_v2 is BaseHooksUpgradeable {
         if (cap == 0) {
             return 0;
         }
-        if (supplyCapExempt[_owner] || cap == type(uint256).max) {
+        if (cap == type(uint256).max) {
             return maxDeposit;
         }
 
@@ -579,7 +564,7 @@ contract USD3_v2 is BaseHooksUpgradeable {
 
         // Enforce minimum deposit only for first-time depositors
         uint256 currentBalance = TokenizedStrategy.balanceOf(receiver);
-        if (currentBalance == 0 && !supplyCapExempt[receiver]) {
+        if (currentBalance == 0) {
             require(assets >= minDeposit, "<min");
         }
 
@@ -819,17 +804,6 @@ contract USD3_v2 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Update supply-cap and first-time minimum-deposit exemption status for a receiver.
-     * @param _account Receiver address to update.
-     * @param _exempt True to bypass supply-cap headroom and first-time minimum-deposit checks, false to remove
-     * exemption.
-     */
-    function setSupplyCapExempt(address _account, bool _exempt) external onlyManagement {
-        supplyCapExempt[_account] = _exempt;
-        emit SupplyCapExemptUpdated(_account, _exempt);
-    }
-
-    /**
      * @notice Set minimum deposit amount
      * @param _minDeposit Minimum amount required for deposits
      */
@@ -897,5 +871,5 @@ contract USD3_v2 is BaseHooksUpgradeable {
      * variables without shifting down storage in the inheritance chain.
      * See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
      */
-    uint256[39] private __gap;
+    uint256[40] private __gap;
 }

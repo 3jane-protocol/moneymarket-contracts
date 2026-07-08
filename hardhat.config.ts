@@ -77,11 +77,13 @@ const config: HardhatUserConfig = {
         },
       },
     ],
-    // Mirrors the foundry size settings without letting 0.8.35 capture every other ^0.8.x source.
+    // Mirrors the foundry per-file compiler settings (USD3.sol pins the measured 999999 runs explicitly
+    // because non-overridden 0.8.22 sources compile under the compilers-block entry above at 4294967295
+    // runs, an unmeasured artifact for USD3) without letting 0.8.35 capture every other ^0.8.x source.
     overrides: Object.fromEntries(
       ([
-        ["src/usd3/USD3.sol", "0.8.22", 200],
-        ["src/usd3/USD3_v2.sol", "0.8.22", 200],
+        ["src/usd3/USD3.sol", "0.8.22", 999999],
+        ["src/usd3/USD3_old.sol", "0.8.22", 200],
         ["src/lcc/LCCVault.sol", "0.8.35", 400],
         ["src/lcc/LCCVaultFactory.sol", "0.8.35", 999999],
         ["src/lcc/interfaces/ILCCVault.sol", "0.8.35", 999999],

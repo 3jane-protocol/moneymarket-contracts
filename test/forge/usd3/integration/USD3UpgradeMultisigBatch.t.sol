@@ -3,7 +3,7 @@ pragma solidity ^0.8.18;
 
 import {Setup} from "../utils/Setup.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
-import {USD3_v2} from "../../../../src/usd3/USD3_v2.sol";
+import {USD3_old} from "../../../../src/usd3/USD3_old.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
@@ -17,7 +17,7 @@ import {ERC1967Utils} from "../../../../lib/openzeppelin/contracts/proxy/ERC1967
 
 /**
  * @title USD3 Upgrade Multisig Batch Test
- * @notice Tests the current USD3 implementation upgrade from frozen v2 logic to ring-fence logic.
+ * @notice Tests the current USD3 implementation upgrade from frozen old logic to ring-fence logic.
  */
 contract USD3UpgradeMultisigBatchTest is Setup {
     // OZ v5 Initializable ERC-7201 storage location; low 64 bits hold _initialized.
@@ -25,8 +25,6 @@ contract USD3UpgradeMultisigBatchTest is Setup {
         0xf0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00;
 
     address public alice;
-    address public exemptReceiver;
-    address public oldWhitelisted;
 
     uint256 public constant INITIAL_DEPOSIT = 1000e6;
     uint256 public constant UPDATED_MIN_DEPOSIT = 250e6;
@@ -35,20 +33,14 @@ contract USD3UpgradeMultisigBatchTest is Setup {
         super.setUp();
 
         alice = makeAddr("alice");
-        exemptReceiver = makeAddr("exemptReceiver");
-        oldWhitelisted = makeAddr("oldWhitelisted");
     }
 
     function test_upgradeFromFrozenV2ToCleanupPreservesLiveState() public {
-        (USD3_v2 oldUsd3, ProxyAdmin proxyAdmin, address proxyAdminOwner) = _deployFrozenCurrentProxy();
+        (USD3_old oldUsd3, ProxyAdmin proxyAdmin, address proxyAdminOwner) = _deployFrozenCurrentProxy();
         setMaxOnCredit(0);
 
         vm.prank(management);
         oldUsd3.setMinDeposit(UPDATED_MIN_DEPOSIT);
-        vm.prank(management);
-        oldUsd3.setSupplyCapExempt(exemptReceiver, true);
-        vm.prank(management);
-        oldUsd3.setWhitelist(oldWhitelisted, true);
 
         MockERC20(address(asset)).mint(alice, INITIAL_DEPOSIT + 100e6);
         vm.startPrank(alice);
@@ -62,12 +54,13 @@ contract USD3UpgradeMultisigBatchTest is Setup {
         oldUsd3.setWhitelistEnabled(true);
         assertEq(ITokenizedStrategy(address(oldUsd3)).maxDeposit(alice), 0, "v2 whitelist gate blocks alice");
 
-        // Mirror the live proxy's consumed reinitializer(3) so version fidelity matches mainnet.
+        // Mirror the live proxy's consumed reinitializer(3): mainnet's version-3 state was written by a
+        // transient restart implementation the deployed logic no longer carries, so the storage write is the
+        // faithful model.
         vm.store(address(oldUsd3), INITIALIZABLE_STORAGE_SLOT, bytes32(uint256(3)));
 
         address sUSD3Before = oldUsd3.sUSD3();
         uint256 minDepositBefore = oldUsd3.minDeposit();
-        bool exemptBefore = oldUsd3.supplyCapExempt(exemptReceiver);
         uint256 totalAssetsBefore = ITokenizedStrategy(address(oldUsd3)).totalAssets();
         uint256 totalSupplyBefore = ITokenizedStrategy(address(oldUsd3)).totalSupply();
         uint256 ppsBefore = totalAssetsBefore * 1e18 / totalSupplyBefore;
@@ -80,9 +73,9 @@ contract USD3UpgradeMultisigBatchTest is Setup {
         assertEq(ITokenizedStrategy(address(upgraded)).asset(), address(asset), "asset remains USDC");
         assertEq(upgraded.sUSD3(), sUSD3Before, "sUSD3 preserved");
         assertEq(upgraded.minDeposit(), minDepositBefore, "minDeposit preserved");
-        assertEq(upgraded.supplyCapExempt(exemptReceiver), exemptBefore, "supplyCapExempt preserved");
+        assertFalse(upgraded.supplyCapExempt(alice), "supplyCapExempt defaults false");
         assertEq(upgraded.ringFencedLiquidity(), 0, "ringFencedLiquidity defaults zero");
-        assertFalse(upgraded.ringFenceConduit(exemptReceiver), "ringFenceConduit defaults false");
+        assertFalse(upgraded.ringFenceConduit(alice), "ringFenceConduit defaults false");
         assertEq(ITokenizedStrategy(address(upgraded)).totalAssets(), totalAssetsBefore, "totalAssets preserved");
         assertEq(ITokenizedStrategy(address(upgraded)).totalSupply(), totalSupplyBefore, "totalSupply preserved");
         assertEq(
@@ -145,12 +138,12 @@ contract USD3UpgradeMultisigBatchTest is Setup {
         assertTrue(USD3(proxy).ringFenceConduit(postUpgradeConduit), "post-upgrade ring-fence call applied");
     }
 
-    function _deployFrozenCurrentProxy() internal returns (USD3_v2 oldUsd3, ProxyAdmin proxyAdmin, address owner) {
-        USD3_v2 oldImplementation = new USD3_v2();
+    function _deployFrozenCurrentProxy() internal returns (USD3_old oldUsd3, ProxyAdmin proxyAdmin, address owner) {
+        USD3_old oldImplementation = new USD3_old();
         owner = makeAddr("FrozenProxyAdminOwner");
 
         bytes memory initData = abi.encodeWithSelector(
-            USD3_v2.initialize.selector,
+            USD3_old.initialize.selector,
             address(USD3(address(strategy)).morphoCredit()),
             MarketParamsLib.id(USD3(address(strategy)).marketParams()),
             management,
@@ -159,7 +152,7 @@ contract USD3UpgradeMultisigBatchTest is Setup {
 
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(oldImplementation), owner, initData);
         proxyAdmin = ProxyAdmin(address(uint160(uint256(vm.load(address(proxy), ERC1967Utils.ADMIN_SLOT)))));
-        oldUsd3 = USD3_v2(address(proxy));
+        oldUsd3 = USD3_old(address(proxy));
         oldUsd3.reinitialize();
     }
 }

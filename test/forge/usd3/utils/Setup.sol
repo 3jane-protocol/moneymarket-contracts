@@ -12,6 +12,7 @@ import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
 
 // Add imports for USD3 testing
 import {USD3} from "../../../../src/usd3/USD3.sol";
+import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {IMorpho, MarketParams, Id} from "../../../../src/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
@@ -186,6 +187,20 @@ contract Setup is Test, IEvents {
         return address(usd3Proxy);
     }
 
+    function setUpSUSD3() internal returns (sUSD3 susd3Strategy) {
+        sUSD3 susd3Implementation = new sUSD3();
+        ProxyAdmin susd3ProxyAdmin = new ProxyAdmin(management);
+        TransparentUpgradeableProxy susd3Proxy = new TransparentUpgradeableProxy(
+            address(susd3Implementation),
+            address(susd3ProxyAdmin),
+            abi.encodeCall(sUSD3.initialize, (address(strategy), management, keeper))
+        );
+        susd3Strategy = sUSD3(address(susd3Proxy));
+
+        vm.prank(management);
+        USD3(address(strategy)).setSUSD3(address(susd3Strategy));
+    }
+
     function depositIntoStrategy(IUSD3 _strategy, address _user, uint256 _amount) public {
         vm.prank(_user);
         asset.approve(address(_strategy), _amount);
@@ -289,7 +304,7 @@ contract Setup is Test, IEvents {
     }
 
     function _setTokenAddrs() internal {
-        // Deploy mock USDC at the mainnet address; the frozen USD3_v2 reinitialize() hardcodes it.
+        // Deploy mock USDC at the mainnet address; the frozen USD3_old reinitialize() hardcodes it.
         address expectedUsdcAddress = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
         // Deploy the mock USDC

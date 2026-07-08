@@ -3,16 +3,12 @@ pragma solidity ^0.8.18;
 
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {Setup} from "../utils/Setup.sol";
-import {USD3} from "../../../../src/usd3/USD3.sol";
+import {USD3, IWaUSDC} from "../../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {
-    TransparentUpgradeableProxy
-} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {DebtFloorHandler} from "./DebtFloorHandler.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -33,17 +29,7 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         usd3Strategy = USD3(address(strategy));
         protocolConfig = MockProtocolConfig(MorphoCredit(address(usd3Strategy.morphoCredit())).protocolConfig());
 
-        sUSD3 susd3Implementation = new sUSD3();
-        ProxyAdmin susd3ProxyAdmin = new ProxyAdmin(management);
-        TransparentUpgradeableProxy susd3Proxy = new TransparentUpgradeableProxy(
-            address(susd3Implementation),
-            address(susd3ProxyAdmin),
-            abi.encodeCall(sUSD3.initialize, (address(usd3Strategy), management, keeper))
-        );
-        susd3Strategy = sUSD3(address(susd3Proxy));
-
-        vm.prank(management);
-        usd3Strategy.setSUSD3(address(susd3Strategy));
+        susd3Strategy = setUpSUSD3();
 
         // Configure floor/cap environment.
         setMaxOnCredit(8000);
@@ -245,6 +231,7 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
     }
 
     function _rawUsd3Liquidity() internal view returns (uint256) {
+        IWaUSDC waUSDC = usd3Strategy.WAUSDC();
         uint256 idleAsset = IERC20(address(underlyingAsset)).balanceOf(address(usd3Strategy));
         uint256 localWaUSDC = usd3Strategy.balanceOfWaUSDC();
         uint256 suppliedWaUSDC = usd3Strategy.suppliedWaUSDC();
@@ -254,10 +241,10 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
             localWaUSDC + (suppliedWaUSDC < waUSDCLiquidity ? suppliedWaUSDC : waUSDCLiquidity);
         if (totalRedeemableWaUSDC == 0) return idleAsset;
 
-        uint256 globalRedeemableWaUSDC = usd3Strategy.WAUSDC()
-            .convertToShares(usd3Strategy.WAUSDC().POOL().getVirtualUnderlyingBalance(usd3Strategy.WAUSDC().asset()));
+        uint256 globalRedeemableWaUSDC =
+            waUSDC.convertToShares(waUSDC.POOL().getVirtualUnderlyingBalance(waUSDC.asset()));
         if (totalRedeemableWaUSDC > globalRedeemableWaUSDC) totalRedeemableWaUSDC = globalRedeemableWaUSDC;
 
-        return idleAsset + usd3Strategy.WAUSDC().convertToAssets(totalRedeemableWaUSDC);
+        return idleAsset + waUSDC.convertToAssets(totalRedeemableWaUSDC);
     }
 }

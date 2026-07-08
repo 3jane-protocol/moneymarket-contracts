@@ -475,6 +475,7 @@ contract USD3 is BaseHooksUpgradeable {
             return availableLiquidity;
         }
 
+        // The fence reserves realized cash liquidity; nominal and bps floors reserve against totalAssets below.
         availableLiquidity = Math.saturatingSub(availableLiquidity, ringFencedLiquidity);
 
         IProtocolConfig config = _protocolConfig();

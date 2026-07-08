@@ -9,10 +9,6 @@ import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
 import {ProtocolConfigLib} from "../../../src/libraries/ProtocolConfigLib.sol";
 import {IERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {
-    TransparentUpgradeableProxy
-} from "../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 contract RingFenceConduit {
     USD3 public immutable usd3;
@@ -239,7 +235,7 @@ contract USD3RingFenceTest is Setup {
         _setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
         _setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 0);
 
-        sUSD3 susd3Strategy = _deploySUSD3();
+        sUSD3 susd3Strategy = setUpSUSD3();
 
         _depositFor(alice, SMALL_AMOUNT);
         vm.startPrank(alice);
@@ -301,19 +297,5 @@ contract USD3RingFenceTest is Setup {
     function _setConfig(bytes32 key, uint256 value) internal {
         vm.prank(protocolConfig.owner());
         protocolConfig.setConfig(key, value);
-    }
-
-    function _deploySUSD3() internal returns (sUSD3 susd3Strategy) {
-        sUSD3 implementation = new sUSD3();
-        ProxyAdmin proxyAdmin = new ProxyAdmin(management);
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
-            address(implementation),
-            address(proxyAdmin),
-            abi.encodeCall(sUSD3.initialize, (address(usd3Strategy), management, keeper))
-        );
-        susd3Strategy = sUSD3(address(proxy));
-
-        vm.prank(management);
-        usd3Strategy.setSUSD3(address(susd3Strategy));
     }
 }

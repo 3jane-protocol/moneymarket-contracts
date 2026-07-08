@@ -35,7 +35,6 @@ interface IUSD3 is IStrategy {
     function ringFenceConduit(address conduit) external view returns (bool);
     function ringFencedLiquidity() external view returns (uint256);
     function minDeposit() external view returns (uint256);
-    function maxSubordinationRatio() external view returns (uint256);
 
     /*//////////////////////////////////////////////////////////////
                     MANAGEMENT FUNCTIONS

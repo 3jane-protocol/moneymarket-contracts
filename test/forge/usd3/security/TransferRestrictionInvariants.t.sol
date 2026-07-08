@@ -6,10 +6,6 @@ import {USD3} from "../../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {
-    TransparentUpgradeableProxy
-} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {Math} from "../../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {Test} from "forge-std/Test.sol";
 
@@ -27,26 +23,7 @@ contract TransferRestrictionInvariants is Setup {
         super.setUp();
 
         usd3Strategy = USD3(address(strategy));
-
-        // Deploy sUSD3 implementation with proxy
-        sUSD3 susd3Implementation = new sUSD3();
-
-        // Deploy proxy admin
-        address proxyAdminOwner = makeAddr("ProxyAdminOwner");
-        ProxyAdmin susd3ProxyAdmin = new ProxyAdmin(proxyAdminOwner);
-
-        // Deploy proxy with initialization
-        bytes memory susd3InitData =
-            abi.encodeWithSelector(sUSD3.initialize.selector, address(usd3Strategy), management, keeper);
-
-        TransparentUpgradeableProxy susd3Proxy =
-            new TransparentUpgradeableProxy(address(susd3Implementation), address(susd3ProxyAdmin), susd3InitData);
-
-        susd3Strategy = sUSD3(address(susd3Proxy));
-
-        // Link strategies
-        vm.prank(management);
-        usd3Strategy.setSUSD3(address(susd3Strategy));
+        susd3Strategy = setUpSUSD3();
 
         vm.prank(management);
         usd3Strategy.setMinDeposit(100e6);
