@@ -7,29 +7,54 @@ import {
 } from "../../../../lib/openzeppelin/contracts/access/extensions/IAccessControlEnumerable.sol";
 import {OperationalController} from "../../../../src/OperationalController.sol";
 
+interface IProtocolConfigEmergencyAdmin {
+    function emergencyAdmin() external view returns (address);
+}
+
+interface IRoleConstants {
+    function OWNER_ROLE() external view returns (bytes32);
+    function EMERGENCY_AUTHORIZED_ROLE() external view returns (bytes32);
+}
+
 /// @title DeployOperationalController
 /// @notice Deploy the OperationalController with separate emergency and operator roles.
 contract DeployOperationalController is Script {
     address constant PROTOCOL_CONFIG = 0x6b276A2A7dd8b629adBA8A06AD6573d01C84f34E;
     address constant CREDIT_LINE = 0x26389b03298BA5DA0664FfD6bF78cF3A7820c6A9;
-    address constant SAFE_ADDRESS = 0x33333333Bd7045F1A601A1E289D7AB21036fB5EF;
+    address constant SLOW_TIMELOCK = 0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2;
+
+    bytes32 constant OWNER_ROLE = keccak256("OWNER_ROLE");
+    bytes32 constant EMERGENCY_AUTHORIZED_ROLE = keccak256("EMERGENCY_AUTHORIZED_ROLE");
 
     function run() external returns (address) {
-        address[] memory emergencySigners = _getEmergencySigners();
-        address[] memory operators = _getOperators();
+        address operationalTimelock = vm.envAddress("OPERATIONAL_TIMELOCK");
+        require(operationalTimelock != address(0), "OPERATIONAL_TIMELOCK not set");
+        require(operationalTimelock.code.length > 0, "OPERATIONAL_TIMELOCK has no code");
+
+        address currentEmergencyController = IProtocolConfigEmergencyAdmin(PROTOCOL_CONFIG).emergencyAdmin();
+        require(currentEmergencyController != address(0), "ProtocolConfig.emergencyAdmin not set");
+        require(currentEmergencyController.code.length > 0, "emergencyAdmin has no code");
+        _validateRoleConstants(currentEmergencyController);
+
+        IAccessControlEnumerable currentEnumerable = IAccessControlEnumerable(currentEmergencyController);
+        address[] memory emergencySigners = _copyRoleMembers(currentEnumerable, EMERGENCY_AUTHORIZED_ROLE);
+        address[] memory operators = new address[](1);
+        operators[0] = operationalTimelock;
 
         console2.log("=== Deploying OperationalController ===");
         console2.log("ProtocolConfig:", PROTOCOL_CONFIG);
         console2.log("CreditLine:", CREDIT_LINE);
-        console2.log("Owner (Safe):", SAFE_ADDRESS);
-        _logAddresses("Emergency signers", emergencySigners);
+        console2.log("Current emergency controller:", currentEmergencyController);
+        console2.log("Owner (slow timelock):", SLOW_TIMELOCK);
+        _logAddresses("Copied emergency members", emergencySigners);
         _logAddresses("Operators", operators);
         console2.log("");
 
         vm.startBroadcast();
 
-        OperationalController controller =
-            new OperationalController(PROTOCOL_CONFIG, CREDIT_LINE, SAFE_ADDRESS, emergencySigners, operators);
+        OperationalController controller = new OperationalController{salt: "3jane"}(
+            PROTOCOL_CONFIG, CREDIT_LINE, SLOW_TIMELOCK, emergencySigners, operators
+        );
 
         vm.stopBroadcast();
 
@@ -51,36 +76,31 @@ contract DeployOperationalController is Script {
         console2.log(
             "1. Run 02_ScheduleOperationalControllerUpgrade.s.sol with OPERATIONAL_CONTROLLER=%s", address(controller)
         );
+        console2.log("   and OPERATIONAL_TIMELOCK=%s", operationalTimelock);
         console2.log("2. Wait for Safe signers to approve the schedule transaction");
         console2.log("3. Wait for timelock delay, then run 03_ExecuteOperationalControllerUpgrade.s.sol");
 
         return address(controller);
     }
 
-    function _getEmergencySigners() internal view returns (address[] memory signers) {
-        string memory raw = vm.envOr("EMERGENCY_SIGNERS", string(""));
-        if (bytes(raw).length == 0) {
-            signers = new address[](1);
-            signers[0] = SAFE_ADDRESS;
-            return signers;
-        }
-
-        return _parseAddressList(raw);
+    function _validateRoleConstants(address controller) internal view {
+        IRoleConstants roles = IRoleConstants(controller);
+        require(roles.OWNER_ROLE() == OWNER_ROLE, "current OWNER_ROLE mismatch");
+        require(
+            roles.EMERGENCY_AUTHORIZED_ROLE() == EMERGENCY_AUTHORIZED_ROLE, "current EMERGENCY_AUTHORIZED_ROLE mismatch"
+        );
     }
 
-    function _getOperators() internal view returns (address[] memory operators) {
-        string memory raw = vm.envString("OPERATORS");
-        require(bytes(raw).length > 0, "OPERATORS not set");
-        operators = _parseAddressList(raw);
-        require(operators.length > 0, "OPERATORS empty");
-    }
-
-    function _parseAddressList(string memory raw) internal pure returns (address[] memory addrs) {
-        string[] memory parts = vm.split(raw, ",");
-        addrs = new address[](parts.length);
-        for (uint256 i = 0; i < parts.length; i++) {
-            addrs[i] = vm.parseAddress(parts[i]);
-            require(addrs[i] != address(0), "zero address in list");
+    function _copyRoleMembers(IAccessControlEnumerable enumerable, bytes32 role)
+        internal
+        view
+        returns (address[] memory members)
+    {
+        uint256 count = enumerable.getRoleMemberCount(role);
+        members = new address[](count);
+        for (uint256 i = 0; i < count; i++) {
+            members[i] = enumerable.getRoleMember(role, i);
+            require(members[i] != address(0), "zero address role member");
         }
     }
 

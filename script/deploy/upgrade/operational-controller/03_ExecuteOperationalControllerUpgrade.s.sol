@@ -10,17 +10,20 @@ import {OperationalControllerUpgradeBase} from "./OperationalControllerUpgradeBa
 contract ExecuteOperationalControllerUpgrade is Script, SafeHelper, OperationalControllerUpgradeBase {
     function run(bool send) external isBatch(SAFE_ADDRESS) isTimelock(TIMELOCK) {
         address newController = vm.envAddress("OPERATIONAL_CONTROLLER");
-        require(newController != address(0), "OPERATIONAL_CONTROLLER not set");
+        address operationalTimelock = vm.envAddress("OPERATIONAL_TIMELOCK");
+        _validateNewController(newController, operationalTimelock);
+        _validateSlowTimelockAdminPreconditions();
 
         console2.log("=== Execute OperationalController Upgrade via Timelock ===");
         console2.log("Safe address:", SAFE_ADDRESS);
         console2.log("Timelock address:", TIMELOCK);
         console2.log("New OperationalController:", newController);
+        console2.log("Operational timelock:", operationalTimelock);
         console2.log("Send to Safe:", send);
         console2.log("");
 
         (address[] memory targets, uint256[] memory values, bytes[] memory datas, bytes32 salt, bytes32 predecessor) =
-            _buildOperation(newController);
+            _buildOperation(newController, operationalTimelock);
 
         bytes32 operationId = calculateBatchOperationId(targets, values, datas, predecessor, salt);
 
@@ -46,6 +49,8 @@ contract ExecuteOperationalControllerUpgrade is Script, SafeHelper, OperationalC
             console2.log("Once executed:");
             console2.log("  - ProtocolConfig.emergencyAdmin -> %s", newController);
             console2.log("  - CreditLine.ozd -> %s", newController);
+            console2.log("  - Operational timelock self DEFAULT_ADMIN_ROLE revoked");
+            console2.log("  - Main multisig slow timelock DEFAULT_ADMIN_ROLE revoked");
         } else {
             console2.log("Simulation mode - not sending to Safe");
             executeBatch(false);
@@ -57,14 +62,16 @@ contract ExecuteOperationalControllerUpgrade is Script, SafeHelper, OperationalC
     /// @notice Check status of the upgrade operation.
     function checkStatus() external view {
         address newController = vm.envAddress("OPERATIONAL_CONTROLLER");
-        require(newController != address(0), "OPERATIONAL_CONTROLLER not set");
+        address operationalTimelock = vm.envAddress("OPERATIONAL_TIMELOCK");
+        _validateNewController(newController, operationalTimelock);
 
         console2.log("=== Checking OperationalController Upgrade Status ===");
         console2.log("New OperationalController:", newController);
+        console2.log("Operational timelock:", operationalTimelock);
         console2.log("");
 
         (address[] memory targets, uint256[] memory values, bytes[] memory datas, bytes32 salt, bytes32 predecessor) =
-            _buildOperation(newController);
+            _buildOperation(newController, operationalTimelock);
 
         bytes32 operationId = calculateBatchOperationId(targets, values, datas, predecessor, salt);
 
@@ -77,10 +84,12 @@ contract ExecuteOperationalControllerUpgrade is Script, SafeHelper, OperationalC
     /// @notice Verify the upgrade was applied correctly.
     function verify() external view {
         address newController = vm.envAddress("OPERATIONAL_CONTROLLER");
-        require(newController != address(0), "OPERATIONAL_CONTROLLER not set");
+        address operationalTimelock = vm.envAddress("OPERATIONAL_TIMELOCK");
+        _validateNewController(newController, operationalTimelock);
 
         console2.log("=== Verifying OperationalController Upgrade ===");
         console2.log("Expected OperationalController:", newController);
+        console2.log("Expected operational timelock:", operationalTimelock);
         console2.log("");
 
         (bool ok1, bytes memory data1) = PROTOCOL_CONFIG.staticcall(abi.encodeWithSignature("emergencyAdmin()"));
@@ -104,6 +113,11 @@ contract ExecuteOperationalControllerUpgrade is Script, SafeHelper, OperationalC
                 console2.log("FAIL: CreditLine.ozd mismatch");
             }
         }
+
+        _validateOperationalTimelockAdminFinalized(operationalTimelock);
+        console2.log("PASS: Operational timelock admin finalized");
+        _validateSlowTimelockAdminFinalized();
+        console2.log("PASS: Slow timelock admin finalized");
     }
 
     function run() external {
