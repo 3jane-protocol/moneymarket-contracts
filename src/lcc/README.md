@@ -58,7 +58,11 @@ over the shared `LCCBase` harness.
 ## 3. Actors and trust model
 
 - **Owner** — fully trusted. Opens calls (`openEpochCall`), tunes mutable risk caps (`setRiskCaps`,
-  `setMaxAuctionAwardBps`, `setSlashFeeBps`), and can trigger `shutdown`. The owner controls the call size; a
+  `setMaxAuctionAwardBps`, `setSlashFeeBps`, `setMarginOracle`), and can trigger `shutdown`. `setMarginOracle` is an
+  owner-trusted rotation that reprices future auction awards and return-pool disposal for all unsettled calls;
+  `openEpochCall` does not snapshot the oracle. It is blocked during a live auction only while the current oracle
+  still prices fills, so a dead oracle never blocks recovery; the new oracle must return a nonzero
+  `marginAsset`-to-`fundingAsset` price at `ORACLE_PRICE_SCALE`. The owner controls the call size; a
   dust-sized `callAmount` can force every account to owe a single funding unit (see §7), a documented owner surface.
 - **Margin oracle** — fully trusted. Returns a fresh `marginAsset`-to-`fundingAsset` price scaled by
   `ORACLE_PRICE_SCALE`, absorbing any token-decimal conversion. A zero price reverts (`OraclePriceInvalid`).

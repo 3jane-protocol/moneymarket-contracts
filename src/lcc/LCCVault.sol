@@ -276,6 +276,29 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
     }
 
     /// @inheritdoc ILCCVault
+    /// @dev Rotation is owner-trusted and reprices future auction awards and return-pool disposal for every
+    /// unsettled call, not only future calls. `openEpochCall` does not snapshot the oracle. The live-auction guard
+    /// blocks rotation only while the current oracle still returns a nonzero price for fills; a zero-price,
+    /// reverting, or otherwise unreadable current oracle never blocks rotation. The new oracle must return
+    /// marginAsset-to-fundingAsset (USDC) prices at ORACLE_PRICE_SCALE with matching decimals; the vault can only
+    /// check that the price is nonzero.
+    function setMarginOracle(address newOracle) external onlyOwner {
+        if (newOracle == address(0)) revert LCCErrorsLib.ZeroAddress();
+        uint256 auctionSlot = _syncState.pendingAuctionEpochPlusOne;
+        if (auctionSlot != 0 && block.timestamp < _epochStart(auctionSlot - 1) + _clockConfig.epochLength) {
+            try IOracle(_auctionConfig.marginOracle).price() returns (uint256 oldPrice) {
+                if (oldPrice != 0) revert LCCErrorsLib.InvalidPhase();
+            } catch {}
+        }
+        if (IOracle(newOracle).price() == 0) revert LCCErrorsLib.OraclePriceInvalid();
+
+        address oldOracle = _auctionConfig.marginOracle;
+        _auctionConfig.marginOracle = newOracle;
+
+        emit LCCEventsLib.MarginOracleUpdated(oldOracle, newOracle);
+    }
+
+    /// @inheritdoc ILCCVault
     function shutdown() external onlyOwner {
         if (_shutdown.active) revert LCCErrorsLib.ShutdownActive();
         _shutdown.active = true;

@@ -357,6 +357,15 @@ interface ILCCVault {
     /// @notice Owner update of the fee charged on auction-awarded slashed margin, clamped to unawarded surplus.
     /// @param newSlashFeeBps New fee in bps.
     function setSlashFeeBps(uint256 newSlashFeeBps) external;
+    /// @notice Owner update of the trusted margin oracle.
+    /// @dev Rotation is owner-trusted and reprices future auction awards and return-pool disposal for every
+    /// unsettled call, not only future calls. `openEpochCall` does not snapshot the oracle. The live-auction guard
+    /// blocks rotation only while the current oracle still returns a nonzero price for fills; a zero-price,
+    /// reverting, or otherwise unreadable current oracle never blocks rotation. The new oracle must return
+    /// marginAsset-to-fundingAsset (USDC) prices at ORACLE_PRICE_SCALE with matching decimals; the vault can only
+    /// check that the price is nonzero.
+    /// @param newOracle New margin oracle.
+    function setMarginOracle(address newOracle) external;
     /// @notice Auction state for an epoch.
     /// @param epoch Epoch to query.
     /// @return The auction state.

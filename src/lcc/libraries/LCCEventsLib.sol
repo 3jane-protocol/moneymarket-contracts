@@ -143,4 +143,9 @@ library LCCEventsLib {
     /// @notice Emitted when the owner updates the auction-award-based slash surplus fee.
     /// @param slashFeeBps New fee on auction-awarded slashed margin, clamped to unawarded surplus, in bps.
     event SlashFeeUpdated(uint256 slashFeeBps);
+
+    /// @notice Emitted when the owner updates the trusted margin oracle.
+    /// @param oldOracle Previous margin oracle.
+    /// @param newOracle New margin oracle.
+    event MarginOracleUpdated(address indexed oldOracle, address indexed newOracle);
 }
