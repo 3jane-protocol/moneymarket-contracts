@@ -27,6 +27,11 @@ function _expectedMaterializeError(bytes memory reason) pure returns (bool) {
         || selector == LCCErrorsLib.OraclePriceInvalid.selector;
 }
 
+function _isTerminal(LCCVault vault_) view returns (bool) {
+    uint256 maxEpochs = vault_.epochConfig().maxEpochs;
+    return maxEpochs != 0 && vault_.currentEpoch() >= maxEpochs;
+}
+
 contract LCCInvariantTest is LCCBase {
     function testFinalizedEpochConservesCallOpenMargin() public {
         _deposit(alice, 100e18);
@@ -92,7 +97,7 @@ contract LCCInvariantHandler is Test {
 
     function deposit(uint256 actorSeed, uint256 amountSeed) external {
         if (invariantVault.shutdownState().active) return;
-        if (_terminal()) return;
+        if (_isTerminal(invariantVault)) return;
         _sync();
 
         address actor = actors[_index(actorSeed)];
@@ -113,9 +118,14 @@ contract LCCInvariantHandler is Test {
     function requestExit(uint256 actorSeed) external {
         _sync();
         if (invariantVault.shutdownState().active) return;
-        if (_terminal()) return;
+        if (_isTerminal(invariantVault)) return;
 
         address actor = actors[_index(actorSeed)];
+        try invariantVault.materializeAccount(actor) {}
+        catch (bytes memory reason) {
+            if (!_expectedSyncedOracleError(reason)) fail();
+            return;
+        }
         ILCCVault.Account memory account = invariantVault.getAccount(actor);
         if (account.exitRequested && !account.exitClaimed) return;
         if (account.pendingMargin != 0 || account.pendingCommitment != 0) return;
@@ -126,8 +136,13 @@ contract LCCInvariantHandler is Test {
         ) return;
 
         vm.prank(actor);
-        try invariantVault.requestExit() returns (uint256) {}
-        catch (bytes memory reason) {
+        try invariantVault.requestExit() returns (uint256 maturity) {
+            ILCCVault.RiskConfig memory riskConfig = invariantVault.riskConfig();
+            uint256 capacity = Math.mulDiv(riskConfig.protocolCommitmentCap, riskConfig.exitCapBps, BPS);
+            if (account.activeCommitment <= capacity) {
+                assertLe(invariantVault.exitBucketCommitmentByMaturity(maturity), capacity);
+            }
+        } catch (bytes memory reason) {
             if (!_expectedRequestExitError(reason)) fail();
         }
     }
@@ -135,7 +150,7 @@ contract LCCInvariantHandler is Test {
     function openCall(uint256 amountSeed) external {
         _sync();
         if (invariantVault.shutdownState().active) return;
-        if (_terminal()) return;
+        if (_isTerminal(invariantVault)) return;
         if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
         if (invariantVault.currentPhase() != ILCCVault.Phase.PreCall) return;
 
@@ -181,12 +196,152 @@ contract LCCInvariantHandler is Test {
             bool roll = (actorSeed / 32) % 2 == 0;
             ILCCVault.Account memory account = invariantVault.getAccount(actor);
             if (roll && account.exitRequested && !account.exitClaimed) roll = false;
+            ILCCVault.Totals memory totals = invariantVault.totals();
             uint256 vaultBalanceBefore = invariantMargin.balanceOf(address(invariantVault));
             uint256 treasuryBalanceBefore = invariantMargin.balanceOf(_treasury());
             vm.prank(actor);
             invariantVault.fundCall(roll);
+            if (roll) {
+                ILCCVault.Account memory accountAfter = invariantVault.getAccount(actor);
+                ILCCVault.Totals memory totalsAfter = invariantVault.totals();
+                assertEq(accountAfter.activeMargin, account.activeMargin);
+                assertEq(accountAfter.activeCommitment, account.activeCommitment);
+                assertEq(totalsAfter.activeMargin, totals.activeMargin);
+                assertEq(totalsAfter.activeCommitment, totals.activeCommitment);
+                assertTrue(invariantVault.fundedEpoch(epoch, actor));
+            }
             _recordMarginOut(vaultBalanceBefore, treasuryBalanceBefore);
         }
+    }
+
+    function probeEarlyRequestExit(uint256 actorSeed) external {
+        if (invariantVault.epochConfig().minCommitmentEpochs == 0) return;
+        if (invariantVault.shutdownState().active || _isTerminal(invariantVault)) return;
+        _sync();
+        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
+        if (invariantVault.syncState().finalizedCallPrefix < invariantVault.calledEpochs().length) return;
+
+        address actor = actors[_index(actorSeed)];
+        ILCCVault.Account memory account = invariantVault.getAccount(actor);
+        if (account.exitRequested && !account.exitClaimed) return;
+        if (account.pendingMargin != 0 || account.pendingCommitment != 0) return;
+
+        if (account.activeMargin == 0 || account.activeCommitment == 0) {
+            if (invariantVault.currentPhase() != ILCCVault.Phase.Normal) return;
+            if (invariantVault.getEpochState(invariantVault.currentEpoch()).callOpened) return;
+            vm.prank(actor);
+            try invariantVault.deposit(1e18) returns (uint256) {
+                ghostCumDeposited += 1e18;
+            } catch {
+                return;
+            }
+            account = invariantVault.getAccount(actor);
+        }
+
+        if (
+            invariantVault.currentEpoch()
+                >= account.commitmentStartEpoch + invariantVault.epochConfig().minCommitmentEpochs
+        ) return;
+
+        _expectRequestExitRevert(actor, LCCErrorsLib.CommitmentNotMature.selector);
+    }
+
+    function probeDoubleFund(uint256 actorSeed) external {
+        _sync();
+        if (invariantVault.shutdownState().active) return;
+        if (invariantVault.currentPhase() != ILCCVault.Phase.Funding) return;
+
+        address actor = actors[_index(actorSeed)];
+        uint256 epoch = invariantVault.currentEpoch();
+        ILCCVault.EpochState memory state = invariantVault.getEpochState(epoch);
+        if (!state.callOpened || state.slashFinalized || invariantVault.fundedEpoch(epoch, actor)) return;
+        uint256 obligation = invariantVault.obligationOf(epoch, actor);
+        if (obligation == 0 || LCCMockToken(invariantUsd3.asset()).balanceOf(actor) < obligation) return;
+
+        uint256 vaultBalanceBefore = invariantMargin.balanceOf(address(invariantVault));
+        uint256 treasuryBalanceBefore = invariantMargin.balanceOf(_treasury());
+        vm.prank(actor);
+        invariantVault.fundCall(false);
+        _recordMarginOut(vaultBalanceBefore, treasuryBalanceBefore);
+
+        _expectFundRevert(actor, false, LCCErrorsLib.AlreadyFunded.selector);
+    }
+
+    function probeFundAfterSlashFinalized(uint256 actorSeed) external {
+        _sync();
+        if (invariantVault.shutdownState().active) return;
+
+        uint256 epoch = invariantVault.currentEpoch();
+        ILCCVault.EpochState memory state = invariantVault.getEpochState(epoch);
+        if (!state.callOpened) return;
+        if (!state.slashFinalized) {
+            if (block.timestamp < invariantVault.phaseEndsAt(epoch, ILCCVault.Phase.Funding)) return;
+            invariantVault.finalizeEpochSlash(epoch);
+            state = invariantVault.getEpochState(epoch);
+            if (!state.slashFinalized) return;
+        }
+
+        _expectFundRevert(actors[_index(actorSeed)], false, LCCErrorsLib.InvalidPhase.selector);
+    }
+
+    function probeRollWhileExiting(uint256 actorSeed) external {
+        _sync();
+        if (invariantVault.shutdownState().active || _isTerminal(invariantVault)) return;
+        if (invariantVault.currentPhase() != ILCCVault.Phase.Funding) return;
+
+        address actor = actors[_index(actorSeed)];
+        ILCCVault.Account memory account = invariantVault.getAccount(actor);
+        if (!account.exitRequested || account.exitClaimed) return;
+
+        uint256 epoch = invariantVault.currentEpoch();
+        ILCCVault.EpochState memory state = invariantVault.getEpochState(epoch);
+        if (!state.callOpened || state.slashFinalized || invariantVault.fundedEpoch(epoch, actor)) return;
+        uint256 obligation = invariantVault.obligationOf(epoch, actor);
+        if (obligation == 0 || LCCMockToken(invariantUsd3.asset()).balanceOf(actor) < obligation) return;
+
+        _expectFundRevert(actor, true, LCCErrorsLib.ExitInProgress.selector);
+    }
+
+    function probeDepositWhileExiting(uint256 actorSeed) external {
+        _sync();
+        if (invariantVault.shutdownState().active || _isTerminal(invariantVault)) return;
+        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
+
+        address actor = actors[_index(actorSeed)];
+        try invariantVault.materializeAccount(actor) {}
+        catch (bytes memory reason) {
+            if (!_expectedSyncedOracleError(reason)) fail();
+            return;
+        }
+        ILCCVault.Account memory account = invariantVault.getAccount(actor);
+        if (!account.exitRequested || account.exitClaimed) return;
+
+        _expectDepositRevert(actor, 1e18, LCCErrorsLib.ExitInProgress.selector);
+    }
+
+    function probeTerminalGuards(uint256 actorSeed) external {
+        if (invariantVault.shutdownState().active) return;
+        uint256 maxEpochs = invariantVault.epochConfig().maxEpochs;
+        if (maxEpochs == 0) return;
+        uint256 terminalStart = invariantVault.phaseEndsAt(maxEpochs - 1, ILCCVault.Phase.Closed);
+        if (block.timestamp <= terminalStart) vm.warp(terminalStart + 1);
+        if (!_isTerminal(invariantVault)) return;
+        ILCCVault.SyncState memory syncState = invariantVault.syncState();
+        if (syncState.pendingAuctionEpochPlusOne != 0) return;
+        if (syncState.finalizedCallPrefix < invariantVault.calledEpochs().length) return;
+
+        address actor = actors[_index(actorSeed)];
+        _expectDepositRevert(actor, 1e18, LCCErrorsLib.VaultTerminal.selector);
+
+        uint256 epoch = invariantVault.currentEpoch();
+        vm.prank(invariantOwner);
+        try invariantVault.openEpochCall(epoch, 1) {
+            fail();
+        } catch (bytes memory reason) {
+            assertEq(_revertSelector(reason), LCCErrorsLib.VaultTerminal.selector);
+        }
+
+        _expectRequestExitRevert(actor, LCCErrorsLib.VaultTerminal.selector);
     }
 
     function takeAuction(uint256 actorSeed, uint256 fillSeed) external {
@@ -267,7 +422,7 @@ contract LCCInvariantHandler is Test {
     }
 
     function claimRemaining(uint256 actorSeed) external {
-        if (!invariantVault.shutdownState().active && !_terminal()) return;
+        if (!invariantVault.shutdownState().active && !_isTerminal(invariantVault)) return;
 
         address actor = actors[_index(actorSeed)];
         // Sync before the guard: getAccount is a read-only preview that stops at an unfinalized slash-eligible
@@ -299,11 +454,17 @@ contract LCCInvariantHandler is Test {
         uint256 currentUtilization =
             invariantVault.totals().activeCommitment + invariantVault.totals().pendingCommitment;
         uint256 maxCap = 10_000_000e18;
+        uint256 existingCap = invariantVault.riskConfig().protocolCommitmentCap;
         // Floor the fuzzed cap at a realistic minimum: a degenerate sub-1e18 protocolCap (reachable when utilization
         // is 0) floors the exit-bucket capacity (protocolCap*exitCapBps/BPS) to 0, which requestExit legitimately
         // rejects with InvalidParams (_assignExitMaturity, LCCVault.sol:1290) -- an unrealistic owner action, not a
         // behavior worth fuzzing.
         uint256 floorCap = currentUtilization < 1e18 ? 1e18 : currentUtilization;
+        // A synced cap reduction can first settle a live auction under old-cap headroom, then leave going-concern
+        // totals transiently above the new cap. Keep live-auction cap reductions out of this invariant handler.
+        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0 && floorCap < existingCap) {
+            floorCap = existingCap;
+        }
         if (floorCap >= maxCap) return;
 
         uint256 protocolCap = floorCap + _range(protocolSeed, 0, maxCap - floorCap);
@@ -381,13 +542,35 @@ contract LCCInvariantHandler is Test {
         return finalizedPrefix < called.length && called[finalizedPrefix] < epoch;
     }
 
-    function _terminal() internal view returns (bool) {
-        uint256 me = invariantVault.epochConfig().maxEpochs;
-        return me != 0 && invariantVault.currentEpoch() >= me;
-    }
-
     function _treasury() internal view returns (address) {
         return invariantVault.assetConfig().treasury;
+    }
+
+    function _expectDepositRevert(address actor, uint256 amount, bytes4 selector) internal {
+        vm.prank(actor);
+        try invariantVault.deposit(amount) {
+            fail();
+        } catch (bytes memory reason) {
+            assertEq(_revertSelector(reason), selector);
+        }
+    }
+
+    function _expectRequestExitRevert(address actor, bytes4 selector) internal {
+        vm.prank(actor);
+        try invariantVault.requestExit() {
+            fail();
+        } catch (bytes memory reason) {
+            assertEq(_revertSelector(reason), selector);
+        }
+    }
+
+    function _expectFundRevert(address actor, bool roll, bytes4 selector) internal {
+        vm.prank(actor);
+        try invariantVault.fundCall(roll) {
+            fail();
+        } catch (bytes memory reason) {
+            assertEq(_revertSelector(reason), selector);
+        }
     }
 
     // Per-action revert whitelists are kept minimal: only selectors reachable AND legitimate for that specific call.
@@ -464,21 +647,7 @@ contract LCCStatefulInvariantTest is LCCBase {
     }
 
     function invariant_DerivedActiveBalancesMatchGlobalTotals() public {
-        if (vault.syncState().pendingAuctionEpochPlusOne != 0) return;
-        try vault.materializeAccount(invariantActors[0]) {}
-        catch (bytes memory reason) {
-            if (!_expectedMaterializeError(reason)) fail();
-            return;
-        }
-        if (vault.syncState().pendingAuctionEpochPlusOne != 0) return;
-
-        for (uint256 i = 0; i < invariantActors.length; ++i) {
-            try vault.materializeAccount(invariantActors[i]) {}
-            catch (bytes memory reason) {
-                if (!_expectedMaterializeError(reason)) fail();
-                return;
-            }
-        }
+        if (!_materializeEveryoneForInvariant()) return;
 
         uint256 activeMargin;
         uint256 activeCommitment;
@@ -535,6 +704,42 @@ contract LCCStatefulInvariantTest is LCCBase {
         assertEq(usdc.balanceOf(address(vault)), 0);
     }
 
+    function invariant_GoingConcernProtocolCap() public {
+        if (!_materializeEveryoneForInvariant()) return;
+        if (vault.shutdownState().active || _isTerminal(vault)) return;
+
+        ILCCVault.Totals memory totals = vault.totals();
+        assertLe(
+            uint256(totals.activeCommitment) + uint256(totals.pendingCommitment),
+            vault.riskConfig().protocolCommitmentCap
+        );
+    }
+
+    function invariant_AuctionRampBound() public view {
+        uint256[] memory called = vault.calledEpochs();
+        ILCCVault.AuctionConfig memory auctionConfig = vault.auctionConfig();
+        if (auctionConfig.auctionStepDuration == 0) return;
+
+        for (uint256 i = 0; i < called.length; ++i) {
+            uint256 epoch = called[i];
+            ILCCVault.EpochState memory state = vault.getEpochState(epoch);
+            if (!state.slashFinalized || state.slashedMargin == 0) continue;
+
+            LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(epoch);
+            if (auction.marginPool == 0) continue;
+
+            uint256 closedWindow =
+                vault.phaseEndsAt(epoch, ILCCVault.Phase.Closed) - vault.phaseEndsAt(epoch, ILCCVault.Phase.Funding);
+            uint256 maxOffered = LCCAuctionLib.offeredPool(
+                auction.marginPool,
+                closedWindow - 1,
+                auctionConfig.auctionStepDuration,
+                auctionConfig.auctionStepDecayRateBps
+            );
+            assertLe(auction.marginAwarded, maxOffered);
+        }
+    }
+
     function _assertTreasuryAndEpochConservation(uint256[] memory called)
         internal
         view
@@ -583,6 +788,25 @@ contract LCCStatefulInvariantTest is LCCBase {
         );
     }
 
+    function _materializeEveryoneForInvariant() internal returns (bool) {
+        if (vault.syncState().pendingAuctionEpochPlusOne != 0) return false;
+        try vault.materializeAccount(invariantActors[0]) {}
+        catch (bytes memory reason) {
+            if (!_expectedMaterializeError(reason)) fail();
+            return false;
+        }
+        if (vault.syncState().pendingAuctionEpochPlusOne != 0) return false;
+
+        for (uint256 i = 0; i < invariantActors.length; ++i) {
+            try vault.materializeAccount(invariantActors[i]) {}
+            catch (bytes memory reason) {
+                if (!_expectedMaterializeError(reason)) fail();
+                return false;
+            }
+        }
+        return vault.syncState().pendingAuctionEpochPlusOne == 0;
+    }
+
     /// @dev Upper bound on the margin the return-pool re-attribution can leave orphaned in the global totals: one
     /// flooring unit per defaulter per return-pool epoch, plus a dust slice scaled by the returnPool/returnCommitment
     /// (inverse price*leverage) ratio. No amount-scale term, so it cannot mask a real margin over-count.
@@ -608,6 +832,41 @@ contract LCCStatefulInvariantTest is LCCBase {
             assertLe(auction.marginAwarded, auction.marginPool);
         }
     }
+
+    function afterInvariant() public virtual {
+        if (!vault.shutdownState().active) {
+            vm.prank(owner);
+            vault.shutdown();
+        }
+        _drainRemainingMargin();
+    }
+
+    function _drainRemainingMargin() internal {
+        uint256 calledLength = vault.calledEpochs().length;
+        uint256 materializePasses = calledLength / 64 + 2;
+        for (uint256 i = 0; i < invariantActors.length; ++i) {
+            address actor = invariantActors[i];
+            for (uint256 j = 0; j < materializePasses; ++j) {
+                vault.materializeAccount(actor);
+            }
+
+            ILCCVault.Account memory account = vault.getAccount(actor);
+            if (account.activeMargin + account.pendingMargin + account.claimableExitMargin == 0) continue;
+
+            vm.prank(actor);
+            vault.claimRemainingMargin(actor);
+        }
+
+        uint256 claimableMargin;
+        for (uint256 i = 0; i < invariantActors.length; ++i) {
+            claimableMargin += vault.getAccount(invariantActors[i]).claimableExitMargin;
+        }
+
+        uint256 dustBound = _marginDustBound();
+        assertLe(
+            uint256(vault.totals().activeMargin) + uint256(vault.totals().pendingMargin) + claimableMargin, dustBound
+        );
+    }
 }
 
 contract LCCAuctionStatefulInvariantTest is LCCStatefulInvariantTest {
@@ -632,35 +891,14 @@ contract LCCTerminalStatefulInvariantTest is LCCStatefulInvariantTest {
         params.maxEpochs = 4;
     }
 
-    function afterInvariant() public {
+    function afterInvariant() public override {
         // Warp past the last epoch's Closed window (terminal) and drain every actor, asserting no margin is stranded.
         uint256 terminalStart = vault.phaseEndsAt(vault.epochConfig().maxEpochs - 1, ILCCVault.Phase.Closed);
         if (block.timestamp <= terminalStart + 300) {
             vm.warp(terminalStart + 301);
         }
 
-        for (uint256 i = 0; i < invariantActors.length; ++i) {
-            address actor = invariantActors[i];
-            // Settles any pending auction and finalizes slashes so the has-margin check below matches the claim's
-            // own synced replay; one call suffices given the vault has at most maxEpochs called epochs.
-            vault.materializeAccount(actor);
-
-            ILCCVault.Account memory account = vault.getAccount(actor);
-            if (account.activeMargin + account.pendingMargin + account.claimableExitMargin == 0) continue;
-
-            vm.prank(actor);
-            vault.claimRemainingMargin(actor);
-        }
-
-        uint256 claimableMargin;
-        for (uint256 i = 0; i < invariantActors.length; ++i) {
-            claimableMargin += vault.getAccount(invariantActors[i]).claimableExitMargin;
-        }
-
-        uint256 dustBound = _marginDustBound();
-        assertLe(
-            uint256(vault.totals().activeMargin) + uint256(vault.totals().pendingMargin) + claimableMargin, dustBound
-        );
+        _drainRemainingMargin();
     }
 }
 
