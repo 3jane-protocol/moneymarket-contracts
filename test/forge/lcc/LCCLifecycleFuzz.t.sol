@@ -39,14 +39,6 @@ contract LCCLifecycleFuzz is LCCBase {
         uint256 slashFeeBps;
     }
 
-    struct MarginSums {
-        uint256 activeMargin;
-        uint256 activeCommitment;
-        uint256 pendingMargin;
-        uint256 pendingCommitment;
-        uint256 claimableMargin;
-    }
-
     function testFuzz_LifecycleConservesMargin(
         ParamSeed memory seed,
         uint256 priceSeed,
@@ -65,7 +57,6 @@ contract LCCLifecycleFuzz is LCCBase {
         vm.warp(vault.phaseEndsAt(0, ILCCVault.Phase.Normal));
         _deposit(carol, depositAmount);
 
-        uint256 callEpoch = 1;
         vm.warp(params.startTimestamp + params.epochLength);
         vault.materializeAccount(alice);
         vault.materializeAccount(bob);
@@ -74,7 +65,7 @@ contract LCCLifecycleFuzz is LCCBase {
         uint256 claimableExitMargin = _requestAndMatureExitIfPossible(carol, params);
         assertGt(claimableExitMargin, 0);
 
-        callEpoch = vault.currentEpoch();
+        uint256 callEpoch = vault.currentEpoch();
         vm.warp(vault.phaseEndsAt(callEpoch, ILCCVault.Phase.Normal));
         uint256 activeCommitment = vault.totals().activeCommitment;
         uint256 callAmount = _callAmount(activeCommitment, callBps);
@@ -165,6 +156,7 @@ contract LCCLifecycleFuzz is LCCBase {
     }
 
     function _boundParams(ParamSeed memory seed) internal view returns (ILCCVault.VaultParams memory params) {
+        // Keep this in sync with LCCConfigLib.t.sol's _boundParams copy.
         params = _params(address(oracle), MIN_PROTOCOL_CAP, MIN_USER_CAP, MIN_EXIT_CAP_BPS);
         params.maxEpochs = 0;
         params.epochLength = bound(seed.epochLength, 4, MAX_EPOCH_LENGTH);
@@ -297,7 +289,6 @@ contract LCCLifecycleFuzz is LCCBase {
     }
 
     function _assertConservation(address[] memory actors, uint256 initialTreasuryMargin) internal view {
-        // Mirrors the stateful invariant helpers; keep both copies in sync unless a shared helper is introduced.
         MarginSums memory sums = _marginSums(actors);
         (uint256 returnPoolEpochs, uint256 marginRatioSum) =
             _assertTreasuryAndEpochConservation(vault.calledEpochs(), initialTreasuryMargin);
@@ -322,55 +313,6 @@ contract LCCLifecycleFuzz is LCCBase {
         assertEq(usdc.balanceOf(address(vault)), 0);
     }
 
-    function _marginSums(address[] memory actors) internal view returns (MarginSums memory sums) {
-        for (uint256 i = 0; i < actors.length; ++i) {
-            ILCCVault.Account memory account = vault.getAccount(actors[i]);
-            sums.activeMargin += account.activeMargin;
-            sums.activeCommitment += account.activeCommitment;
-            sums.pendingMargin += account.pendingMargin;
-            sums.pendingCommitment += account.pendingCommitment;
-            sums.claimableMargin += account.claimableExitMargin;
-        }
-    }
-
-    function _assertTreasuryAndEpochConservation(uint256[] memory called, uint256 initialTreasuryMargin)
-        internal
-        view
-        returns (uint256 returnPoolEpochs, uint256 marginRatioSum)
-    {
-        uint256 expectedTreasury;
-        uint256 liveAuctionSlot = vault.syncState().pendingAuctionEpochPlusOne;
-        ILCCVault.RiskConfig memory riskConfig = vault.riskConfig();
-
-        for (uint256 i = 0; i < called.length; ++i) {
-            uint256 epoch = called[i];
-            ILCCVault.EpochState memory state = vault.getEpochState(epoch);
-            if (state.returnPool != 0) {
-                ++returnPoolEpochs;
-                marginRatioSum += Math.ceilDiv(state.returnPool, state.returnCommitment);
-            }
-            if (!state.slashFinalized || state.slashDisabledByShutdown || liveAuctionSlot == epoch + 1) continue;
-
-            LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(epoch);
-            assertEq(
-                state.marginReleased + state.fundedUsersRemainingMargin + state.slashedMargin, state.marginAtCallOpen
-            );
-
-            assertLe(auction.marginAwarded, state.slashedMargin);
-            uint256 surplus = state.slashedMargin - auction.marginAwarded;
-            assertLe(state.returnPool, surplus);
-
-            uint256 toTreasury = surplus - state.returnPool;
-            if (state.returnPool != 0) {
-                uint256 minimumFee = Math.min(Math.mulDiv(auction.marginAwarded, riskConfig.slashFeeBps, BPS), surplus);
-                assertGe(toTreasury, minimumFee);
-            }
-            expectedTreasury += toTreasury;
-        }
-
-        assertEq(margin.balanceOf(treasury), initialTreasuryMargin + expectedTreasury);
-    }
-
     function _drainAndAssertOnlyDust(address[] memory actors) internal {
         for (uint256 i = 0; i < actors.length; ++i) {
             vault.materializeAccount(actors[i]);
@@ -392,20 +334,6 @@ contract LCCLifecycleFuzz is LCCBase {
         );
         assertLe(margin.balanceOf(address(vault)), dustBound);
         assertEq(usdc.balanceOf(address(vault)), 0);
-    }
-
-    function _marginDustBound(uint256 actorCount) internal view returns (uint256) {
-        uint256[] memory called = vault.calledEpochs();
-        uint256 returnPoolEpochs;
-        uint256 marginRatioSum;
-        for (uint256 i = 0; i < called.length; ++i) {
-            ILCCVault.EpochState memory state = vault.getEpochState(called[i]);
-            if (state.returnPool != 0) {
-                ++returnPoolEpochs;
-                marginRatioSum += Math.ceilDiv(state.returnPool, state.returnCommitment);
-            }
-        }
-        return actorCount * (returnPoolEpochs + marginRatioSum);
     }
 
     function _threeActors() internal view returns (address[] memory actors) {

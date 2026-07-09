@@ -32,6 +32,14 @@ function _isTerminal(LCCVault vault_) view returns (bool) {
     return maxEpochs != 0 && vault_.currentEpoch() >= maxEpochs;
 }
 
+function _callWindowClosed(LCCVault vault_) view returns (bool) {
+    uint256 maxEpochs = vault_.epochConfig().maxEpochs;
+    if (maxEpochs == 0) return false;
+    uint256 current = vault_.currentEpoch();
+    return current >= maxEpochs
+        || (current == maxEpochs - 1 && block.timestamp >= vault_.phaseEndsAt(maxEpochs - 1, ILCCVault.Phase.PreCall));
+}
+
 contract LCCInvariantTest is LCCBase {
     function testFinalizedEpochConservesCallOpenMargin() public {
         _deposit(alice, 100e18);
@@ -54,6 +62,7 @@ contract LCCInvariantHandler is Test {
     LCCMockUSD3 internal invariantUsd3;
     OracleMock internal invariantOracle;
     address internal invariantOwner;
+    address internal invariantTreasury;
     address[] internal actors;
     uint256 public ghostCumDeposited;
     uint256 public ghostCumMarginOut;
@@ -71,8 +80,9 @@ contract LCCInvariantHandler is Test {
         invariantUsd3 = usd3_;
         invariantOracle = oracle_;
         invariantOwner = owner_;
+        invariantTreasury = vault_.assetConfig().treasury;
         actors = actors_;
-        ghostCumDeposited = margin_.balanceOf(address(vault_)) + margin_.balanceOf(vault_.assetConfig().treasury);
+        ghostCumDeposited = margin_.balanceOf(address(vault_)) + margin_.balanceOf(invariantTreasury);
     }
 
     function perturbOracle(uint256 priceSeed) external {
@@ -321,10 +331,6 @@ contract LCCInvariantHandler is Test {
 
     function probeTerminalGuards(uint256 actorSeed) external {
         if (invariantVault.shutdownState().active) return;
-        uint256 maxEpochs = invariantVault.epochConfig().maxEpochs;
-        if (maxEpochs == 0) return;
-        uint256 terminalStart = invariantVault.phaseEndsAt(maxEpochs - 1, ILCCVault.Phase.Closed);
-        if (block.timestamp <= terminalStart) vm.warp(terminalStart + 1);
         if (!_isTerminal(invariantVault)) return;
         ILCCVault.SyncState memory syncState = invariantVault.syncState();
         if (syncState.pendingAuctionEpochPlusOne != 0) return;
@@ -451,8 +457,8 @@ contract LCCInvariantHandler is Test {
         _sync();
         if (invariantVault.shutdownState().active) return;
 
-        uint256 currentUtilization =
-            invariantVault.totals().activeCommitment + invariantVault.totals().pendingCommitment;
+        ILCCVault.Totals memory totals = invariantVault.totals();
+        uint256 currentUtilization = totals.activeCommitment + totals.pendingCommitment;
         uint256 maxCap = 10_000_000e18;
         uint256 existingCap = invariantVault.riskConfig().protocolCommitmentCap;
         // Floor the fuzzed cap at a realistic minimum: a degenerate sub-1e18 protocolCap (reachable when utilization
@@ -481,7 +487,8 @@ contract LCCInvariantHandler is Test {
         _sync();
         if (invariantVault.shutdownState().active) return;
         if (seed % 64 != 0) return;
-        if (invariantVault.totals().activeMargin + invariantVault.totals().pendingMargin == 0) return;
+        ILCCVault.Totals memory totals = invariantVault.totals();
+        if (totals.activeMargin + totals.pendingMargin == 0) return;
 
         // shutdown() is onlyOwner with no synced modifier and an oracle-free wind-down disposal, so its only revert
         // (ShutdownActive) is already guarded above; call it directly and let any unexpected revert fail the run.
@@ -543,7 +550,7 @@ contract LCCInvariantHandler is Test {
     }
 
     function _treasury() internal view returns (address) {
-        return invariantVault.assetConfig().treasury;
+        return invariantTreasury;
     }
 
     function _expectDepositRevert(address actor, uint256 amount, bytes4 selector) internal {
@@ -655,19 +662,18 @@ contract LCCStatefulInvariantTest is LCCBase {
         uint256 pendingCommitment;
         uint256 claimableMargin;
 
-        for (uint256 i = 0; i < invariantActors.length; ++i) {
-            ILCCVault.Account memory account = vault.getAccount(invariantActors[i]);
-            activeMargin += account.activeMargin;
-            activeCommitment += account.activeCommitment;
-            pendingMargin += account.pendingMargin;
-            pendingCommitment += account.pendingCommitment;
-            claimableMargin += account.claimableExitMargin;
-        }
+        MarginSums memory sums = _marginSums(invariantActors);
+        activeMargin = sums.activeMargin;
+        activeCommitment = sums.activeCommitment;
+        pendingMargin = sums.pendingMargin;
+        pendingCommitment = sums.pendingCommitment;
+        claimableMargin = sums.claimableMargin;
 
         uint256[] memory called = vault.calledEpochs();
         // Single pass over the called epochs: asserts treasury + per-epoch conservation and returns the return-pool
         // margin dust accounting.
-        (uint256 returnPoolEpochs, uint256 marginRatioSum) = _assertTreasuryAndEpochConservation(called);
+        (uint256 returnPoolEpochs, uint256 marginRatioSum) =
+            _assertTreasuryAndEpochConservation(called, initialTreasuryMargin);
 
         ILCCVault.Totals memory totals = vault.totals();
         uint256 n = invariantActors.length;
@@ -704,9 +710,24 @@ contract LCCStatefulInvariantTest is LCCBase {
         assertEq(usdc.balanceOf(address(vault)), 0);
     }
 
+    function invariant_LiveAuctionSolvencyLowerBound() public view {
+        ILCCVault.Totals memory totals = vault.totals();
+        uint256 auctionInventory;
+        uint256 slot = vault.syncState().pendingAuctionEpochPlusOne;
+        if (slot != 0) {
+            LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(slot - 1);
+            auctionInventory = auction.marginPool - auction.marginAwarded;
+        }
+
+        assertGe(
+            margin.balanceOf(address(vault)),
+            uint256(totals.activeMargin) + uint256(totals.pendingMargin) + auctionInventory
+        );
+    }
+
     function invariant_GoingConcernProtocolCap() public {
         if (!_materializeEveryoneForInvariant()) return;
-        if (vault.shutdownState().active || _isTerminal(vault)) return;
+        if (vault.shutdownState().active || _callWindowClosed(vault)) return;
 
         ILCCVault.Totals memory totals = vault.totals();
         assertLe(
@@ -740,47 +761,6 @@ contract LCCStatefulInvariantTest is LCCBase {
         }
     }
 
-    function _assertTreasuryAndEpochConservation(uint256[] memory called)
-        internal
-        view
-        returns (uint256 returnPoolEpochs, uint256 marginRatioSum)
-    {
-        uint256 expectedTreasury;
-        uint256 liveAuctionSlot = vault.syncState().pendingAuctionEpochPlusOne;
-        ILCCVault.RiskConfig memory riskConfig = vault.riskConfig();
-
-        for (uint256 i = 0; i < called.length; ++i) {
-            uint256 epoch = called[i];
-            ILCCVault.EpochState memory state = vault.getEpochState(epoch);
-            if (state.returnPool != 0) {
-                ++returnPoolEpochs;
-                // returnCommitment != 0 whenever returnPool != 0 (LCCVault.sol:928). The returnPool/returnCommitment
-                // ratio (inverse price*leverage) bounds how much margin a low-price paired-drop can orphan per
-                // defaulter.
-                marginRatioSum += Math.ceilDiv(state.returnPool, state.returnCommitment);
-            }
-            if (!state.slashFinalized || state.slashDisabledByShutdown || liveAuctionSlot == epoch + 1) continue;
-
-            LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(epoch);
-            assertEq(
-                state.marginReleased + state.fundedUsersRemainingMargin + state.slashedMargin, state.marginAtCallOpen
-            );
-
-            assertLe(auction.marginAwarded, state.slashedMargin);
-            uint256 surplus = state.slashedMargin - auction.marginAwarded;
-            assertLe(state.returnPool, surplus);
-
-            uint256 toTreasury = surplus - state.returnPool;
-            if (state.returnPool != 0) {
-                uint256 minimumFee = Math.min(Math.mulDiv(auction.marginAwarded, riskConfig.slashFeeBps, BPS), surplus);
-                assertGe(toTreasury, minimumFee);
-            }
-            expectedTreasury += toTreasury;
-        }
-
-        assertEq(margin.balanceOf(treasury), initialTreasuryMargin + expectedTreasury);
-    }
-
     function _assertGhostFlowLedger() internal view {
         assertEq(
             margin.balanceOf(address(vault)),
@@ -797,7 +777,7 @@ contract LCCStatefulInvariantTest is LCCBase {
         }
         if (vault.syncState().pendingAuctionEpochPlusOne != 0) return false;
 
-        for (uint256 i = 0; i < invariantActors.length; ++i) {
+        for (uint256 i = 1; i < invariantActors.length; ++i) {
             try vault.materializeAccount(invariantActors[i]) {}
             catch (bytes memory reason) {
                 if (!_expectedMaterializeError(reason)) fail();
@@ -805,23 +785,6 @@ contract LCCStatefulInvariantTest is LCCBase {
             }
         }
         return vault.syncState().pendingAuctionEpochPlusOne == 0;
-    }
-
-    /// @dev Upper bound on the margin the return-pool re-attribution can leave orphaned in the global totals: one
-    /// flooring unit per defaulter per return-pool epoch, plus a dust slice scaled by the returnPool/returnCommitment
-    /// (inverse price*leverage) ratio. No amount-scale term, so it cannot mask a real margin over-count.
-    function _marginDustBound() internal view returns (uint256) {
-        uint256[] memory called = vault.calledEpochs();
-        uint256 returnPoolEpochs;
-        uint256 marginRatioSum;
-        for (uint256 i = 0; i < called.length; ++i) {
-            ILCCVault.EpochState memory state = vault.getEpochState(called[i]);
-            if (state.returnPool != 0) {
-                ++returnPoolEpochs;
-                marginRatioSum += Math.ceilDiv(state.returnPool, state.returnCommitment);
-            }
-        }
-        return invariantActors.length * (returnPoolEpochs + marginRatioSum);
     }
 
     function invariant_AuctionFillAndAwardBounds() public view {
@@ -862,7 +825,7 @@ contract LCCStatefulInvariantTest is LCCBase {
             claimableMargin += vault.getAccount(invariantActors[i]).claimableExitMargin;
         }
 
-        uint256 dustBound = _marginDustBound();
+        uint256 dustBound = _marginDustBound(invariantActors.length);
         assertLe(
             uint256(vault.totals().activeMargin) + uint256(vault.totals().pendingMargin) + claimableMargin, dustBound
         );

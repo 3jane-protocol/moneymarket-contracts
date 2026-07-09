@@ -200,6 +200,7 @@ contract LCCConfigLibTest is Test {
     }
 
     function _boundParams(ParamSeed memory seed) internal view returns (ILCCVault.VaultParams memory params) {
+        // Keep this in sync with LCCLifecycleFuzz.t.sol's _boundParams copy.
         params = _baseParams();
         params.epochLength = bound(seed.epochLength, 4, MAX_EPOCH_LENGTH);
         bool auctionEnabled = seed.auctionMode % 2 == 1 && params.epochLength >= 5;

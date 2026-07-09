@@ -10,9 +10,11 @@ import {IERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol
 
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
+import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
 import {OracleMock} from "../../../src/mocks/OracleMock.sol";
-import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
+import {ORACLE_PRICE_SCALE, BPS} from "../../../src/libraries/ConstantsLib.sol";
 import {IOracle} from "../../../src/interfaces/IOracle.sol";
+import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 
 contract LCCMockToken is ERC20 {
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
@@ -112,6 +114,14 @@ contract LCCBase is Test {
     LCCVault internal vaultImplementation;
     UpgradeableBeacon internal beacon;
     LCCVault internal vault;
+
+    struct MarginSums {
+        uint256 activeMargin;
+        uint256 activeCommitment;
+        uint256 pendingMargin;
+        uint256 pendingCommitment;
+        uint256 claimableMargin;
+    }
 
     function setUp() public virtual {
         vm.warp(START);
@@ -255,5 +265,71 @@ contract LCCBase is Test {
     function _syncAs(address user) internal {
         vm.prank(user);
         vault.materializeAccount(user);
+    }
+
+    function _marginSums(address[] memory actors) internal view returns (MarginSums memory sums) {
+        for (uint256 i = 0; i < actors.length; ++i) {
+            ILCCVault.Account memory account = vault.getAccount(actors[i]);
+            sums.activeMargin += account.activeMargin;
+            sums.activeCommitment += account.activeCommitment;
+            sums.pendingMargin += account.pendingMargin;
+            sums.pendingCommitment += account.pendingCommitment;
+            sums.claimableMargin += account.claimableExitMargin;
+        }
+    }
+
+    function _assertTreasuryAndEpochConservation(uint256[] memory called, uint256 initialTreasuryMargin)
+        internal
+        view
+        returns (uint256 returnPoolEpochs, uint256 marginRatioSum)
+    {
+        uint256 expectedTreasury;
+        uint256 liveAuctionSlot = vault.syncState().pendingAuctionEpochPlusOne;
+        ILCCVault.RiskConfig memory riskConfig = vault.riskConfig();
+
+        for (uint256 i = 0; i < called.length; ++i) {
+            uint256 epoch = called[i];
+            ILCCVault.EpochState memory state = vault.getEpochState(epoch);
+            if (state.returnPool != 0) {
+                ++returnPoolEpochs;
+                marginRatioSum += Math.ceilDiv(state.returnPool, state.returnCommitment);
+            }
+            if (!state.slashFinalized || state.slashDisabledByShutdown || liveAuctionSlot == epoch + 1) continue;
+
+            LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(epoch);
+            assertEq(
+                state.marginReleased + state.fundedUsersRemainingMargin + state.slashedMargin, state.marginAtCallOpen
+            );
+
+            assertLe(auction.marginAwarded, state.slashedMargin);
+            uint256 surplus = state.slashedMargin - auction.marginAwarded;
+            assertLe(state.returnPool, surplus);
+
+            uint256 toTreasury = surplus - state.returnPool;
+            if (state.returnPool != 0) {
+                uint256 minimumFee = Math.min(Math.mulDiv(auction.marginAwarded, riskConfig.slashFeeBps, BPS), surplus);
+                assertGe(toTreasury, minimumFee);
+            }
+            expectedTreasury += toTreasury;
+        }
+
+        assertEq(margin.balanceOf(treasury), initialTreasuryMargin + expectedTreasury);
+    }
+
+    /// @dev Upper bound on the margin the return-pool re-attribution can leave orphaned in the global totals: one
+    /// flooring unit per defaulter per return-pool epoch, plus a dust slice scaled by the returnPool/returnCommitment
+    /// (inverse price*leverage) ratio. No amount-scale term, so it cannot mask a real margin over-count.
+    function _marginDustBound(uint256 actorCount) internal view returns (uint256) {
+        uint256[] memory called = vault.calledEpochs();
+        uint256 returnPoolEpochs;
+        uint256 marginRatioSum;
+        for (uint256 i = 0; i < called.length; ++i) {
+            ILCCVault.EpochState memory state = vault.getEpochState(called[i]);
+            if (state.returnPool != 0) {
+                ++returnPoolEpochs;
+                marginRatioSum += Math.ceilDiv(state.returnPool, state.returnCommitment);
+            }
+        }
+        return actorCount * (returnPoolEpochs + marginRatioSum);
     }
 }
