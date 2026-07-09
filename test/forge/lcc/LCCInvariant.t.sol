@@ -877,6 +877,37 @@ contract LCCAuctionStatefulInvariantTest is LCCStatefulInvariantTest {
     }
 }
 
+contract LCCStressedGeometryStatefulInvariantTest is LCCStatefulInvariantTest {
+    function setUp() public override {
+        LCCBase.setUp();
+        ILCCVault.VaultParams memory params = _auctionParams();
+        params.epochLength = 97;
+        params.normalDuration = 1;
+        params.preCallDuration = 1;
+        params.fundingDuration = 93;
+        params.auctionStepCount = 2;
+        params.marginRatioBps = 9_999;
+        params.exitDelayEpochs = 8;
+        params.exitCapBps = 313;
+        params.minDepositAssets = 1e18;
+        _deployVaultWithParams(params);
+        _setupHandler();
+    }
+}
+
+contract LCCHighDecayAuctionStatefulInvariantTest is LCCStatefulInvariantTest {
+    function setUp() public override {
+        LCCBase.setUp();
+        ILCCVault.VaultParams memory params = _auctionParams();
+        params.auctionStepCount = 2;
+        params.auctionStepDecayRateBps = 9_999;
+        params.slashFeeBps = 10_000;
+        params.maxAuctionAwardBps = 500;
+        _deployVaultWithParams(params);
+        _setupHandler();
+    }
+}
+
 contract LCCTerminalStatefulInvariantTest is LCCStatefulInvariantTest {
     function setUp() public override {
         LCCBase.setUp();
