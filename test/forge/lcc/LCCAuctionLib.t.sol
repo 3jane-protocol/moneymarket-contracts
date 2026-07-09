@@ -3,6 +3,8 @@ pragma solidity ^0.8.22;
 
 import {Test} from "../../../lib/forge-std/src/Test.sol";
 import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
+import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
+import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 
 contract LCCAuctionLibTest is Test {
     uint256 internal constant RAY = 1e27;
@@ -67,6 +69,23 @@ contract LCCAuctionLibTest is Test {
         assertLe(offered, pool);
     }
 
+    function testFuzzOfferedPoolMonotonicInElapsed(
+        uint128 pool,
+        uint32 elapsed1,
+        uint32 elapsed2,
+        uint32 stepDuration,
+        uint256 decayBps
+    ) public pure {
+        stepDuration = uint32(bound(stepDuration, 1, type(uint32).max));
+        decayBps = bound(decayBps, 1, BPS);
+        if (elapsed1 > elapsed2) (elapsed1, elapsed2) = (elapsed2, elapsed1);
+
+        uint256 offered1 = LCCAuctionLib.offeredPool(pool, elapsed1, stepDuration, decayBps);
+        uint256 offered2 = LCCAuctionLib.offeredPool(pool, elapsed2, stepDuration, decayBps);
+
+        assertLe(offered1, offered2);
+    }
+
     function testFuzzFillSequenceConservesPool(uint128 shortfall, uint128 pool, uint256 seed) public pure {
         shortfall = uint128(bound(shortfall, 1, type(uint128).max));
 
@@ -108,5 +127,35 @@ contract LCCAuctionLibTest is Test {
         // Zero shortfall short-circuits.
         state.shortfallAmount = 0;
         assertEq(LCCAuctionLib.fillAward(state, 1e18, 50e18, type(uint256).max), 0);
+    }
+
+    function testFuzzComputeAwardRespectsOracleCap(
+        uint128 shortfall,
+        uint128 pool,
+        uint128 awardedSeed,
+        uint128 fillSeed,
+        uint32 elapsed,
+        uint32 stepDuration,
+        uint256 decayBps,
+        uint256 maxAwardBps,
+        uint256 price
+    ) public pure {
+        shortfall = uint128(bound(shortfall, 1, type(uint128).max));
+        uint256 marginAwarded = bound(uint256(awardedSeed), 0, pool);
+        uint256 fillAmount = bound(uint256(fillSeed), 0, shortfall);
+        stepDuration = uint32(bound(stepDuration, 1, type(uint32).max));
+        decayBps = bound(decayBps, 1, BPS);
+        maxAwardBps = bound(maxAwardBps, 0, BPS);
+        price = bound(price, 1, type(uint128).max);
+
+        LCCAuctionLib.AuctionState memory state = LCCAuctionLib.AuctionState({
+            shortfallAmount: shortfall, filledAmount: 0, marginPool: pool, marginAwarded: marginAwarded
+        });
+
+        uint256 award =
+            LCCAuctionLib.computeAward(state, fillAmount, elapsed, stepDuration, decayBps, maxAwardBps, price);
+        uint256 oracleCap = Math.mulDiv(Math.mulDiv(fillAmount, maxAwardBps, BPS), ORACLE_PRICE_SCALE, price);
+
+        assertLe(award, oracleCap);
     }
 }
