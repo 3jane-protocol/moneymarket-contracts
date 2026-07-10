@@ -14,6 +14,14 @@ library LCCErrorsLib {
     error InvalidParams();
     /// @notice Thrown when an action is attempted that is blocked by emergency shutdown.
     error ShutdownActive();
+    /// @notice Thrown when a state-transitioning action is attempted while the vault is paused.
+    error Paused();
+    /// @notice Thrown when pausing a vault that is already paused.
+    error AlreadyPaused();
+    /// @notice Thrown when unpausing a vault that is not paused.
+    error NotPaused();
+    /// @notice Thrown when a caller is not authorized for the action.
+    error Unauthorized();
     /// @notice Thrown when a new call, deposit, or exit request is attempted after scheduled sunset.
     error VaultTerminal();
     /// @notice Thrown when an exit request would create more tracked maturity buckets than the vault supports.

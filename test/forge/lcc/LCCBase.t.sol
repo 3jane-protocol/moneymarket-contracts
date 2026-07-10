@@ -204,13 +204,22 @@ contract LCCBase is Test {
     }
 
     function _mintAndApprove(address user, uint256 marginAmount, uint256 usdcAmount) internal {
+        _mintAndApprove(vault, user, marginAmount, usdcAmount);
+    }
+
+    function _mintAndApprove(LCCVault target, address user, uint256 marginAmount, uint256 usdcAmount) internal {
         margin.mint(user, marginAmount);
         usdc.mint(user, usdcAmount);
 
         vm.startPrank(user);
-        margin.approve(address(vault), type(uint256).max);
-        usdc.approve(address(vault), type(uint256).max);
+        margin.approve(address(target), type(uint256).max);
+        usdc.approve(address(target), type(uint256).max);
         vm.stopPrank();
+    }
+
+    function _effectiveTime(LCCVault target) internal view returns (uint256) {
+        (, bool paused, uint64 pausedAt, uint64 pausedAccumulated) = target.pauseState();
+        return (paused ? pausedAt : block.timestamp) - pausedAccumulated;
     }
 
     function _deposit(address user, uint256 assets) internal returns (uint256 commitment) {

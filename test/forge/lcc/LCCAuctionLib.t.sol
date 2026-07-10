@@ -158,4 +158,16 @@ contract LCCAuctionLibTest is Test {
 
         assertLe(award, oracleCap);
     }
+
+    function testFuzzValueAndCommitmentMatchesFormula(uint128 assets, uint128 price, uint16 marginRatioSeed)
+        public
+        pure
+    {
+        uint256 marginRatioBps = bound(uint256(marginRatioSeed), 1, BPS);
+        (uint256 marginValue, uint256 commitment) = LCCAuctionLib.valueAndCommitment(assets, price, marginRatioBps);
+
+        uint256 expectedValue = Math.mulDiv(assets, price, ORACLE_PRICE_SCALE);
+        assertEq(marginValue, expectedValue);
+        assertEq(commitment, Math.mulDiv(expectedValue, BPS, marginRatioBps));
+    }
 }

@@ -4,6 +4,17 @@
 
 This repository is a contracts codebase. "Deployment" here primarily means CI execution and release publishing behavior.
 
+## LCC Implementation Deployment
+
+`LCCVault` is compiled for Shanghai with solc `0.8.35`, via IR, and 500 optimizer runs in both Foundry and Hardhat.
+Its measured runtime is 24,014 bytes, leaving 562 bytes below EIP-170; run `yarn build:forge:size` before approving an
+implementation release.
+
+`LCCAuctionLib` is the implementation's only externally linked library. Deploy and link it before deploying each new
+`LCCVault` implementation, then schedule the beacon upgrade through the 7-day timelock. The config, account, bucket,
+type, error, and event libraries are compiled internally and require no deployment or link addresses. Compare
+`forge inspect LCCVault storageLayout` with `docs/lcc-vault-storage-layout.json` before scheduling the upgrade.
+
 ## GitHub Actions Workflows
 
 - `foundry.yml`

@@ -84,7 +84,7 @@ const config: HardhatUserConfig = {
       ([
         ["src/usd3/USD3.sol", "0.8.22", 999999],
         ["src/usd3/USD3_old.sol", "0.8.22", 200],
-        ["src/lcc/LCCVault.sol", "0.8.35", 400],
+        ["src/lcc/LCCVault.sol", "0.8.35", 500],
         ["src/lcc/LCCVaultFactory.sol", "0.8.35", 999999],
         ["src/lcc/interfaces/ILCCVault.sol", "0.8.35", 999999],
         ["src/lcc/libraries/LCCAccountLib.sol", "0.8.35", 999999],

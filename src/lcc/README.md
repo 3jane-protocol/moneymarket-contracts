@@ -58,12 +58,17 @@ over the shared `LCCBase` harness.
 ## 3. Actors and trust model
 
 - **Owner** — fully trusted. Opens calls (`openEpochCall`), tunes mutable risk caps (`setRiskCaps`,
-  `setMaxAuctionAwardBps`, `setSlashFeeBps`, `setMarginOracle`), and can trigger `shutdown`. `setMarginOracle` is an
+  `setMaxAuctionAwardBps`, `setSlashFeeBps`, `setMarginOracle`), controls the pause guardian, can pause/unpause, and
+  can trigger `shutdown`. Ownership is transferable for governance rotation and incident recovery but cannot be
+  renounced, because an ownerless vault could never unpause, shut down, or open calls. `setMarginOracle` is an
   owner-trusted rotation that reprices future auction awards and return-pool disposal for all unsettled calls;
-  `openEpochCall` does not snapshot the oracle. It is blocked during a live auction only while the current oracle
-  still prices fills, so a dead oracle never blocks recovery; the new oracle must return a nonzero
-  `marginAsset`-to-`fundingAsset` price at `ORACLE_PRICE_SCALE`. The owner controls the call size; a
-  dust-sized `callAmount` can force every account to owe a single funding unit (see §7), a documented owner surface.
+  `openEpochCall` does not snapshot the oracle. While paused the owner may rotate even a responsive oracle because
+  no fills can execute. While unpaused, rotation is blocked during a live auction only while the current oracle still
+  prices fills, so a zero-price or reverting oracle never blocks recovery; the new oracle must return a nonzero
+  `marginAsset`-to-`fundingAsset` price at `ORACLE_PRICE_SCALE`. The owner controls the call size; a dust-sized
+  `callAmount` can force every account to owe a single funding unit (see §7), a documented owner surface.
+- **Pause guardian** — owner-appointed circuit-breaker account. The guardian may pause the vault but cannot unpause
+  and cannot change configuration.
 - **Margin oracle** — fully trusted. Returns a fresh `marginAsset`-to-`fundingAsset` price scaled by
   `ORACLE_PRICE_SCALE`, absorbing any token-decimal conversion. A zero price reverts (`OraclePriceInvalid`).
 - **Depositor / funder** — posts margin, funds its own obligation (`fundCall(bool)`), and exits (`requestExit`).
@@ -116,10 +121,10 @@ can exceed the protocol cap.
 
 ## 4. Epoch clock and phase machine
 
-Phases are **pure functions of `block.timestamp`**. Nothing transitions them; no keeper advances them. `_currentEpoch`
-clamps to `0` before `startTimestamp` (`if (block.timestamp < startTimestamp) return 0`) and is otherwise
-`(block.timestamp - startTimestamp) / epochLength`, and `_phaseAt` maps the offset within the epoch to a `Phase`.
-The `synced` modifier only catches **accounting** up to the wall clock (§5); it never changes which phase the clock
+Phases are **pure functions of the pause-adjusted effective timestamp**. Nothing transitions them; no keeper advances
+them. `_currentEpoch` clamps to `0` before `startTimestamp` and is otherwise
+`(effectiveTime - startTimestamp) / epochLength`, and `_phaseAt` maps the offset within the epoch to a `Phase`. The
+`synced` modifier only catches **accounting** up to the effective clock (§5); it never changes which phase the clock
 is in.
 
 ```mermaid
@@ -150,6 +155,27 @@ stateDiagram-v2
 | `PreCall` | `start + normalDuration + preCallDuration`                  | `openEpochCall`                       | `InvalidPhase`        |
 | `Funding` | `_fundingDeadline` (= `start + normal + preCall + funding`) | `fundCall(bool)`, `fundCall(address)` | `InvalidPhase`        |
 | `Closed`  | `start + epochLength`                                       | `takeAuction` (auction must be live)  | `AuctionNotLive`      |
+
+`phaseEndsAt` projects the queried effective-time boundary into wall-clock time using the pause offset accumulated at
+the time of the query. It is exact for current and future boundaries while unpaused, but a boundary already in the
+past shifts if a later pause adds to the offset. While paused, it reports the end as if the vault were unpaused at the
+current wall clock, so every lifecycle window resumes with the same effective time remaining.
+
+## 4.1 Pause circuit breaker
+
+`pause()` is callable by the owner or the configured guardian. It freezes the derived clock and makes every `synced`
+entrypoint revert before state progression, including deposits, exits, funding, auctions, slash finalization,
+materialization, and synced owner setters. `shutdown`, `setMarginOracle`, pause/unpause/guardian management, and views
+remain live so the owner can wind down or rotate an oracle during an incident. While paused, no auction fill can
+execute, so the owner may replace even a still-responsive but compromised oracle before resuming; while unpaused,
+the live-auction guard still permits recovery only when the old oracle is zero-price or reverting.
+
+`unpause()` is owner-only and the pause has no time bound: margin stays frozen until the owner unpauses or shuts the
+vault down, an accepted extension of the fully-trusted-owner model. Shutdown ends an active pause, emits `Unpaused`,
+and immediately enables wind-down claims while recording the same frozen effective timestamp for slash semantics.
+`pause()` remains callable after shutdown so the guardian or owner can stop a faulty wind-down claim path; the owner
+must unpause again to resume claims. Each elapsed pause duration is accumulated into the clock offset, so all epochs,
+funding deadlines, auction windows, exit maturities, and terminal checks shift by exactly the paused duration.
 
 **Phase-free / lifecycle-gated entrypoints** (these have **no** phase check):
 
@@ -508,14 +534,16 @@ flowchart TD
     RP["unregistered proxy"] -.->|anyone can point| BE
 ```
 
-`LCCAuctionLib` is externally linked into a shared `LCCVault` implementation. An `UpgradeableBeacon` owned by the
-7-day timelock points at that implementation; the implementation constructor fixes protocol-wide `notificationVault`,
-`usd3`, `fundingAsset`, and `treasury` and calls `_disableInitializers()`. `LCCVaultFactory` deploys per-facility
-`BeaconProxy` instances with atomic `initialize` calldata; per-facility params live in proxy storage. The factory
-registry (`isVault` / `allVaults`) records owner-vetted **provenance only** — the beacon is public, so anyone can
-point an unregistered proxy at it. Packed structs in `LCCTypesLib` are upgrade-frozen layout; new state must consume
-`__gap`; `LCCAuctionLib` must be re-linked on every implementation redeploy; a `forge inspect LCCVault
-storageLayout` diff is the manual review gate. The full upgrade checklist of record lives in
+`LCCAuctionLib` is the only externally linked library in the shared `LCCVault` implementation. The implementation is
+compiled for Shanghai with solc `0.8.35`, via IR, and 500 optimizer runs; its measured runtime is 24,014 bytes, leaving
+562 bytes below EIP-170. An `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
+implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls
+`_disableInitializers()`. `LCCVaultFactory` deploys per-facility `BeaconProxy` instances with atomic `initialize`
+calldata; per-facility params live in proxy storage. The factory registry (`isVault` / `allVaults`) records owner-vetted
+**provenance only** — the beacon is public, so anyone can point an unregistered proxy at it. Packed structs in
+`LCCTypesLib` are upgrade-frozen layout; new state must consume `__gap`; `LCCAuctionLib` must be re-linked on every
+implementation redeploy; `yarn build:forge:size` and a `forge inspect LCCVault storageLayout` diff are the release
+gates. The full upgrade checklist of record lives in
 [`docs/architecture.md`](../../docs/architecture.md).
 
 ## 12. Known sharp edges / reviewer invariants

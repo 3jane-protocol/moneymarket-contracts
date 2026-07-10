@@ -16,13 +16,13 @@ library LCCConfigLib {
     /// @dev Seconds per auction price step: the Closed window divided by the step count (0 when auctions are
     /// disabled). Kept next to `validate`'s window/step-count constraints so the formula and its bounds move
     /// together.
-    function auctionStepDuration(ILCCVault.VaultParams memory params) internal pure returns (uint256) {
+    function auctionStepDuration(ILCCVault.VaultParams calldata params) internal pure returns (uint256) {
         if (params.auctionStepCount == 0) return 0;
         uint256 phaseDurations = params.normalDuration + params.preCallDuration + params.fundingDuration;
         return (params.epochLength - phaseDurations) / params.auctionStepCount;
     }
 
-    function validate(ILCCVault.VaultParams memory params) internal pure {
+    function validate(ILCCVault.VaultParams calldata params) internal pure {
         if (params.owner == address(0) || params.marginAsset == address(0) || params.marginOracle == address(0)) {
             revert LCCErrorsLib.ZeroAddress();
         }

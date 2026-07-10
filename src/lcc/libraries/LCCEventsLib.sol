@@ -114,8 +114,21 @@ library LCCEventsLib {
 
     /// @notice Emitted when emergency shutdown is triggered.
     /// @param epoch Epoch in which shutdown occurred.
-    /// @param timestamp Block timestamp of shutdown.
+    /// @param timestamp Pause-adjusted effective timestamp of shutdown.
     event EmergencyShutdown(uint256 indexed epoch, uint256 timestamp);
+
+    /// @notice Emitted when the pause guardian or owner pauses the vault.
+    /// @param by Account that paused the vault.
+    event Paused(address indexed by);
+
+    /// @notice Emitted when the owner unpauses the vault.
+    /// @param by Account that unpaused the vault.
+    event Unpaused(address indexed by);
+
+    /// @notice Emitted when the owner updates the pause guardian.
+    /// @param oldGuardian Previous guardian.
+    /// @param newGuardian New guardian.
+    event GuardianUpdated(address indexed oldGuardian, address indexed newGuardian);
 
     /// @notice Emitted when an epoch's funding shortfall opens a Dutch auction.
     /// @param epoch Epoch whose shortfall is auctioned.

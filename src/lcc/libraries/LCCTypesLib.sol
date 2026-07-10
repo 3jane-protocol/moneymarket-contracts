@@ -8,6 +8,18 @@ import {ILCCVault} from "../interfaces/ILCCVault.sol";
 /// @custom:contact support@3jane.xyz
 /// @notice Library exposing implementation-only LCC vault types.
 library LCCTypesLib {
+    /// @notice Packed pause circuit-breaker state; effective time excludes accumulated paused seconds.
+    /// @param guardian Address allowed to pause alongside the owner (zero disables the guardian).
+    /// @param paused True while the vault clock and all synced entrypoints are frozen.
+    /// @param pausedAt Wall timestamp of the active or most recently completed pause.
+    /// @param pausedAccumulated Total wall seconds spent paused over the vault's lifetime.
+    struct PauseState {
+        address guardian;
+        bool paused;
+        uint48 pausedAt;
+        uint40 pausedAccumulated;
+    }
+
     /// @notice Packed epoch clock and phase durations.
     struct ClockConfig {
         uint64 startTimestamp;

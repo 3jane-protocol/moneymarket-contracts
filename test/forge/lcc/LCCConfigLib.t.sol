@@ -9,11 +9,11 @@ import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 import {BPS} from "../../../src/libraries/ConstantsLib.sol";
 
 contract LCCConfigHarness {
-    function validate(ILCCVault.VaultParams memory params) external pure {
+    function validate(ILCCVault.VaultParams calldata params) external pure {
         LCCConfigLib.validate(params);
     }
 
-    function auctionStepDuration(ILCCVault.VaultParams memory params) external pure returns (uint256) {
+    function auctionStepDuration(ILCCVault.VaultParams calldata params) external pure returns (uint256) {
         return LCCConfigLib.auctionStepDuration(params);
     }
 }

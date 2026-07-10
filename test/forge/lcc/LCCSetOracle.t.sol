@@ -68,6 +68,33 @@ contract LCCSetOracleTest is LCCBase {
         vault.setMarginOracle(address(newOracle));
     }
 
+    function testSetMarginOracleRotatesResponsiveOracleDuringPausedLiveAuction() public {
+        _deployAuctionVault();
+        _setupShortfallAuction();
+        OracleMock newOracle = _oracleWithPrice(2 * ORACLE_PRICE_SCALE);
+
+        vm.warp(DEADLINE + 10);
+        vm.prank(owner);
+        vault.pause();
+        vm.warp(DEADLINE + 1 days);
+
+        vm.prank(owner);
+        vault.setMarginOracle(address(newOracle));
+        assertEq(vault.assetConfig().marginOracle, address(newOracle));
+
+        vm.expectRevert(LCCErrorsLib.Paused.selector);
+        vm.prank(carol);
+        vault.takeAuction(25e18);
+
+        vm.prank(owner);
+        vault.unpause();
+        vm.prank(carol);
+        (uint256 filled, uint256 award) = vault.takeAuction(25e18);
+
+        assertEq(filled, 25e18);
+        assertEq(award, 12.5e18);
+    }
+
     function testSetMarginOracleRotatesDuringLiveAuctionWhenOracleDead() public {
         _deployAuctionVault();
         _setupShortfallAuction();

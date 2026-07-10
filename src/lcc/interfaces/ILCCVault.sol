@@ -90,7 +90,7 @@ interface ILCCVault {
 
     /// @notice Initializes a beacon proxy vault with per-facility configuration.
     /// @param params The facility configuration.
-    function initialize(VaultParams memory params) external;
+    function initialize(VaultParams calldata params) external;
 
     /// @notice Immutable asset and integration addresses for this vault.
     /// @param marginAsset ERC20 posted as the performance bond.
@@ -185,7 +185,7 @@ interface ILCCVault {
 
     /// @notice Packed emergency shutdown state.
     /// @param active Whether shutdown has been triggered.
-    /// @param timestamp Block timestamp at which shutdown was triggered (0 if not shut down).
+    /// @param timestamp Pause-adjusted effective timestamp at which shutdown was triggered (0 if not shut down).
     /// @param epoch Epoch in which shutdown was triggered (0 if not shut down).
     struct ShutdownState {
         bool active;
@@ -264,17 +264,29 @@ interface ILCCVault {
         uint256 returnCommitment;
     }
 
-    /// @notice Current epoch index derived from the block timestamp.
+    /// @notice Current epoch index derived from the pause-adjusted effective timestamp.
     /// @return The current epoch.
     function currentEpoch() external view returns (uint256);
-    /// @notice Current lifecycle phase derived from the block timestamp.
+    /// @notice Current lifecycle phase derived from the pause-adjusted effective timestamp.
     /// @return The current phase.
     function currentPhase() external view returns (Phase);
-    /// @notice Timestamp at which a given phase ends within a given epoch.
+    /// @notice Wall-clock timestamp at which a given phase ends within a given epoch.
+    /// @dev Projects the effective-time boundary using the pause offset accumulated when queried. It is exact for
+    /// current and future boundaries while unpaused, but a boundary already in the past shifts if a later pause adds
+    /// to the offset. While paused, it assumes the vault is unpaused at the current wall-clock timestamp.
     /// @param epoch Epoch to query.
     /// @param phase Phase whose end is requested.
-    /// @return The phase-end timestamp.
+    /// @return The wall-clock phase-end timestamp.
     function phaseEndsAt(uint256 epoch, Phase phase) external view returns (uint256);
+    /// @notice Current pause circuit-breaker state.
+    /// @return guardian Account that may pause the vault, or zero when disabled.
+    /// @return paused Whether synced state-transitioning entrypoints are paused.
+    /// @return pausedAt Wall-clock timestamp at which the current pause began, or the previous pause began if unpaused.
+    /// @return pausedAccumulated Total wall-clock seconds subtracted from lifecycle time by completed pauses.
+    function pauseState()
+        external
+        view
+        returns (address guardian, bool paused, uint64 pausedAt, uint64 pausedAccumulated);
     /// @notice Deposits margin for the caller, creating a leveraged commitment.
     /// @dev Pulls `assets` of marginAsset from the caller and credits the caller's own account (self-deposit only,
     /// since a deposit creates a callable obligation). Activates immediately during Normal (before a call opens),
@@ -311,7 +323,25 @@ interface ILCCVault {
         uint256 newMinDeposit
     ) external;
     /// @notice Triggers emergency shutdown: blocks new deposits/calls and enables remaining-margin withdrawal.
+    /// @dev Callable while paused. Shutdown ends the active pause, emits `Unpaused`, and records the same frozen
+    /// pause-adjusted timestamp so in-flight funding windows keep their slash-disable semantics. A later pause
+    /// remains available as a circuit breaker for the wind-down claim path.
     function shutdown() external;
+    /// @notice Updates the pause guardian.
+    /// @dev Only the owner may update the guardian. The zero address disables guardian pausing.
+    /// @param newGuardian New guardian address, or zero to disable the guardian.
+    function setGuardian(address newGuardian) external;
+    /// @notice Pauses synced state-transitioning entrypoints and freezes the derived lifecycle clock.
+    /// @dev Callable by the owner or guardian. Pause does not run global sync, so it remains available even if a
+    /// sync path is blocked. While paused, every `synced` entrypoint reverts before state progression: deposits,
+    /// exits, funding, auctions, slash finalization, account materialization, and owner risk/auction setters. The
+    /// live functions are shutdown, setMarginOracle, pause/unpause/setGuardian, ownership transfer, and views. Pause
+    /// remains callable after shutdown so a faulty wind-down claim path can be stopped.
+    function pause() external;
+    /// @notice Owner unpauses the vault and resumes every epoch window exactly where it froze.
+    /// @dev The pause has no time bound: margin stays frozen until the owner unpauses or shuts the vault down;
+    /// shutdown ends the active pause automatically.
+    function unpause() external;
     /// @notice Owner opens the current epoch's capital call during PreCall.
     /// @dev Reverts unless in PreCall of `epoch`, if a prior call is unsettled, if already opened, or if
     /// `callAmount` exceeds the active-commitment base. Owner guidance: `callAmount` should be meaningful relative to
@@ -359,11 +389,12 @@ interface ILCCVault {
     function setSlashFeeBps(uint256 newSlashFeeBps) external;
     /// @notice Owner update of the trusted margin oracle.
     /// @dev Rotation is owner-trusted and reprices future auction awards and return-pool disposal for every
-    /// unsettled call, not only future calls. `openEpochCall` does not snapshot the oracle. The live-auction guard
-    /// blocks rotation only while the current oracle still returns a nonzero price for fills; a zero-price,
-    /// reverting, or otherwise unreadable current oracle never blocks rotation. The new oracle must return
-    /// marginAsset-to-fundingAsset (USDC) prices at ORACLE_PRICE_SCALE with matching decimals; the vault can only
-    /// check that the price is nonzero.
+    /// unsettled call, not only future calls. `openEpochCall` does not snapshot the oracle. While paused, no fills
+    /// can execute and the owner may rotate even a responsive current oracle before resuming the frozen auction.
+    /// While unpaused, the live-auction guard blocks rotation only while the current oracle still returns a nonzero
+    /// price for fills; a zero-price, reverting, or otherwise unreadable current oracle never blocks rotation. The
+    /// new oracle must return marginAsset-to-fundingAsset (USDC) prices at ORACLE_PRICE_SCALE with matching decimals;
+    /// the vault can only check that the price is nonzero.
     /// @param newOracle New margin oracle.
     function setMarginOracle(address newOracle) external;
     /// @notice Auction state for an epoch.
