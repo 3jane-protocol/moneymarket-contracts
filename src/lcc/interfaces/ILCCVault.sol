@@ -59,9 +59,10 @@ interface ILCCVault {
     /// earliest exit request is commitmentStartEpoch + minCommitmentEpochs and the earliest maturity adds
     /// exitDelayEpochs. Wind-down claims (shutdown or terminal) bypass the gate.
     /// @param minDepositAssets Minimum margin deposit, in marginAsset units.
-    /// @param auctionStepCount Number of price steps spanning the Closed window; 0 disables the auction entirely,
-    /// otherwise must be at least 2 (the final step boundary coincides with settlement and is never live). Bounded to
-    /// uint32, and its derived step duration is also bounded to uint32.
+    /// @param auctionStepCount Divisor used to derive the Closed-window step duration; 0 disables the auction
+    /// entirely, otherwise must be at least 2. Because the duration is floor-rounded and the live step index is
+    /// uncapped, a remainder can make live steps reach or exceed this configured count. Bounded to uint32, and its
+    /// derived step duration is also bounded to uint32.
     /// @param auctionStepDecayRateBps Per-step decay of the protocol's retained pool share, in bps.
     /// @param maxAuctionAwardBps Oracle-valued collateral award cap per fundingAsset filled, in bps; 0 disables.
     /// @param slashFeeBps Fee on auction-awarded slashed margin, clamped to the unawarded surplus, in bps.
@@ -132,7 +133,8 @@ interface ILCCVault {
     }
 
     /// @notice Immutable auction timing and decay configuration.
-    /// @param auctionStepCount Number of price steps spanning the Closed-window auction.
+    /// @param auctionStepCount Configured divisor used to derive the Closed-window step duration; the live index is
+    /// uncapped and can exceed this value when the division has a remainder.
     /// @param auctionStepDecayRateBps Per-step retained-pool decay, in bps.
     /// @param auctionStepDuration Derived duration of each auction price step, in seconds.
     struct AuctionConfig {
@@ -358,7 +360,14 @@ interface ILCCVault {
     /// obligation and delivers wrapped USD3n while retaining the caller's full margin and full callable commitment;
     /// that exposure re-arms each epoch, the caller's pro-rata share of successive calls grows as amortizers decay,
     /// and lifetime funding obligations are unbounded while rolling. A live exiter cannot roll and reverts with
-    /// `ExitInProgress`; a live exiter may still fund with `roll = false`.
+    /// `ExitInProgress`; a live exiter may still fund with `roll = false`. Delivery always mints at least one USD3
+    /// share: when the obligation itself would round to zero shares, the payer supplies at most 1,000 extra
+    /// funding-asset base units and the beneficiary receives the full resulting USD3n amount. Settlement accounting
+    /// remains based on `obligationAmount`. Payers should approve `obligationOf(epoch, user) + 1_000` base units, or
+    /// compute `max(obligationOf(epoch, user), usd3.previewMint(1))` client-side. Reverts `FundingTopUpExcessive`
+    /// above that bound and `FundingDeliveryImpossible` when USD3 reports zero assets with nonzero supply. Either
+    /// error signals an incident state: pause to freeze the deadline and have the owner shut down before the frozen
+    /// deadline to disable slashing.
     /// @param roll Whether to retain full margin and commitment after paying this call.
     /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
     function fundCall(bool roll) external returns (uint256 obligationAmount);
@@ -366,8 +375,9 @@ interface ILCCVault {
     /// @dev The caller pays; released margin, wrapped USD3n delivery, and funded status accrue to `user`. The
     /// Funding phase is the timing guard, as on {fundCall}. Push funding always amortizes because the payer must not
     /// control whether the user's margin remains locked and callable. A push fund can front-run and deny the user's
-    /// intended roll for that epoch: the payer donates the obligation, the user receives wrapped USD3n and released
-    /// margin, and the user can restore commitment by re-depositing the released margin.
+    /// intended roll for that epoch: the payer donates the obligation plus any bounded delivery top-up, the user
+    /// receives wrapped USD3n and released margin, and the user can restore commitment by re-depositing the released
+    /// margin. The delivery guarantees and degenerate-USD3 incident procedure are the same as {fundCall(bool)}.
     /// @param user Account whose obligation is funded.
     /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
     function fundCall(address user) external returns (uint256 obligationAmount);
@@ -375,7 +385,10 @@ interface ILCCVault {
     /// collateral kicker.
     /// @dev Targets whichever auction is live, following Yearn-take semantics. `maxFillAmount` is the caller's only
     /// bound; the award is the current ramped pro-rata kicker, capped by `maxAuctionAwardBps` of the fill at the
-    /// fill-time oracle price. Reverts if USD3 or the notification vault cannot accept delivery.
+    /// fill-time oracle price. Reverts if USD3 or the notification vault cannot accept delivery. If a fill leaves a
+    /// residual smaller than the assets required to mint one USD3 share, the remaining shortfall cannot be filled
+    /// because `maxFillAmount` is a caller ceiling and no top-up is taken; it settles through normal window-end
+    /// disposal without rolling over.
     /// @param maxFillAmount Maximum shortfall to fill (fundingAsset).
     /// @return filledAmount Shortfall actually filled (fundingAsset).
     /// @return marginAward Collateral kicker awarded (marginAsset).

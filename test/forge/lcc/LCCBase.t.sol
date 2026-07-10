@@ -22,6 +22,10 @@ contract LCCMockToken is ERC20 {
     function mint(address account, uint256 amount) external {
         _mint(account, amount);
     }
+
+    function burn(address account, uint256 amount) external {
+        _burn(account, amount);
+    }
 }
 
 contract LCCMockUSD3 is ERC4626 {
@@ -29,6 +33,7 @@ contract LCCMockUSD3 is ERC4626 {
     uint256 internal minDeposit;
     bool internal depositHookReverts;
     mapping(address => bool) internal supplyCapExempt;
+    uint256 public ringFencedLiquidity;
 
     constructor(IERC20 asset_) ERC20("Mock USD3", "mUSD3") ERC4626(asset_) {}
 
@@ -48,6 +53,25 @@ contract LCCMockUSD3 is ERC4626 {
         supplyCapExempt[account] = exempt;
     }
 
+    function reportProfit(uint256 assets) external {
+        LCCMockToken(asset()).mint(address(this), assets);
+    }
+
+    function _convertToShares(uint256 assets, Math.Rounding rounding) internal view override returns (uint256) {
+        uint256 supply = totalSupply();
+        if (supply == 0) return assets;
+        uint256 managedAssets = totalAssets();
+        if (managedAssets == 0) return 0;
+        return Math.mulDiv(assets, supply, managedAssets, rounding);
+    }
+
+    function _convertToAssets(uint256 shares, Math.Rounding rounding) internal view override returns (uint256) {
+        uint256 supply = totalSupply();
+        if (supply == 0) return shares;
+        uint256 managedAssets = totalAssets();
+        return Math.mulDiv(shares, managedAssets, supply, rounding);
+    }
+
     function maxDeposit(address) public view override returns (uint256) {
         return depositLimit;
     }
@@ -55,7 +79,10 @@ contract LCCMockUSD3 is ERC4626 {
     function deposit(uint256 assets, address receiver) public override returns (uint256) {
         require(!depositHookReverts, "!allowed");
         if (balanceOf(receiver) == 0 && !supplyCapExempt[receiver]) require(assets >= minDeposit, "<min");
-        return super.deposit(assets, receiver);
+        require(previewDeposit(assets) != 0, "ZERO_SHARES");
+        uint256 shares = super.deposit(assets, receiver);
+        ringFencedLiquidity += assets;
+        return shares;
     }
 }
 
@@ -215,6 +242,14 @@ contract LCCBase is Test {
         margin.approve(address(target), type(uint256).max);
         usdc.approve(address(target), type(uint256).max);
         vm.stopPrank();
+    }
+
+    function _seedUsd3(uint256 assets, uint256 profit) internal {
+        usdc.mint(address(this), assets);
+        usdc.approve(address(usd3), assets);
+        usd3.deposit(assets, address(this));
+        usd3.reportProfit(profit);
+        assertEq(usd3.previewMint(1), Math.ceilDiv(assets + profit, assets));
     }
 
     function _effectiveTime(LCCVault target) internal view returns (uint256) {

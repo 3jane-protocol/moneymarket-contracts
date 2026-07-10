@@ -135,6 +135,73 @@ contract LCCReturnPoolTest is LCCBase {
         assertEq(vault.exitBucketCommitmentByMaturity(maturity), 0);
     }
 
+    function testCapBelowGrandfatheredUtilizationDoesNotAddDueCommitmentAsHeadroom() public {
+        ILCCVault.VaultParams memory params = _auctionParams();
+        params.protocolCommitmentCap = 200e18;
+        _deployVaultWithParams(params);
+
+        _deposit(carol, 5e18);
+        _deposit(bob, 45e18);
+        _deposit(alice, 50e18);
+        vm.prank(carol);
+        assertEq(vault.requestExit(), 1);
+
+        _openCall(100e18);
+        _fund(carol);
+        _fundRolling(bob);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+        assertEq(vault.totals().activeCommitment, 95e18);
+
+        vm.prank(owner);
+        vault.setRiskCaps(80e18, 200e18, 2_000, 0);
+        vm.warp(START + EPOCH);
+        vault.materializeAccount(alice);
+
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(state.returnPool, 0);
+        assertEq(state.returnCommitment, 0);
+        assertEq(margin.balanceOf(treasury), 50e18);
+        assertEq(vault.totals().activeCommitment, 90e18);
+        assertGt(vault.totals().activeCommitment, vault.riskConfig().protocolCommitmentCap);
+    }
+
+    function testDisposalHeadroomClampsToPackedTotalsWidthBeforeDueExitFold() public {
+        uint256 maxPacked = type(uint128).max;
+        ILCCVault.VaultParams memory params = _auctionParams();
+        params.protocolCommitmentCap = maxPacked;
+        params.userCommitmentCap = maxPacked;
+        _deployVaultWithParams(params);
+
+        uint256 bobCommitment = maxPacked - 40e18 - 1;
+        uint256 bobMargin = bobCommitment / 2;
+        _mintAndApprove(bob, bobMargin, bobCommitment);
+        _deposit(bob, bobMargin);
+        _deposit(carol, 10e18);
+        _deposit(alice, 10e18);
+        vm.prank(carol);
+        assertEq(vault.requestExit(), 1);
+
+        _openCall((maxPacked - 1) / 2);
+        _fundRolling(bob);
+        _fund(carol);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+
+        uint256 usedBeforeDisposal = vault.totals().activeCommitment;
+        uint256 packingHeadroom = maxPacked - usedBeforeDisposal;
+        assertEq(packingHeadroom, 30e18 + 1);
+        oracle.setPrice(4 * ORACLE_PRICE_SCALE);
+        vm.warp(START + EPOCH);
+        vault.materializeAccount(alice);
+
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(state.returnCommitment, packingHeadroom);
+        assertEq(vault.totals().activeCommitment, maxPacked - 10e18);
+        assertGt(state.returnPool, 0);
+        assertEq(state.returnPool + margin.balanceOf(treasury), 10e18);
+    }
+
     /// @dev Slashed epoch whose freed cap headroom is re-consumed by a fresh deposit before disposal:
     /// alice and bob default on a 200e18 call, carol's deposit fills the cap back to `cap`, and time is
     /// warped past the epoch so the next touch settles and disposes.

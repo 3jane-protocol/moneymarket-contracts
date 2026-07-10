@@ -108,7 +108,7 @@ const config: HardhatUserConfig = {
         [
           ["src/usd3/USD3.sol", "0.8.22", 999999, "shanghai"],
           ["src/usd3/USD3_old.sol", "0.8.22", 200, "shanghai"],
-          ["src/lcc/LCCVault.sol", "0.8.35", 300, "cancun"],
+          ["src/lcc/LCCVault.sol", "0.8.35", 150, "cancun"],
           ["src/lcc/LCCVaultFactory.sol", "0.8.35", 999999, "cancun"],
           ["src/lcc/interfaces/ILCCVault.sol", "0.8.35", 999999, "cancun"],
           ["src/lcc/libraries/LCCAccountLib.sol", "0.8.35", 999999, "cancun"],

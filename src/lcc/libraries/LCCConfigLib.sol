@@ -13,8 +13,10 @@ library LCCConfigLib {
     uint256 internal constant MAX_EXIT_DELAY_EPOCHS = 64;
     uint256 internal constant MIN_EXIT_CAP_BPS = (2 * BPS + MAX_EXIT_DELAY_EPOCHS - 1) / MAX_EXIT_DELAY_EPOCHS;
 
-    /// @dev Seconds per auction price step: the Closed window divided by the step count (0 when auctions are
-    /// disabled). Kept next to `validate`'s window/step-count constraints so the formula and its bounds move
+    /// @dev Seconds per auction price step: the Closed window divided by the configured step count (0 when auctions
+    /// are disabled). The division floors, while pricing uses the uncapped live index `elapsed / stepDuration`, so a
+    /// remainder can produce live indices at or above the configured count; the maximum live index is
+    /// `(closedWindow - 1) / stepDuration`. Kept next to `validate`'s constraints so the formula and bounds move
     /// together.
     function auctionStepDuration(ILCCVault.VaultParams calldata params) internal pure returns (uint256) {
         if (params.auctionStepCount == 0) return 0;
@@ -67,8 +69,8 @@ library LCCConfigLib {
                 revert LCCErrorsLib.InvalidParams();
             }
         } else {
-            // Takes are only live strictly before the epoch end, so the step-N boundary is never reachable and a
-            // one-step auction would offer zero collateral for its entire window; at least two steps are required.
+            // With one configured step, stepDuration equals the entire Closed window. Takes stop strictly before its
+            // first boundary, so a one-step auction would offer zero collateral throughout; require at least two.
             if (params.auctionStepCount == 1) revert LCCErrorsLib.InvalidParams();
             if (params.auctionStepDecayRateBps == 0 || params.auctionStepDecayRateBps > BPS) {
                 revert LCCErrorsLib.InvalidParams();

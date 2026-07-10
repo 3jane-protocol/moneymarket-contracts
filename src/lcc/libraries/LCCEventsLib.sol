@@ -35,10 +35,18 @@ library LCCEventsLib {
     event EpochCallOpened(uint256 indexed epoch, uint256 callAmount, uint256 commitmentDenominator);
 
     /// @notice Emitted when a user's epoch obligation is funded.
+    /// @param payer Account supplying the funding asset.
     /// @param user Account whose obligation was funded.
     /// @param epoch Epoch funded.
     /// @param obligationAmount Obligation paid (fundingAsset).
-    event CallFunded(address indexed user, uint256 indexed epoch, uint256 obligationAmount);
+    /// @param fundingAmount Actual funding asset pulled and delivered, including any bounded dust top-up.
+    event CallFunded(
+        address indexed payer,
+        address indexed user,
+        uint256 indexed epoch,
+        uint256 obligationAmount,
+        uint256 fundingAmount
+    );
 
     /// @notice Emitted when backing margin is released to a funder.
     /// @param user Account receiving the released margin.

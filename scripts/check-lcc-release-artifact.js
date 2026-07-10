@@ -3,25 +3,35 @@ const fs = require("fs");
 const path = require("path");
 
 const EXPECTED_COMPILER = "0.8.35+commit.47b9dedd";
-const EXPECTED_OPTIMIZER_RUNS = 300;
-const MAX_RUNTIME_BYTES = 24_076;
+const EXPECTED_OPTIMIZER_RUNS = 150;
+const MAX_RUNTIME_BYTES = 24_276;
 const EIP_170_LIMIT = 24_576;
 const AUCTION_LIBRARY_SOURCE = "src/lcc/libraries/LCCAuctionLib.sol";
+const STORAGE_LAYOUT_BASELINE = "docs/lcc-vault-storage-layout.json";
+const NEGATIVE_FIXTURE_DIRECTORY = "scripts/fixtures/lcc-storage-layout";
+const EXPECTED_NEGATIVE_FIXTURES = [
+  "base-storage-insertion.json",
+  "gap-shrinkage.json",
+  "packed-member-reorder.json",
+  "width-change.json",
+];
 
 function fail(message) {
   console.error(`LCC release artifact check failed: ${message}`);
   process.exit(1);
 }
 
+function forge(args) {
+  return execFileSync("forge", args, {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: { ...process.env, FOUNDRY_PROFILE: "build" },
+  });
+}
+
 function forgeOutputDirectory() {
   try {
-    const config = JSON.parse(
-      execFileSync("forge", ["config", "--json"], {
-        cwd: process.cwd(),
-        encoding: "utf8",
-        env: { ...process.env, FOUNDRY_PROFILE: "build" },
-      }),
-    );
+    const config = JSON.parse(forge(["config", "--json"]));
     if (typeof config.out !== "string" || config.out.length === 0) fail("build profile has no Forge output directory");
     return path.resolve(process.cwd(), config.out);
   } catch (error) {
@@ -29,11 +39,115 @@ function forgeOutputDirectory() {
   }
 }
 
-const ARTIFACT_PATH = path.join(forgeOutputDirectory(), "LCCVault.sol", "LCCVault.json");
+function readJson(relativePath) {
+  const absolutePath = path.resolve(process.cwd(), relativePath);
+  if (!fs.existsSync(absolutePath)) fail(`missing ${absolutePath}`);
+  try {
+    return JSON.parse(fs.readFileSync(absolutePath, "utf8"));
+  } catch (error) {
+    fail(`could not parse ${absolutePath}: ${error.message}`);
+  }
+}
 
-if (!fs.existsSync(ARTIFACT_PATH)) fail(`missing ${ARTIFACT_PATH}; run yarn build:forge first`);
+function canonicalType(typeId, types, ancestry = new Set()) {
+  const type = types[typeId];
+  if (!type) throw new Error(`unknown storage type ${typeId}`);
+  if (ancestry.has(typeId)) throw new Error(`recursive storage type ${typeId}`);
 
-const artifact = JSON.parse(fs.readFileSync(ARTIFACT_PATH, "utf8"));
+  const nextAncestry = new Set(ancestry);
+  nextAncestry.add(typeId);
+  const canonical = {
+    encoding: type.encoding,
+    numberOfBytes: type.numberOfBytes,
+    label: type.label,
+  };
+
+  if (type.key !== undefined) canonical.key = canonicalType(type.key, types, nextAncestry);
+  if (type.value !== undefined) canonical.value = canonicalType(type.value, types, nextAncestry);
+  if (type.base !== undefined) {
+    canonical.base = canonicalType(type.base, types, nextAncestry);
+  }
+  if (type.members !== undefined) {
+    canonical.members = type.members.map((member) => ({
+      label: member.label,
+      slot: member.slot,
+      offset: member.offset,
+      type: canonicalType(member.type, types, nextAncestry),
+    }));
+  }
+
+  return canonical;
+}
+
+function canonicalLayout(layout) {
+  if (!Array.isArray(layout?.storage) || typeof layout?.types !== "object") {
+    throw new Error("malformed storage layout");
+  }
+  return layout.storage.map((entry) => ({
+    label: entry.label,
+    slot: entry.slot,
+    offset: entry.offset,
+    type: canonicalType(entry.type, layout.types),
+  }));
+}
+
+function firstDifference(expected, actual, location = "layout") {
+  if (typeof expected !== typeof actual) return `${location}: expected ${typeof expected}, found ${typeof actual}`;
+  if (expected === null || actual === null || typeof expected !== "object") {
+    return expected === actual ? undefined : `${location}: expected ${JSON.stringify(expected)}, found ${JSON.stringify(actual)}`;
+  }
+  if (Array.isArray(expected) !== Array.isArray(actual)) return `${location}: array/object mismatch`;
+
+  const expectedKeys = Object.keys(expected);
+  const actualKeys = Object.keys(actual);
+  if (expectedKeys.join(",") !== actualKeys.join(",")) {
+    return `${location}: expected keys [${expectedKeys.join(", ")}], found [${actualKeys.join(", ")}]`;
+  }
+  for (const key of expectedKeys) {
+    const difference = firstDifference(expected[key], actual[key], `${location}.${key}`);
+    if (difference) return difference;
+  }
+  return undefined;
+}
+
+function layoutDifference(expected, actual) {
+  return { difference: firstDifference(canonicalLayout(expected), canonicalLayout(actual)) };
+}
+
+function verifyNegativeFixtures() {
+  const directory = path.resolve(process.cwd(), NEGATIVE_FIXTURE_DIRECTORY);
+  if (!fs.existsSync(directory)) fail(`missing ${directory}`);
+  const fixtureFiles = new Set(fs.readdirSync(directory).filter((file) => file.endsWith(".json")));
+  const missingFixtures = EXPECTED_NEGATIVE_FIXTURES.filter((fixtureFile) => !fixtureFiles.has(fixtureFile));
+  if (missingFixtures.length !== 0) fail(`missing storage-layout negative fixtures: ${missingFixtures.join(", ")}`);
+
+  for (const fixtureFile of EXPECTED_NEGATIVE_FIXTURES) {
+    const fixture = readJson(path.join(NEGATIVE_FIXTURE_DIRECTORY, fixtureFile));
+    if (
+      fixture === null ||
+      typeof fixture !== "object" ||
+      !Object.hasOwn(fixture, "baseline") ||
+      !Object.hasOwn(fixture, "candidate")
+    ) {
+      fail(`negative fixture ${fixtureFile} must contain baseline and candidate layouts`);
+    }
+
+    let result;
+    try {
+      result = layoutDifference(fixture.baseline, fixture.candidate);
+    } catch (error) {
+      fail(`negative fixture ${fixtureFile} could not be evaluated: ${error.message}`);
+    }
+    if (!result.difference) {
+      fail(`negative fixture ${fixtureFile} was not rejected`);
+    }
+  }
+}
+
+const artifactPath = path.join(forgeOutputDirectory(), "LCCVault.sol", "LCCVault.json");
+if (!fs.existsSync(artifactPath)) fail(`missing ${artifactPath}; run yarn build:forge first`);
+
+const artifact = readJson(artifactPath);
 const metadata = artifact.metadata;
 const settings = metadata?.settings;
 const bytecode = artifact.deployedBytecode?.object;
@@ -67,7 +181,18 @@ if (
   fail(`expected LCCAuctionLib as the sole link reference, found ${linkedSources.join(", ") || "none"}`);
 }
 
+let layoutResult;
+try {
+  layoutResult = layoutDifference(readJson(STORAGE_LAYOUT_BASELINE), artifact.storageLayout);
+} catch (error) {
+  fail(`could not compare the artifact storage layout: ${error.message}`);
+}
+if (layoutResult.difference) {
+  fail(`storage layout differs from reviewer-controlled baseline: ${layoutResult.difference}`);
+}
+verifyNegativeFixtures();
+
 console.log(
   `LCCVault release artifact: ${runtimeBytes} bytes, ${EIP_170_LIMIT - runtimeBytes} bytes below EIP-170, ` +
-    `${EXPECTED_OPTIMIZER_RUNS} runs`,
+    `${EXPECTED_OPTIMIZER_RUNS} runs; storage layout matches reviewer-controlled baseline`,
 );

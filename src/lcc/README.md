@@ -256,6 +256,18 @@ Ceil rounding means the sum of obligations can exceed `callAmount` by up to `(nu
 dust. `callAmount` is the nominal pro-rata base, **not** a hard aggregate funding cap; the pool can settle slightly
 above it. `obligationOf` returns `0` once the account has funded, the epoch is finalized, or no call is open.
 
+Funding must mint at least one USD3 share. The vault computes
+`fundingAmount = max(obligation, usd3.previewMint(1))` before writing settlement state and pulls that amount from the
+payer. Any extra amount is delivered to the beneficiary as USD3n but does not alter obligation-denominated
+settlement accounting. The extra pull is capped at `MAX_FUNDING_TOP_UP = 1_000` funding-asset base units;
+`FundingTopUpExcessive` protects approvals if USD3 PPS jumps between a quote and execution. Payers should approve
+`obligationOf(epoch, user) + 1_000` base units, or compute
+`max(obligationOf(epoch, user), usd3.previewMint(1))` client-side. If a degenerate USD3 has zero assets with supply
+outstanding, `previewMint(1) == 0` and funding reverts `FundingDeliveryImpossible`. Both
+`FundingTopUpExcessive` (pathological PPS) and `FundingDeliveryImpossible` use the same incident path: pause to freeze
+the deadline, then have the owner shut down before the frozen deadline so the call cannot slash and users can claim
+remaining margin.
+
 ```mermaid
 sequenceDiagram
     participant U as User
@@ -271,8 +283,9 @@ sequenceDiagram
     else roll == true
         V->>V: retain full margin and full commitment
     end
-    V->>F: safeTransferFrom(payer, vault, obligation)
-    V->>U3: deposit(obligation)
+    V->>V: fundingAmount = max(obligation, USD3 previewMint(1))
+    V->>F: safeTransferFrom(payer, vault, fundingAmount)
+    V->>U3: deposit(fundingAmount)
     U3->>NV: deposit USD3
     NV-->>U: mint USD3n shares
     opt amortize
@@ -354,6 +367,11 @@ vault is not shut down, and the epoch-end window is still open. Otherwise the sl
 `takeAuction` follows Yearn-take semantics: `maxFillAmount` is the caller's only bound, filling
 `min(maxFillAmount, remainingShortfall)`. The offered collateral ramps over the Closed window:
 
+Unlike call funding, auction fills never pull above `maxFillAmount`. At USD3 PPS above 1, a fill that leaves a
+residual smaller than `usd3.previewMint(1)` can make that residual unfillable because every later fill is clamped to
+the remaining shortfall and mints zero shares. The residual settles through the existing window-end disposal path;
+it does not roll over.
+
 ```
 steps    = elapsed / stepDuration
 retained = (1 - stepDecayRateBps/BPS) ^ steps        // rayMultiplier = RAY - stepDecayRateBps * 1e23
@@ -400,7 +418,7 @@ flowchart TD
     D -->|no| E{"wind-down? shutdown or call window closed"}
     E -->|going concern| F["oracle required<br/>revert if price == 0"]
     E -->|wind-down| G["try/catch oracle<br/>dead or overflow price -> 0"]
-    F --> H["rawCommitment from returnPool<br/>headroom = protocolCap - used + dueUnfoldedExit"]
+    F --> H["rawCommitment from returnPool<br/>effectiveUsed = used - dueUnfoldedExit<br/>headroom = min(protocolCap - effectiveUsed,<br/>uint128 max - used)"]
     G --> I{"price == 0?"}
     I -->|yes| J["returnPool = 0<br/>sweep surplus to treasury"]
     I -->|no| K["rawCommitment from returnPool<br/>headroom = uint128 max - used"]
@@ -420,7 +438,8 @@ paths always pass `auctionedMargin = 0`, so `fee = 0` there. The remaining `retu
 
 **Going concern vs wind-down.** Going-concern disposal requires a live oracle (reverts `OraclePriceInvalid` on a
 zero price) and clamps `returnCommitment` by real cap headroom
-(`protocolCommitmentCap - used + dueUnfoldedExitCommitment`, where `used = active + pending commitment`). Wind-down
+(`protocolCommitmentCap - (used - dueUnfoldedExitCommitment)`, saturating each subtraction), additionally clamped by
+`type(uint128).max - used`, where `used = active + pending commitment`. Wind-down
 disposal — under `shutdown` or once `_callWindowClosed()` — wraps the oracle in try/catch, treats a dead or
 overflow-risk price as zero (sweeping the pool to treasury rather than bricking), and clamps by the packed-totals
 width (`type(uint128).max - used`) instead of the protocol cap, because no future call can ever use the returned
@@ -429,10 +448,10 @@ commitment. If the clamped `returnCommitment` falls below `MIN_RETURN_COMMITMENT
 
 Two subtleties carried in prose, not boxes:
 
-- **Headroom add-back.** Going-concern headroom adds `_dueUnfoldedExitCommitment(currentEpoch)` — exit commitment
-  that has matured but not yet folded out of `_totals`, so it would otherwise overstate `used`. This never
-  double-counts because on the sync path disposal runs before `_foldDueMaturities`, and on a mid-window full-fill
-  settlement it runs after that transaction's folds (where due buckets are already zeroed), summing `0`.
+- **Headroom exclusion.** Going-concern headroom subtracts `_dueUnfoldedExitCommitment(currentEpoch)` from `used`
+  before applying the protocol-cap subtraction. This avoids granting headroom when utilization remains above a
+  reduced cap after the due exit folds. A separate packed-width clamp prevents the pre-fold return credit from
+  overflowing uint128 totals. On a mid-window full-fill settlement, due buckets are already folded and the sum is 0.
 - **Tight-cap diversion.** When protocol-cap headroom binds, removing the slash fee does **not** increase defaulter
   recovery — the cap clamp diverts the excess to treasury anyway. Heavy rolling pins utilization and worsens this;
   owners manage it with `setRiskCaps`.
@@ -535,8 +554,8 @@ flowchart TD
 ```
 
 `LCCAuctionLib` is the only externally linked library in the shared `LCCVault` implementation. The canonical Forge
-artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 300 optimizer runs; its measured runtime is
-23,991 bytes, leaving 585 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
+24,126 bytes, 150 bytes below the 24,276-byte release ceiling and 450 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls
@@ -545,8 +564,10 @@ calldata; per-facility params live in proxy storage. The factory registry (`isVa
 **provenance only** — the beacon is public, so anyone can point an unregistered proxy at it. Packed structs in
 `LCCTypesLib` are upgrade-frozen layout; the initial layout retains a 50-slot `__gap`, and new state must consume it;
 `LCCAuctionLib` must be re-linked on every
-implementation redeploy; `yarn build:forge:size` and a `forge inspect LCCVault storageLayout` diff are the release
-gates. The full upgrade checklist of record lives in
+implementation redeploy. `yarn build:forge:size` embeds the build-profile storage layout in the canonical artifact
+and recursively compares its complete type graph against the reviewer-controlled
+`docs/lcc-vault-storage-layout.json`; the checker never regenerates that baseline. The full upgrade checklist of
+record lives in
 [`docs/architecture.md`](../../docs/architecture.md).
 
 ## 12. Known sharp edges / reviewer invariants

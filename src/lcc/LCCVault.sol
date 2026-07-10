@@ -37,6 +37,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
     uint256 internal constant MAX_MATERIALIZE_STEPS = 64;
     uint256 internal constant MAX_EXIT_MATURITY_BUCKETS = 2 * LCCConfigLib.MAX_EXIT_DELAY_EPOCHS;
+    /// @notice Maximum extra fundingAsset pulled to ensure a dust obligation mints at least one USD3 share.
+    uint256 internal constant MAX_FUNDING_TOP_UP = 1_000;
     /// @notice Minimum returned funding commitment retained for attribution, assuming 6-decimal USDC funding units.
     uint256 internal constant MIN_RETURN_COMMITMENT = 1e6;
 
@@ -64,11 +66,11 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// protocolCommitmentCap) or deposits revert on the packed-storage cast.
     LCCTypesLib.AssetConfigStorage internal _assetConfig;
     /// @dev Packed per-facility oracle + auction config: marginOracle, auctionStepCount, auctionStepDecayRateBps,
-    /// and the derived auctionStepDuration. The auction window (the Closed phase) is divided into auctionStepCount
-    /// price steps; the protocol's retained share of the pool decays by auctionStepDecayRateBps each completed
-    /// step. Takes are live strictly before the epoch end, so the reachable steps are 1..auctionStepCount-1 and the
-    /// maximum live offer is pool * (1 - (1 - decay)^(auctionStepCount - 1)); the step-N boundary coincides with
-    /// settlement. auctionStepCount == 0 permanently disables the auction machinery.
+    /// and the derived auctionStepDuration. The auction window (the Closed phase) derives its step duration by
+    /// flooring `closedWindow / auctionStepCount`; the live step index is uncapped and can therefore exceed
+    /// `auctionStepCount - 1` when the division has a remainder. The maximum live step is
+    /// `(closedWindow - 1) / auctionStepDuration`. The protocol's retained share of the pool decays by
+    /// auctionStepDecayRateBps each completed step. auctionStepCount == 0 permanently disables the auction machinery.
     LCCTypesLib.AuctionConfigStorage internal _auctionConfig;
 
     /// @dev Mutable risk configuration. Per-epoch exit capacity is `protocolCommitmentCap * exitCapBps / BPS`.
@@ -706,15 +708,20 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         if (fundedEpoch[epoch][user]) revert LCCErrorsLib.AlreadyFunded();
 
         Account memory account = _replayForUpdate(user);
-        uint256 activeMargin = account.activeMargin;
-        uint256 activeCommitment = account.activeCommitment;
-        obligationAmount = _obligation(state, activeCommitment);
+        obligationAmount = _obligation(state, account.activeCommitment);
         if (obligationAmount == 0) revert LCCErrorsLib.InvalidAmount();
         if (roll && account.exitRequested && !account.exitClaimed) revert LCCErrorsLib.ExitInProgress();
 
-        uint256 releasedMargin = roll ? 0 : activeMargin.mulDiv(obligationAmount, activeCommitment);
-        uint256 remainingMargin = activeMargin - releasedMargin;
-        uint256 remainingCommitment = activeCommitment - obligationAmount;
+        uint256 minimumFundingAmount = usd3.previewMint(1);
+        if (minimumFundingAmount == 0) revert LCCErrorsLib.FundingDeliveryImpossible();
+        uint256 fundingAmount = Math.max(obligationAmount, minimumFundingAmount);
+        if (fundingAmount - obligationAmount > MAX_FUNDING_TOP_UP) {
+            revert LCCErrorsLib.FundingTopUpExcessive();
+        }
+
+        uint256 releasedMargin = roll ? 0 : account.activeMargin.mulDiv(obligationAmount, account.activeCommitment);
+        uint256 remainingMargin = account.activeMargin - releasedMargin;
+        uint256 remainingCommitment = account.activeCommitment - obligationAmount;
 
         _recordExitingFund(epoch, account, obligationAmount, releasedMargin, remainingMargin, remainingCommitment);
 
@@ -732,12 +739,12 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
         if (!roll) _decreaseGlobalActive(releasedMargin, obligationAmount);
 
-        fundingAsset.safeTransferFrom(payer, address(this), obligationAmount);
-        _deliverWrapped(user, obligationAmount);
+        fundingAsset.safeTransferFrom(payer, address(this), fundingAmount);
+        _deliverWrapped(user, fundingAmount);
 
         if (releasedMargin != 0) IERC20(_assetConfig.marginAsset).safeTransfer(user, releasedMargin);
 
-        emit LCCEventsLib.CallFunded(user, epoch, obligationAmount);
+        emit LCCEventsLib.CallFunded(payer, user, epoch, obligationAmount, fundingAmount);
         emit LCCEventsLib.MarginReleased(user, epoch, releasedMargin);
     }
 
@@ -814,11 +821,10 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     }
 
     /// @dev Exit commitment that has matured but not yet folded out of `_totals`, so it still inflates
-    /// `usedCommitment` when disposal computes cap headroom. The add-back never double-counts: disposal on
-    /// the sync path runs before `_foldDueMaturities`, and disposal from a mid-window full-fill settlement
-    /// runs after that transaction's folds, where due buckets are already zeroed and pruned so this sums 0.
-    /// Reordering `_syncGlobal` to fold maturities before finalization would break the first case into a
-    /// double-count that overstates headroom.
+    /// `usedCommitment` when disposal computes cap headroom. Disposal subtracts it from used commitment before the
+    /// protocol-cap clamp, while a separate packing clamp still uses the pre-fold total. The sync path disposes before
+    /// `_foldDueMaturities`; a mid-window full-fill runs after that transaction's folds, where due buckets are already
+    /// zeroed and pruned so this sums 0.
     function _dueUnfoldedExitCommitment(uint256 current) internal view returns (uint256 commitment) {
         uint256 length = exitMaturityList.length;
         for (uint256 i = 0; i < length; ++i) {
@@ -959,10 +965,14 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         // During wind-down no call can ever open, so returned commitment bounds no callable
         // exposure: clamping by the protocol cap would only divert defaulters' recoverable
         // margin to the treasury. Bound it by the packed-totals width instead.
+        uint256 packingHeadroom = uint256(type(uint128).max).saturatingSub(usedCommitment);
         uint256 headroom = windDown
-            ? uint256(type(uint128).max).saturatingSub(usedCommitment)
-            : _riskConfig.protocolCommitmentCap.saturatingSub(usedCommitment)
-                + _dueUnfoldedExitCommitment(_currentEpoch());
+            ? packingHeadroom
+            : Math.min(
+                _riskConfig.protocolCommitmentCap
+                    .saturatingSub(usedCommitment.saturatingSub(_dueUnfoldedExitCommitment(_currentEpoch()))),
+                packingHeadroom
+            );
 
         (uint256 returnPool, uint256 returnCommitment) = LCCAuctionLib.disposeValuation(
             surplus,

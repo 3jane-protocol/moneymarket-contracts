@@ -44,6 +44,10 @@ library LCCErrorsLib {
     error OraclePriceInvalid();
     /// @notice Thrown when funding an obligation that the user has already funded this epoch.
     error AlreadyFunded();
+    /// @notice Thrown when minting one USD3 share would require more than the permitted funding top-up.
+    error FundingTopUpExcessive();
+    /// @notice Thrown when USD3 cannot mint any shares because it reports zero assets with supply outstanding.
+    error FundingDeliveryImpossible();
     /// @notice Thrown when there is nothing to claim for the caller.
     error NothingToClaim();
     /// @notice Thrown when claiming an exit that was never requested (or already claimed).

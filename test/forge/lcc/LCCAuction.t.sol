@@ -243,6 +243,67 @@ contract LCCAuctionTest is LCCBase {
         assertEq(notificationVault.balanceOf(carol), 1);
     }
 
+    function testOneUnitResidualAtPpsAboveOneSettlesAtWindowEnd() public {
+        _seedUsd3(2, 1);
+        _setupShortfallAuction();
+        vm.warp(DEADLINE + 5);
+
+        vm.prank(carol);
+        (uint256 filled,) = vault.takeAuction(50e18 - 1);
+        assertEq(filled, 50e18 - 1);
+
+        vm.expectRevert(bytes("ZERO_SHARES"));
+        vm.prank(bob);
+        vault.takeAuction(type(uint256).max);
+
+        LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(0);
+        assertEq(auction.shortfallAmount - auction.filledAmount, 1);
+        vm.warp(WINDOW_END);
+        vault.materializeAccount(carol);
+
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
+        auction = vault.getAuctionState(0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
+        assertEq(auction.filledAmount, auction.shortfallAmount - 1);
+        assertLe(auction.marginAwarded, auction.marginPool);
+        assertEq(auction.marginAwarded + state.returnPool + margin.balanceOf(treasury), state.slashedMargin);
+    }
+
+    function testMaximumLiveStepCanExceedConfiguredStepCount() public {
+        ILCCVault.VaultParams memory params = _auctionParams();
+        params.fundingDuration = 30;
+        params.auctionStepCount = 6;
+        _deployVaultWithParams(params);
+
+        _deposit(alice, 100e18);
+        _deposit(bob, 50e18);
+        _openCall(150e18);
+        _fund(alice);
+        uint256 deadline = START + NORMAL + PRE_CALL + params.fundingDuration;
+        vm.warp(deadline);
+        vault.finalizeEpochSlash(0);
+
+        uint256 liveTimestamp = START + EPOCH - 1;
+        vm.warp(liveTimestamp);
+        ILCCVault.AuctionConfig memory config = vault.auctionConfig();
+        uint256 maximumLiveStep = (liveTimestamp - deadline) / config.auctionStepDuration;
+        assertEq(config.auctionStepCount, 6);
+        assertEq(config.auctionStepDuration, 1);
+        assertEq(maximumLiveStep, 9);
+
+        uint256 expectedAward = LCCAuctionLib.offeredPool(
+            50e18, liveTimestamp - deadline, config.auctionStepDuration, config.auctionStepDecayRateBps
+        );
+        vm.prank(carol);
+        (uint256 filled, uint256 award) = vault.takeAuction(50e18);
+
+        assertEq(filled, 50e18);
+        assertEq(award, expectedAward);
+        assertLe(award, 50e18);
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(award + state.returnPool + margin.balanceOf(treasury), state.slashedMargin);
+    }
+
     function testShutdownForceSettlesAndBlocksTakes() public {
         _setupShortfallAuction();
         vm.warp(DEADLINE + 5);

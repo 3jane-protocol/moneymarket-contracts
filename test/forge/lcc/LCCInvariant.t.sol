@@ -66,6 +66,7 @@ contract LCCInvariantHandler is Test {
     address[] internal actors;
     uint256 public ghostCumDeposited;
     uint256 public ghostCumMarginOut;
+    uint256 public ghostGrandfatheredOverCapExposure;
 
     constructor(
         LCCVault vault_,
@@ -460,25 +461,28 @@ contract LCCInvariantHandler is Test {
         ILCCVault.Totals memory totals = invariantVault.totals();
         uint256 currentUtilization = totals.activeCommitment + totals.pendingCommitment;
         uint256 maxCap = 10_000_000e18;
-        uint256 existingCap = invariantVault.riskConfig().protocolCommitmentCap;
         // Floor the fuzzed cap at a realistic minimum: a degenerate sub-1e18 protocolCap (reachable when utilization
         // is 0) floors the exit-bucket capacity (protocolCap*exitCapBps/BPS) to 0, which requestExit legitimately
         // rejects with InvalidParams (_assignExitMaturity, LCCVault.sol:1290) -- an unrealistic owner action, not a
         // behavior worth fuzzing.
-        uint256 floorCap = currentUtilization < 1e18 ? 1e18 : currentUtilization;
-        // A synced cap reduction can first settle a live auction under old-cap headroom, then leave going-concern
-        // totals transiently above the new cap. Keep live-auction cap reductions out of this invariant handler.
-        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0 && floorCap < existingCap) {
-            floorCap = existingCap;
+        uint256 protocolCap;
+        if (currentUtilization > 1e18 && protocolSeed % 4 == 0) {
+            // Exercise owner-authorized grandfathering: subsequent deposits and disposal may reduce, but never
+            // increase, the resulting over-cap exposure.
+            protocolCap = _range(protocolSeed / 4, 1e18, currentUtilization - 1);
+        } else {
+            uint256 floorCap = currentUtilization < 1e18 ? 1e18 : currentUtilization;
+            if (floorCap >= maxCap) return;
+            protocolCap = _range(protocolSeed, floorCap, maxCap);
         }
-        if (floorCap >= maxCap) return;
-
-        uint256 protocolCap = floorCap + _range(protocolSeed, 0, maxCap - floorCap);
         uint256 exitCapBps = _range(exitCapSeed, 500, 5_000);
 
         vm.prank(invariantOwner);
-        try invariantVault.setRiskCaps(protocolCap, maxCap, exitCapBps, 0) {}
-        catch (bytes memory reason) {
+        try invariantVault.setRiskCaps(protocolCap, maxCap, exitCapBps, 0) {
+            totals = invariantVault.totals();
+            uint256 utilizationAfter = totals.activeCommitment + totals.pendingCommitment;
+            ghostGrandfatheredOverCapExposure = Math.saturatingSub(utilizationAfter, protocolCap);
+        } catch (bytes memory reason) {
             if (!_expectedSyncedOracleError(reason)) fail();
         }
     }
@@ -730,10 +734,11 @@ contract LCCStatefulInvariantTest is LCCBase {
         if (vault.shutdownState().active || _callWindowClosed(vault)) return;
 
         ILCCVault.Totals memory totals = vault.totals();
-        assertLe(
-            uint256(totals.activeCommitment) + uint256(totals.pendingCommitment),
-            vault.riskConfig().protocolCommitmentCap
-        );
+        uint256 protocolCap = vault.riskConfig().protocolCommitmentCap;
+        uint256 utilization = uint256(totals.activeCommitment) + uint256(totals.pendingCommitment);
+        uint256 overCapExposure = Math.saturatingSub(utilization, protocolCap);
+
+        assertLe(overCapExposure, handler.ghostGrandfatheredOverCapExposure());
     }
 
     function invariant_AuctionRampBound() public view {
