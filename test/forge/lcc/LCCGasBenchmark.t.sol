@@ -3,49 +3,67 @@ pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
 
-/// @dev Focused gas probes for the synchronized user paths affected by LCCVault size cleanup.
-contract LCCGasBenchmarkTest is LCCBase {
+/// @dev Each benchmark establishes prerequisites in setUp so the measured call starts in a fresh transaction.
+contract LCCGasDepositBenchmarkTest is LCCBase {
     function testGasDeposit() public {
         vm.prank(alice);
         uint256 gasBefore = gasleft();
         vault.deposit(100e18);
         emit log_named_uint("deposit", gasBefore - gasleft());
     }
+}
 
-    function testGasSelfFundAmortizing() public {
+contract LCCGasSelfFundAmortizingBenchmarkTest is LCCBase {
+    function setUp() public override {
+        super.setUp();
         _deposit(alice, 100e18);
         _openCall(200e18);
         vm.warp(START + NORMAL + PRE_CALL);
+    }
 
+    function testGasSelfFundAmortizing() public {
         vm.prank(alice);
         uint256 gasBefore = gasleft();
         vault.fundCall(false);
         emit log_named_uint("self fund amortizing", gasBefore - gasleft());
     }
+}
 
-    function testGasSelfFundRolling() public {
+contract LCCGasSelfFundRollingBenchmarkTest is LCCBase {
+    function setUp() public override {
+        super.setUp();
         _deposit(alice, 100e18);
         _openCall(200e18);
         vm.warp(START + NORMAL + PRE_CALL);
+    }
 
+    function testGasSelfFundRolling() public {
         vm.prank(alice);
         uint256 gasBefore = gasleft();
         vault.fundCall(true);
         emit log_named_uint("self fund rolling", gasBefore - gasleft());
     }
+}
 
-    function testGasPushFunding() public {
+contract LCCGasPushFundingBenchmarkTest is LCCBase {
+    function setUp() public override {
+        super.setUp();
         _deposit(alice, 100e18);
         _openCall(200e18);
         vm.warp(START + NORMAL + PRE_CALL);
+    }
 
+    function testGasPushFunding() public {
         vm.prank(bob);
         uint256 gasBefore = gasleft();
         vault.fundCall(alice);
         emit log_named_uint("push funding", gasBefore - gasleft());
     }
+}
 
-    function testGasAuctionFill() public {
+contract LCCGasAuctionFillBenchmarkTest is LCCBase {
+    function setUp() public override {
+        super.setUp();
         _deployAuctionVault();
         _deposit(alice, 100e18);
         _deposit(bob, 100e18);
@@ -54,72 +72,121 @@ contract LCCGasBenchmarkTest is LCCBase {
         _finishFunding();
         vault.finalizeEpochSlash(0);
         vm.warp(START + NORMAL + PRE_CALL + FUNDING + 5);
+    }
 
+    function testGasAuctionFill() public {
         vm.prank(carol);
         uint256 gasBefore = gasleft();
         vault.takeAuction(50e18);
         emit log_named_uint("auction fill", gasBefore - gasleft());
     }
+}
+
+contract LCCGasRequestExitBenchmarkTest is LCCBase {
+    function setUp() public override {
+        super.setUp();
+        _deposit(alice, 100e18);
+    }
 
     function testGasRequestExit() public {
-        _deposit(alice, 100e18);
-
         vm.prank(alice);
         uint256 gasBefore = gasleft();
         vault.requestExit();
         emit log_named_uint("request exit", gasBefore - gasleft());
     }
+}
 
-    function testGasClaimExitedMargin() public {
+contract LCCGasClaimExitedMarginBenchmarkTest is LCCBase {
+    function setUp() public override {
+        super.setUp();
         _deposit(alice, 100e18);
         vm.prank(alice);
         vault.requestExit();
         vm.warp(START + EPOCH);
+    }
 
+    function testGasClaimExitedMargin() public {
         vm.prank(alice);
         uint256 gasBefore = gasleft();
         vault.claimExitedMargin(alice);
         emit log_named_uint("claim exited margin", gasBefore - gasleft());
     }
+}
 
-    function testGasClaimRemainingMargin() public {
+contract LCCGasClaimRemainingMarginBenchmarkTest is LCCBase {
+    function setUp() public override {
+        super.setUp();
         _deposit(alice, 100e18);
         vm.prank(owner);
         vault.shutdown();
+    }
 
+    function testGasClaimRemainingMargin() public {
         vm.prank(alice);
         uint256 gasBefore = gasleft();
         vault.claimRemainingMargin(alice);
         emit log_named_uint("claim remaining margin", gasBefore - gasleft());
     }
+}
 
-    function testGasSynchronizationWithDueActivation() public {
+contract LCCGasFinalizeSlashBenchmarkTest is LCCBase {
+    function setUp() public override {
+        super.setUp();
+        _deposit(alice, 100e18);
+        _deposit(bob, 100e18);
+        _openCall(200e18);
+        _fund(bob);
+        _finishFunding();
+    }
+
+    function testGasFinalizeSlash() public {
+        uint256 gasBefore = gasleft();
+        vault.finalizeEpochSlash(0);
+        emit log_named_uint("finalize slash", gasBefore - gasleft());
+    }
+}
+
+contract LCCGasSynchronizationBenchmarkTest is LCCBase {
+    function setUp() public override {
+        super.setUp();
         vm.warp(START + NORMAL);
         _deposit(alice, 100e18);
         vm.warp(START + EPOCH);
+    }
 
+    function testGasSynchronizationWithDueActivation() public {
         vm.prank(owner);
         uint256 gasBefore = gasleft();
         vault.setRiskCaps(CAP, CAP, 2_000, 0);
         emit log_named_uint("sync due activation", gasBefore - gasleft());
     }
+}
 
-    function testGasMaterializeChangedState() public {
+contract LCCGasMaterializeChangedBenchmarkTest is LCCBase {
+    function setUp() public override {
+        super.setUp();
         _deposit(alice, 100e18);
         _deposit(bob, 100e18);
         _openCall(200e18);
         _fund(bob);
         _finishFunding();
         vault.finalizeEpochSlash(0);
+    }
 
+    function testGasMaterializeChangedState() public {
         uint256 gasBefore = gasleft();
         vault.materializeAccount(alice);
         emit log_named_uint("materialize changed", gasBefore - gasleft());
     }
+}
+
+contract LCCGasMaterializeNoOpBenchmarkTest is LCCBase {
+    function setUp() public override {
+        super.setUp();
+        _deposit(alice, 100e18);
+    }
 
     function testGasMaterializeNoOp() public {
-        _deposit(alice, 100e18);
-
         uint256 gasBefore = gasleft();
         vault.materializeAccount(alice);
         emit log_named_uint("materialize no-op", gasBefore - gasleft());

@@ -11,7 +11,8 @@
   "scripts": {
     "prepare": "husky install && forge install",
     "build:forge": "FOUNDRY_PROFILE=build forge build",
-    "build:forge:size": "yarn build:forge --sizes",
+    "build:forge:size": "yarn build:forge --sizes && yarn check:lcc-release-artifact",
+    "check:lcc-release-artifact": "node scripts/check-lcc-release-artifact.js",
     "build:hardhat": "npx hardhat compile",
     "test:forge": "FOUNDRY_PROFILE=test forge test",
     "test:forge:noninvariant": "FOUNDRY_PROFILE=test forge test --no-match-contract 'CoreInvariantHarness|InvariantsTest|DebtFloorInvariantsTest|USD3UpgradeForkTest|LCC.*StatefulInvariantTest'",
@@ -67,6 +68,7 @@
     "husky": "^8.0.3",
     "lint-staged": "^14.0.1",
     "prettier": "^3.0.2",
+    "solc-0.8.35": "npm:solc@0.8.35",
     "solidity-coverage": "^0.8.4",
     "ts-node": "^10.9.1",
     "typechain": "^8.3.1",

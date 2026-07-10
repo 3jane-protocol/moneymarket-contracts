@@ -9,212 +9,204 @@
       "type": "t_address"
     },
     {
-      "astId": 1336,
-      "contract": "src/lcc/LCCVault.sol:LCCVault",
-      "label": "_status",
-      "offset": 0,
-      "slot": "1",
-      "type": "t_uint256"
-    },
-    {
-      "astId": 4895,
+      "astId": 5094,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "_clockConfig",
       "offset": 0,
-      "slot": "2",
-      "type": "t_struct(ClockConfig)12427_storage"
+      "slot": "1",
+      "type": "t_struct(ClockConfig)12626_storage"
     },
     {
-      "astId": 4899,
+      "astId": 5098,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "_assetConfig",
       "offset": 0,
-      "slot": "3",
-      "type": "t_struct(AssetConfigStorage)12437_storage"
+      "slot": "2",
+      "type": "t_struct(AssetConfigStorage)12636_storage"
     },
     {
-      "astId": 4903,
+      "astId": 5102,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "_auctionConfig",
       "offset": 0,
-      "slot": "4",
-      "type": "t_struct(AuctionConfigStorage)12447_storage"
+      "slot": "3",
+      "type": "t_struct(AuctionConfigStorage)12646_storage"
     },
     {
-      "astId": 4907,
+      "astId": 5106,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "_riskConfig",
       "offset": 0,
-      "slot": "5",
-      "type": "t_struct(RiskConfig)10504_storage"
+      "slot": "4",
+      "type": "t_struct(RiskConfig)10703_storage"
     },
     {
-      "astId": 4911,
+      "astId": 5110,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "_totals",
       "offset": 0,
-      "slot": "11",
-      "type": "t_struct(Totals)10514_storage"
+      "slot": "10",
+      "type": "t_struct(Totals)10713_storage"
     },
     {
-      "astId": 4915,
+      "astId": 5114,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "_syncState",
       "offset": 0,
-      "slot": "13",
-      "type": "t_struct(SyncState)10524_storage"
+      "slot": "12",
+      "type": "t_struct(SyncState)10723_storage"
     },
     {
-      "astId": 4919,
+      "astId": 5118,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "_shutdown",
       "offset": 0,
-      "slot": "14",
-      "type": "t_struct(ShutdownState)10532_storage"
+      "slot": "13",
+      "type": "t_struct(ShutdownState)10731_storage"
     },
     {
-      "astId": 4925,
+      "astId": 5124,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "epochAuctions",
       "offset": 0,
-      "slot": "15",
-      "type": "t_mapping(t_uint256,t_struct(AuctionState)11205_storage)"
+      "slot": "14",
+      "type": "t_mapping(t_uint256,t_struct(AuctionState)11404_storage)"
     },
     {
-      "astId": 4931,
+      "astId": 5130,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "accounts",
       "offset": 0,
-      "slot": "16",
-      "type": "t_mapping(t_address,t_struct(AccountStorage)12477_storage)"
+      "slot": "15",
+      "type": "t_mapping(t_address,t_struct(AccountStorage)12676_storage)"
     },
     {
-      "astId": 4937,
+      "astId": 5136,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "epochs",
       "offset": 0,
-      "slot": "17",
-      "type": "t_mapping(t_uint256,t_struct(EpochState)10590_storage)"
+      "slot": "16",
+      "type": "t_mapping(t_uint256,t_struct(EpochState)10789_storage)"
     },
     {
-      "astId": 4941,
+      "astId": 5140,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "calledEpochList",
       "offset": 0,
-      "slot": "18",
+      "slot": "17",
       "type": "t_array(t_uint256)dyn_storage"
     },
     {
-      "astId": 4946,
+      "astId": 5145,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "pendingMarginByActivationEpoch",
+      "offset": 0,
+      "slot": "18",
+      "type": "t_mapping(t_uint256,t_uint256)"
+    },
+    {
+      "astId": 5150,
+      "contract": "src/lcc/LCCVault.sol:LCCVault",
+      "label": "pendingCommitmentByActivationEpoch",
       "offset": 0,
       "slot": "19",
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 4951,
-      "contract": "src/lcc/LCCVault.sol:LCCVault",
-      "label": "pendingCommitmentByActivationEpoch",
-      "offset": 0,
-      "slot": "20",
-      "type": "t_mapping(t_uint256,t_uint256)"
-    },
-    {
-      "astId": 4955,
+      "astId": 5154,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "activationEpochList",
       "offset": 0,
-      "slot": "21",
+      "slot": "20",
       "type": "t_array(t_uint256)dyn_storage"
     },
     {
-      "astId": 4960,
+      "astId": 5159,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "activationEpochIndexPlusOne",
+      "offset": 0,
+      "slot": "21",
+      "type": "t_mapping(t_uint256,t_uint256)"
+    },
+    {
+      "astId": 5164,
+      "contract": "src/lcc/LCCVault.sol:LCCVault",
+      "label": "exitBucketMarginByMaturity",
       "offset": 0,
       "slot": "22",
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 4965,
+      "astId": 5169,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
-      "label": "exitBucketMarginByMaturity",
+      "label": "exitBucketCommitmentByMaturity",
       "offset": 0,
       "slot": "23",
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 4970,
-      "contract": "src/lcc/LCCVault.sol:LCCVault",
-      "label": "exitBucketCommitmentByMaturity",
-      "offset": 0,
-      "slot": "24",
-      "type": "t_mapping(t_uint256,t_uint256)"
-    },
-    {
-      "astId": 4974,
+      "astId": 5173,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "exitMaturityList",
       "offset": 0,
-      "slot": "25",
+      "slot": "24",
       "type": "t_array(t_uint256)dyn_storage"
     },
     {
-      "astId": 4979,
+      "astId": 5178,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "exitMaturityIndexPlusOne",
       "offset": 0,
-      "slot": "26",
+      "slot": "25",
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 4987,
+      "astId": 5186,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "exitExposureByCallAndMaturity",
       "offset": 0,
-      "slot": "27",
-      "type": "t_mapping(t_uint256,t_mapping(t_uint256,t_struct(ExitExposure)12493_storage))"
+      "slot": "26",
+      "type": "t_mapping(t_uint256,t_mapping(t_uint256,t_struct(ExitExposure)12692_storage))"
     },
     {
-      "astId": 4993,
+      "astId": 5192,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "exitMaturitiesByCall",
       "offset": 0,
-      "slot": "28",
+      "slot": "27",
       "type": "t_mapping(t_uint256,t_array(t_uint256)dyn_storage)"
     },
     {
-      "astId": 5000,
+      "astId": 5199,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "fundedEpoch",
+      "offset": 0,
+      "slot": "28",
+      "type": "t_mapping(t_uint256,t_mapping(t_address,t_bool))"
+    },
+    {
+      "astId": 5206,
+      "contract": "src/lcc/LCCVault.sol:LCCVault",
+      "label": "defaultedEpoch",
       "offset": 0,
       "slot": "29",
       "type": "t_mapping(t_uint256,t_mapping(t_address,t_bool))"
     },
     {
-      "astId": 5007,
-      "contract": "src/lcc/LCCVault.sol:LCCVault",
-      "label": "defaultedEpoch",
-      "offset": 0,
-      "slot": "30",
-      "type": "t_mapping(t_uint256,t_mapping(t_address,t_bool))"
-    },
-    {
-      "astId": 5010,
+      "astId": 5209,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "_pause",
       "offset": 0,
-      "slot": "31",
-      "type": "t_struct(PauseState)12413_storage"
+      "slot": "30",
+      "type": "t_struct(PauseState)12612_storage"
     },
     {
-      "astId": 5015,
+      "astId": 5214,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "__gap",
       "offset": 0,
-      "slot": "32",
-      "type": "t_array(t_uint256)49_storage"
+      "slot": "31",
+      "type": "t_array(t_uint256)50_storage"
     }
   ],
   "types": {
@@ -223,10 +215,10 @@
       "label": "address",
       "numberOfBytes": "20"
     },
-    "t_array(t_uint256)49_storage": {
+    "t_array(t_uint256)50_storage": {
       "encoding": "inplace",
-      "label": "uint256[49]",
-      "numberOfBytes": "1568",
+      "label": "uint256[50]",
+      "numberOfBytes": "1600",
       "base": "t_uint256"
     },
     "t_array(t_uint256)dyn_storage": {
@@ -247,12 +239,12 @@
       "numberOfBytes": "32",
       "value": "t_bool"
     },
-    "t_mapping(t_address,t_struct(AccountStorage)12477_storage)": {
+    "t_mapping(t_address,t_struct(AccountStorage)12676_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct LCCTypesLib.AccountStorage)",
       "numberOfBytes": "32",
-      "value": "t_struct(AccountStorage)12477_storage"
+      "value": "t_struct(AccountStorage)12676_storage"
     },
     "t_mapping(t_uint256,t_array(t_uint256)dyn_storage)": {
       "encoding": "mapping",
@@ -268,33 +260,33 @@
       "numberOfBytes": "32",
       "value": "t_mapping(t_address,t_bool)"
     },
-    "t_mapping(t_uint256,t_mapping(t_uint256,t_struct(ExitExposure)12493_storage))": {
+    "t_mapping(t_uint256,t_mapping(t_uint256,t_struct(ExitExposure)12692_storage))": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => mapping(uint256 => struct LCCTypesLib.ExitExposure))",
       "numberOfBytes": "32",
-      "value": "t_mapping(t_uint256,t_struct(ExitExposure)12493_storage)"
+      "value": "t_mapping(t_uint256,t_struct(ExitExposure)12692_storage)"
     },
-    "t_mapping(t_uint256,t_struct(AuctionState)11205_storage)": {
+    "t_mapping(t_uint256,t_struct(AuctionState)11404_storage)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => struct LCCAuctionLib.AuctionState)",
       "numberOfBytes": "32",
-      "value": "t_struct(AuctionState)11205_storage"
+      "value": "t_struct(AuctionState)11404_storage"
     },
-    "t_mapping(t_uint256,t_struct(EpochState)10590_storage)": {
+    "t_mapping(t_uint256,t_struct(EpochState)10789_storage)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => struct ILCCVault.EpochState)",
       "numberOfBytes": "32",
-      "value": "t_struct(EpochState)10590_storage"
+      "value": "t_struct(EpochState)10789_storage"
     },
-    "t_mapping(t_uint256,t_struct(ExitExposure)12493_storage)": {
+    "t_mapping(t_uint256,t_struct(ExitExposure)12692_storage)": {
       "encoding": "mapping",
       "key": "t_uint256",
       "label": "mapping(uint256 => struct LCCTypesLib.ExitExposure)",
       "numberOfBytes": "32",
-      "value": "t_struct(ExitExposure)12493_storage"
+      "value": "t_struct(ExitExposure)12692_storage"
     },
     "t_mapping(t_uint256,t_uint256)": {
       "encoding": "mapping",
@@ -303,13 +295,13 @@
       "numberOfBytes": "32",
       "value": "t_uint256"
     },
-    "t_struct(AccountStorage)12477_storage": {
+    "t_struct(AccountStorage)12676_storage": {
       "encoding": "inplace",
       "label": "struct LCCTypesLib.AccountStorage",
       "numberOfBytes": "160",
       "members": [
         {
-          "astId": 12450,
+          "astId": 12649,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "activeMargin",
           "offset": 0,
@@ -317,7 +309,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 12452,
+          "astId": 12651,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "activeCommitment",
           "offset": 16,
@@ -325,7 +317,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 12454,
+          "astId": 12653,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "pendingMargin",
           "offset": 0,
@@ -333,7 +325,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 12456,
+          "astId": 12655,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "pendingCommitment",
           "offset": 16,
@@ -341,7 +333,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 12458,
+          "astId": 12657,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "claimableExitMargin",
           "offset": 0,
@@ -349,7 +341,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 12460,
+          "astId": 12659,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "exitBucketMargin",
           "offset": 16,
@@ -357,7 +349,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 12462,
+          "astId": 12661,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "exitBucketCommitment",
           "offset": 0,
@@ -365,7 +357,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 12464,
+          "astId": 12663,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "pendingActivationEpoch",
           "offset": 16,
@@ -373,7 +365,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 12466,
+          "astId": 12665,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "calledEpochCursor",
           "offset": 24,
@@ -381,7 +373,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 12468,
+          "astId": 12667,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "exitMaturityEpoch",
           "offset": 0,
@@ -389,7 +381,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 12470,
+          "astId": 12669,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "exitRequested",
           "offset": 8,
@@ -397,7 +389,7 @@
           "type": "t_bool"
         },
         {
-          "astId": 12472,
+          "astId": 12671,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "exitClaimed",
           "offset": 9,
@@ -405,7 +397,7 @@
           "type": "t_bool"
         },
         {
-          "astId": 12474,
+          "astId": 12673,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "exitMatured",
           "offset": 10,
@@ -413,7 +405,7 @@
           "type": "t_bool"
         },
         {
-          "astId": 12476,
+          "astId": 12675,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "commitmentStartEpoch",
           "offset": 11,
@@ -422,13 +414,13 @@
         }
       ]
     },
-    "t_struct(AssetConfigStorage)12437_storage": {
+    "t_struct(AssetConfigStorage)12636_storage": {
       "encoding": "inplace",
       "label": "struct LCCTypesLib.AssetConfigStorage",
       "numberOfBytes": "32",
       "members": [
         {
-          "astId": 12430,
+          "astId": 12629,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "marginAsset",
           "offset": 0,
@@ -436,7 +428,7 @@
           "type": "t_address"
         },
         {
-          "astId": 12432,
+          "astId": 12631,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "marginRatioBps",
           "offset": 20,
@@ -444,7 +436,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 12434,
+          "astId": 12633,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "exitDelayEpochs",
           "offset": 22,
@@ -452,7 +444,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 12436,
+          "astId": 12635,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "minCommitmentEpochs",
           "offset": 24,
@@ -461,13 +453,13 @@
         }
       ]
     },
-    "t_struct(AuctionConfigStorage)12447_storage": {
+    "t_struct(AuctionConfigStorage)12646_storage": {
       "encoding": "inplace",
       "label": "struct LCCTypesLib.AuctionConfigStorage",
       "numberOfBytes": "32",
       "members": [
         {
-          "astId": 12440,
+          "astId": 12639,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "marginOracle",
           "offset": 0,
@@ -475,7 +467,7 @@
           "type": "t_address"
         },
         {
-          "astId": 12442,
+          "astId": 12641,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "auctionStepCount",
           "offset": 20,
@@ -483,7 +475,7 @@
           "type": "t_uint32"
         },
         {
-          "astId": 12444,
+          "astId": 12643,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "auctionStepDecayRateBps",
           "offset": 24,
@@ -491,7 +483,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 12446,
+          "astId": 12645,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "auctionStepDuration",
           "offset": 26,
@@ -500,13 +492,13 @@
         }
       ]
     },
-    "t_struct(AuctionState)11205_storage": {
+    "t_struct(AuctionState)11404_storage": {
       "encoding": "inplace",
       "label": "struct LCCAuctionLib.AuctionState",
       "numberOfBytes": "96",
       "members": [
         {
-          "astId": 11198,
+          "astId": 11397,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "shortfallAmount",
           "offset": 0,
@@ -514,7 +506,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 11200,
+          "astId": 11399,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "filledAmount",
           "offset": 16,
@@ -522,7 +514,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 11202,
+          "astId": 11401,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "marginPool",
           "offset": 0,
@@ -530,7 +522,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 11204,
+          "astId": 11403,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "marginAwarded",
           "offset": 0,
@@ -539,13 +531,13 @@
         }
       ]
     },
-    "t_struct(ClockConfig)12427_storage": {
+    "t_struct(ClockConfig)12626_storage": {
       "encoding": "inplace",
       "label": "struct LCCTypesLib.ClockConfig",
       "numberOfBytes": "32",
       "members": [
         {
-          "astId": 12416,
+          "astId": 12615,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "startTimestamp",
           "offset": 0,
@@ -553,7 +545,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 12418,
+          "astId": 12617,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "maxEpochs",
           "offset": 8,
@@ -561,7 +553,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 12420,
+          "astId": 12619,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "epochLength",
           "offset": 16,
@@ -569,7 +561,7 @@
           "type": "t_uint32"
         },
         {
-          "astId": 12422,
+          "astId": 12621,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "normalDuration",
           "offset": 20,
@@ -577,7 +569,7 @@
           "type": "t_uint32"
         },
         {
-          "astId": 12424,
+          "astId": 12623,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "preCallDuration",
           "offset": 24,
@@ -585,7 +577,7 @@
           "type": "t_uint32"
         },
         {
-          "astId": 12426,
+          "astId": 12625,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "fundingDuration",
           "offset": 28,
@@ -594,13 +586,13 @@
         }
       ]
     },
-    "t_struct(EpochState)10590_storage": {
+    "t_struct(EpochState)10789_storage": {
       "encoding": "inplace",
       "label": "struct ILCCVault.EpochState",
       "numberOfBytes": "384",
       "members": [
         {
-          "astId": 10565,
+          "astId": 10764,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "callOpened",
           "offset": 0,
@@ -608,7 +600,7 @@
           "type": "t_bool"
         },
         {
-          "astId": 10567,
+          "astId": 10766,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "commitmentDenominator",
           "offset": 0,
@@ -616,7 +608,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10569,
+          "astId": 10768,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "callAmount",
           "offset": 0,
@@ -624,7 +616,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10571,
+          "astId": 10770,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "marginAtCallOpen",
           "offset": 0,
@@ -632,7 +624,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10573,
+          "astId": 10772,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "fundedAmount",
           "offset": 0,
@@ -640,7 +632,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10575,
+          "astId": 10774,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "marginReleased",
           "offset": 0,
@@ -648,7 +640,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10577,
+          "astId": 10776,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "fundedUsersRemainingMargin",
           "offset": 0,
@@ -656,7 +648,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10579,
+          "astId": 10778,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "fundedUsersRemainingCommitment",
           "offset": 0,
@@ -664,7 +656,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10581,
+          "astId": 10780,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "slashFinalized",
           "offset": 0,
@@ -672,7 +664,7 @@
           "type": "t_bool"
         },
         {
-          "astId": 10583,
+          "astId": 10782,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "slashDisabledByShutdown",
           "offset": 1,
@@ -680,7 +672,7 @@
           "type": "t_bool"
         },
         {
-          "astId": 10585,
+          "astId": 10784,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "slashedMargin",
           "offset": 0,
@@ -688,7 +680,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10587,
+          "astId": 10786,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "returnPool",
           "offset": 0,
@@ -696,7 +688,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10589,
+          "astId": 10788,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "returnCommitment",
           "offset": 0,
@@ -705,13 +697,13 @@
         }
       ]
     },
-    "t_struct(ExitExposure)12493_storage": {
+    "t_struct(ExitExposure)12692_storage": {
       "encoding": "inplace",
       "label": "struct LCCTypesLib.ExitExposure",
       "numberOfBytes": "224",
       "members": [
         {
-          "astId": 12480,
+          "astId": 12679,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "margin",
           "offset": 0,
@@ -719,7 +711,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 12482,
+          "astId": 12681,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "commitment",
           "offset": 0,
@@ -727,7 +719,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 12484,
+          "astId": 12683,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "fundedAmount",
           "offset": 0,
@@ -735,7 +727,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 12486,
+          "astId": 12685,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "marginReleased",
           "offset": 0,
@@ -743,7 +735,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 12488,
+          "astId": 12687,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "fundedUsersRemainingMargin",
           "offset": 0,
@@ -751,7 +743,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 12490,
+          "astId": 12689,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "fundedUsersRemainingCommitment",
           "offset": 0,
@@ -759,7 +751,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 12492,
+          "astId": 12691,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "listed",
           "offset": 0,
@@ -768,13 +760,13 @@
         }
       ]
     },
-    "t_struct(PauseState)12413_storage": {
+    "t_struct(PauseState)12612_storage": {
       "encoding": "inplace",
       "label": "struct LCCTypesLib.PauseState",
       "numberOfBytes": "32",
       "members": [
         {
-          "astId": 12406,
+          "astId": 12605,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "guardian",
           "offset": 0,
@@ -782,7 +774,7 @@
           "type": "t_address"
         },
         {
-          "astId": 12408,
+          "astId": 12607,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "paused",
           "offset": 20,
@@ -790,7 +782,7 @@
           "type": "t_bool"
         },
         {
-          "astId": 12410,
+          "astId": 12609,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "pausedAt",
           "offset": 21,
@@ -798,7 +790,7 @@
           "type": "t_uint48"
         },
         {
-          "astId": 12412,
+          "astId": 12611,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "pausedAccumulated",
           "offset": 27,
@@ -807,13 +799,13 @@
         }
       ]
     },
-    "t_struct(RiskConfig)10504_storage": {
+    "t_struct(RiskConfig)10703_storage": {
       "encoding": "inplace",
       "label": "struct ILCCVault.RiskConfig",
       "numberOfBytes": "192",
       "members": [
         {
-          "astId": 10493,
+          "astId": 10692,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "protocolCommitmentCap",
           "offset": 0,
@@ -821,7 +813,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10495,
+          "astId": 10694,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "userCommitmentCap",
           "offset": 0,
@@ -829,7 +821,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10497,
+          "astId": 10696,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "exitCapBps",
           "offset": 0,
@@ -837,7 +829,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10499,
+          "astId": 10698,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "minDepositAssets",
           "offset": 0,
@@ -845,7 +837,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10501,
+          "astId": 10700,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "maxAuctionAwardBps",
           "offset": 0,
@@ -853,7 +845,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 10503,
+          "astId": 10702,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "slashFeeBps",
           "offset": 0,
@@ -862,13 +854,13 @@
         }
       ]
     },
-    "t_struct(ShutdownState)10532_storage": {
+    "t_struct(ShutdownState)10731_storage": {
       "encoding": "inplace",
       "label": "struct ILCCVault.ShutdownState",
       "numberOfBytes": "32",
       "members": [
         {
-          "astId": 10527,
+          "astId": 10726,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "active",
           "offset": 0,
@@ -876,7 +868,7 @@
           "type": "t_bool"
         },
         {
-          "astId": 10529,
+          "astId": 10728,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "timestamp",
           "offset": 1,
@@ -884,7 +876,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 10531,
+          "astId": 10730,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "epoch",
           "offset": 9,
@@ -893,13 +885,13 @@
         }
       ]
     },
-    "t_struct(SyncState)10524_storage": {
+    "t_struct(SyncState)10723_storage": {
       "encoding": "inplace",
       "label": "struct ILCCVault.SyncState",
       "numberOfBytes": "32",
       "members": [
         {
-          "astId": 10517,
+          "astId": 10716,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "lastActivationFolded",
           "offset": 0,
@@ -907,7 +899,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 10519,
+          "astId": 10718,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "lastMaturityFolded",
           "offset": 8,
@@ -915,7 +907,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 10521,
+          "astId": 10720,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "finalizedCallPrefix",
           "offset": 16,
@@ -923,7 +915,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 10523,
+          "astId": 10722,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "pendingAuctionEpochPlusOne",
           "offset": 24,
@@ -932,13 +924,13 @@
         }
       ]
     },
-    "t_struct(Totals)10514_storage": {
+    "t_struct(Totals)10713_storage": {
       "encoding": "inplace",
       "label": "struct ILCCVault.Totals",
       "numberOfBytes": "64",
       "members": [
         {
-          "astId": 10507,
+          "astId": 10706,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "activeMargin",
           "offset": 0,
@@ -946,7 +938,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 10509,
+          "astId": 10708,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "activeCommitment",
           "offset": 16,
@@ -954,7 +946,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 10511,
+          "astId": 10710,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "pendingMargin",
           "offset": 0,
@@ -962,7 +954,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 10513,
+          "astId": 10712,
           "contract": "src/lcc/LCCVault.sol:LCCVault",
           "label": "pendingCommitment",
           "offset": 16,

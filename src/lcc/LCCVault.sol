@@ -6,7 +6,7 @@ import {IERC20} from "../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC4626} from "../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Initializable} from "../../lib/openzeppelin/contracts/proxy/utils/Initializable.sol";
-import {ReentrancyGuard} from "../../lib/openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuardTransient} from "../../lib/openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "../../lib/openzeppelin/contracts/utils/math/SafeCast.sol";
 
@@ -29,7 +29,7 @@ import {ILCCVault} from "./interfaces/ILCCVault.sol";
 /// @dev State progression is lazy and keeperless: every state-touching entrypoint calls `_syncGlobal` to advance
 /// the epoch clock, fold pending/matured buckets, and finalize eligible slashes. Per-account state is materialized
 /// on demand by replaying the sparse `calledEpochs` list from each account's cursor.
-contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
+contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
     using Math for uint256;
     using SafeCast for uint256;
@@ -51,8 +51,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
     /// @notice Protocol-wide recipient of slashed margin and unsold auction collateral.
     address private immutable treasury;
 
-    // Sequential proxy storage starts after Ownable's _owner and ReentrancyGuard's _status. The guard slot reads 0
-    // on a fresh proxy; only ENTERED (2) is blocked, so the first proxy call is safe without initialization.
+    // Sequential proxy storage starts after Ownable's _owner. Reentrancy state is transaction-scoped and uses no
+    // persistent storage.
 
     /// @dev Packed per-facility epoch clock: startTimestamp, maxEpochs (0 = perpetual), epochLength, and the
     /// Normal/PreCall/Funding phase durations. Written once in initialize.
@@ -128,7 +128,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuard {
     LCCTypesLib.PauseState internal _pause;
 
     /// @dev Reserved storage for future versions. New storage must be appended by consuming gap slots.
-    uint256[49] private __gap;
+    uint256[50] private __gap;
 
     /* CONSTRUCTOR / INITIALIZER */
 

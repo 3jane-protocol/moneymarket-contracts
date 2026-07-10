@@ -6,9 +6,13 @@ This repository is a contracts codebase. "Deployment" here primarily means CI ex
 
 ## LCC Implementation Deployment
 
-`LCCVault` is compiled for Shanghai with solc `0.8.35`, via IR, and 500 optimizer runs in both Foundry and Hardhat.
-Its measured runtime is 24,014 bytes, leaving 562 bytes below EIP-170; run `yarn build:forge:size` before approving an
-implementation release.
+The canonical `LCCVault` deployment artifact is compiled for Cancun with official solc `0.8.35`, via IR, 300
+optimizer runs, and no metadata bytecode hash. Its measured runtime is 23,991 bytes, leaving 585 bytes below EIP-170.
+Because it uses `ReentrancyGuardTransient`, every deployment chain must support EIP-1153. Hardhat uses pinned stable
+solc-js `0.8.35` for its LCC compile/test artifact, which must not be deployed.
+
+Run `yarn build:forge:size` before approving an implementation release. In addition to building with sizes, the
+command checks the compiler, EVM target, optimizer, metadata, internal 24,076-byte ceiling, and linked-library set.
 
 `LCCAuctionLib` is the implementation's only externally linked library. Deploy and link it before deploying each new
 `LCCVault` implementation, then schedule the beacon upgrade through the 7-day timelock. The config, account, bucket,

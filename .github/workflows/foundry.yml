@@ -193,8 +193,8 @@ jobs:
       - name: Log Invariant Seed
         run: 'echo "LCC invariant seed: 0x${{ github.event.pull_request.base.sha || github.sha }}"'
 
-      - name: Warm Solc Cache
-        run: yarn -s build:forge
+      - name: Build and check LCC release artifact
+        run: yarn -s build:forge:size
 
       - name: Run LCC Invariants (fast)
         run: yarn -s test:forge:invariant:lcc
@@ -219,8 +219,8 @@ jobs:
       - name: Log Invariant Seed
         run: 'echo "LCC invariant seed: 0x${{ github.sha }}"'
 
-      - name: Warm Solc Cache
-        run: yarn -s build:forge
+      - name: Build and check LCC release artifact
+        run: yarn -s build:forge:size
 
       - name: Run LCC Invariants (deep)
         run: yarn -s test:forge:invariant:lcc:deep
