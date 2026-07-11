@@ -641,6 +641,8 @@ contract LCCStatefulInvariantTest is LCCBase {
 
     function setUp() public virtual override {
         super.setUp();
+        _assertLayoutSlot("exitExposureByCallAndMaturity", EXIT_EXPOSURE_MAPPING_SLOT);
+        _assertLayoutSlot("exitMaturitiesByCall", EXIT_MATURITIES_MAPPING_SLOT);
         _setupHandler();
     }
 

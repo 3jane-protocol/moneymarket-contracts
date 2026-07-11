@@ -230,6 +230,25 @@ contract LCCBase is Test {
         return LCCVault(address(new BeaconProxy(address(beacon), abi.encodeCall(ILCCVault.initialize, (params)))));
     }
 
+    /// @dev Asserts a hardcoded storage-slot constant against the reviewer-controlled layout baseline, so slot
+    /// drift fails tests loudly instead of degrading raw-slot assertions into vacuous passes.
+    function _assertLayoutSlot(string memory label, uint256 expectedSlot) internal view {
+        string memory json = vm.readFile("docs/lcc-vault-storage-layout.json");
+        for (uint256 i = 0;; ++i) {
+            string memory base = string.concat(".storage[", vm.toString(i), "]");
+            if (!vm.keyExistsJson(json, string.concat(base, ".label"))) break;
+            if (keccak256(bytes(vm.parseJsonString(json, string.concat(base, ".label")))) == keccak256(bytes(label))) {
+                assertEq(vm.parseUint(vm.parseJsonString(json, string.concat(base, ".slot"))), expectedSlot, label);
+                return;
+            }
+        }
+        revert(string.concat("layout label missing: ", label));
+    }
+
+    function _mappingSlot(uint256 key, uint256 slot) internal pure returns (bytes32) {
+        return keccak256(abi.encode(key, slot));
+    }
+
     function _mintAndApprove(address user, uint256 marginAmount, uint256 usdcAmount) internal {
         _mintAndApprove(vault, user, marginAmount, usdcAmount);
     }

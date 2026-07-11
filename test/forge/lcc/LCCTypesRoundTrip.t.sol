@@ -10,6 +10,7 @@ import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
 import {LCCTypesLib} from "../../../src/lcc/libraries/LCCTypesLib.sol";
+import {BPS} from "../../../src/libraries/ConstantsLib.sol";
 
 contract LCCTypesHarness is LCCVault {
     LCCTypesLib.Bucket internal bucket;
@@ -42,6 +43,18 @@ contract LCCTypesHarness is LCCVault {
     {
         auctionState = value;
         return auctionState;
+    }
+
+    function increaseBucket(uint256 margin, uint256 commitment) external {
+        _increaseBucket(bucket, margin, commitment);
+    }
+
+    function applyFillOn(LCCAuctionLib.AuctionState memory seed, uint256 fillAmount, uint256 price)
+        external
+        returns (uint256)
+    {
+        auctionState = seed;
+        return LCCAuctionLib.applyFill(auctionState, fillAmount, 1, 1, 1, BPS, price);
     }
 }
 
@@ -109,6 +122,32 @@ contract LCCTypesRoundTripTest is Test {
         assertEq(loaded.filledAmount, value.filledAmount);
         assertEq(loaded.marginPool, value.marginPool);
         assertEq(loaded.marginAwarded, value.marginAwarded);
+    }
+
+    function testFuzzBucketIncrementRevertsPastUint128(uint128 seedMargin, uint128 seedCommitment) public {
+        harness.storeLoadBucket(LCCTypesLib.Bucket({margin: seedMargin, commitment: seedCommitment}));
+        uint256 overwideMargin = uint256(type(uint128).max) - seedMargin + 1;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SafeCast.SafeCastOverflowedUintDowncast.selector, 128, uint256(seedMargin) + overwideMargin
+            )
+        );
+        harness.increaseBucket(overwideMargin, 0);
+    }
+
+    function testFuzzApplyFillRevertsPastUint128Filled(uint128 seedFilled) public {
+        LCCAuctionLib.AuctionState memory seed = LCCAuctionLib.AuctionState({
+            shortfallAmount: type(uint128).max, filledAmount: seedFilled, marginPool: 0, marginAwarded: 0
+        });
+        uint256 overwideFill = uint256(type(uint128).max) - seedFilled + 1;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SafeCast.SafeCastOverflowedUintDowncast.selector, 128, uint256(seedFilled) + overwideFill
+            )
+        );
+        harness.applyFillOn(seed, overwideFill, 1e36);
     }
 
     function testFuzzStoreLoadRevertsOnOverwideAmount(

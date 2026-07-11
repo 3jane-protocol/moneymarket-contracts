@@ -142,8 +142,9 @@ library LCCAuctionLib {
     }
 
     /// @notice Computes an auction award and records the fill against packed auction storage.
-    /// @dev `fillAward` clamps the award to the unawarded pool, so both updated counters remain within uint128.
-    /// SafeCast keeps that bound checked at the storage boundary.
+    /// @dev `fillAward` clamps only the award to the unawarded pool; the caller must clamp `fillAmount` to the
+    /// remaining shortfall (`shortfallAmount - filledAmount`) or `filledAmount` can exceed `shortfallAmount`,
+    /// breaking full-fill settlement. SafeCast keeps both packed counters checked at the storage boundary.
     /// @param state The auction storage updated by the fill.
     /// @param fillAmount Amount of the shortfall being filled (fundingAsset).
     /// @param elapsed Seconds since the auction window opened.

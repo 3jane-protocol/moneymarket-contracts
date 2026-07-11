@@ -15,6 +15,17 @@ contract LCCBucketPruningTest is LCCBase {
     uint256 internal constant MATURITY_LIST_SLOT = 22;
     uint256 internal constant MATURITY_INDEX_SLOT = 23;
 
+    function setUp() public override {
+        super.setUp();
+        _assertLayoutSlot("_totals", TOTALS_SLOT);
+        _assertLayoutSlot("pendingBucketByActivationEpoch", PENDING_BUCKET_SLOT);
+        _assertLayoutSlot("activationEpochList", ACTIVATION_LIST_SLOT);
+        _assertLayoutSlot("activationEpochIndexPlusOne", ACTIVATION_INDEX_SLOT);
+        _assertLayoutSlot("exitBucketByMaturity", EXIT_BUCKET_SLOT);
+        _assertLayoutSlot("exitMaturityList", MATURITY_LIST_SLOT);
+        _assertLayoutSlot("exitMaturityIndexPlusOne", MATURITY_INDEX_SLOT);
+    }
+
     struct BucketSlots {
         uint256 bucketMapping;
         uint256 list;
@@ -114,9 +125,5 @@ contract LCCBucketPruningTest is LCCBase {
 
     function _indexPlusOne(uint256 epoch, uint256 indexMappingSlot) internal view returns (uint256) {
         return uint256(vm.load(address(vault), _mappingSlot(epoch, indexMappingSlot)));
-    }
-
-    function _mappingSlot(uint256 key, uint256 slot) internal pure returns (bytes32) {
-        return keccak256(abi.encode(key, slot));
     }
 }

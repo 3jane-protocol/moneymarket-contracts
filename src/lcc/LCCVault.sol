@@ -100,15 +100,15 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// @dev Sparse, ordered list of epochs in which a call was opened; the replay/finalization spine.
     uint256[] internal calledEpochList;
 
-    /// @dev Packed pending margin and commitment keyed by activation epoch. The original field getters remain
-    /// hand-written below so the external interface is unchanged.
+    /// @dev Packed pending margin and commitment keyed by activation epoch. Exposed through the hand-written per-field
+    /// uint256 view getters below, which form the stable external ABI.
     mapping(uint256 => LCCTypesLib.Bucket) internal pendingBucketByActivationEpoch;
     /// @dev Distinct activation epochs with nonzero pending buckets (swap-remove tracked; bounds the fold scan).
     uint256[] internal activationEpochList;
     /// @dev 1-based index of an activation epoch in `activationEpochList` (0 = absent).
     mapping(uint256 => uint256) internal activationEpochIndexPlusOne;
-    /// @dev Packed exit margin and commitment keyed by maturity epoch. The original field getters remain
-    /// hand-written below so the external interface is unchanged.
+    /// @dev Packed exit margin and commitment keyed by maturity epoch. Exposed through the hand-written per-field
+    /// uint256 view getters below, which form the stable external ABI.
     mapping(uint256 => LCCTypesLib.Bucket) internal exitBucketByMaturity;
     /// @dev Distinct maturity epochs with nonzero exit buckets (swap-remove tracked; bounds the fold scan).
     uint256[] internal exitMaturityList;
