@@ -100,18 +100,16 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// @dev Sparse, ordered list of epochs in which a call was opened; the replay/finalization spine.
     uint256[] internal calledEpochList;
 
-    /// @inheritdoc ILCCVault
-    mapping(uint256 => uint256) public pendingMarginByActivationEpoch;
-    /// @inheritdoc ILCCVault
-    mapping(uint256 => uint256) public pendingCommitmentByActivationEpoch;
+    /// @dev Packed pending margin and commitment keyed by activation epoch. The original field getters remain
+    /// hand-written below so the external interface is unchanged.
+    mapping(uint256 => LCCTypesLib.Bucket) internal pendingBucketByActivationEpoch;
     /// @dev Distinct activation epochs with nonzero pending buckets (swap-remove tracked; bounds the fold scan).
     uint256[] internal activationEpochList;
     /// @dev 1-based index of an activation epoch in `activationEpochList` (0 = absent).
     mapping(uint256 => uint256) internal activationEpochIndexPlusOne;
-    /// @inheritdoc ILCCVault
-    mapping(uint256 => uint256) public exitBucketMarginByMaturity;
-    /// @inheritdoc ILCCVault
-    mapping(uint256 => uint256) public exitBucketCommitmentByMaturity;
+    /// @dev Packed exit margin and commitment keyed by maturity epoch. The original field getters remain
+    /// hand-written below so the external interface is unchanged.
+    mapping(uint256 => LCCTypesLib.Bucket) internal exitBucketByMaturity;
     /// @dev Distinct maturity epochs with nonzero exit buckets (swap-remove tracked; bounds the fold scan).
     uint256[] internal exitMaturityList;
     /// @dev 1-based index of a maturity epoch in `exitMaturityList` (0 = absent).
@@ -432,8 +430,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         account.exitBucketCommitment = accountCommitment;
         _storeAccount(msg.sender, account);
 
-        exitBucketMarginByMaturity[maturityEpoch] += accountMargin;
-        exitBucketCommitmentByMaturity[maturityEpoch] += accountCommitment;
+        LCCTypesLib.Bucket storage bucket = exitBucketByMaturity[maturityEpoch];
+        _increaseBucket(bucket, accountMargin, accountCommitment);
         _trackExitMaturity(maturityEpoch);
         _addCurrentCallExitExposure(msg.sender, accountMargin, accountCommitment, maturityEpoch);
 
@@ -478,8 +476,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
         uint256 maturity = account.exitMaturityEpoch;
         if (account.exitRequested && !account.exitClaimed && !account.exitMatured) {
-            exitBucketMarginByMaturity[maturity] -= account.exitBucketMargin;
-            exitBucketCommitmentByMaturity[maturity] -= account.exitBucketCommitment;
+            LCCTypesLib.Bucket storage bucket = exitBucketByMaturity[maturity];
+            _decreaseBucket(bucket, account.exitBucketMargin, account.exitBucketCommitment);
             _pruneExitMaturityIfEmpty(maturity);
         }
 
@@ -696,6 +694,26 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         return _shutdown;
     }
 
+    /// @inheritdoc ILCCVault
+    function pendingMarginByActivationEpoch(uint256 epoch) external view returns (uint256) {
+        return pendingBucketByActivationEpoch[epoch].margin;
+    }
+
+    /// @inheritdoc ILCCVault
+    function pendingCommitmentByActivationEpoch(uint256 epoch) external view returns (uint256) {
+        return pendingBucketByActivationEpoch[epoch].commitment;
+    }
+
+    /// @inheritdoc ILCCVault
+    function exitBucketMarginByMaturity(uint256 epoch) external view returns (uint256) {
+        return exitBucketByMaturity[epoch].margin;
+    }
+
+    /// @inheritdoc ILCCVault
+    function exitBucketCommitmentByMaturity(uint256 epoch) external view returns (uint256) {
+        return exitBucketByMaturity[epoch].commitment;
+    }
+
     /* FUNDING INTERNALS */
 
     function _fund(address payer, address user, bool roll) internal returns (uint256 obligationAmount) {
@@ -829,17 +847,17 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         uint256 length = exitMaturityList.length;
         for (uint256 i = 0; i < length; ++i) {
             uint256 maturity = exitMaturityList[i];
-            if (maturity <= current) commitment += exitBucketCommitmentByMaturity[maturity];
+            if (maturity <= current) commitment += exitBucketByMaturity[maturity].commitment;
         }
     }
 
     function _foldActivation(uint256 epoch) internal {
-        uint256 margin = pendingMarginByActivationEpoch[epoch];
-        uint256 commitment = pendingCommitmentByActivationEpoch[epoch];
+        LCCTypesLib.Bucket memory bucket = pendingBucketByActivationEpoch[epoch];
+        uint256 margin = bucket.margin;
+        uint256 commitment = bucket.commitment;
         if (margin == 0 && commitment == 0) return;
 
-        pendingMarginByActivationEpoch[epoch] = 0;
-        pendingCommitmentByActivationEpoch[epoch] = 0;
+        delete pendingBucketByActivationEpoch[epoch];
         _pruneActivationEpochIfEmpty(epoch);
         _decreasePendingTotals(margin, commitment);
         _increaseGlobalActive(margin, commitment);
@@ -848,12 +866,12 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     }
 
     function _foldMaturity(uint256 epoch) internal {
-        uint256 margin = exitBucketMarginByMaturity[epoch];
-        uint256 commitment = exitBucketCommitmentByMaturity[epoch];
+        LCCTypesLib.Bucket memory bucket = exitBucketByMaturity[epoch];
+        uint256 margin = bucket.margin;
+        uint256 commitment = bucket.commitment;
         if (margin == 0 && commitment == 0) return;
 
-        exitBucketMarginByMaturity[epoch] = 0;
-        exitBucketCommitmentByMaturity[epoch] = 0;
+        delete exitBucketByMaturity[epoch];
         _pruneExitMaturityIfEmpty(epoch);
         _decreaseGlobalActive(margin, commitment);
 
@@ -1184,14 +1202,14 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     }
 
     function _pruneActivationEpochIfEmpty(uint256 activationEpoch) internal {
-        bool empty = pendingMarginByActivationEpoch[activationEpoch] == 0
-            && pendingCommitmentByActivationEpoch[activationEpoch] == 0;
+        LCCTypesLib.Bucket storage bucket = pendingBucketByActivationEpoch[activationEpoch];
+        bool empty = bucket.margin == 0 && bucket.commitment == 0;
         LCCBucketListLib.pruneIfEmpty(activationEpochList, activationEpochIndexPlusOne, activationEpoch, empty);
     }
 
     function _pruneExitMaturityIfEmpty(uint256 maturityEpoch) internal {
-        bool empty =
-            exitBucketMarginByMaturity[maturityEpoch] == 0 && exitBucketCommitmentByMaturity[maturityEpoch] == 0;
+        LCCTypesLib.Bucket storage bucket = exitBucketByMaturity[maturityEpoch];
+        bool empty = bucket.margin == 0 && bucket.commitment == 0;
         LCCBucketListLib.pruneIfEmpty(exitMaturityList, exitMaturityIndexPlusOne, maturityEpoch, empty);
     }
 
@@ -1200,8 +1218,9 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
             uint256 maturity = exitMaturityList[i];
             if (maturity <= epoch) continue;
 
-            uint256 margin = exitBucketMarginByMaturity[maturity];
-            uint256 commitment = exitBucketCommitmentByMaturity[maturity];
+            LCCTypesLib.Bucket storage bucket = exitBucketByMaturity[maturity];
+            uint256 margin = bucket.margin;
+            uint256 commitment = bucket.commitment;
             if (margin == 0 && commitment == 0) continue;
 
             _addCallExitExposure(epoch, maturity, margin, commitment);
@@ -1228,8 +1247,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
             exposure.listed = true;
             exitMaturitiesByCall[epoch].push(maturity);
         }
-        exposure.margin += margin;
-        exposure.commitment += commitment;
+        exposure.margin = (uint256(exposure.margin) + margin).toUint128();
+        exposure.commitment = (uint256(exposure.commitment) + commitment).toUint128();
     }
 
     function _recordExitingFund(
@@ -1243,8 +1262,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         if (!account.exitRequested || account.exitClaimed || account.exitMatured) return;
 
         uint256 maturity = account.exitMaturityEpoch;
-        exitBucketMarginByMaturity[maturity] -= releasedMargin;
-        exitBucketCommitmentByMaturity[maturity] -= obligationAmount;
+        LCCTypesLib.Bucket storage bucket = exitBucketByMaturity[maturity];
+        _decreaseBucket(bucket, releasedMargin, obligationAmount);
         _pruneExitMaturityIfEmpty(maturity);
         account.exitBucketMargin -= releasedMargin;
         account.exitBucketCommitment -= obligationAmount;
@@ -1252,10 +1271,12 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         LCCTypesLib.ExitExposure storage exposure = exitExposureByCallAndMaturity[epoch][maturity];
         if (!exposure.listed) return;
 
-        exposure.fundedAmount += obligationAmount;
-        exposure.marginReleased += releasedMargin;
-        exposure.fundedUsersRemainingMargin += remainingMargin;
-        exposure.fundedUsersRemainingCommitment += remainingCommitment;
+        exposure.fundedAmount = (uint256(exposure.fundedAmount) + obligationAmount).toUint128();
+        exposure.marginReleased = (uint256(exposure.marginReleased) + releasedMargin).toUint128();
+        exposure.fundedUsersRemainingMargin =
+            (uint256(exposure.fundedUsersRemainingMargin) + remainingMargin).toUint128();
+        exposure.fundedUsersRemainingCommitment =
+            (uint256(exposure.fundedUsersRemainingCommitment) + remainingCommitment).toUint128();
     }
 
     function _reduceExitBucketsForSlash(uint256 epoch) internal {
@@ -1269,8 +1290,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
                 exposure.commitment - exposure.fundedAmount - exposure.fundedUsersRemainingCommitment;
             if (slashedMargin == 0 && slashedCommitment == 0) continue;
 
-            exitBucketMarginByMaturity[maturity] -= slashedMargin;
-            exitBucketCommitmentByMaturity[maturity] -= slashedCommitment;
+            LCCTypesLib.Bucket storage bucket = exitBucketByMaturity[maturity];
+            _decreaseBucket(bucket, slashedMargin, slashedCommitment);
             _pruneExitMaturityIfEmpty(maturity);
         }
     }
@@ -1285,8 +1306,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         account.pendingActivationEpoch = activationEpoch;
 
         _increasePendingTotals(margin, commitment);
-        pendingMarginByActivationEpoch[activationEpoch] += margin;
-        pendingCommitmentByActivationEpoch[activationEpoch] += commitment;
+        LCCTypesLib.Bucket storage bucket = pendingBucketByActivationEpoch[activationEpoch];
+        _increaseBucket(bucket, margin, commitment);
         if (activationEpoch > _syncState.lastActivationFolded) _trackActivationEpoch(activationEpoch);
     }
 
@@ -1297,10 +1318,20 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         _decreasePendingTotals(margin, commitment);
 
         if (activationEpoch > _syncState.lastActivationFolded) {
-            pendingMarginByActivationEpoch[activationEpoch] -= margin;
-            pendingCommitmentByActivationEpoch[activationEpoch] -= commitment;
+            LCCTypesLib.Bucket storage bucket = pendingBucketByActivationEpoch[activationEpoch];
+            _decreaseBucket(bucket, margin, commitment);
             _pruneActivationEpochIfEmpty(activationEpoch);
         }
+    }
+
+    function _increaseBucket(LCCTypesLib.Bucket storage bucket, uint256 margin, uint256 commitment) internal {
+        bucket.margin = (uint256(bucket.margin) + margin).toUint128();
+        bucket.commitment = (uint256(bucket.commitment) + commitment).toUint128();
+    }
+
+    function _decreaseBucket(LCCTypesLib.Bucket storage bucket, uint256 margin, uint256 commitment) internal {
+        bucket.margin = (uint256(bucket.margin) - margin).toUint128();
+        bucket.commitment = (uint256(bucket.commitment) - commitment).toUint128();
     }
 
     function _decreaseGlobalActive(uint256 margin, uint256 commitment) internal {
@@ -1340,7 +1371,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
         maturityEpoch = _currentEpoch() + _assetConfig.exitDelayEpochs;
         while (true) {
-            uint256 assigned = exitBucketCommitmentByMaturity[maturityEpoch];
+            uint256 assigned = exitBucketByMaturity[maturityEpoch].commitment;
             if (assigned < capacity) {
                 uint256 remaining = capacity - assigned;
                 if (accountCommitment <= remaining || accountCommitment > capacity) return maturityEpoch;

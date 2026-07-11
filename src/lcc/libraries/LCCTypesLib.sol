@@ -46,6 +46,12 @@ library LCCTypesLib {
         uint32 auctionStepDuration;
     }
 
+    /// @notice Packed margin and commitment amounts for an activation or exit-maturity epoch.
+    struct Bucket {
+        uint128 margin;
+        uint128 commitment;
+    }
+
     /// @notice Packed on-chain form of {ILCCVault.Account}.
     /// @dev Fields carry the same meaning as `Account`; amounts pack into uint128 and epochs/cursor into uint64.
     /// Deposits revert on the cast if an amount exceeds its width.
@@ -80,12 +86,12 @@ library LCCTypesLib {
     /// counter these are exact live-position values, which the slash carve-out relies on.
     /// @param listed Whether this maturity has been recorded for the call (avoids duplicate tracking).
     struct ExitExposure {
-        uint256 margin;
-        uint256 commitment;
-        uint256 fundedAmount;
-        uint256 marginReleased;
-        uint256 fundedUsersRemainingMargin;
-        uint256 fundedUsersRemainingCommitment;
+        uint128 margin;
+        uint128 commitment;
+        uint128 fundedAmount;
+        uint128 marginReleased;
+        uint128 fundedUsersRemainingMargin;
+        uint128 fundedUsersRemainingCommitment;
         bool listed;
     }
 

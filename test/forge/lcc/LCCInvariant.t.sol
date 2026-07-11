@@ -631,6 +631,10 @@ contract LCCInvariantHandler is Test {
 }
 
 contract LCCStatefulInvariantTest is LCCBase {
+    // Storage slots used only to inspect the internal exact-once exposure-membership guard.
+    uint256 internal constant EXIT_EXPOSURE_MAPPING_SLOT = 24;
+    uint256 internal constant EXIT_MATURITIES_MAPPING_SLOT = 25;
+
     LCCInvariantHandler internal handler;
     address[] internal invariantActors;
     uint256 internal initialTreasuryMargin;
@@ -798,6 +802,26 @@ contract LCCStatefulInvariantTest is LCCBase {
             LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(called[i]);
             assertLe(auction.filledAmount, auction.shortfallAmount);
             assertLe(auction.marginAwarded, auction.marginPool);
+        }
+    }
+
+    function invariant_ExitExposureListedImpliesNonzeroMargin() public view {
+        uint256[] memory called = vault.calledEpochs();
+        for (uint256 i = 0; i < called.length; ++i) {
+            bytes32 maturitiesSlot = keccak256(abi.encode(called[i], EXIT_MATURITIES_MAPPING_SLOT));
+            uint256 maturityCount = uint256(vm.load(address(vault), maturitiesSlot));
+            uint256 maturitiesDataSlot = uint256(keccak256(abi.encode(maturitiesSlot)));
+            bytes32 callExposureSlot = keccak256(abi.encode(called[i], EXIT_EXPOSURE_MAPPING_SLOT));
+
+            for (uint256 j = 0; j < maturityCount; ++j) {
+                uint256 maturity = uint256(vm.load(address(vault), bytes32(maturitiesDataSlot + j)));
+                uint256 exposureSlot = uint256(keccak256(abi.encode(maturity, callExposureSlot)));
+                uint256 marginAndCommitment = uint256(vm.load(address(vault), bytes32(exposureSlot)));
+                uint256 listed = uint256(vm.load(address(vault), bytes32(exposureSlot + 3))) & 0xff;
+
+                assertEq(listed, 1);
+                assertGt(marginAndCommitment & type(uint128).max, 0);
+            }
         }
     }
 

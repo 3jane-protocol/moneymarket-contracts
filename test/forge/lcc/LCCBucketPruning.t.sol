@@ -8,18 +8,15 @@ contract LCCBucketPruningTest is LCCBase {
     // These slots intentionally mirror the upgrade-frozen LCCVault storage-layout snapshot. Reading the internal
     // sparse-list bookkeeping directly lets the tests prove both list contents and every 1-based index mapping.
     uint256 internal constant TOTALS_SLOT = 10;
-    uint256 internal constant PENDING_MARGIN_SLOT = 18;
-    uint256 internal constant PENDING_COMMITMENT_SLOT = 19;
-    uint256 internal constant ACTIVATION_LIST_SLOT = 20;
-    uint256 internal constant ACTIVATION_INDEX_SLOT = 21;
-    uint256 internal constant EXIT_MARGIN_SLOT = 22;
-    uint256 internal constant EXIT_COMMITMENT_SLOT = 23;
-    uint256 internal constant MATURITY_LIST_SLOT = 24;
-    uint256 internal constant MATURITY_INDEX_SLOT = 25;
+    uint256 internal constant PENDING_BUCKET_SLOT = 18;
+    uint256 internal constant ACTIVATION_LIST_SLOT = 19;
+    uint256 internal constant ACTIVATION_INDEX_SLOT = 20;
+    uint256 internal constant EXIT_BUCKET_SLOT = 21;
+    uint256 internal constant MATURITY_LIST_SLOT = 22;
+    uint256 internal constant MATURITY_INDEX_SLOT = 23;
 
     struct BucketSlots {
-        uint256 marginMapping;
-        uint256 commitmentMapping;
+        uint256 bucketMapping;
         uint256 list;
         uint256 indexMapping;
         uint256 packedTotals;
@@ -28,8 +25,7 @@ contract LCCBucketPruningTest is LCCBase {
     function testActivationPruningRetainsMixedFutureBucketsAndRepairsIndices() public {
         _seedBuckets(
             BucketSlots({
-                marginMapping: PENDING_MARGIN_SLOT,
-                commitmentMapping: PENDING_COMMITMENT_SLOT,
+                bucketMapping: PENDING_BUCKET_SLOT,
                 list: ACTIVATION_LIST_SLOT,
                 indexMapping: ACTIVATION_INDEX_SLOT,
                 packedTotals: TOTALS_SLOT + 1
@@ -40,7 +36,7 @@ contract LCCBucketPruningTest is LCCBase {
         vault.materializeAccount(alice);
 
         _assertPrunedList(ACTIVATION_LIST_SLOT, ACTIVATION_INDEX_SLOT);
-        _assertBucketValues(PENDING_MARGIN_SLOT, PENDING_COMMITMENT_SLOT);
+        _assertBucketValues(PENDING_BUCKET_SLOT);
 
         ILCCVault.Totals memory totals = vault.totals();
         assertEq(totals.activeMargin, 6e18);
@@ -52,8 +48,7 @@ contract LCCBucketPruningTest is LCCBase {
     function testMaturityPruningRetainsMixedFutureBucketsAndRepairsIndices() public {
         _seedBuckets(
             BucketSlots({
-                marginMapping: EXIT_MARGIN_SLOT,
-                commitmentMapping: EXIT_COMMITMENT_SLOT,
+                bucketMapping: EXIT_BUCKET_SLOT,
                 list: MATURITY_LIST_SLOT,
                 indexMapping: MATURITY_INDEX_SLOT,
                 packedTotals: TOTALS_SLOT
@@ -64,7 +59,7 @@ contract LCCBucketPruningTest is LCCBase {
         vault.materializeAccount(alice);
 
         _assertPrunedList(MATURITY_LIST_SLOT, MATURITY_INDEX_SLOT);
-        _assertBucketValues(EXIT_MARGIN_SLOT, EXIT_COMMITMENT_SLOT);
+        _assertBucketValues(EXIT_BUCKET_SLOT);
 
         ILCCVault.Totals memory totals = vault.totals();
         assertEq(totals.activeMargin, 17e18);
@@ -90,8 +85,8 @@ contract LCCBucketPruningTest is LCCBase {
     function _seedBucket(BucketSlots memory slots, uint256 listDataSlot, uint256 index, uint256 epoch) internal {
         vm.store(address(vault), bytes32(listDataSlot + index), bytes32(epoch));
         vm.store(address(vault), _mappingSlot(epoch, slots.indexMapping), bytes32(index + 1));
-        vm.store(address(vault), _mappingSlot(epoch, slots.marginMapping), bytes32(epoch * 1e18));
-        vm.store(address(vault), _mappingSlot(epoch, slots.commitmentMapping), bytes32(epoch * 2e18));
+        uint256 packedBucket = epoch * 1e18 | (epoch * 2e18 << 128);
+        vm.store(address(vault), _mappingSlot(epoch, slots.bucketMapping), bytes32(packedBucket));
     }
 
     function _assertPrunedList(uint256 listSlot, uint256 indexMappingSlot) internal view {
@@ -108,16 +103,13 @@ contract LCCBucketPruningTest is LCCBase {
         assertEq(_indexPlusOne(8, indexMappingSlot), 2);
     }
 
-    function _assertBucketValues(uint256 marginMappingSlot, uint256 commitmentMappingSlot) internal view {
+    function _assertBucketValues(uint256 bucketMappingSlot) internal view {
         for (uint256 epoch = 1; epoch <= 3; ++epoch) {
-            assertEq(uint256(vm.load(address(vault), _mappingSlot(epoch, marginMappingSlot))), 0);
-            assertEq(uint256(vm.load(address(vault), _mappingSlot(epoch, commitmentMappingSlot))), 0);
+            assertEq(uint256(vm.load(address(vault), _mappingSlot(epoch, bucketMappingSlot))), 0);
         }
 
-        assertEq(uint256(vm.load(address(vault), _mappingSlot(8, marginMappingSlot))), 8e18);
-        assertEq(uint256(vm.load(address(vault), _mappingSlot(8, commitmentMappingSlot))), 16e18);
-        assertEq(uint256(vm.load(address(vault), _mappingSlot(9, marginMappingSlot))), 9e18);
-        assertEq(uint256(vm.load(address(vault), _mappingSlot(9, commitmentMappingSlot))), 18e18);
+        assertEq(uint256(vm.load(address(vault), _mappingSlot(8, bucketMappingSlot))), 8e18 | (uint256(16e18) << 128));
+        assertEq(uint256(vm.load(address(vault), _mappingSlot(9, bucketMappingSlot))), 9e18 | (uint256(18e18) << 128));
     }
 
     function _indexPlusOne(uint256 epoch, uint256 indexMappingSlot) internal view returns (uint256) {

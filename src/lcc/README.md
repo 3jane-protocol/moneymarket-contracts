@@ -237,6 +237,7 @@ against active+pending totals: `protocolCommitmentCap` vault-wide and `userCommi
 Activation follows `_depositActivation`: **immediate** (credited to `activeMargin` / `activeCommitment` now) only
 when the phase is `Normal` and no call has opened for the current epoch; otherwise **pending** for epoch `e+1`,
 tracked in `pendingMarginByActivationEpoch` / `pendingCommitmentByActivationEpoch` and folded in later by sync.
+Those two ABI-compatible `uint256` getters read the halves of one packed `LCCTypesLib.Bucket` storage word.
 
 Every deposit sets `commitmentStartEpoch` to its activation epoch — this restarts the `minCommitmentEpochs` exit
 clock (§9). Funding of any kind never touches `commitmentStartEpoch`.
@@ -501,6 +502,11 @@ deposit activation; every deposit resets it, and no funding touches it.
 `protocolCommitmentCap * exitCapBps / BPS`. Funded or slashed amounts free bucket room retroactively. A request
 larger than the whole per-epoch capacity takes the first bucket with any remaining room.
 
+Each maturity bucket stores its margin and commitment as the two `uint128` halves of one `LCCTypesLib.Bucket` word;
+the original `exitBucketMarginByMaturity` and `exitBucketCommitmentByMaturity` getters still return `uint256`.
+Per-call exit exposure similarly packs six `uint128` values into three words and keeps `listed` in a fourth word.
+The explicit flag is the exact-once guard for `exitMaturitiesByCall` membership and must not be derived from amounts.
+
 **Bucket-cap trio.** Live maturity buckets are hard-capped at `MAX_EXIT_MATURITY_BUCKETS = 2 * 64 = 128`; a request
 that would create a 129th bucket reverts `ExitCapacityReached`. `exitDelayEpochs <= 64` and `exitCapBps >= 313`
 (`MIN_EXIT_CAP_BPS`) are enforced at config so worst-case honest exit demand — including first-fit fragmentation —
@@ -555,7 +561,7 @@ flowchart TD
 
 `LCCAuctionLib` is the only externally linked library in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-24,126 bytes, 150 bytes below the 24,276-byte release ceiling and 450 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+24,259 bytes, 17 bytes below the 24,276-byte release ceiling and 317 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls

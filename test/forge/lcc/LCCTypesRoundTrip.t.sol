@@ -8,13 +8,30 @@ import {SafeCast} from "../../../lib/openzeppelin/contracts/utils/math/SafeCast.
 import {LCCMockNotificationVault, LCCMockToken, LCCMockUSD3} from "./LCCBase.t.sol";
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
+import {LCCTypesLib} from "../../../src/lcc/libraries/LCCTypesLib.sol";
 
 contract LCCTypesHarness is LCCVault {
+    LCCTypesLib.Bucket internal bucket;
+    LCCTypesLib.ExitExposure internal exitExposure;
+
     constructor(address notificationVault_, address treasury_) LCCVault(notificationVault_, treasury_) {}
 
     function storeLoad(ILCCVault.Account memory account) external returns (ILCCVault.Account memory) {
         _storeAccount(msg.sender, account);
         return _loadAccount(msg.sender);
+    }
+
+    function storeLoadBucket(LCCTypesLib.Bucket memory value) external returns (LCCTypesLib.Bucket memory) {
+        bucket = value;
+        return bucket;
+    }
+
+    function storeLoadExitExposure(LCCTypesLib.ExitExposure memory value)
+        external
+        returns (LCCTypesLib.ExitExposure memory)
+    {
+        exitExposure = value;
+        return exitExposure;
     }
 }
 
@@ -38,6 +55,37 @@ contract LCCTypesRoundTripTest is Test {
         ILCCVault.Account memory loaded = harness.storeLoad(account);
 
         _assertAccountEq(loaded, account);
+    }
+
+    function testFuzzBucketStoreLoadRoundTrips(uint128 margin, uint128 commitment) public {
+        LCCTypesLib.Bucket memory value = LCCTypesLib.Bucket({margin: margin, commitment: commitment});
+
+        LCCTypesLib.Bucket memory loaded = harness.storeLoadBucket(value);
+
+        assertEq(loaded.margin, value.margin);
+        assertEq(loaded.commitment, value.commitment);
+    }
+
+    function testFuzzExitExposureStoreLoadRoundTrips(uint128[6] memory amounts, bool listed) public {
+        LCCTypesLib.ExitExposure memory value = LCCTypesLib.ExitExposure({
+            margin: amounts[0],
+            commitment: amounts[1],
+            fundedAmount: amounts[2],
+            marginReleased: amounts[3],
+            fundedUsersRemainingMargin: amounts[4],
+            fundedUsersRemainingCommitment: amounts[5],
+            listed: listed
+        });
+
+        LCCTypesLib.ExitExposure memory loaded = harness.storeLoadExitExposure(value);
+
+        assertEq(loaded.margin, value.margin);
+        assertEq(loaded.commitment, value.commitment);
+        assertEq(loaded.fundedAmount, value.fundedAmount);
+        assertEq(loaded.marginReleased, value.marginReleased);
+        assertEq(loaded.fundedUsersRemainingMargin, value.fundedUsersRemainingMargin);
+        assertEq(loaded.fundedUsersRemainingCommitment, value.fundedUsersRemainingCommitment);
+        assertEq(loaded.listed, value.listed);
     }
 
     function testFuzzStoreLoadRevertsOnOverwideAmount(

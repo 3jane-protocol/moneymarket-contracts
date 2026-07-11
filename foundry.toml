@@ -7,7 +7,7 @@ optimizer = true
 optimizer_runs = 999999
 bytecode_hash = "none"
 evm_version = "shanghai"
-# LCCVault pins optimizer_runs = 150 (24,126 B runtime, 150 B below the 24,276 release ceiling, 450 B EIP-170 margin). The frozen USD3_old
+# LCCVault pins optimizer_runs = 150 (24,259 B runtime, 17 B below the 24,276 release ceiling, 317 B EIP-170 margin). The frozen USD3_old
 # upgrade-test artifact pins optimizer_runs = 200 for a different reason: it is the pre-cleanup implementation, and
 # under the test profile (via-ir disabled) it hits solc "Stack too deep" at higher runs, so the low pin is what lets
 # it compile without via-ir. It is a test-only fixture (deployed only inside the upgrade tests), so its runs are
