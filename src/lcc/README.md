@@ -363,6 +363,9 @@ An auction is kicked only when there is a shortfall (`callAmount > fundedAmount`
 vault is not shut down, and the epoch-end window is still open. Otherwise the slashed margin flows straight to
 `_disposeSlashSurplus` with `awarded = 0`.
 
+`AuctionState` stores its four `uint128` counters in two words. `getAuctionState` keeps the historical wire encoding,
+while the externally linked `LCCAuctionLib` computes and records each packed fill atomically.
+
 ### Auction pricing (Diagram D — formula + Table 2)
 
 `takeAuction` follows Yearn-take semantics: `maxFillAmount` is the caller's only bound, filling
@@ -561,7 +564,7 @@ flowchart TD
 
 `LCCAuctionLib` is the only externally linked library in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-24,259 bytes, 17 bytes below the 24,276-byte release ceiling and 317 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+24,208 bytes, 68 bytes below the 24,276-byte release ceiling and 368 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls

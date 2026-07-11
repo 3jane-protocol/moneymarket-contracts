@@ -7,7 +7,7 @@ This repository is a contracts codebase. "Deployment" here primarily means CI ex
 ## LCC Implementation Deployment
 
 The canonical `LCCVault` deployment artifact is compiled for Cancun with official solc `0.8.35`, via IR, 150
-optimizer runs, and no metadata bytecode hash. Its measured runtime is 24,259 bytes, 17 bytes below the internal ceiling and 317 bytes below EIP-170.
+optimizer runs, and no metadata bytecode hash. Its measured runtime is 24,208 bytes, 68 bytes below the internal ceiling and 368 bytes below EIP-170.
 Because it uses `ReentrancyGuardTransient`, every deployment chain must support EIP-1153. Hardhat uses pinned stable
 solc-js `0.8.35` for its LCC compile/test artifact, which must not be deployed.
 
@@ -26,6 +26,8 @@ intentional layout update requires a separate reviewed baseline change.
 The current layout packs each pending-activation and exit-maturity margin/commitment pair into one
 `LCCTypesLib.Bucket` word. The four historical field getters remain ABI-compatible `uint256` views. Exit exposure
 uses three words for six `uint128` amounts and keeps its explicit fourth-word `listed` membership guard.
+Auction state uses two words for four `uint128` counters; `getAuctionState` remains wire-compatible, and the linked
+`LCCAuctionLib` records packed fill updates.
 
 ## GitHub Actions Workflows
 

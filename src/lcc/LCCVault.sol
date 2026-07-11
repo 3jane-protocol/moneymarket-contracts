@@ -562,7 +562,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         uint256 price = IOracle(_auctionConfig.marginOracle).price();
         if (price == 0) revert LCCErrorsLib.OraclePriceInvalid();
 
-        marginAward = LCCAuctionLib.computeAward(
+        marginAward = LCCAuctionLib.applyFill(
             state,
             filledAmount,
             _now() - _fundingDeadline(epoch),
@@ -571,9 +571,6 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
             _riskConfig.maxAuctionAwardBps,
             price
         );
-
-        state.filledAmount += filledAmount.toUint128();
-        state.marginAwarded += marginAward;
 
         fundingAsset.safeTransferFrom(msg.sender, address(this), filledAmount);
         _deliverWrapped(msg.sender, filledAmount);
@@ -886,9 +883,9 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         // itself the window has closed and defaults are final.
         bool disabled = _shutdown.active && _shutdown.timestamp < _fundingDeadline(epoch);
         state.slashFinalized = true;
-        state.slashDisabledByShutdown = disabled;
 
         if (disabled) {
+            state.slashDisabledByShutdown = true;
             emit LCCEventsLib.EpochSlashFinalized(epoch, 0, 0, true);
             return;
         }
@@ -913,7 +910,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
                 epochAuctions[epoch] = LCCAuctionLib.AuctionState({
                     shortfallAmount: shortfallAmount.toUint128(),
                     filledAmount: 0,
-                    marginPool: slashedMargin,
+                    marginPool: slashedMargin.toUint128(),
                     marginAwarded: 0
                 });
                 _syncState.pendingAuctionEpochPlusOne = (epoch + 1).toUint64();

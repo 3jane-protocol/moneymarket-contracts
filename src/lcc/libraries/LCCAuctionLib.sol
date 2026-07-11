@@ -2,6 +2,7 @@
 pragma solidity >=0.8.22 <0.9.0;
 
 import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
+import {SafeCast} from "../../../lib/openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {ORACLE_PRICE_SCALE, BPS} from "../../libraries/ConstantsLib.sol";
 import {IOracle} from "../../interfaces/IOracle.sol";
@@ -10,13 +11,15 @@ import {LCCErrorsLib} from "./LCCErrorsLib.sol";
 /// @title LCCAuctionLib
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
-/// @notice Stateless pricing math for the LCC epoch-shortfall auction.
+/// @notice Pricing math and packed fill accounting for the LCC epoch-shortfall auction.
 /// @dev The auction sells the right to fill an epoch's funding-asset shortfall (wrapped into USD3 for the buyer)
 /// together with a collateral kicker from the slashed margin pool. The protocol's retained share of the pool decays by
 /// `stepDecayRateBps` every `stepDuration` seconds, so the offered kicker ramps from zero toward the full pool.
-/// Functions take only value types and memory structs so the library can be switched to external linkage if the
-/// vault approaches the bytecode size limit.
+/// The externally linked fill path accepts the caller's auction storage slot and records checked packed counters in
+/// the same delegatecall that computes the award.
 library LCCAuctionLib {
+    using SafeCast for uint256;
+
     uint256 internal constant RAY = 1e27;
 
     /// @notice State of an epoch's shortfall auction.
@@ -27,8 +30,8 @@ library LCCAuctionLib {
     struct AuctionState {
         uint128 shortfallAmount;
         uint128 filledAmount;
-        uint256 marginPool;
-        uint256 marginAwarded;
+        uint128 marginPool;
+        uint128 marginAwarded;
     }
 
     /// @notice Computes `x**n` in fixed-point with `base` scaling.
@@ -136,6 +139,31 @@ library LCCAuctionLib {
         uint256 oracleCapMargin = Math.mulDiv(Math.mulDiv(fillAmount, maxAwardBps, BPS), ORACLE_PRICE_SCALE, price);
         uint256 offered = offeredPool(state.marginPool, elapsed, stepDuration, stepDecayRateBps);
         return fillAward(state, fillAmount, offered, oracleCapMargin);
+    }
+
+    /// @notice Computes an auction award and records the fill against packed auction storage.
+    /// @dev `fillAward` clamps the award to the unawarded pool, so both updated counters remain within uint128.
+    /// SafeCast keeps that bound checked at the storage boundary.
+    /// @param state The auction storage updated by the fill.
+    /// @param fillAmount Amount of the shortfall being filled (fundingAsset).
+    /// @param elapsed Seconds since the auction window opened.
+    /// @param stepDuration Seconds per price step.
+    /// @param stepDecayRateBps Per-step decay of the protocol's retained share, in bps.
+    /// @param maxAwardBps Award cap per fundingAsset filled, in bps.
+    /// @param price Margin-to-fundingAsset oracle price, scaled by ORACLE_PRICE_SCALE.
+    /// @return award Collateral awarded for this fill (marginAsset).
+    function applyFill(
+        AuctionState storage state,
+        uint256 fillAmount,
+        uint256 elapsed,
+        uint256 stepDuration,
+        uint256 stepDecayRateBps,
+        uint256 maxAwardBps,
+        uint256 price
+    ) public returns (uint256 award) {
+        award = computeAward(state, fillAmount, elapsed, stepDuration, stepDecayRateBps, maxAwardBps, price);
+        state.filledAmount = (uint256(state.filledAmount) + fillAmount).toUint128();
+        state.marginAwarded = (uint256(state.marginAwarded) + award).toUint128();
     }
 
     /// @notice Values margin assets in funding-asset units and derives their callable commitment.

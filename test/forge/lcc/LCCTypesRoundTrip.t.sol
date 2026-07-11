@@ -8,11 +8,13 @@ import {SafeCast} from "../../../lib/openzeppelin/contracts/utils/math/SafeCast.
 import {LCCMockNotificationVault, LCCMockToken, LCCMockUSD3} from "./LCCBase.t.sol";
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
+import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
 import {LCCTypesLib} from "../../../src/lcc/libraries/LCCTypesLib.sol";
 
 contract LCCTypesHarness is LCCVault {
     LCCTypesLib.Bucket internal bucket;
     LCCTypesLib.ExitExposure internal exitExposure;
+    LCCAuctionLib.AuctionState internal auctionState;
 
     constructor(address notificationVault_, address treasury_) LCCVault(notificationVault_, treasury_) {}
 
@@ -32,6 +34,14 @@ contract LCCTypesHarness is LCCVault {
     {
         exitExposure = value;
         return exitExposure;
+    }
+
+    function storeLoadAuctionState(LCCAuctionLib.AuctionState memory value)
+        external
+        returns (LCCAuctionLib.AuctionState memory)
+    {
+        auctionState = value;
+        return auctionState;
     }
 }
 
@@ -86,6 +96,19 @@ contract LCCTypesRoundTripTest is Test {
         assertEq(loaded.fundedUsersRemainingMargin, value.fundedUsersRemainingMargin);
         assertEq(loaded.fundedUsersRemainingCommitment, value.fundedUsersRemainingCommitment);
         assertEq(loaded.listed, value.listed);
+    }
+
+    function testFuzzAuctionStateStoreLoadRoundTrips(uint128[4] memory amounts) public {
+        LCCAuctionLib.AuctionState memory value = LCCAuctionLib.AuctionState({
+            shortfallAmount: amounts[0], filledAmount: amounts[1], marginPool: amounts[2], marginAwarded: amounts[3]
+        });
+
+        LCCAuctionLib.AuctionState memory loaded = harness.storeLoadAuctionState(value);
+
+        assertEq(loaded.shortfallAmount, value.shortfallAmount);
+        assertEq(loaded.filledAmount, value.filledAmount);
+        assertEq(loaded.marginPool, value.marginPool);
+        assertEq(loaded.marginAwarded, value.marginAwarded);
     }
 
     function testFuzzStoreLoadRevertsOnOverwideAmount(

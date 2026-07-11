@@ -105,7 +105,7 @@ contract LCCAuctionLibTest is Test {
             uint256 award = LCCAuctionLib.fillAward(state, fill, offered, type(uint256).max);
 
             state.filledAmount += uint128(fill);
-            state.marginAwarded += award;
+            state.marginAwarded += uint128(award);
             totalAward += award;
         }
 
@@ -141,7 +141,7 @@ contract LCCAuctionLibTest is Test {
         uint256 price
     ) public pure {
         shortfall = uint128(bound(shortfall, 1, type(uint128).max));
-        uint256 marginAwarded = bound(uint256(awardedSeed), 0, pool);
+        uint128 marginAwarded = uint128(bound(uint256(awardedSeed), 0, pool));
         uint256 fillAmount = bound(uint256(fillSeed), 0, shortfall);
         stepDuration = uint32(bound(stepDuration, 1, type(uint32).max));
         decayBps = bound(decayBps, 1, BPS);
