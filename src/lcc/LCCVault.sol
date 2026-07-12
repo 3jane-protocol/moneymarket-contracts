@@ -86,7 +86,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// @dev Packed fold cursors and single live-auction slot (epoch + 1; 0 = none). Safe because calls are
     /// sequential: an auction for epoch E exists only during E's Closed window, and a later kick happens inside
     /// _syncGlobal after _settleDueAuction has already swept E.
-    SyncState internal _syncState;
+    LCCTypesLib.SyncStateStorage internal _syncState;
 
     /// @dev Packed emergency shutdown state.
     ShutdownState internal _shutdown;
@@ -122,8 +122,6 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
     /// @inheritdoc ILCCVault
     mapping(uint256 => mapping(address => bool)) public fundedEpoch;
-    /// @inheritdoc ILCCVault
-    mapping(uint256 => mapping(address => bool)) public defaultedEpoch;
 
     LCCTypesLib.PauseState internal _pause;
 
@@ -196,8 +194,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         });
 
         uint256 epoch = _currentEpoch();
-        _syncState.lastActivationFolded = epoch.toUint64();
-        _syncState.lastMaturityFolded = epoch.toUint64();
+        _syncState.lastFolded = epoch.toUint64();
     }
 
     /* MODIFIERS */
@@ -683,7 +680,13 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
     /// @inheritdoc ILCCVault
     function syncState() external view returns (SyncState memory) {
-        return _syncState;
+        uint64 lastFolded = _syncState.lastFolded;
+        return SyncState({
+            lastActivationFolded: lastFolded,
+            lastMaturityFolded: lastFolded,
+            finalizedCallPrefix: _syncState.finalizedCallPrefix,
+            pendingAuctionEpochPlusOne: _syncState.pendingAuctionEpochPlusOne
+        });
     }
 
     /// @inheritdoc ILCCVault
@@ -804,12 +807,11 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
         uint256 current = _currentEpoch();
         _foldDueActivations(current);
-        _syncState.lastActivationFolded = current.toUint64();
 
         // Slash finalization must run before maturity folds so defaulted exiter exposure is carved out of exit buckets
         // before those buckets decrement global active totals.
         _foldDueMaturities(current);
-        _syncState.lastMaturityFolded = current.toUint64();
+        _syncState.lastFolded = current.toUint64();
     }
 
     function _foldDueActivations(uint256 current) internal {
@@ -1028,7 +1030,6 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     function _recordDefaults(address user, LCCTypesLib.AccountReplay memory replay) internal {
         for (uint256 i = 0; i < replay.defaultCount; ++i) {
             LCCTypesLib.DefaultRecord memory record = replay.defaults[i];
-            defaultedEpoch[record.epoch][user] = true;
             emit LCCEventsLib.UserDefaulted(user, record.epoch, record.slashedMargin, record.slashedCommitment);
             if (record.returnMarginShare != 0) {
                 emit LCCEventsLib.ReturnPoolCredited(
@@ -1148,15 +1149,13 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         if (!replay.complete) return replay;
 
         uint256 current = _currentEpoch();
-        uint256 activationFolded = current > _syncState.lastActivationFolded ? current : _syncState.lastActivationFolded;
-        uint256 maturityFolded = current > _syncState.lastMaturityFolded ? current : _syncState.lastMaturityFolded;
-        if (stoppedAtUnfinalized && _slashEligible(unfinalizedEpoch)) {
-            if (activationFolded > unfinalizedEpoch) activationFolded = unfinalizedEpoch;
-            if (maturityFolded > unfinalizedEpoch) maturityFolded = unfinalizedEpoch;
+        uint256 folded = current > _syncState.lastFolded ? current : _syncState.lastFolded;
+        if (stoppedAtUnfinalized && _slashEligible(unfinalizedEpoch) && folded > unfinalizedEpoch) {
+            folded = unfinalizedEpoch;
         }
 
-        replay.account.activatePendingForEpoch(activationFolded);
-        replay.account.matureExitForEpoch(maturityFolded);
+        replay.account.activatePendingForEpoch(folded);
+        replay.account.matureExitForEpoch(folded);
     }
 
     function _shouldDefault(Account memory account, EpochState storage state, uint256 epoch, address user)
@@ -1305,7 +1304,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         _increasePendingTotals(margin, commitment);
         LCCTypesLib.Bucket storage bucket = pendingBucketByActivationEpoch[activationEpoch];
         _increaseBucket(bucket, margin, commitment);
-        if (activationEpoch > _syncState.lastActivationFolded) _trackActivationEpoch(activationEpoch);
+        if (activationEpoch > _syncState.lastFolded) _trackActivationEpoch(activationEpoch);
     }
 
     function _decreasePending(Account memory account, uint256 margin, uint256 commitment) internal {
@@ -1314,7 +1313,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         uint256 activationEpoch = account.pendingActivationEpoch;
         _decreasePendingTotals(margin, commitment);
 
-        if (activationEpoch > _syncState.lastActivationFolded) {
+        if (activationEpoch > _syncState.lastFolded) {
             LCCTypesLib.Bucket storage bucket = pendingBucketByActivationEpoch[activationEpoch];
             _decreaseBucket(bucket, margin, commitment);
             _pruneActivationEpochIfEmpty(activationEpoch);

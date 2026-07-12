@@ -2,6 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {Test} from "../../../lib/forge-std/src/Test.sol";
+import {Vm} from "../../../lib/forge-std/src/Vm.sol";
 import {BeaconProxy} from "../../../lib/openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
 import {UpgradeableBeacon} from "../../../lib/openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {ERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -9,6 +10,7 @@ import {ERC4626} from "../../../lib/openzeppelin/contracts/token/ERC20/extension
 import {IERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
+import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
 import {OracleMock} from "../../../src/mocks/OracleMock.sol";
@@ -247,6 +249,37 @@ contract LCCBase is Test {
 
     function _mappingSlot(uint256 key, uint256 slot) internal pure returns (bytes32) {
         return keccak256(abi.encode(key, slot));
+    }
+
+    function _isUserDefaulted(Vm.Log memory entry, address emitter) internal pure returns (bool) {
+        return
+            entry.emitter == emitter && entry.topics.length == 3
+                && entry.topics[0] == LCCEventsLib.UserDefaulted.selector;
+    }
+
+    function _assertNoUserDefaulted(Vm.Log[] memory logs, address emitter, address user, uint256 epoch) internal pure {
+        for (uint256 i = 0; i < logs.length; ++i) {
+            Vm.Log memory entry = logs[i];
+            bool matches = _isUserDefaulted(entry, emitter) && address(uint160(uint256(entry.topics[1]))) == user
+                && uint256(entry.topics[2]) == epoch;
+            assertFalse(matches, "unexpected UserDefaulted event");
+        }
+    }
+
+    function _normalizedUserDefaultedEventsHash(Vm.Log[] memory logs, address emitter)
+        internal
+        pure
+        returns (bytes32 hash)
+    {
+        for (uint256 i = 0; i < logs.length; ++i) {
+            Vm.Log memory entry = logs[i];
+            if (!_isUserDefaulted(entry, emitter)) continue;
+
+            address user = address(uint160(uint256(entry.topics[1])));
+            uint256 epoch = uint256(entry.topics[2]);
+            (uint256 slashedMargin, uint256 slashedCommitment) = abi.decode(entry.data, (uint256, uint256));
+            hash = keccak256(abi.encode(hash, user, epoch, slashedMargin, slashedCommitment));
+        }
     }
 
     function _mintAndApprove(address user, uint256 marginAmount, uint256 usdcAmount) internal {

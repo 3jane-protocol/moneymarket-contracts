@@ -3,6 +3,7 @@ pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
+import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 
 contract LCCSyncTest is LCCBase {
     uint256 internal constant HUGE_EPOCH_GAP = 20_000;
@@ -50,6 +51,10 @@ contract LCCSyncTest is LCCBase {
 
         assertLt(gasUsed, 700_000);
         assertEq(vault.totals().activeMargin, 100e18);
+        ILCCVault.SyncState memory state = vault.syncState();
+        assertEq(state.lastActivationFolded, HUGE_EPOCH_GAP);
+        // Both view fields reconstruct from the single stored lastFolded; asserted as a pair once here.
+        assertEq(state.lastMaturityFolded, HUGE_EPOCH_GAP);
     }
 
     function testSparseSyncFoldsPendingAfterLargeDormantGapOnce() public {
@@ -63,6 +68,8 @@ contract LCCSyncTest is LCCBase {
         assertEq(vault.pendingCommitmentByActivationEpoch(1), 0);
         assertEq(vault.totals().pendingMargin, 0);
         assertEq(vault.totals().activeMargin, 100e18);
+        ILCCVault.SyncState memory state = vault.syncState();
+        assertEq(state.lastActivationFolded, HUGE_EPOCH_GAP);
     }
 
     function testSparseSyncFoldsMaturityAfterLargeDormantGapOnce() public {
@@ -77,6 +84,8 @@ contract LCCSyncTest is LCCBase {
         assertEq(vault.exitBucketCommitmentByMaturity(maturity), 0);
         assertEq(vault.totals().activeMargin, 0);
         assertEq(vault.claimableExitedMargin(alice), 100e18);
+        ILCCVault.SyncState memory state = vault.syncState();
+        assertEq(state.lastActivationFolded, HUGE_EPOCH_GAP);
     }
 
     function testSparseSyncFoldsPendingAndMaturityInSameSync() public {
@@ -95,6 +104,27 @@ contract LCCSyncTest is LCCBase {
         assertEq(vault.totals().pendingMargin, 0);
         assertEq(vault.totals().activeMargin, 50e18);
         assertEq(vault.claimableExitedMargin(alice), 100e18);
+        ILCCVault.SyncState memory state = vault.syncState();
+        assertEq(state.lastActivationFolded, HUGE_EPOCH_GAP);
+    }
+
+    function testEligibleUnfinalizedReplayBarrierDoesNotAdvanceStoredFoldWatermarks() public {
+        _deposit(alice, 100e18);
+        vm.prank(alice);
+        vault.requestExit();
+        _openCall(100e18);
+
+        vm.warp(START + EPOCH);
+
+        assertEq(vault.claimableExitedMargin(alice), 0);
+        ILCCVault.SyncState memory state = vault.syncState();
+        assertEq(state.lastActivationFolded, 0);
+
+        // A mutating synced touch finalizes the eligible epoch, and only then may the stored watermark advance.
+        vault.materializeAccount(alice);
+        state = vault.syncState();
+        assertEq(state.lastActivationFolded, 1);
+        assertTrue(vault.getEpochState(0).slashFinalized);
     }
 
     function testSparseSyncMaturityPruningDoesNotSkipSwapRemovedDueBucket() public {

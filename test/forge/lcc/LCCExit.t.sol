@@ -5,6 +5,7 @@ import {LCCBase} from "./LCCBase.t.sol";
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
+import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
 
 contract LCCExitTest is LCCBase {
     uint256 internal constant MAX_EXIT_MATURITY_BUCKETS = 128;
@@ -178,9 +179,10 @@ contract LCCExitTest is LCCBase {
         assertEq(vault.requestExit(), 1);
 
         vm.warp(START + EPOCH);
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.UserDefaulted(alice, 0, 100e18, 200e18);
         _syncAs(alice);
 
-        assertTrue(vault.defaultedEpoch(0, alice));
         assertEq(margin.balanceOf(treasury), 0);
         assertEq(vault.claimableExitedMargin(alice), 0);
     }

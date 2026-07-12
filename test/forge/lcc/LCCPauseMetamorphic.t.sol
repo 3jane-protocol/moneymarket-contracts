@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import {LCCBase} from "./LCCBase.t.sol";
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
+import {Vm} from "../../../lib/forge-std/src/Vm.sol";
 
 contract LCCPauseMetamorphicTest is LCCBase {
     function testFuzzPauseResumeMatchesUnpausedLifecycle(uint8 rawPausePoint, uint32 rawDuration) public {
@@ -48,9 +49,11 @@ contract LCCPauseMetamorphicTest is LCCBase {
 
         uint256 pauseAt = START + NORMAL + PRE_CALL + 10;
         vm.warp(pauseAt);
+        vm.recordLogs();
         vm.prank(owner);
         unpausedRun.shutdown();
-        bytes32 unpausedHash = _stateHash(unpausedRun, 0);
+        bytes32 unpausedDefaults = _normalizedUserDefaultedEventsHash(vm.getRecordedLogs(), address(unpausedRun));
+        bytes32 unpausedHash = _stateHash(unpausedRun, 0, unpausedDefaults);
 
         vm.prank(owner);
         pausedRun.pause();
@@ -58,7 +61,8 @@ contract LCCPauseMetamorphicTest is LCCBase {
         vm.prank(owner);
         pausedRun.shutdown();
 
-        assertEq(_stateHash(pausedRun, 0), unpausedHash);
+        bytes32 pausedDefaults = _normalizedUserDefaultedEventsHash(vm.getRecordedLogs(), address(pausedRun));
+        assertEq(_stateHash(pausedRun, 0, pausedDefaults), unpausedHash);
         assertEq(pausedRun.shutdownState().timestamp, unpausedRun.shutdownState().timestamp);
         assertEq(pausedRun.shutdownState().epoch, unpausedRun.shutdownState().epoch);
         (, bool paused,, uint64 accumulated) = pausedRun.pauseState();
@@ -70,6 +74,7 @@ contract LCCPauseMetamorphicTest is LCCBase {
     function _runScript(LCCVault target, uint256 pausePoint, uint256 duration) internal returns (bytes32) {
         uint256 treasuryBefore = margin.balanceOf(treasury);
         uint256 shift;
+        vm.recordLogs();
 
         shift = _maybePause(target, pausePoint, 0, START + 1, shift, duration);
         vm.warp(START + 1 + shift);
@@ -113,7 +118,12 @@ contract LCCPauseMetamorphicTest is LCCBase {
         vm.prank(alice);
         target.claimExitedMargin(alice);
 
-        return _stateHash(target, margin.balanceOf(treasury) - treasuryBefore);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        return _stateHash(
+            target,
+            margin.balanceOf(treasury) - treasuryBefore,
+            _normalizedUserDefaultedEventsHash(logs, address(target))
+        );
     }
 
     function _maybePause(
@@ -139,7 +149,11 @@ contract LCCPauseMetamorphicTest is LCCBase {
         return shift + duration;
     }
 
-    function _stateHash(LCCVault target, uint256 treasuryDelta) internal view returns (bytes32) {
+    function _stateHash(LCCVault target, uint256 treasuryDelta, bytes32 defaultEventsHash)
+        internal
+        view
+        returns (bytes32)
+    {
         bytes32 accountsHash =
             keccak256(abi.encode(target.getAccount(alice), target.getAccount(bob), target.getAccount(carol)));
         bytes32 epochsHash =
@@ -150,9 +164,7 @@ contract LCCPauseMetamorphicTest is LCCBase {
                 target.fundedEpoch(0, alice),
                 target.fundedEpoch(0, bob),
                 target.fundedEpoch(0, carol),
-                target.defaultedEpoch(0, alice),
-                target.defaultedEpoch(0, bob),
-                target.defaultedEpoch(0, carol)
+                defaultEventsHash
             )
         );
         bytes32 balancesHash = keccak256(

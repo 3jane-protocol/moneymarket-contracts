@@ -46,6 +46,14 @@ library LCCTypesLib {
         uint32 auctionStepDuration;
     }
 
+    /// @notice Packed implementation form of the global sync cursors and live-auction slot.
+    /// @dev Activation and maturity folds advance together, so one watermark backs both fields in the external view.
+    struct SyncStateStorage {
+        uint64 lastFolded;
+        uint64 finalizedCallPrefix;
+        uint64 pendingAuctionEpochPlusOne;
+    }
+
     /// @notice Packed margin and commitment amounts for an activation or exit-maturity epoch.
     struct Bucket {
         uint128 margin;

@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import {LCCBase} from "./LCCBase.t.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
+import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
 
 contract LCCSlashTest is LCCBase {
     function testSlashConservationAndTreasuryReceivesOnce() public {
@@ -93,10 +94,11 @@ contract LCCSlashTest is LCCBase {
         _openCall(100e18);
         _finishFunding();
 
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.UserDefaulted(alice, 0, 100e18, 200e18);
         _syncAs(alice);
 
         assertEq(margin.balanceOf(treasury), 0);
-        assertTrue(vault.defaultedEpoch(0, alice));
         assertEq(vault.totals().activeMargin, 100e18);
 
         _syncAs(alice);
@@ -108,6 +110,8 @@ contract LCCSlashTest is LCCBase {
         _deposit(alice, 100e18);
         _openCall(100e18);
         _finishFunding();
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.UserDefaulted(alice, 0, 100e18, 200e18);
         _syncAs(alice);
 
         vm.warp(START + EPOCH);
@@ -117,10 +121,10 @@ contract LCCSlashTest is LCCBase {
         vm.prank(owner);
         vault.openEpochCall(1, 50e18);
         vm.warp(START + EPOCH + NORMAL + PRE_CALL + FUNDING);
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.UserDefaulted(alice, 1, 150e18, 300e18);
         _syncAs(alice);
 
-        assertTrue(vault.defaultedEpoch(0, alice));
-        assertTrue(vault.defaultedEpoch(1, alice));
         assertEq(margin.balanceOf(treasury), 0);
     }
 
@@ -152,9 +156,10 @@ contract LCCSlashTest is LCCBase {
         vm.warp(START + EPOCH);
         _deposit(bob, 50e18);
 
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.UserDefaulted(alice, 0, 100e18, 200e18);
         _syncAs(alice);
 
-        assertTrue(vault.defaultedEpoch(0, alice));
         assertEq(vault.totals().activeMargin, 150e18);
         assertEq(vault.claimableExitedMargin(alice), 0);
     }

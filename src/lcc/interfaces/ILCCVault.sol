@@ -469,11 +469,6 @@ interface ILCCVault {
     /// @param user Account to query.
     /// @return True if funded.
     function fundedEpoch(uint256 epoch, address user) external view returns (bool);
-    /// @notice Whether `user` was materialized as defaulted for `epoch`.
-    /// @param epoch Epoch to query.
-    /// @param user Account to query.
-    /// @return True if defaulted.
-    function defaultedEpoch(uint256 epoch, address user) external view returns (bool);
     /// @notice Pending margin scheduled to activate at an epoch (marginAsset).
     /// @param epoch Activation epoch to query.
     /// @return The pending margin for that epoch.

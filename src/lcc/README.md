@@ -564,7 +564,7 @@ flowchart TD
 
 `LCCAuctionLib` is the only externally linked library in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-24,208 bytes, 68 bytes below the 24,276-byte release ceiling and 368 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+23,955 bytes, 321 bytes below the 24,276-byte release ceiling and 621 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls

@@ -5,6 +5,7 @@ import {LCCBase} from "./LCCBase.t.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
+import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
 
 contract LCCRollTest is LCCBase {
     function testRolledSelfFundKeepsAccountTotalsAndRecordsNetSettlementCommitment() public {
@@ -98,9 +99,10 @@ contract LCCRollTest is LCCBase {
         assertEq(state.returnCommitment, 90e18);
         assertEq(margin.balanceOf(treasury), 5e18);
 
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.UserDefaulted(carol, 0, 100e18, 200e18);
         vault.materializeAccount(carol);
         ILCCVault.Account memory carolAccount = vault.getAccount(carol);
-        assertTrue(vault.defaultedEpoch(0, carol));
         assertEq(carolAccount.activeMargin, 45e18);
         assertEq(carolAccount.activeCommitment, 90e18);
     }

@@ -3,6 +3,8 @@ pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
+import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
+import {Vm} from "../../../lib/forge-std/src/Vm.sol";
 
 contract LCCMaterializeTest is LCCBase {
     function testFreshAccountCanDepositAfterManyFinalizedCalls() public {
@@ -47,9 +49,10 @@ contract LCCMaterializeTest is LCCBase {
         ILCCVault.Account memory derived = vault.getAccount(alice);
         assertEq(derived.claimableExitMargin, 0);
 
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.UserDefaulted(alice, 0, 100e18, 200e18);
         _syncAs(alice);
 
-        assertTrue(vault.defaultedEpoch(0, alice));
         assertEq(vault.claimableExitedMargin(alice), 0);
     }
 
@@ -85,6 +88,7 @@ contract LCCMaterializeTest is LCCBase {
     }
 
     function testPendingDepositDuringCallIsNotDefaultedForPriorEpoch() public {
+        vm.recordLogs();
         _deposit(alice, 100e18);
         _openCall(100e18);
 
@@ -93,11 +97,12 @@ contract LCCMaterializeTest is LCCBase {
 
         vm.warp(START + EPOCH);
         _syncAs(bob);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
 
         ILCCVault.Account memory account = vault.getAccount(bob);
         assertEq(account.activeMargin, 100e18);
         assertEq(account.activeCommitment, 200e18);
-        assertFalse(vault.defaultedEpoch(0, bob));
+        _assertNoUserDefaulted(logs, address(vault), bob, 0);
     }
 
     function testOnlyOldActiveExposureDefaultsWhenUserAlsoHasPendingDeposit() public {
@@ -108,16 +113,18 @@ contract LCCMaterializeTest is LCCBase {
         _deposit(alice, 50e18);
 
         vm.warp(START + EPOCH);
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.UserDefaulted(alice, 0, 100e18, 200e18);
         _syncAs(alice);
 
         ILCCVault.Account memory account = vault.getAccount(alice);
-        assertTrue(vault.defaultedEpoch(0, alice));
         assertEq(account.activeMargin, 150e18);
         assertEq(account.activeCommitment, 300e18);
         assertEq(margin.balanceOf(treasury), 0);
     }
 
     function testMaturedExiterIsNotDefaultedByLaterCall() public {
+        vm.recordLogs();
         _deposit(alice, 100e18);
         vm.prank(alice);
         vault.requestExit();
@@ -135,7 +142,8 @@ contract LCCMaterializeTest is LCCBase {
         assertEq(vault.claimableExitedMargin(alice), 100e18);
         vm.prank(alice);
         assertEq(vault.claimExitedMargin(alice), 100e18);
-        assertFalse(vault.defaultedEpoch(1, alice));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        _assertNoUserDefaulted(logs, address(vault), alice, 1);
     }
 
     function testRepeatMaterializeIsIdempotent() public {
