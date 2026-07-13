@@ -125,8 +125,11 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
     LCCTypesLib.PauseState internal _pause;
 
+    /// @inheritdoc ILCCVault
+    uint256 public pendingTreasuryMargin;
+
     /// @dev Reserved storage for future versions. New storage must be appended by consuming gap slots.
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 
     /* CONSTRUCTOR / INITIALIZER */
 
@@ -362,9 +365,13 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// @dev The margin oracle is fully trusted to return a fresh marginAsset-to-fundingAsset price scaled by
     /// ORACLE_PRICE_SCALE, including any token decimal conversion.
     function deposit(uint256 assets) external nonReentrant synced returns (uint256 commitment) {
+        if (_syncState.pendingAuctionEpochPlusOne != 0) revert LCCErrorsLib.InvalidPhase();
         if (_shutdown.active) revert LCCErrorsLib.ShutdownActive();
         if (_terminal()) revert LCCErrorsLib.VaultTerminal();
         if (assets == 0 || assets < _riskConfig.minDepositAssets) revert LCCErrorsLib.InvalidAmount();
+        if (
+            uint256(_totals.activeMargin).saturatingAdd(_totals.pendingMargin).saturatingAdd(assets) > type(uint128).max
+        ) revert LCCErrorsLib.CapExceeded();
 
         Account memory account = _replayForUpdate(msg.sender);
         if (account.exitRequested && !account.exitClaimed) revert LCCErrorsLib.ExitInProgress();
@@ -450,7 +457,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         account.clearExit();
         _storeAccount(msg.sender, account);
 
-        if (assets != 0) IERC20(_assetConfig.marginAsset).safeTransfer(receiver, assets);
+        if (assets != 0) _transferMargin(receiver, assets);
 
         emit LCCEventsLib.ExitedMarginClaimed(msg.sender, receiver, assets);
     }
@@ -490,9 +497,18 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         account.clearExit();
         _storeAccount(msg.sender, account);
 
-        IERC20(_assetConfig.marginAsset).safeTransfer(receiver, assets);
+        _transferMargin(receiver, assets);
 
         emit LCCEventsLib.RemainingMarginClaimed(msg.sender, receiver, assets);
+    }
+
+    /// @inheritdoc ILCCVault
+    function sweepTreasury() external nonReentrant {
+        uint256 amount = pendingTreasuryMargin;
+        if (amount == 0) return;
+        pendingTreasuryMargin = 0;
+        _transferMargin(treasury, amount);
+        emit LCCEventsLib.TreasurySwept(amount);
     }
 
     /* CALL, FUNDING & AUCTION ACTIONS */
@@ -571,7 +587,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
         fundingAsset.safeTransferFrom(msg.sender, address(this), filledAmount);
         _deliverWrapped(msg.sender, filledAmount);
-        if (marginAward != 0) IERC20(_assetConfig.marginAsset).safeTransfer(msg.sender, marginAward);
+        if (marginAward != 0) _transferMargin(msg.sender, marginAward);
 
         emit LCCEventsLib.AuctionFill(msg.sender, epoch, filledAmount, marginAward);
 
@@ -760,7 +776,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         fundingAsset.safeTransferFrom(payer, address(this), fundingAmount);
         _deliverWrapped(user, fundingAmount);
 
-        if (releasedMargin != 0) IERC20(_assetConfig.marginAsset).safeTransfer(user, releasedMargin);
+        if (releasedMargin != 0) _transferMargin(user, releasedMargin);
 
         emit LCCEventsLib.CallFunded(payer, user, epoch, obligationAmount, fundingAmount);
         emit LCCEventsLib.MarginReleased(user, epoch, releasedMargin);
@@ -771,6 +787,10 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     function _deliverWrapped(address receiver, uint256 fundingAmount) internal {
         uint256 usd3Assets = usd3.deposit(fundingAmount, address(this));
         notificationVault.deposit(usd3Assets, receiver);
+    }
+
+    function _transferMargin(address receiver, uint256 assets) internal {
+        IERC20(_assetConfig.marginAsset).safeTransfer(receiver, assets);
     }
 
     /* SYNC, FOLD & SLASH INTERNALS */
@@ -837,16 +857,16 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         }
     }
 
-    /// @dev Exit commitment that has matured but not yet folded out of `_totals`, so it still inflates
-    /// `usedCommitment` when disposal computes cap headroom. Disposal subtracts it from used commitment before the
-    /// protocol-cap clamp, while a separate packing clamp still uses the pre-fold total. The sync path disposes before
-    /// `_foldDueMaturities`; a mid-window full-fill runs after that transaction's folds, where due buckets are already
-    /// zeroed and pruned so this sums 0.
-    function _dueUnfoldedExitCommitment(uint256 current) internal view returns (uint256 commitment) {
+    /// @dev Sums the exit-bucket commitment maturing at or before `cutoff` that is still counted in `_totals`, i.e.
+    /// commitment that cannot back any future call yet still inflates `usedCommitment`. Disposal subtracts it from
+    /// used commitment before the protocol-cap clamp (the separate packing clamp keeps the pre-subtraction total).
+    /// Callers pass the first epoch a call can still open as `cutoff`, so a maturity that will fold before that call
+    /// is excluded from headroom rather than clipping the defaulter return pool.
+    function _dueUnfoldedExitCommitment(uint256 cutoff) internal view returns (uint256 commitment) {
         uint256 length = exitMaturityList.length;
         for (uint256 i = 0; i < length; ++i) {
             uint256 maturity = exitMaturityList[i];
-            if (maturity <= current) commitment += exitBucketByMaturity[maturity].commitment;
+            if (maturity <= cutoff) commitment += exitBucketByMaturity[maturity].commitment;
         }
     }
 
@@ -964,8 +984,11 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// @dev Charges the slash fee on auction-awarded collateral and caps it by the unawarded surplus being disposed.
     /// Any surplus not consumed by the fee still needs a going-concern oracle valuation, so full-fee configs can
     /// revert until the oracle recovers when no auction filled or when a partial-fill lazy settlement leaves surplus;
-    /// wind-down disposal remains oracle-free. When protocol-cap headroom binds, removing the fee does not increase
-    /// defaulter recovery because the cap clamp diverts the excess to treasury; owners manage headroom with risk caps.
+    /// wind-down disposal remains tolerant of oracle reverts and invalid values. A gas-griefing oracle can still
+    /// exhaust the transaction gas; the owner can recover by rotating it through `setMarginOracle` before retrying
+    /// wind-down.
+    /// When protocol-cap headroom binds, removing the fee does not increase defaulter recovery because the cap clamp
+    /// diverts the excess to treasury; owners manage headroom with risk caps.
     function _disposeSlashSurplus(uint256 epoch, uint256 surplus, uint256 auctionedMargin) internal {
         if (surplus == 0) return;
 
@@ -983,13 +1006,17 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         // exposure: clamping by the protocol cap would only divert defaulters' recoverable
         // margin to the treasury. Bound it by the packed-totals width instead.
         uint256 packingHeadroom = uint256(type(uint128).max).saturatingSub(usedCommitment);
-        uint256 headroom = windDown
-            ? packingHeadroom
-            : Math.min(
+        uint256 usedMargin = uint256(_totals.activeMargin) + uint256(_totals.pendingMargin);
+        uint256 headroom = packingHeadroom;
+        if (!windDown) {
+            uint256 current = _currentEpoch();
+            uint256 cutoff = _phaseAt(_now()) >= Phase.Funding ? current + 1 : current;
+            headroom = Math.min(
                 _riskConfig.protocolCommitmentCap
-                    .saturatingSub(usedCommitment.saturatingSub(_dueUnfoldedExitCommitment(_currentEpoch()))),
+                    .saturatingSub(usedCommitment.saturatingSub(_dueUnfoldedExitCommitment(cutoff))),
                 packingHeadroom
             );
+        }
 
         (uint256 returnPool, uint256 returnCommitment) = LCCAuctionLib.disposeValuation(
             surplus,
@@ -998,6 +1025,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
             _auctionConfig.marginOracle,
             windDown,
             _assetConfig.marginRatioBps,
+            usedMargin,
             headroom,
             MIN_RETURN_COMMITMENT
         );
@@ -1006,7 +1034,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         state.returnCommitment = returnCommitment;
         if (returnPool != 0) _increaseGlobalActive(returnPool, returnCommitment);
         uint256 toTreasury = surplus - returnPool;
-        if (toTreasury != 0) IERC20(_assetConfig.marginAsset).safeTransfer(treasury, toTreasury);
+        pendingTreasuryMargin += toTreasury;
         emit LCCEventsLib.SlashSurplusDisposed(epoch, toTreasury, returnPool, returnCommitment);
     }
 

@@ -183,7 +183,7 @@ contract LCCExitTest is LCCBase {
         emit LCCEventsLib.UserDefaulted(alice, 0, 100e18, 200e18);
         _syncAs(alice);
 
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(vault.claimableExitedMargin(alice), 0);
     }
 

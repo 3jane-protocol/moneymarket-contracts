@@ -104,3 +104,22 @@ contract LCCDepositTest is LCCBase {
         _deposit(alice, 100e18);
     }
 }
+
+contract LCCPendingActivationOverflowPoC is LCCBase {
+    function testAggregateMarginOverflowRevertsAtAdmission() public {
+        uint256 maxPacked = type(uint128).max;
+        _deployVaultWithParams(_params(maxPacked, maxPacked));
+        oracle.setPrice(1e18);
+        margin.mint(alice, maxPacked);
+
+        uint256 pendingAmount = 1e18 + 1;
+        _deposit(alice, maxPacked - 1e18);
+        vm.warp(START + NORMAL);
+
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        _deposit(alice, pendingAmount);
+
+        assertEq(vault.totals().pendingMargin, 0);
+        assertEq(vault.pendingMarginByActivationEpoch(1), 0);
+    }
+}

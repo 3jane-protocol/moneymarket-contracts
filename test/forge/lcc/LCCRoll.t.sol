@@ -97,7 +97,7 @@ contract LCCRollTest is LCCBase {
         // fee = min(awarded 50e18 x 10%, surplus 50e18) = 5e18.
         assertEq(state.returnPool, 45e18);
         assertEq(state.returnCommitment, 90e18);
-        assertEq(margin.balanceOf(treasury), 5e18);
+        assertEq(_accruedTreasuryMargin(), 5e18);
 
         vm.expectEmit(true, true, false, true, address(vault));
         emit LCCEventsLib.UserDefaulted(carol, 0, 100e18, 200e18);

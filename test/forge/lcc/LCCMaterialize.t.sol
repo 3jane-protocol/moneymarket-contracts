@@ -120,7 +120,7 @@ contract LCCMaterializeTest is LCCBase {
         ILCCVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 150e18);
         assertEq(account.activeCommitment, 300e18);
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
     }
 
     function testMaturedExiterIsNotDefaultedByLaterCall() public {

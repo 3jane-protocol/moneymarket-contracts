@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.22;
 
-import {LCCBase, LCCRevertingOracle} from "./LCCBase.t.sol";
+import {LCCBase, LCCBlacklistMockToken, LCCRevertingOracle} from "./LCCBase.t.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
+import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
 
 contract LCCShutdownTest is LCCBase {
     function testShutdownDuringFundingDisablesSlash() public {
@@ -16,7 +17,7 @@ contract LCCShutdownTest is LCCBase {
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertTrue(state.slashFinalized);
         assertTrue(state.slashDisabledByShutdown);
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(vault.totals().activeMargin, 100e18);
     }
 
@@ -31,7 +32,7 @@ contract LCCShutdownTest is LCCBase {
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertTrue(state.slashFinalized);
         assertFalse(state.slashDisabledByShutdown);
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(state.returnPool, 100e18);
         assertEq(state.returnCommitment, 200e18);
     }
@@ -47,8 +48,8 @@ contract LCCShutdownTest is LCCBase {
         _finishFunding();
         vault.finalizeEpochSlash(0);
 
-        vm.warp(START + NORMAL + PRE_CALL + FUNDING + 1);
-        _deposit(carol, 100e18);
+        vm.prank(owner);
+        vault.setRiskCaps(1, 200e18, 2_000, 0);
 
         vm.warp(START + EPOCH);
         vm.prank(owner);
@@ -57,7 +58,7 @@ contract LCCShutdownTest is LCCBase {
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 100e18);
         assertEq(state.returnCommitment, 200e18);
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
     }
 
     function testShutdownWithDeadOracleAndPendingAuctionSweepsSurplus() public {
@@ -78,7 +79,7 @@ contract LCCShutdownTest is LCCBase {
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         assertEq(state.returnPool, 0);
         assertEq(state.returnCommitment, 0);
-        assertEq(margin.balanceOf(treasury), 100e18);
+        assertEq(_accruedTreasuryMargin(), 100e18);
     }
 
     function testRemainingClaimWithdrawsSafeMarginAndBlocksDeposits() public {
@@ -119,5 +120,76 @@ contract LCCShutdownTest is LCCBase {
 
         assertEq(vault.totals().activeMargin, 0);
         assertEq(vault.totals().activeCommitment, 0);
+    }
+
+    function testShutdownSettlesAuctionBeforeFoldingMaxWidthPendingActivation() public {
+        uint256 maxPacked = type(uint128).max;
+        ILCCVault.VaultParams memory params = _auctionParams();
+        params.protocolCommitmentCap = maxPacked;
+        params.userCommitmentCap = maxPacked;
+        _deployVaultWithParams(params);
+        oracle.setPrice(1e18);
+        margin.mint(alice, maxPacked);
+        margin.mint(bob, maxPacked);
+
+        uint256 auctionMargin = maxPacked / 2;
+        uint256 commitment = _deposit(alice, auctionMargin);
+        _openCall(commitment);
+        vm.warp(START + NORMAL + PRE_CALL);
+        _deposit(bob, maxPacked - auctionMargin);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
+
+        vm.warp(START + EPOCH);
+        vm.prank(owner);
+        vault.shutdown();
+
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(state.returnPool, auctionMargin);
+        assertEq(vault.totals().activeMargin, maxPacked);
+        assertEq(vault.totals().pendingMargin, 0);
+        assertEq(vault.pendingTreasuryMargin(), 0);
+    }
+
+    function testRejectedTreasuryTransferDoesNotBrickShutdownOrRemainingClaim() public {
+        LCCBlacklistMockToken blacklistMargin = new LCCBlacklistMockToken("Blacklist Margin", "bMRG");
+        margin = blacklistMargin;
+        _deployAuctionVault();
+        _mintAndApprove(alice, 100e18, 0);
+        _mintAndApprove(bob, 50e18, 0);
+        _deposit(alice, 100e18);
+        _deposit(bob, 50e18);
+        _openCall(150e18);
+        _fund(alice);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+
+        blacklistMargin.setBlockedRecipient(treasury);
+        oracle.setPrice(0);
+
+        vm.prank(owner);
+        vault.shutdown();
+        assertEq(vault.pendingTreasuryMargin(), 50e18);
+        assertEq(margin.balanceOf(treasury), 0);
+
+        uint256 aliceBefore = margin.balanceOf(alice);
+        vm.prank(alice);
+        assertEq(vault.claimRemainingMargin(alice), 50e18);
+        assertEq(margin.balanceOf(alice), aliceBefore + 50e18);
+
+        vm.prank(owner);
+        vault.pause();
+        vm.expectRevert("BLOCKED_RECIPIENT");
+        vault.sweepTreasury();
+        assertEq(vault.pendingTreasuryMargin(), 50e18);
+
+        blacklistMargin.setBlockedRecipient(address(0));
+        vm.expectEmit(false, false, false, true, address(vault));
+        emit LCCEventsLib.TreasurySwept(50e18);
+        vault.sweepTreasury();
+
+        assertEq(vault.pendingTreasuryMargin(), 0);
+        assertEq(margin.balanceOf(treasury), 50e18);
     }
 }

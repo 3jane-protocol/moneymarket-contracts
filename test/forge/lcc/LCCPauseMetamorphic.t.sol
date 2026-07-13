@@ -121,7 +121,7 @@ contract LCCPauseMetamorphicTest is LCCBase {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         return _stateHash(
             target,
-            margin.balanceOf(treasury) - treasuryBefore,
+            margin.balanceOf(treasury) + target.pendingTreasuryMargin() - treasuryBefore,
             _normalizedUserDefaultedEventsHash(logs, address(target))
         );
     }

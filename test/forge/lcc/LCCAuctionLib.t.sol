@@ -3,6 +3,7 @@ pragma solidity ^0.8.22;
 
 import {Test} from "../../../lib/forge-std/src/Test.sol";
 import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
+import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
 import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 
@@ -169,5 +170,17 @@ contract LCCAuctionLibTest is Test {
         uint256 expectedValue = Math.mulDiv(assets, price, ORACLE_PRICE_SCALE);
         assertEq(marginValue, expectedValue);
         assertEq(commitment, Math.mulDiv(expectedValue, BPS, marginRatioBps));
+    }
+
+    function testDisposeValuationClampsMarginAndCommitmentProRata() public {
+        OracleMock oracle = new OracleMock();
+        oracle.setPrice(ORACLE_PRICE_SCALE);
+
+        (uint256 returnPool, uint256 returnCommitment) = LCCAuctionLib.disposeValuation(
+            100e18, 0, 0, address(oracle), false, 5_000, uint256(type(uint128).max) - 25e18, type(uint256).max, 1
+        );
+
+        assertEq(returnPool, 25e18);
+        assertEq(returnCommitment, 50e18);
     }
 }

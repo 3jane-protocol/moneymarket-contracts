@@ -187,14 +187,17 @@ library LCCAuctionLib {
     /// at the margin oracle. Going-concern disposal reverts on a zero oracle price; wind-down disposal treats an
     /// unreadable, zero, or valuation-overflowing price as zero so recovery can never brick, dropping the pool to
     /// the treasury instead. The returned commitment is clamped by `headroom` and zeroed below
-    /// `minReturnCommitment`, with the pool scaled down pro-rata to any clamp.
+    /// `minReturnCommitment`, with the pool scaled down pro-rata to any clamp. The saturating headroom above
+    /// `usedMargin` independently caps the pool before valuation, which scales its paired commitment pro-rata and
+    /// keeps packed aggregate margin in range.
     /// @param surplus Unawarded slashed margin being disposed (marginAsset).
     /// @param auctionedMargin Collateral awarded to auction fillers, the fee basis (marginAsset).
     /// @param slashFeeBps Fee on auction-awarded collateral, in bps.
     /// @param marginOracle The margin oracle consulted for the return-pool valuation.
     /// @param windDown True once no future call can use returned commitment (shutdown or closed call window).
     /// @param marginRatioBps Margin ratio leveraging margin value into commitment, in bps.
-    /// @param headroom Maximum commitment that may be returned.
+    /// @param usedMargin Active plus pending margin already occupying packed totals.
+    /// @param commitmentHeadroom Maximum commitment that may be returned.
     /// @param minReturnCommitment Minimum commitment worth attributing; smaller results are zeroed.
     /// @return returnPool Margin re-attributed to defaulters (marginAsset).
     /// @return returnCommitment Commitment re-attributed to defaulters (fundingAsset).
@@ -205,11 +208,12 @@ library LCCAuctionLib {
         address marginOracle,
         bool windDown,
         uint256 marginRatioBps,
-        uint256 headroom,
+        uint256 usedMargin,
+        uint256 commitmentHeadroom,
         uint256 minReturnCommitment
     ) public view returns (uint256 returnPool, uint256 returnCommitment) {
         uint256 fee = Math.min(Math.mulDiv(auctionedMargin, slashFeeBps, BPS), surplus);
-        returnPool = surplus - fee;
+        returnPool = Math.min(surplus - fee, Math.saturatingSub(type(uint128).max, usedMargin));
 
         // The oracle is consulted only when there is a return pool to value.
         if (returnPool != 0) {
@@ -230,7 +234,7 @@ library LCCAuctionLib {
                 returnPool = 0;
             } else {
                 (, uint256 rawCommitment) = valueAndCommitment(returnPool, price, marginRatioBps);
-                returnCommitment = Math.min(rawCommitment, headroom);
+                returnCommitment = Math.min(rawCommitment, commitmentHeadroom);
                 if (returnCommitment < minReturnCommitment) returnCommitment = 0;
                 returnPool = returnCommitment == 0 ? 0 : Math.mulDiv(returnPool, returnCommitment, rawCommitment);
             }

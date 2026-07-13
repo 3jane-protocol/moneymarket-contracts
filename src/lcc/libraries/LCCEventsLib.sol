@@ -70,12 +70,17 @@ library LCCEventsLib {
 
     /// @notice Emitted when unawarded slashed margin is disposed after any auction-award-based fee.
     /// @param epoch Epoch whose slash surplus was disposed.
-    /// @param treasuryAmount Margin swept to treasury, including fee and unbacked remainder (marginAsset).
+    /// @param treasuryAmount Margin accrued for treasury, but not yet transferred, including fee and unbacked remainder
+    /// (marginAsset).
     /// @param returnPool Margin returned to defaulters for lazy attribution (marginAsset).
     /// @param returnCommitment Callable commitment created by `returnPool` (fundingAsset).
     event SlashSurplusDisposed(
         uint256 indexed epoch, uint256 treasuryAmount, uint256 returnPool, uint256 returnCommitment
     );
+
+    /// @notice Emitted when all accrued treasury margin is transferred to the treasury.
+    /// @param marginAssets Margin transferred (marginAsset).
+    event TreasurySwept(uint256 marginAssets);
 
     /// @notice Emitted once an epoch's slash is finalized.
     /// @param epoch Epoch finalized.

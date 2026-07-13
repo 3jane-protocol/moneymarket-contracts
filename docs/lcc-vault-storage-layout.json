@@ -177,12 +177,20 @@
       "type": "t_struct(PauseState)12920_storage"
     },
     {
-      "astId": 5203,
+      "astId": 5201,
+      "contract": "src/lcc/LCCVault.sol:LCCVault",
+      "label": "pendingTreasuryMargin",
+      "offset": 0,
+      "slot": "28",
+      "type": "t_uint256"
+    },
+    {
+      "astId": 5206,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "__gap",
       "offset": 0,
-      "slot": "28",
-      "type": "t_array(t_uint256)50_storage"
+      "slot": "29",
+      "type": "t_array(t_uint256)49_storage"
     }
   ],
   "types": {
@@ -191,10 +199,10 @@
       "label": "address",
       "numberOfBytes": "20"
     },
-    "t_array(t_uint256)50_storage": {
+    "t_array(t_uint256)49_storage": {
       "encoding": "inplace",
-      "label": "uint256[50]",
-      "numberOfBytes": "1600",
+      "label": "uint256[49]",
+      "numberOfBytes": "1568",
       "base": "t_uint256"
     },
     "t_array(t_uint256)dyn_storage": {

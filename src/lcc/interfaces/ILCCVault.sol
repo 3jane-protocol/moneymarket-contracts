@@ -313,6 +313,12 @@ interface ILCCVault {
     /// @param receiver Recipient of the margin.
     /// @return assets Margin transferred (marginAsset).
     function claimRemainingMargin(address receiver) external returns (uint256 assets);
+    /// @notice Transfers all accrued treasury margin to the treasury.
+    /// @dev Permissionless, unsynced, and available while paused or shut down. The accrued ledger is zeroed before the
+    /// transfer and restored by transaction rollback if the margin token rejects the treasury recipient.
+    function sweepTreasury() external;
+    /// @notice Margin accrued for treasury but still held by the vault (marginAsset).
+    function pendingTreasuryMargin() external view returns (uint256);
     /// @notice Owner update of mutable risk caps; applies to future deposits and exit assignments only.
     /// @param newProtocolCommitmentCap New vault-wide commitment cap (fundingAsset); must be in (0, uint128.max].
     /// @param newUserCommitmentCap New per-account commitment cap (fundingAsset).

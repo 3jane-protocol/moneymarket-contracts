@@ -38,7 +38,7 @@ contract LCCSyncTest is LCCBase {
         vm.prank(bob);
         vault.materializeAccount(bob);
 
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(vault.totals().activeMargin, 100e18);
     }
 

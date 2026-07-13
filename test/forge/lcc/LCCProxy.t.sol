@@ -102,7 +102,7 @@ contract LCCProxyTest is LCCBase {
         first.finalizeEpochSlash(0);
         second.finalizeEpochSlash(0);
 
-        assertEq(margin.balanceOf(treasury), 30e18);
+        assertEq(margin.balanceOf(treasury) + first.pendingTreasuryMargin() + second.pendingTreasuryMargin(), 30e18);
         assertEq(first.assetConfig().treasury, treasury);
         assertEq(second.assetConfig().treasury, treasury);
     }

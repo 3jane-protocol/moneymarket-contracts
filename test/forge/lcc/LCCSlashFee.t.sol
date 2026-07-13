@@ -23,7 +23,7 @@ contract LCCSlashFeeTest is LCCBase {
         vault.materializeAccount(carol);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(margin.balanceOf(treasury), 0.5e18);
+        assertEq(_accruedTreasuryMargin(), 0.5e18);
         assertEq(state.returnPool, 44.5e18);
         assertEq(state.returnCommitment, 89e18);
     }
@@ -40,7 +40,7 @@ contract LCCSlashFeeTest is LCCBase {
         assertEq(award, 37.5e18);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(margin.balanceOf(treasury), 12.5e18);
+        assertEq(_accruedTreasuryMargin(), 12.5e18);
         assertEq(state.returnPool, 0);
         assertEq(state.returnCommitment, 0);
     }
@@ -56,7 +56,7 @@ contract LCCSlashFeeTest is LCCBase {
         vault.finalizeEpochSlash(0);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(state.returnPool, 50e18);
         assertEq(state.returnCommitment, 100e18);
     }
@@ -68,7 +68,7 @@ contract LCCSlashFeeTest is LCCBase {
         vault.finalizeEpochSlash(0);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(state.returnPool, 100e18);
         assertEq(state.returnCommitment, 200e18);
     }
@@ -83,7 +83,7 @@ contract LCCSlashFeeTest is LCCBase {
         vault.finalizeEpochSlash(0);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(state.returnPool, 1e18);
         assertEq(state.returnCommitment, 2e18);
         assertEq(vault.getAuctionState(0).shortfallAmount, 0);
@@ -103,7 +103,7 @@ contract LCCSlashFeeTest is LCCBase {
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(margin.balanceOf(treasury), 0.5e18);
+        assertEq(_accruedTreasuryMargin(), 0.5e18);
         assertEq(state.returnPool, 44.5e18);
         assertEq(state.returnCommitment, 89e18);
     }
@@ -128,7 +128,7 @@ contract LCCSlashFeeTest is LCCBase {
         vault.materializeAccount(alice);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(state.returnPool, 100e18);
         assertEq(state.returnCommitment, 200e18);
     }
@@ -153,7 +153,7 @@ contract LCCSlashFeeTest is LCCBase {
         vault.materializeAccount(alice);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(margin.balanceOf(treasury), 5e18);
+        assertEq(_accruedTreasuryMargin(), 5e18);
         assertEq(state.returnPool, 40e18);
         assertEq(state.returnCommitment, 80e18);
 
@@ -177,7 +177,7 @@ contract LCCSlashFeeTest is LCCBase {
 
         state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(margin.balanceOf(treasury) - treasuryBefore, 45e18);
+        assertEq(_accruedTreasuryMargin() - treasuryBefore, 45e18);
         assertEq(state.returnPool, 0);
         assertEq(state.returnCommitment, 0);
     }
@@ -201,16 +201,13 @@ contract LCCSlashFeeTest is LCCBase {
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(margin.balanceOf(treasury), 20e18);
+        assertEq(_accruedTreasuryMargin(), 20e18);
         assertEq(state.returnPool, 0);
         assertEq(state.returnCommitment, 0);
     }
 
     function testTightCapClampPinsNeverAwardedRecovery() public {
-        _setupAllDefaultAuctionWithCap(250e18);
-
-        vm.warp(DEADLINE + 1);
-        _deposit(carol, 100e18);
+        _setupTightCapAuction();
 
         vm.warp(WINDOW_END);
         vault.materializeAccount(alice);
@@ -218,26 +215,24 @@ contract LCCSlashFeeTest is LCCBase {
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 25e18);
         assertEq(state.returnCommitment, 50e18);
-        assertEq(margin.balanceOf(treasury), 75e18);
+        assertEq(_accruedTreasuryMargin(), 75e18);
     }
 
     function testTightCapClampPinsPartialFillRecovery() public {
-        _setupAllDefaultAuctionWithCap(250e18);
+        _setupTightCapAuction();
 
         vm.warp(DEADLINE + 5);
         vm.prank(carol);
         (, uint256 award) = vault.takeAuction(20e18);
         assertEq(award, 5e18);
 
-        _deposit(carol, 100e18);
-
         vm.warp(WINDOW_END);
         vault.materializeAccount(alice);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 25e18);
         assertEq(state.returnCommitment, 50e18);
-        assertEq(margin.balanceOf(treasury), 70e18);
+        assertEq(_accruedTreasuryMargin(), 70e18);
     }
 
     function _setupShortfallAuction() internal {
@@ -249,16 +244,24 @@ contract LCCSlashFeeTest is LCCBase {
         vault.finalizeEpochSlash(0);
     }
 
-    function _setupAllDefaultAuctionWithCap(uint256 cap) internal {
+    /// @dev Carol rolls rather than defaulting, so her pre-existing 100 commitment remains live through the
+    /// auction. Lowering the cap to 150 leaves 50 commitment headroom and independently exercises the
+    /// commitment-side clamp without relying on a deposit during the live auction.
+    function _setupTightCapAuction() internal {
         ILCCVault.VaultParams memory params = _auctionParams();
-        params.protocolCommitmentCap = cap;
+        params.protocolCommitmentCap = 300e18;
         _deployVaultWithParams(params);
 
         _deposit(alice, 99e18);
         _deposit(bob, 1e18);
-        _openCall(200e18);
+        _deposit(carol, 50e18);
+        _openCall(300e18);
+        _fundRolling(carol);
         _finishFunding();
         vault.finalizeEpochSlash(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
+
+        vm.prank(owner);
+        vault.setRiskCaps(150e18, 300e18, 2_000, 0);
     }
 }

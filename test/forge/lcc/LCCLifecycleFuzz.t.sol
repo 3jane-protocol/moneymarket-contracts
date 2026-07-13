@@ -309,6 +309,7 @@ contract LCCLifecycleFuzz is LCCBase {
         assertEq(
             margin.balanceOf(address(vault)),
             uint256(totals.activeMargin) + uint256(totals.pendingMargin) + sums.claimableMargin + auctionInventory
+                + vault.pendingTreasuryMargin()
         );
         assertEq(usdc.balanceOf(address(vault)), 0);
     }
@@ -329,6 +330,7 @@ contract LCCLifecycleFuzz is LCCBase {
         }
 
         uint256 dustBound = _marginDustBound(actors.length);
+        vault.sweepTreasury();
         assertLe(
             uint256(vault.totals().activeMargin) + uint256(vault.totals().pendingMargin) + claimableMargin, dustBound
         );

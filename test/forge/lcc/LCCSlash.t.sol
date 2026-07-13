@@ -18,16 +18,16 @@ contract LCCSlashTest is LCCBase {
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(
-            state.marginReleased + state.fundedUsersRemainingMargin + margin.balanceOf(treasury) + state.returnPool,
+            state.marginReleased + state.fundedUsersRemainingMargin + _accruedTreasuryMargin() + state.returnPool,
             200e18
         );
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(state.returnPool, 100e18);
         assertEq(vault.totals().activeMargin, 100e18);
         assertEq(vault.totals().activeCommitment, 200e18);
 
         vault.finalizeEpochSlash(0);
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
     }
 
     function testSlashFeeZeroReturnsAllSurplus() public {
@@ -40,7 +40,7 @@ contract LCCSlashTest is LCCBase {
         vault.finalizeEpochSlash(0);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(state.returnPool, 100e18);
         assertEq(vault.totals().activeMargin, 100e18);
         assertEq(vault.totals().activeCommitment, 200e18);
@@ -70,7 +70,7 @@ contract LCCSlashTest is LCCBase {
         oracle.setPrice(1e36);
         vault.finalizeEpochSlash(0);
 
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(vault.getEpochState(0).returnPool, 100e18);
 
         ILCCVault.VaultParams memory params = _termParams(1);
@@ -85,7 +85,7 @@ contract LCCSlashTest is LCCBase {
         vm.warp(START + EPOCH);
         vault.finalizeEpochSlash(0);
 
-        assertEq(margin.balanceOf(treasury), 100e18);
+        assertEq(_accruedTreasuryMargin(), 100e18);
         assertEq(vault.getEpochState(0).returnPool, 0);
     }
 
@@ -98,11 +98,11 @@ contract LCCSlashTest is LCCBase {
         emit LCCEventsLib.UserDefaulted(alice, 0, 100e18, 200e18);
         _syncAs(alice);
 
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(vault.totals().activeMargin, 100e18);
 
         _syncAs(alice);
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(vault.totals().activeMargin, 100e18);
     }
 
@@ -125,7 +125,7 @@ contract LCCSlashTest is LCCBase {
         emit LCCEventsLib.UserDefaulted(alice, 1, 150e18, 300e18);
         _syncAs(alice);
 
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
     }
 
     function testExitingDefaulterDoesNotBrickMaturityFoldWithoutUserMaterialization() public {
@@ -138,7 +138,7 @@ contract LCCSlashTest is LCCBase {
         vm.warp(START + EPOCH);
         _deposit(bob, 50e18);
 
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(vault.exitBucketMarginByMaturity(1), 0);
         assertEq(vault.totals().activeMargin, 150e18);
 

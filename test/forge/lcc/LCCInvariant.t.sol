@@ -50,7 +50,7 @@ contract LCCInvariantTest is LCCBase {
         vault.finalizeEpochSlash(0);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        uint256 disposedSlash = margin.balanceOf(treasury) + state.returnPool;
+        uint256 disposedSlash = margin.balanceOf(treasury) + vault.pendingTreasuryMargin() + state.returnPool;
 
         assertEq(state.marginReleased + state.fundedUsersRemainingMargin + disposedSlash, state.marginAtCallOpen);
     }
@@ -118,8 +118,8 @@ contract LCCInvariantHandler is Test {
 
         vm.prank(actor);
         try invariantVault.deposit(amount) returns (uint256) {
-            // marginAsset enters the vault only via deposit; count the exact amount pulled in. A synced slash-fee
-            // disposal in the same tx moves margin to the treasury, which the ledger's treasury term accounts for.
+            // marginAsset enters the vault only via deposit; count the exact amount pulled in. Slash disposal may
+            // accrue pending treasury margin in the same transaction, which remains in the vault until swept.
             ghostCumDeposited += amount;
         } catch (bytes memory reason) {
             if (!_expectedDepositError(reason)) fail();
@@ -480,7 +480,7 @@ contract LCCInvariantHandler is Test {
         vm.prank(invariantOwner);
         try invariantVault.setRiskCaps(protocolCap, maxCap, exitCapBps, 0) {
             totals = invariantVault.totals();
-            uint256 utilizationAfter = totals.activeCommitment + totals.pendingCommitment;
+            uint256 utilizationAfter = uint256(totals.activeCommitment) + uint256(totals.pendingCommitment);
             ghostGrandfatheredOverCapExposure = Math.saturatingSub(utilizationAfter, protocolCap);
         } catch (bytes memory reason) {
             if (!_expectedSyncedOracleError(reason)) fail();
@@ -498,6 +498,10 @@ contract LCCInvariantHandler is Test {
         // (ShutdownActive) is already guarded above; call it directly and let any unexpected revert fail the run.
         vm.prank(invariantOwner);
         invariantVault.shutdown();
+    }
+
+    function sweepTreasury() external {
+        invariantVault.sweepTreasury();
     }
 
     function warpToPreCall() external {
@@ -586,9 +590,9 @@ contract LCCInvariantHandler is Test {
 
     // Per-action revert whitelists are kept minimal: only selectors reachable AND legitimate for that specific call.
     // `_expectedMaterializeError` (the _replayForUpdate barrier + oracle-disposal revert) is the base for the actions
-    // that run _replayForUpdate: deposit, requestExit, and the claims (LCCVault.sol:300,337,373,394). deposit adds
-    // CapExceeded (only thrown in deposit, LCCVault.sol:314) and InvalidAmount; requestExit adds InvalidAmount (a
-    // synced default can zero its commitment after the stale guard) and ExitCapacityReached. Claims add NOTHING
+    // that run _replayForUpdate: deposit, requestExit, and the claims. deposit adds InvalidPhase for the live-auction
+    // freeze, CapExceeded, and InvalidAmount; requestExit adds InvalidAmount (a synced default can zero its commitment
+    // after the stale guard) and ExitCapacityReached. Claims add NOTHING
     // beyond the base -- their preconditions make NoExitRequested/ExitNotMature/NothingToClaim unreachable, so
     // catching those would mask a preview-vs-claim divergence. materialize/setRiskCaps do NO per-account replay
     // (materializeAccount uses the bounded _replayAndRecordDefaults; setRiskCaps only folds global state), so the
@@ -597,7 +601,7 @@ contract LCCInvariantHandler is Test {
     function _expectedDepositError(bytes memory reason) internal pure returns (bool) {
         bytes4 selector = _revertSelector(reason);
         return _expectedMaterializeError(reason) || selector == LCCErrorsLib.CapExceeded.selector
-            || selector == LCCErrorsLib.InvalidAmount.selector;
+            || selector == LCCErrorsLib.InvalidAmount.selector || selector == LCCErrorsLib.InvalidPhase.selector;
     }
 
     function _expectedRequestExitError(bytes memory reason) internal pure returns (bool) {
@@ -611,8 +615,8 @@ contract LCCInvariantHandler is Test {
     }
 
     /// @dev Records margin that left the vault to a non-treasury recipient (funder release, filler award, exit
-    /// payout). A slash-fee disposal to the treasury can piggyback on any synced action; the ledger already
-    /// subtracts the treasury balance, so the treasury portion is excluded here to avoid double-counting.
+    /// payout). Treasury accrual stays in the vault, while the separately fuzzed sweep is reconciled through the
+    /// treasury-balance term in the ghost ledger.
     function _recordMarginOut(uint256 vaultBalanceBefore, uint256 treasuryBalanceBefore) internal {
         uint256 vaultBalanceAfter = invariantMargin.balanceOf(address(invariantVault));
         if (vaultBalanceAfter >= vaultBalanceBefore) return;
@@ -715,6 +719,7 @@ contract LCCStatefulInvariantTest is LCCBase {
         assertEq(
             margin.balanceOf(address(vault)),
             uint256(totals.activeMargin) + uint256(totals.pendingMargin) + claimableMargin + auctionInventory
+                + vault.pendingTreasuryMargin()
         );
         _assertGhostFlowLedger();
         assertEq(usdc.balanceOf(address(vault)), 0);
@@ -732,6 +737,7 @@ contract LCCStatefulInvariantTest is LCCBase {
         assertGe(
             margin.balanceOf(address(vault)),
             uint256(totals.activeMargin) + uint256(totals.pendingMargin) + auctionInventory
+                + vault.pendingTreasuryMargin()
         );
     }
 
@@ -739,12 +745,33 @@ contract LCCStatefulInvariantTest is LCCBase {
         if (!_materializeEveryoneForInvariant()) return;
         if (vault.shutdownState().active || _callWindowClosed(vault)) return;
 
-        ILCCVault.Totals memory totals = vault.totals();
         uint256 protocolCap = vault.riskConfig().protocolCommitmentCap;
-        uint256 utilization = uint256(totals.activeCommitment) + uint256(totals.pendingCommitment);
+        uint256 utilization = _settledCallableUtilization();
         uint256 overCapExposure = Math.saturatingSub(utilization, protocolCap);
 
         assertLe(overCapExposure, handler.ghostGrandfatheredOverCapExposure());
+    }
+
+    /// @dev Reads current totals while a call can still open; otherwise snapshots, advances to the next epoch, and
+    /// executes the real sync/fold path before reading totals. No exit bucket or disposal-cutoff expression is used.
+    function _settledCallableUtilization() internal returns (uint256 utilization) {
+        ILCCVault.Totals memory totals = vault.totals();
+        if (vault.currentPhase() < ILCCVault.Phase.Funding) {
+            return uint256(totals.activeCommitment) + uint256(totals.pendingCommitment);
+        }
+
+        ILCCVault.RiskConfig memory config = vault.riskConfig();
+        uint256 snapshot = vm.snapshotState();
+        if (oracle.price() == 0) oracle.setPrice(ORACLE_PRICE_SCALE);
+        vm.warp(vault.phaseEndsAt(vault.currentEpoch(), ILCCVault.Phase.Closed));
+        vm.prank(owner);
+        vault.setRiskCaps(
+            config.protocolCommitmentCap, config.userCommitmentCap, config.exitCapBps, config.minDepositAssets
+        );
+
+        totals = vault.totals();
+        utilization = uint256(totals.activeCommitment) + uint256(totals.pendingCommitment);
+        assertTrue(vm.revertToStateAndDelete(snapshot), "snapshot restore failed");
     }
 
     function invariant_AuctionRampBound() public view {
@@ -860,6 +887,78 @@ contract LCCStatefulInvariantTest is LCCBase {
         assertLe(
             uint256(vault.totals().activeMargin) + uint256(vault.totals().pendingMargin) + claimableMargin, dustBound
         );
+    }
+}
+
+contract LCCCutoffNoOpHandler {
+    uint256 internal calls;
+
+    function noop() external {
+        ++calls;
+    }
+}
+
+/// @dev Falsifiability fixture for the disposal cutoff. Both branches start from the same live auction at the first
+/// zero-award step. One settles eagerly by filling the shortfall; the other advances to the next epoch and lets the
+/// real sync/fold path settle it. These paths have identical economics, so their disposal outputs must match. This
+/// compares observed state transitions and never reads an exit bucket or reconstructs the production cutoff.
+contract LCCCutoffStatefulInvariantTest is LCCBase {
+    LCCCutoffNoOpHandler internal cutoffHandler;
+
+    function setUp() public override {
+        super.setUp();
+
+        ILCCVault.VaultParams memory params = _auctionParams();
+        params.protocolCommitmentCap = 300e18;
+        _deployVaultWithParams(params);
+
+        _deposit(carol, 100e18);
+        _deposit(alice, 50e18);
+        vm.prank(carol);
+        assertEq(vault.requestExit(), 1);
+
+        _openCall(150e18);
+        _fund(carol);
+        _deposit(bob, 50e18);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+        oracle.setPrice(2 * ORACLE_PRICE_SCALE);
+        vm.warp(vault.phaseEndsAt(0, ILCCVault.Phase.Funding) + 1);
+
+        cutoffHandler = new LCCCutoffNoOpHandler();
+        targetContract(address(cutoffHandler));
+    }
+
+    function invariant_GoingConcernProtocolCap() public {
+        uint256 snapshot = vm.snapshotState();
+
+        vm.prank(bob);
+        (, uint256 award) = vault.takeAuction(type(uint256).max);
+        assertEq(award, 0);
+        ILCCVault.EpochState memory eager = vault.getEpochState(0);
+        uint256 eagerTreasury = vault.pendingTreasuryMargin();
+
+        assertTrue(vm.revertToState(snapshot), "eager snapshot restore failed");
+        vm.warp(vault.phaseEndsAt(0, ILCCVault.Phase.Closed));
+        vault.materializeAccount(bob);
+        ILCCVault.EpochState memory postFold = vault.getEpochState(0);
+
+        assertEq(eager.returnPool, postFold.returnPool, "return pool differs across equivalent settlement paths");
+        assertEq(
+            eager.returnCommitment,
+            postFold.returnCommitment,
+            "return commitment differs across equivalent settlement paths"
+        );
+        assertEq(
+            eagerTreasury, vault.pendingTreasuryMargin(), "treasury accrual differs across equivalent settlement paths"
+        );
+
+        ILCCVault.Totals memory totals = vault.totals();
+        assertLe(
+            uint256(totals.activeCommitment) + uint256(totals.pendingCommitment),
+            vault.riskConfig().protocolCommitmentCap
+        );
+        assertTrue(vm.revertToStateAndDelete(snapshot), "post-fold snapshot restore failed");
     }
 }
 

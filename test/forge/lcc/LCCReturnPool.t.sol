@@ -28,33 +28,33 @@ contract LCCReturnPoolTest is LCCBase {
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
         assertEq(state.returnPool, 100e18);
         assertEq(state.returnCommitment, 200e18);
     }
 
     function testHeadroomZeroSendsWholeSurplusToTreasury() public {
-        _setupCapBoundSlash(200e18);
+        _setupCapBoundSlash(100e18);
         vault.materializeAccount(alice);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 0);
         assertEq(state.returnCommitment, 0);
-        assertEq(margin.balanceOf(treasury), 100e18);
-        assertEq(vault.totals().activeMargin, 100e18);
-        assertEq(vault.totals().activeCommitment, 200e18);
+        assertEq(_accruedTreasuryMargin(), 50e18);
+        assertEq(vault.totals().activeMargin, 50e18);
+        assertEq(vault.totals().activeCommitment, 100e18);
         assertEq(vault.totals().pendingMargin, 0);
     }
 
     function testPairedShareGuardDoesNotCreditMarginWhenCommitmentShareFloorsToZero() public {
-        _setupCapBoundSlash(200e18 + 1);
+        _setupCapBoundSlash(100e18 + 1);
         vault.materializeAccount(alice);
         vault.materializeAccount(bob);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 0);
         assertEq(state.returnCommitment, 0);
-        assertEq(margin.balanceOf(treasury), 100e18);
+        assertEq(_accruedTreasuryMargin(), 50e18);
 
         ILCCVault.Account memory aliceAccount = vault.getAccount(alice);
         ILCCVault.Account memory bobAccount = vault.getAccount(bob);
@@ -62,8 +62,8 @@ contract LCCReturnPoolTest is LCCBase {
         assertEq(aliceAccount.activeCommitment, 0);
         assertEq(bobAccount.activeMargin, 0);
         assertEq(bobAccount.activeCommitment, 0);
-        assertEq(vault.totals().activeMargin, 100e18);
-        assertEq(vault.totals().activeCommitment, 200e18);
+        assertEq(vault.totals().activeMargin, 50e18);
+        assertEq(vault.totals().activeCommitment, 100e18);
         _assertAccountTotalsWithinDust(0);
     }
 
@@ -81,7 +81,7 @@ contract LCCReturnPoolTest is LCCBase {
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 0);
         assertEq(state.returnCommitment, 0);
-        assertEq(margin.balanceOf(treasury), 100e18);
+        assertEq(_accruedTreasuryMargin(), 100e18);
         assertEq(vault.totals().activeMargin, 0);
         assertEq(vault.totals().activeCommitment, 0);
     }
@@ -111,28 +111,31 @@ contract LCCReturnPoolTest is LCCBase {
         assertLe(vault.totals().activeCommitment - aliceAccount.activeCommitment - bobAccount.activeCommitment, 1);
     }
 
-    function testDueExitMaturityCountsAsDisposalHeadroom() public {
-        _deployVaultWithParams(_params(200e18 + 500_000, 200e18 + 500_000));
-
-        _deposit(carol, 100e18);
-        _deposit(alice, 250_000);
-
-        vm.prank(carol);
-        uint256 maturity = vault.requestExit();
-        assertEq(maturity, 1);
-
-        _openCall(1);
-        _fund(carol);
-
-        oracle.setPrice(4 * ORACLE_PRICE_SCALE);
-        vm.warp(START + EPOCH);
-        vault.materializeAccount(alice);
+    function testNoAuctionDisposalCountsNextEpochExitAsHeadroom() public {
+        uint256 maturity = _setupNextEpochExitHeadroom();
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(state.returnPool, 250_000);
-        assertEq(state.returnCommitment, 2_000_000);
-        assertEq(margin.balanceOf(treasury), 0);
-        assertEq(vault.exitBucketCommitmentByMaturity(maturity), 0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
+        assertEq(state.returnPool, 50e18);
+        assertEq(state.returnCommitment, 200e18);
+        assertEq(_accruedTreasuryMargin(), 0);
+        assertEq(vault.exitBucketCommitmentByMaturity(maturity), 100e18);
+    }
+
+    function testLateNoAuctionFinalizationAtCurrentPlusThreePreservesReturnPool() public {
+        _setupNextEpochExitHeadroom();
+        vm.warp(START + 3 * EPOCH + NORMAL + PRE_CALL);
+        assertEq(vault.currentEpoch(), 3);
+
+        vault.finalizeEpochSlash(0);
+
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
+        assertEq(state.returnPool, 50e18);
+        assertEq(state.returnCommitment, 200e18);
+        assertEq(_accruedTreasuryMargin(), 0);
     }
 
     function testCapBelowGrandfatheredUtilizationDoesNotAddDueCommitmentAsHeadroom() public {
@@ -161,7 +164,7 @@ contract LCCReturnPoolTest is LCCBase {
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 0);
         assertEq(state.returnCommitment, 0);
-        assertEq(margin.balanceOf(treasury), 50e18);
+        assertEq(_accruedTreasuryMargin(), 50e18);
         assertEq(vault.totals().activeCommitment, 90e18);
         assertGt(vault.totals().activeCommitment, vault.riskConfig().protocolCommitmentCap);
     }
@@ -199,25 +202,41 @@ contract LCCReturnPoolTest is LCCBase {
         assertEq(state.returnCommitment, packingHeadroom);
         assertEq(vault.totals().activeCommitment, maxPacked - 10e18);
         assertGt(state.returnPool, 0);
-        assertEq(state.returnPool + margin.balanceOf(treasury), 10e18);
+        assertEq(state.returnPool + _accruedTreasuryMargin(), 10e18);
     }
 
-    /// @dev Slashed epoch whose freed cap headroom is re-consumed by a fresh deposit before disposal:
-    /// alice and bob default on a 200e18 call, carol's deposit fills the cap back to `cap`, and time is
-    /// warped past the epoch so the next touch settles and disposes.
+    function _setupNextEpochExitHeadroom() internal returns (uint256 maturity) {
+        _deployVaultWithParams(_params(300e18, 300e18));
+
+        _deposit(carol, 100e18);
+        _deposit(alice, 50e18);
+        vm.prank(carol);
+        maturity = vault.requestExit();
+        assertEq(maturity, 1);
+
+        _openCall(150e18);
+        _fund(carol);
+        _deposit(bob, 50e18);
+        oracle.setPrice(2 * ORACLE_PRICE_SCALE);
+    }
+
+    /// @dev The owner lowers the cap to already-active rolling utilization before settlement, independently
+    /// exercising the commitment-side clamp without relying on a deposit during the live auction.
     function _setupCapBoundSlash(uint256 cap) internal {
         ILCCVault.VaultParams memory params = _auctionParams();
-        params.protocolCommitmentCap = cap;
+        params.protocolCommitmentCap = 200e18;
         _deployVaultWithParams(params);
 
-        _deposit(alice, 99e18);
+        _deposit(alice, 49e18);
         _deposit(bob, 1e18);
+        _deposit(carol, 50e18);
         _openCall(200e18);
+        _fundRolling(carol);
         _finishFunding();
         vault.finalizeEpochSlash(0);
 
-        vm.warp(START + NORMAL + PRE_CALL + FUNDING + 1);
-        _deposit(carol, 100e18);
+        vm.prank(owner);
+        vault.setRiskCaps(cap, 200e18, 2_000, 0);
 
         vm.warp(START + EPOCH);
     }

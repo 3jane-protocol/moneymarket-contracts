@@ -183,7 +183,7 @@ contract LCCPauseTest is LCCBase {
         assertTrue(state.slashDisabledByShutdown);
         assertEq(state.slashedMargin, 0);
         assertEq(vault.totals().activeMargin, 200e18);
-        assertEq(margin.balanceOf(treasury), 0);
+        assertEq(_accruedTreasuryMargin(), 0);
     }
 
     function testPausedAccumulatedAcrossTwoCyclesKeepsClockExact() public {

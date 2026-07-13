@@ -564,14 +564,14 @@ flowchart TD
 
 `LCCAuctionLib` is the only externally linked library in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-23,955 bytes, 321 bytes below the 24,276-byte release ceiling and 621 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+24,250 bytes, 26 bytes below the 24,276-byte release ceiling and 326 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls
 `_disableInitializers()`. `LCCVaultFactory` deploys per-facility `BeaconProxy` instances with atomic `initialize`
 calldata; per-facility params live in proxy storage. The factory registry (`isVault` / `allVaults`) records owner-vetted
 **provenance only** — the beacon is public, so anyone can point an unregistered proxy at it. Packed structs in
-`LCCTypesLib` are upgrade-frozen layout; the initial layout retains a 50-slot `__gap`, and new state must consume it;
+`LCCTypesLib` are upgrade-frozen layout; the initial layout retains a 49-slot `__gap` after the treasury accrual slot, and new state must consume it;
 `LCCAuctionLib` must be re-linked on every
 implementation redeploy. `yarn build:forge:size` embeds the build-profile storage layout in the canonical artifact
 and recursively compares its complete type graph against the reviewer-controlled

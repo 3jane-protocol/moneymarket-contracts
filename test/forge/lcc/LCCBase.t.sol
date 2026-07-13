@@ -30,6 +30,21 @@ contract LCCMockToken is ERC20 {
     }
 }
 
+contract LCCBlacklistMockToken is LCCMockToken {
+    address internal blockedRecipient;
+
+    constructor(string memory name_, string memory symbol_) LCCMockToken(name_, symbol_) {}
+
+    function setBlockedRecipient(address recipient) external {
+        blockedRecipient = recipient;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        require(blockedRecipient == address(0) || to != blockedRecipient, "BLOCKED_RECIPIENT");
+        super._update(from, to, value);
+    }
+}
+
 contract LCCMockUSD3 is ERC4626 {
     uint256 internal depositLimit = type(uint256).max;
     uint256 internal minDeposit;
@@ -409,7 +424,11 @@ contract LCCBase is Test {
             expectedTreasury += toTreasury;
         }
 
-        assertEq(margin.balanceOf(treasury), initialTreasuryMargin + expectedTreasury);
+        assertEq(margin.balanceOf(treasury) + vault.pendingTreasuryMargin(), initialTreasuryMargin + expectedTreasury);
+    }
+
+    function _accruedTreasuryMargin() internal view returns (uint256) {
+        return margin.balanceOf(treasury) + vault.pendingTreasuryMargin();
     }
 
     /// @dev Upper bound on the margin the return-pool re-attribution can leave orphaned in the global totals: one
