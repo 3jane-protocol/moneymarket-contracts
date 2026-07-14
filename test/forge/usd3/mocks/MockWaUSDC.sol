@@ -13,6 +13,9 @@ import {Math} from "../../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 contract MockWaUSDC is ERC20 {
     using Math for uint256;
 
+    error EnforcedPause();
+    error StaticATokenInvalidZeroShares();
+
     // Storage slot 0 for underlying asset (avoiding immutables for etching)
     address private _asset;
 
@@ -24,6 +27,10 @@ contract MockWaUSDC is ERC20 {
 
     uint128 private _virtualUnderlyingBalance;
 
+    // Append-only test controls: storage slots 5/6 are etched by Setup.sol.
+    bool private _reserveFrozen;
+    uint128 private _maxMintOverride;
+
     constructor(address _usdc) ERC20("Wrapped Aave USDC", "waUSDC") {
         _asset = _usdc;
     }
@@ -32,7 +39,7 @@ contract MockWaUSDC is ERC20 {
      * @dev Modifier to check if contract is not paused
      */
     modifier whenNotPaused() {
-        require(!_paused, "EnforcedPause");
+        if (_paused) revert EnforcedPause();
         _;
     }
 
@@ -52,6 +59,14 @@ contract MockWaUSDC is ERC20 {
      */
     function setPaused(bool paused_) external {
         _paused = paused_;
+    }
+
+    function setReserveFrozen(bool reserveFrozen_) external {
+        _reserveFrozen = reserveFrozen_;
+    }
+
+    function setMaxMintOverride(uint128 maxMintOverride_) external {
+        _maxMintOverride = maxMintOverride_;
     }
 
     function setVirtualUnderlyingBalance(uint128 virtualUnderlyingBalance_) external {
@@ -83,6 +98,7 @@ contract MockWaUSDC is ERC20 {
      */
     function deposit(uint256 assets, address receiver) public whenNotPaused returns (uint256 shares) {
         shares = previewDeposit(assets);
+        if (shares == 0) revert StaticATokenInvalidZeroShares();
         IERC20(_asset).transferFrom(msg.sender, address(this), assets);
         _mint(receiver, shares);
         return shares;
@@ -164,22 +180,23 @@ contract MockWaUSDC is ERC20 {
      * @dev Max deposit/mint/withdraw/redeem functions
      */
     function maxDeposit(address) public view returns (uint256) {
-        if (_paused) return 0;
+        if (_reserveFrozen) return 0;
         return type(uint256).max;
     }
 
     function maxMint(address) public view returns (uint256) {
-        if (_paused) return 0;
+        if (_reserveFrozen) return 0;
+        if (_maxMintOverride != 0) return _maxMintOverride;
         return type(uint256).max;
     }
 
     function maxWithdraw(address owner) public view returns (uint256) {
-        if (_paused) return 0;
+        if (_paused || _reserveFrozen) return 0;
         return convertToAssets(maxRedeem(owner));
     }
 
     function maxRedeem(address owner) public view returns (uint256) {
-        if (_paused) return 0;
+        if (_paused || _reserveFrozen) return 0;
         uint256 underlyingTokenBalanceInShares =
             convertToShares(_virtualUnderlyingBalance == 0 ? totalAssets() : _virtualUnderlyingBalance);
         uint256 cachedUserBalance = balanceOf(owner);
@@ -190,6 +207,7 @@ contract MockWaUSDC is ERC20 {
      * @dev Mint function for ERC4626 compatibility
      */
     function mint(uint256 shares, address receiver) public whenNotPaused returns (uint256 assets) {
+        if (shares == 0) revert StaticATokenInvalidZeroShares();
         assets = previewMint(shares);
         IERC20(_asset).transferFrom(msg.sender, address(this), assets);
         _mint(receiver, shares);

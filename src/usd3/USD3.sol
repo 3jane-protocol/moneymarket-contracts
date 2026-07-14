@@ -209,13 +209,41 @@ contract USD3 is BaseHooksUpgradeable {
         return Math.min(maxOnCreditCap, subCap);
     }
 
+    /// @dev Wraps idle USDC into waUSDC via a fallible, rounding-aware mint.
+    /// Skips (leaving USDC idle) when the wrapper is paused, when the deposit would mint
+    /// zero shares, or when `enforceSlack` is set and the 1-unit mint rounding cost is not
+    /// covered by slack between live nav and reported total assets (plus any pending credit).
+    /// @param amount USDC amount to wrap
+    /// @param pendingCredit Assets TokenizedStrategy will credit to totalAssets after this call
+    /// @param enforceSlack Whether to require the rounding cost be covered by nav slack
+    function _wrapUSDC(uint256 amount, uint256 pendingCredit, bool enforceSlack) private {
+        if (amount == 0 || Pausable(address(WAUSDC)).paused()) return;
+        uint256 shares = WAUSDC.previewDeposit(amount);
+        uint256 maxShares = WAUSDC.maxMint(address(this));
+        if (shares > maxShares) shares = maxShares;
+        if (shares == 0) return;
+        if (enforceSlack) {
+            uint256 aggregate = suppliedWaUSDC() + balanceOfWaUSDC();
+            uint256 baseValue = WAUSDC.convertToAssets(aggregate);
+            uint256 cost = WAUSDC.previewMint(shares);
+            uint256 gain = WAUSDC.convertToAssets(aggregate + shares) - baseValue;
+            // The mint's ≤1-unit rounding cost must be covered by realized-but-unreported
+            // interest, else leave the USDC idle (counted at face by nav) rather than book a deficit.
+            if (cost > gain) {
+                uint256 navNow = baseValue + asset.balanceOf(address(this));
+                if (TokenizedStrategy.totalAssets() + pendingCredit + (cost - gain) > navNow) return;
+            }
+        }
+        try WAUSDC.mint(shares, address(this)) {} catch {}
+    }
+
     /// @dev Deploy funds to MorphoCredit market respecting maxOnCredit ratio and subordination cap
     /// @param _amount Amount of asset to deploy
     function _deployFunds(uint256 _amount) internal override {
         if (_amount == 0) return;
 
         // Wrap USDC to waUSDC
-        _amount = WAUSDC.deposit(_amount, address(this));
+        _wrapUSDC(_amount, _amount, true);
 
         uint256 maxOnCreditRatio = maxOnCredit();
         if (maxOnCreditRatio == 0) {
@@ -287,6 +315,8 @@ contract USD3 is BaseHooksUpgradeable {
 
         morphoCredit.accrueInterest(params);
 
+        if (!TokenizedStrategy.isShutdown()) _wrapUSDC(asset.balanceOf(address(this)), 0, false);
+
         return nav();
     }
 
@@ -298,9 +328,7 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         // First wrap any idle USDC to waUSDC
-        if (_totalIdle > 0) {
-            WAUSDC.deposit(_totalIdle, address(this));
-        }
+        _wrapUSDC(_totalIdle, 0, true);
 
         _applyDeployCap(true);
     }
