@@ -43,26 +43,6 @@ contract WaUSDCWrapValuePreservationTest is Setup {
         _assertAccounted("report must crystallize wrapping value");
     }
 
-    function test_depositSpamCannotFreezeWithdrawals() public {
-        wrapper.setSharePrice(STATIC_PRICE);
-        setMaxOnCredit(0);
-        _depositExactShares(5_000_000_000);
-
-        vm.prank(keeper);
-        tokenized.report();
-
-        for (uint256 i; i < 50; ++i) {
-            vm.prank(alice);
-            tokenized.deposit(2, alice);
-
-            vm.prank(keeper);
-            tokenized.tend();
-
-            _assertAccounted("dust deposit/tend must not create deficit");
-            assertGt(usd3.availableWithdrawLimit(alice), 0, "dust spam froze withdrawals");
-        }
-    }
-
     /*//////////////////////////////////////////////////////////////
                               LEMMAS
     //////////////////////////////////////////////////////////////*/
@@ -86,24 +66,27 @@ contract WaUSDCWrapValuePreservationTest is Setup {
                         REPORT-TIME HEAL
     //////////////////////////////////////////////////////////////*/
 
-    function test_staticPriceReportHealsFreshVaultPileAndDeploys() public {
+    function test_reportWrapsLooseUSDCAndDeploys() public {
         wrapper.setSharePrice(STATIC_PRICE);
         setMaxOnCredit(10_000);
 
-        uint256 shares = 5_000_000_001; // Non-zero mock carry; deliberately not divisible by 500.
-        uint256 assets = wrapper.previewMint(shares);
-        _deposit(assets);
+        _depositExactShares(5_000_000_000);
+        uint256 suppliedBefore = usd3.suppliedWaUSDC();
 
-        assertEq(wrapper.balanceOf(address(usd3)), 0, "fresh lossy wrap should wait for report");
-        assertEq(asset.balanceOf(address(usd3)), assets, "fresh pile should stay idle");
+        uint256 looseShares = 5_000_000_001; // Deliberately not divisible by 500.
+        uint256 looseAssets = wrapper.previewMint(looseShares);
+        assertEq(wrapper.previewDeposit(looseAssets), looseShares, "loose assets must map to exact whole shares");
+        deal(address(asset), address(usd3), looseAssets);
+
+        assertEq(asset.balanceOf(address(usd3)), looseAssets, "loose USDC setup failed");
 
         vm.prank(keeper);
-        (, uint256 loss) = tokenized.report();
+        (uint256 profit,) = tokenized.report();
 
-        assertEq(loss, 1, "report must crystallize the wrap loss");
-        assertEq(asset.balanceOf(address(usd3)), 0, "report did not clear the wrappable pile");
-        assertGt(usd3.suppliedWaUSDC(), 0, "post-report rebalance did not deploy");
-        _assertAccounted("report bootstrap left stale accounting");
+        assertGt(profit, 0, "report did not recognize loose USDC");
+        assertEq(asset.balanceOf(address(usd3)), 0, "report did not wrap loose USDC");
+        assertGt(usd3.suppliedWaUSDC(), suppliedBefore, "post-report rebalance did not deploy wrapped USDC");
+        _assertAccounted("report-time wrap left stale accounting");
     }
 
     function test_reportWrapLossBurnsSUSD3WithoutRevert() public {
@@ -142,6 +125,15 @@ contract WaUSDCWrapValuePreservationTest is Setup {
         _assertAccounted("zero-balance sUSD3 branch left deficit");
     }
 
+    function test_reportSucceedsUnderPausedWaUSDCWithDeployImbalance() public {
+        uint256 snapshot = vm.snapshotState();
+        bool overTargetSucceeded = _runPausedReportWithDeployImbalance(true);
+        assertTrue(vm.revertToStateAndDelete(snapshot), "failed to restore fresh fixture");
+        bool underTargetSucceeded = _runPausedReportWithDeployImbalance(false);
+
+        assertTrue(overTargetSucceeded && underTargetSucceeded, "paused report reverted with deploy imbalance");
+    }
+
     /*//////////////////////////////////////////////////////////////
                          FALLIBLE MINT PATHS
     //////////////////////////////////////////////////////////////*/
@@ -172,8 +164,6 @@ contract WaUSDCWrapValuePreservationTest is Setup {
 
         wrapper.setReserveFrozen(false);
         wrapper.setMaxMintOverride(10);
-        // Donate one unit of live slack so the clamped wrap's one-unit loss is funded.
-        deal(address(asset), address(usd3), asset.balanceOf(address(usd3)) + 1);
         uint256 sharesBefore = wrapper.balanceOf(address(usd3));
         uint256 idleBefore = asset.balanceOf(address(usd3));
         uint256 expectedCost = wrapper.previewMint(10);
@@ -214,6 +204,54 @@ contract WaUSDCWrapValuePreservationTest is Setup {
         assets = wrapper.previewMint(waShares);
         assertEq(wrapper.previewDeposit(assets), waShares, "amount does not mint exact waUSDC shares");
         _deposit(assets);
+    }
+
+    function _runPausedReportWithDeployImbalance(bool overTarget) internal returns (bool reportSucceeded) {
+        sUSD3 subordinate = setUpSUSD3();
+        setMaxOnCredit(overTarget ? 10_000 : 0);
+        _deposit(10_000e6);
+
+        uint256 subordinateDeposit = tokenized.balanceOf(alice) / 10;
+        vm.startPrank(alice);
+        tokenized.approve(address(subordinate), subordinateDeposit);
+        subordinate.deposit(subordinateDeposit, alice);
+        vm.stopPrank();
+
+        if (overTarget) {
+            assertGt(usd3.suppliedWaUSDC(), 0, "over-target setup requires deployed waUSDC");
+            setMaxOnCredit(0);
+        } else {
+            assertGt(wrapper.balanceOf(address(usd3)), 0, "under-target setup requires local waUSDC");
+            setMaxOnCredit(10_000);
+        }
+
+        wrapper.setSharePrice(990_000);
+        uint256 expectedNav = usd3.nav();
+        uint256 reportedAssetsBefore = tokenized.totalAssets();
+        uint256 subordinateBalanceBefore = tokenized.balanceOf(address(subordinate));
+        uint256 suppliedBefore = usd3.suppliedWaUSDC();
+        uint256 localBefore = wrapper.balanceOf(address(usd3));
+        assertLt(expectedNav, reportedAssetsBefore, "loss setup failed");
+
+        (bool shouldTendBeforePause,) = usd3.tendTrigger();
+        assertTrue(shouldTendBeforePause, "deploy imbalance should trigger tend before pause");
+
+        wrapper.setPaused(true);
+        (bool shouldTendWhilePaused,) = usd3.tendTrigger();
+        assertFalse(shouldTendWhilePaused, "paused waUSDC should suppress tend trigger");
+
+        vm.prank(keeper);
+        bytes memory returnData;
+        (reportSucceeded, returnData) = address(tokenized).call(abi.encodeCall(ITokenizedStrategy.report, ()));
+        if (!reportSucceeded) return false;
+
+        (, uint256 loss) = abi.decode(returnData, (uint256, uint256));
+        assertGt(loss, 0, "report did not realize the loss");
+        assertEq(tokenized.totalAssets(), expectedNav, "report did not rebase totalAssets to nav");
+        assertEq(tokenized.totalAssets(), usd3.nav(), "post-report accounting is stale");
+        assertLt(tokenized.balanceOf(address(subordinate)), subordinateBalanceBefore, "sUSD3 did not absorb the loss");
+        assertEq(usd3.suppliedWaUSDC(), suppliedBefore, "paused report moved deployed waUSDC");
+        assertEq(wrapper.balanceOf(address(usd3)), localBefore, "paused report moved local waUSDC");
     }
 
     function _assertAccounted(string memory reason) internal view {

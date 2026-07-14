@@ -253,6 +253,29 @@ contract SubordinationDeployCapTest is Setup {
         helper.borrow(marketParams, 100_000e6, 0, borrower, borrower);
     }
 
+    function test_susd3WithdrawRevertsWhileWaUSDCPausedToKeepPullbackAtomic() public {
+        _setupSUSD3ExitRebalanceScenario();
+
+        uint256 suppliedBefore = usd3Strategy.suppliedWaUSDC();
+        uint256 capBefore = _effectiveDeployCapWaUSDC();
+        uint256 usd3BalanceBefore = strategy.balanceOf(address(susd3Strategy));
+        uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
+
+        assertApproxEqAbs(suppliedBefore, capBefore, 2, "pre-withdraw deployment should sit at cap");
+        assertGt(withdrawLimit, 0, "sUSD3 should have debt-floor withdrawal capacity");
+
+        waUSDC.setPaused(true);
+
+        vm.prank(bob);
+        vm.expectRevert();
+        susd3Strategy.withdraw(withdrawLimit, bob, bob);
+
+        assertEq(usd3Strategy.suppliedWaUSDC(), suppliedBefore, "paused exit must not defer the pullback");
+        assertEq(
+            strategy.balanceOf(address(susd3Strategy)), usd3BalanceBefore, "paused exit must leave backing unchanged"
+        );
+    }
+
     function test_susd3WithdrawDoesNotTendAfterUsd3Shutdown() public {
         _setupSUSD3ExitRebalanceScenario();
 

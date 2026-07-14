@@ -61,6 +61,14 @@ contract MockWaUSDC is ERC20 {
         _paused = paused_;
     }
 
+    function transfer(address to, uint256 value) public override whenNotPaused returns (bool) {
+        return super.transfer(to, value);
+    }
+
+    function transferFrom(address from, address to, uint256 value) public override whenNotPaused returns (bool) {
+        return super.transferFrom(from, to, value);
+    }
+
     function setReserveFrozen(bool reserveFrozen_) external {
         _reserveFrozen = reserveFrozen_;
     }
