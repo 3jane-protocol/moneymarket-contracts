@@ -14,6 +14,7 @@ import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
 import {IMorpho, MarketParams, Id} from "../../../../src/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
+import {MorphoStorageLib} from "../../../../src/libraries/periphery/MorphoStorageLib.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
 import {IrmMock} from "../../../../src/mocks/IrmMock.sol";
 import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
@@ -290,6 +291,35 @@ contract Setup is Test, IEvents {
         // Execute borrow through helper - only helper is authorized to borrow
         vm.prank(borrower);
         helper.borrow(marketParams, borrowAmountWaUSDC, 0, borrower, borrower);
+    }
+
+    /// @dev Increases Morpho's packed market totalSupplyAssets while preserving totalSupplyShares.
+    function _simulateYield(USD3 usd3Strategy, uint256 amount) internal {
+        _simulateMarketAssetsDelta(usd3Strategy, amount, true);
+    }
+
+    /// @dev Decreases Morpho's packed market totalSupplyAssets while preserving totalSupplyShares.
+    function _simulateLoss(USD3 usd3Strategy, uint256 amount) internal {
+        _simulateMarketAssetsDelta(usd3Strategy, amount, false);
+    }
+
+    function _simulateMarketAssetsDelta(USD3 usd3Strategy, uint256 amount, bool increase) internal {
+        IMorpho morpho = usd3Strategy.morphoCredit();
+        bytes32 marketSlot = MorphoStorageLib.marketTotalSupplyAssetsAndSharesSlot(usd3Strategy.marketId());
+        uint256 currentTotal = uint256(vm.load(address(morpho), marketSlot));
+        uint128 totalSupplyAssets = uint128(currentTotal);
+        uint256 updatedTotalSupplyAssets;
+
+        if (increase) {
+            updatedTotalSupplyAssets = uint256(totalSupplyAssets) + amount;
+            assertLe(updatedTotalSupplyAssets, type(uint128).max);
+        } else {
+            assertGe(uint256(totalSupplyAssets), amount);
+            updatedTotalSupplyAssets = uint256(totalSupplyAssets) - amount;
+        }
+
+        uint256 preservedTotalSupplyShares = currentTotal & ~uint256(type(uint128).max);
+        vm.store(address(morpho), marketSlot, bytes32(preservedTotalSupplyShares | updatedTotalSupplyAssets));
     }
 
     function _setTokenAddrs() internal {
