@@ -15,6 +15,7 @@ contract MockWaUSDC is ERC20 {
 
     error EnforcedPause();
     error StaticATokenInvalidZeroShares();
+    error AaveReservePaused();
 
     // Storage slot 0 for underlying asset (avoiding immutables for etching)
     address private _asset;
@@ -30,6 +31,7 @@ contract MockWaUSDC is ERC20 {
     // Append-only test controls: storage slots 5/6 are etched by Setup.sol.
     bool private _reserveFrozen;
     uint128 private _maxMintOverride;
+    bool private _aaveReservePaused;
 
     constructor(address _usdc) ERC20("Wrapped Aave USDC", "waUSDC") {
         _asset = _usdc;
@@ -75,6 +77,10 @@ contract MockWaUSDC is ERC20 {
 
     function setMaxMintOverride(uint128 maxMintOverride_) external {
         _maxMintOverride = maxMintOverride_;
+    }
+
+    function setAaveReservePaused(bool aaveReservePaused_) external {
+        _aaveReservePaused = aaveReservePaused_;
     }
 
     function setVirtualUnderlyingBalance(uint128 virtualUnderlyingBalance_) external {
@@ -215,6 +221,7 @@ contract MockWaUSDC is ERC20 {
      * @dev Mint function for ERC4626 compatibility
      */
     function mint(uint256 shares, address receiver) public whenNotPaused returns (uint256 assets) {
+        if (_aaveReservePaused) revert AaveReservePaused();
         if (shares == 0) revert StaticATokenInvalidZeroShares();
         assets = previewMint(shares);
         IERC20(_asset).transferFrom(msg.sender, address(this), assets);

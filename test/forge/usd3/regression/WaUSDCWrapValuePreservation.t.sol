@@ -62,6 +62,28 @@ contract WaUSDCWrapValuePreservationTest is Setup {
         assertLe(cost - gain, 1, "L1: wrap loss exceeds one unit");
     }
 
+    function testFuzz_unwrapRoundingLemmas(uint256 price, uint256 amount, uint256 aggregate) public {
+        price = bound(price, 1e6, 2e6);
+        amount = bound(amount, 0, 1e24);
+        aggregate = bound(aggregate, 0, 1e24);
+        wrapper.setSharePrice(price);
+
+        uint256 shares = wrapper.previewWithdraw(amount);
+        uint256 redeemedAssets = wrapper.previewRedeem(shares);
+        assertGe(redeemedAssets, amount, "U2: redeem does not cover requested withdrawal");
+
+        uint256 remainingNav = wrapper.convertToAssets(aggregate);
+        uint256 navBefore = wrapper.convertToAssets(aggregate + shares);
+        uint256 marginalNav = navBefore - remainingNav;
+        assertGe(marginalNav, redeemedAssets, "U3: redeem exceeds marginal NAV");
+        assertLe(marginalNav - redeemedAssets, 1, "U4: unwrap loss exceeds one unit");
+
+        uint256 navAfterWithdrawal = remainingNav + redeemedAssets - amount;
+        uint256 withdrawalNavDrop = navBefore - navAfterWithdrawal;
+        assertGe(withdrawalNavDrop, amount, "U5: withdrawal increased NAV");
+        assertLe(withdrawalNavDrop - amount, 1, "U6: withdrawal NAV dust exceeds one unit");
+    }
+
     /*//////////////////////////////////////////////////////////////
                         REPORT-TIME HEAL
     //////////////////////////////////////////////////////////////*/
@@ -123,6 +145,35 @@ contract WaUSDCWrapValuePreservationTest is Setup {
         (, uint256 loss) = tokenized.report();
         assertEq(loss, 1, "expected one-unit report loss");
         _assertAccounted("zero-balance sUSD3 branch left deficit");
+    }
+
+    function test_characterization_repeatedDepositDustSelfHealsOnReport() public {
+        wrapper.setSharePrice(STATIC_PRICE);
+        setMaxOnCredit(0);
+
+        uint256 depositAmount = 2;
+        uint256 depositCount = 5;
+        assertEq(wrapper.previewDeposit(depositAmount), 1, "setup must mint one whole wrapper share");
+        assertEq(wrapper.previewMint(1), depositAmount, "setup must consume the full deposit");
+
+        uint256 previousDrift;
+        for (uint256 i; i < depositCount; ++i) {
+            _deposit(depositAmount);
+
+            uint256 currentDrift = tokenized.totalAssets() - usd3.nav();
+            assertEq(currentDrift, previousDrift + 1, "accepted drift must grow by one unit per deposit");
+            previousDrift = currentDrift;
+        }
+
+        assertEq(previousDrift, depositCount, "repeated-deposit drift characterization changed");
+        assertEq(usd3.availableWithdrawLimit(alice), 0, "unreported drift should temporarily restrict withdrawals");
+
+        vm.prank(keeper);
+        (, uint256 loss) = tokenized.report();
+
+        assertEq(loss, previousDrift, "report must recognize the accepted deposit dust");
+        assertEq(tokenized.totalAssets(), usd3.nav(), "report must rebase totalAssets to NAV");
+        assertGt(usd3.availableWithdrawLimit(alice), 0, "report must restore withdrawal availability");
     }
 
     function test_reportSucceedsUnderPausedWaUSDCWithDeployImbalance() public {

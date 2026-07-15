@@ -276,6 +276,55 @@ contract SubordinationDeployCapTest is Setup {
         );
     }
 
+    function test_composed_pausedReportThenSUSD3WithdrawRevertsAtomically() public {
+        _setupSUSD3ExitRebalanceScenario();
+
+        uint256 suppliedBefore = usd3Strategy.suppliedWaUSDC();
+        uint256 usd3BackingBefore = strategy.balanceOf(address(susd3Strategy));
+        uint256 idleUSDC = 100;
+        deal(address(asset), address(strategy), idleUSDC);
+
+        waUSDC.setSharePrice(990_000);
+        uint256 expectedNav = usd3Strategy.nav();
+        assertLt(expectedNav, strategy.totalAssets(), "share-price loss setup failed");
+
+        waUSDC.setPaused(true);
+        vm.prank(keeper);
+        (, uint256 loss) = ITokenizedStrategy(address(strategy)).report();
+
+        assertGt(loss, 0, "paused report should realize the wrapper loss");
+        assertEq(strategy.totalAssets(), expectedNav, "paused report should rebase totalAssets to NAV");
+        assertLt(
+            strategy.balanceOf(address(susd3Strategy)), usd3BackingBefore, "paused report should burn sUSD3 backing"
+        );
+        assertEq(usd3Strategy.suppliedWaUSDC(), suppliedBefore, "paused report tend must not move deployed waUSDC");
+        assertEq(asset.balanceOf(address(strategy)), idleUSDC, "paused report must leave loose USDC unwrapped");
+        assertTrue(waUSDC.paused(), "wrapper must remain paused through the composed scenario");
+
+        vm.prank(keeper);
+        ITokenizedStrategy(address(susd3Strategy)).report();
+        uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
+        assertGt(withdrawLimit, 0, "sUSD3 accounting sync should restore an actionable exit");
+
+        uint256 bobSharesBefore = ITokenizedStrategy(address(susd3Strategy)).balanceOf(bob);
+        uint256 usd3BackingAfterReport = strategy.balanceOf(address(susd3Strategy));
+        vm.prank(bob);
+        vm.expectRevert(ErrorsLib.TransferReverted.selector);
+        susd3Strategy.withdraw(withdrawLimit, bob, bob);
+
+        assertEq(usd3Strategy.suppliedWaUSDC(), suppliedBefore, "reverted exit must leave deployment unchanged");
+        assertEq(
+            strategy.balanceOf(address(susd3Strategy)),
+            usd3BackingAfterReport,
+            "reverted exit must leave backing unchanged"
+        );
+        assertEq(
+            ITokenizedStrategy(address(susd3Strategy)).balanceOf(bob),
+            bobSharesBefore,
+            "reverted exit must preserve shares"
+        );
+    }
+
     function test_susd3WithdrawDoesNotTendAfterUsd3Shutdown() public {
         _setupSUSD3ExitRebalanceScenario();
 
