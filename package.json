@@ -15,6 +15,7 @@
     "check:lcc-release-artifact": "node scripts/check-lcc-release-artifact.js",
     "build:hardhat": "npx hardhat compile",
     "test:forge": "FOUNDRY_PROFILE=test forge test",
+    "test:forge:lcc:ir": "FOUNDRY_PROFILE=test-lcc-ir forge test --match-path 'test/forge/lcc/**/*.t.sol'",
     "test:forge:noninvariant": "FOUNDRY_PROFILE=test forge test --no-match-contract 'CoreInvariantHarness|InvariantsTest|DebtFloorInvariantsTest|USD3UpgradeForkTest|LCC.*StatefulInvariantTest'",
     "test:forge:irm": "FOUNDRY_PROFILE=test-irm forge test",
     "test:forge:all": "yarn test:forge && yarn test:forge:irm",

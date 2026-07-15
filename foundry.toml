@@ -46,6 +46,13 @@ script = "/dev/null"
 # Run all tests but exclude IRM tests
 no_match_path = "**/irm/**"
 
+[profile.test-lcc-ir]
+# Runs the LCC suite (via test:forge:lcc:ir) under via-IR + Cancun to match the release artifact's compiler settings.
+via_ir = true
+evm_version = "cancun"
+script = "/dev/null"
+no_match_path = "**/irm/**"
+
 [profile.test-irm]
 # IRM tests need via-ir due to stack complexity
 via-ir = true
