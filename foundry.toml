@@ -20,6 +20,19 @@ wrap_comments = true
 test = "/dev/null"
 script = "/dev/null"
 
+[profile.script]
+test = "/dev/null"
+ffi = true
+ast = true
+solc = "0.8.22"
+cbor_metadata = false
+fs_permissions = [
+  { access = "read-write", path = "." },
+  { access = "read", path = "/tmp" },
+]
+build_info = true
+extra_output = ["storageLayout"]
+
 [profile.test]
 via-ir = false
 script = "/dev/null"
