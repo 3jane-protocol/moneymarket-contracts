@@ -23,6 +23,9 @@ contract MockRelayerStrategy {
     address public performanceFeeRecipient;
     uint16 public performanceFee;
     uint256 public totalAssets;
+    uint256 public lastReport;
+    uint256 public profitMaxUnlockTime;
+    bool public isShutdown;
     uint256 public reportCalls;
     uint256 public tendCalls;
 
@@ -37,6 +40,8 @@ contract MockRelayerStrategy {
     constructor(uint256 initialTotalAssets) {
         totalAssets = initialTotalAssets;
         _nextTotalAssets = initialTotalAssets;
+        lastReport = block.timestamp;
+        profitMaxUnlockTime = 10 days;
     }
 
     function setAsset(address newAsset) external {
@@ -63,8 +68,24 @@ contract MockRelayerStrategy {
         performanceFeeRecipient = newRecipient;
     }
 
+    function setPerformanceFee(uint16 newPerformanceFee) external {
+        performanceFee = newPerformanceFee;
+    }
+
     function setTotalAssets(uint256 newTotalAssets) external {
         totalAssets = newTotalAssets;
+    }
+
+    function setLastReport(uint256 newLastReport) external {
+        lastReport = newLastReport;
+    }
+
+    function setProfitMaxUnlockTime(uint256 newProfitMaxUnlockTime) external {
+        profitMaxUnlockTime = newProfitMaxUnlockTime;
+    }
+
+    function setIsShutdown(bool newIsShutdown) external {
+        isShutdown = newIsShutdown;
     }
 
     function configureReport(uint256 newTotalAssets, uint256 profit, uint256 loss, bool shouldRevert) external {
@@ -79,6 +100,7 @@ contract MockRelayerStrategy {
         if (_reportReverts) revert MockReportFailed(address(this));
         reportCalls++;
         totalAssets = _nextTotalAssets;
+        lastReport = block.timestamp;
         return (_nextProfit, _nextLoss);
     }
 
@@ -720,6 +742,301 @@ contract KeeperRelayerTest is Setup {
         vm.expectRevert(abi.encodeWithSelector(KeeperRelayer.NonzeroSusd3PerformanceFee.selector, 1));
         vm.prank(keeper);
         relayer.report();
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            REPORT TRIGGER
+    //////////////////////////////////////////////////////////////*/
+
+    function test_reportTriggerFalseBeforeBothDeadlines() public {
+        (,, KeeperRelayer mockRelayer) = _deployMockRelayer(10_000, keeper);
+
+        (bool shouldReport, bytes memory callData) = mockRelayer.reportTrigger();
+
+        assertFalse(shouldReport);
+        assertEq(callData, abi.encodeWithSelector(KeeperRelayer.report.selector));
+    }
+
+    function test_reportTriggerUsesStrictDeadlineBoundary() public {
+        (,, KeeperRelayer mockRelayer) = _deployMockRelayer(10_000, keeper);
+        uint256 lastReport = block.timestamp;
+
+        vm.warp(lastReport + 10 days);
+        (bool shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+
+        vm.warp(lastReport + 10 days + 1);
+        (shouldReport,) = mockRelayer.reportTrigger();
+        assertTrue(shouldReport);
+    }
+
+    function test_reportTriggerTrueWhenOnlyUsd3IsDue() public {
+        (MockRelayerStrategy mockUsd3, MockRelayerStrategy mockSusd3, KeeperRelayer mockRelayer) =
+            _deployMockRelayer(10_000, keeper);
+        uint256 lastReport = block.timestamp;
+
+        vm.warp(lastReport + 10 days + 1);
+        mockSusd3.setLastReport(block.timestamp);
+
+        assertGt(block.timestamp - mockUsd3.lastReport(), mockUsd3.profitMaxUnlockTime());
+        assertEq(block.timestamp, mockSusd3.lastReport());
+        (bool shouldReport,) = mockRelayer.reportTrigger();
+        assertTrue(shouldReport);
+    }
+
+    function test_reportTriggerTrueWhenOnlySusd3IsDue() public {
+        (MockRelayerStrategy mockUsd3, MockRelayerStrategy mockSusd3, KeeperRelayer mockRelayer) =
+            _deployMockRelayer(10_000, keeper);
+        uint256 lastReport = block.timestamp;
+
+        vm.warp(lastReport + 10 days + 1);
+        mockUsd3.setLastReport(block.timestamp);
+
+        assertEq(block.timestamp, mockUsd3.lastReport());
+        assertGt(block.timestamp - mockSusd3.lastReport(), mockSusd3.profitMaxUnlockTime());
+        (bool shouldReport,) = mockRelayer.reportTrigger();
+        assertTrue(shouldReport);
+    }
+
+    function test_reportTriggerRespectsDivergentPerLegUnlockTimes() public {
+        (MockRelayerStrategy mockUsd3, MockRelayerStrategy mockSusd3, KeeperRelayer mockRelayer) =
+            _deployMockRelayer(10_000, keeper);
+        uint256 lastReport = block.timestamp;
+        mockUsd3.setProfitMaxUnlockTime(2 days);
+        mockSusd3.setProfitMaxUnlockTime(20 days);
+
+        vm.warp(lastReport + 2 days);
+        (bool shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+
+        vm.warp(lastReport + 2 days + 1);
+        (shouldReport,) = mockRelayer.reportTrigger();
+        assertTrue(shouldReport);
+
+        vm.warp(lastReport + 20 days);
+        mockUsd3.setLastReport(block.timestamp);
+        (shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+
+        vm.warp(lastReport + 20 days + 1);
+        (shouldReport,) = mockRelayer.reportTrigger();
+        assertTrue(shouldReport);
+    }
+
+    function test_reportTriggerFalseWhenEitherStrategyIsShutdown() public {
+        (MockRelayerStrategy mockUsd3, MockRelayerStrategy mockSusd3, KeeperRelayer mockRelayer) =
+            _deployMockRelayer(10_000, keeper);
+        vm.warp(block.timestamp + 10 days + 1);
+
+        mockUsd3.setIsShutdown(true);
+        (bool shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+
+        mockUsd3.setIsShutdown(false);
+        mockSusd3.setIsShutdown(true);
+        (shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+    }
+
+    function test_reportTriggerFalseWhenEitherZeroAssetHealthCheckIsArmed() public {
+        (MockRelayerStrategy mockUsd3, MockRelayerStrategy mockSusd3, KeeperRelayer mockRelayer) =
+            _deployMockRelayer(10_000, keeper);
+        vm.warp(block.timestamp + 10 days + 1);
+
+        mockUsd3.setTotalAssets(0);
+        (bool shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+
+        mockUsd3.setTotalAssets(10_000);
+        mockSusd3.setTotalAssets(0);
+        mockUsd3.setPerformanceFee(1);
+        (shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+    }
+
+    function test_reportTriggerTrueWhenZeroAssetLegSkipIsArmed() public {
+        (MockRelayerStrategy mockUsd3, MockRelayerStrategy mockSusd3, KeeperRelayer mockRelayer) =
+            _deployMockRelayer(10_000, keeper);
+        vm.warp(block.timestamp + 10 days + 1);
+        mockUsd3.setPerformanceFee(1);
+        mockSusd3.setTotalAssets(0);
+
+        (bool shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+
+        mockRelayer.setDoHealthCheck(address(mockSusd3), false);
+        (shouldReport,) = mockRelayer.reportTrigger();
+        assertTrue(shouldReport);
+    }
+
+    function test_reportTriggerTrueWhenZeroAssetSeniorSkipIsArmed() public {
+        (MockRelayerStrategy mockUsd3,, KeeperRelayer mockRelayer) = _deployMockRelayer(10_000, keeper);
+        vm.warp(block.timestamp + 10 days + 1);
+        mockUsd3.setTotalAssets(0);
+
+        (bool shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+
+        mockRelayer.setDoHealthCheck(address(mockUsd3), false);
+        (shouldReport,) = mockRelayer.reportTrigger();
+        assertTrue(shouldReport);
+    }
+
+    function test_reportTriggerFalseWhenZeroAssetLegSkipIsArmedBeforeBothDeadlines() public {
+        (MockRelayerStrategy mockUsd3, MockRelayerStrategy mockSusd3, KeeperRelayer mockRelayer) =
+            _deployMockRelayer(10_000, keeper);
+        mockUsd3.setPerformanceFee(1);
+        mockSusd3.setTotalAssets(0);
+        mockRelayer.setDoHealthCheck(address(mockSusd3), false);
+
+        (bool shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+    }
+
+    function test_reportTriggerEmptyJuniorGuardRequiresNonzeroSeniorPerformanceFee() public {
+        (MockRelayerStrategy mockUsd3, MockRelayerStrategy mockSusd3, KeeperRelayer mockRelayer) =
+            _deployMockRelayer(10_000, keeper);
+        vm.warp(block.timestamp + 10 days + 1);
+        mockSusd3.setTotalAssets(0);
+
+        (bool shouldReport,) = mockRelayer.reportTrigger();
+        assertTrue(shouldReport);
+
+        mockUsd3.setPerformanceFee(1);
+        (shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+
+        mockRelayer.setDoHealthCheck(address(mockSusd3), false);
+        (shouldReport,) = mockRelayer.reportTrigger();
+        assertTrue(shouldReport);
+    }
+
+    function test_reportTriggerZeroUnlockDisablesOnlyThatLeg() public {
+        (MockRelayerStrategy mockUsd3, MockRelayerStrategy mockSusd3, KeeperRelayer mockRelayer) =
+            _deployMockRelayer(10_000, keeper);
+        uint256 lastReport = block.timestamp;
+        mockUsd3.setProfitMaxUnlockTime(0);
+
+        vm.warp(lastReport + 10 days);
+        (bool shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+
+        vm.warp(lastReport + 10 days + 1);
+        (shouldReport,) = mockRelayer.reportTrigger();
+        assertTrue(shouldReport);
+
+        mockSusd3.setLastReport(block.timestamp);
+        (shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+
+        mockSusd3.setProfitMaxUnlockTime(0);
+        vm.warp(block.timestamp + 100 days);
+        (shouldReport,) = mockRelayer.reportTrigger();
+        assertFalse(shouldReport);
+    }
+
+    function test_reportTriggerRealStrategiesUsesStrictProfitUnlockDeadline() public {
+        _seedSeniorAndJunior();
+        uint256 lastReport = ITokenizedStrategy(address(usd3Strategy)).lastReport();
+        assertEq(lastReport, ITokenizedStrategy(address(susd3Strategy)).lastReport());
+
+        (bool shouldReport,) = relayer.reportTrigger();
+        assertFalse(shouldReport);
+
+        vm.warp(lastReport + 10 days);
+        (shouldReport,) = relayer.reportTrigger();
+        assertFalse(shouldReport);
+
+        vm.warp(lastReport + 10 days + 1);
+        (shouldReport,) = relayer.reportTrigger();
+        assertTrue(shouldReport);
+    }
+
+    function test_reportTriggerCalldataReportsBothStrategiesAndResetsCadence() public {
+        _seedSeniorAndJunior();
+        uint256 previousReport = ITokenizedStrategy(address(usd3Strategy)).lastReport();
+        vm.warp(previousReport + 10 days + 1);
+
+        (bool shouldReport, bytes memory callData) = relayer.reportTrigger();
+        assertTrue(shouldReport);
+        assertEq(callData, abi.encodeWithSelector(KeeperRelayer.report.selector));
+
+        vm.prank(keeper);
+        (bool success,) = address(relayer).call(callData);
+        assertTrue(success);
+        assertEq(ITokenizedStrategy(address(usd3Strategy)).lastReport(), block.timestamp);
+        assertEq(ITokenizedStrategy(address(susd3Strategy)).lastReport(), block.timestamp);
+
+        (shouldReport,) = relayer.reportTrigger();
+        assertFalse(shouldReport);
+    }
+
+    function test_reportTriggerStaysTrueWhenManagementDirectReportsOnlyUsd3() public {
+        _seedSeniorAndJunior();
+        uint256 previousReport = ITokenizedStrategy(address(usd3Strategy)).lastReport();
+        vm.warp(previousReport + 10 days + 1);
+
+        (bool shouldReport,) = relayer.reportTrigger();
+        assertTrue(shouldReport);
+
+        vm.prank(management);
+        ITokenizedStrategy(address(usd3Strategy)).report();
+        assertEq(ITokenizedStrategy(address(usd3Strategy)).lastReport(), block.timestamp);
+        assertEq(ITokenizedStrategy(address(susd3Strategy)).lastReport(), previousReport);
+
+        (shouldReport,) = relayer.reportTrigger();
+        assertTrue(shouldReport);
+    }
+
+    function test_reportTriggerEmptyJuniorRecoveryUsesOneShotSkip() public {
+        mintAndDepositIntoStrategy(IUSD3(address(usd3Strategy)), alice, SENIOR_DEPOSIT);
+        vm.prank(keeper);
+        relayer.report();
+        uint256 previousReport = ITokenizedStrategy(address(usd3Strategy)).lastReport();
+        assertEq(ITokenizedStrategy(address(susd3Strategy)).totalAssets(), 0);
+
+        _simulateYield(usd3Strategy, 5_000e6);
+        vm.warp(previousReport + 10 days + 1);
+
+        (bool shouldReport,) = relayer.reportTrigger();
+        assertFalse(shouldReport);
+
+        vm.prank(management);
+        relayer.setDoHealthCheck(address(susd3Strategy), false);
+        bytes memory callData;
+        (shouldReport, callData) = relayer.reportTrigger();
+        assertTrue(shouldReport);
+
+        vm.prank(keeper);
+        (bool success,) = address(relayer).call(callData);
+        assertTrue(success);
+        assertGt(ITokenizedStrategy(address(susd3Strategy)).totalAssets(), 0);
+        (,, bool doHealthCheck) = relayer.healthCheck(address(susd3Strategy));
+        assertTrue(doHealthCheck);
+
+        (shouldReport,) = relayer.reportTrigger();
+        assertFalse(shouldReport);
+    }
+
+    function test_reportTriggerShutdownDisablesCadenceButManualReportStillSucceeds() public {
+        _seedSeniorAndJunior();
+        uint256 previousReport = ITokenizedStrategy(address(usd3Strategy)).lastReport();
+        vm.warp(previousReport + 10 days + 1);
+
+        vm.startPrank(management);
+        ITokenizedStrategy(address(usd3Strategy)).shutdownStrategy();
+        ITokenizedStrategy(address(susd3Strategy)).shutdownStrategy();
+        vm.stopPrank();
+
+        (bool shouldReport, bytes memory callData) = relayer.reportTrigger();
+        assertFalse(shouldReport);
+        assertEq(callData, abi.encodeWithSelector(KeeperRelayer.report.selector));
+
+        vm.prank(keeper);
+        (bool success,) = address(relayer).call(callData);
+        assertTrue(success);
+        assertEq(ITokenizedStrategy(address(usd3Strategy)).lastReport(), block.timestamp);
+        assertEq(ITokenizedStrategy(address(susd3Strategy)).lastReport(), block.timestamp);
     }
 
     function test_tendTriggerForwardsUsd3StateWithRelayerCalldata() public {

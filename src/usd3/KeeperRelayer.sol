@@ -117,6 +117,36 @@ contract KeeperRelayer {
         callData = abi.encodeWithSelector(this.tend.selector);
     }
 
+    /// @notice Reports-due trigger: true once either strategy's profit-unlock window has elapsed
+    /// since its own last report. Cadence-eligible, not guaranteed-to-succeed — wiring and health
+    /// checks still fail closed in report(). Calldata must be executed against this relayer.
+    function reportTrigger() external view returns (bool shouldReport, bytes memory callData) {
+        callData = abi.encodeWithSelector(this.report.selector);
+
+        ITokenizedStrategy senior = ITokenizedStrategy(usd3);
+        ITokenizedStrategy junior = ITokenizedStrategy(susd3);
+
+        // Shutdown stops automatic cadence; manual reports through the relayer remain possible.
+        if (senior.isShutdown() || junior.isShutdown()) return (false, callData);
+
+        // A zero-asset senior leg is silenced while its health check is armed. The junior leg is only
+        // silenced while a senior fee mint could make its zero-base health check fail closed
+        // (senior.performanceFee() != 0); with a zero fee there is no revert risk, so the junior check
+        // does not block the trigger.
+        if (senior.totalAssets() == 0 && healthCheck[usd3].doHealthCheck) return (false, callData);
+        if (junior.totalAssets() == 0 && healthCheck[susd3].doHealthCheck && senior.performanceFee() != 0) {
+            return (false, callData);
+        }
+
+        shouldReport = _reportDue(senior) || _reportDue(junior);
+    }
+
+    function _reportDue(ITokenizedStrategy strategy) private view returns (bool) {
+        uint256 unlockTime = strategy.profitMaxUnlockTime();
+        // Zero unlock means no profit stream (used during migrations) — no time cadence for that leg.
+        return unlockTime != 0 && block.timestamp - strategy.lastReport() > unlockTime;
+    }
+
     /// @notice Adds or removes an authorized keeper account.
     function setKeeper(address keeper, bool authorized) external onlyManagement {
         _setKeeper(keeper, authorized);
