@@ -1,0 +1,1854 @@
+{
+  "functions": [
+    {
+      "name": "assetConfig",
+      "signature": "assetConfig()",
+      "selector": "0x17872060",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "marginAsset",
+              "type": "address"
+            },
+            {
+              "name": "fundingAsset",
+              "type": "address"
+            },
+            {
+              "name": "usd3",
+              "type": "address"
+            },
+            {
+              "name": "notificationVault",
+              "type": "address"
+            },
+            {
+              "name": "marginOracle",
+              "type": "address"
+            },
+            {
+              "name": "treasury",
+              "type": "address"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "auctionConfig",
+      "signature": "auctionConfig()",
+      "selector": "0xbb406135",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "auctionStepCount",
+              "type": "uint256"
+            },
+            {
+              "name": "auctionStepDecayRateBps",
+              "type": "uint256"
+            },
+            {
+              "name": "auctionStepDuration",
+              "type": "uint256"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "calledEpochs",
+      "signature": "calledEpochs()",
+      "selector": "0xddf1e546",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256[]"
+        }
+      ]
+    },
+    {
+      "name": "claimExitedMargin",
+      "signature": "claimExitedMargin(address)",
+      "selector": "0xbe1fa008",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "receiver",
+          "type": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "assets",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "claimRemainingMargin",
+      "signature": "claimRemainingMargin(address)",
+      "selector": "0x34f59c35",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "receiver",
+          "type": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "assets",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "claimableExitedMargin",
+      "signature": "claimableExitedMargin(address)",
+      "selector": "0xeadf6758",
+      "stateMutability": "view",
+      "inputs": [
+        {
+          "name": "user",
+          "type": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "currentEpoch",
+      "signature": "currentEpoch()",
+      "selector": "0x76671808",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "currentPhase",
+      "signature": "currentPhase()",
+      "selector": "0x055ad42e",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8"
+        }
+      ]
+    },
+    {
+      "name": "deposit",
+      "signature": "deposit(uint256)",
+      "selector": "0xb6b55f25",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "assets",
+          "type": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "commitment",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "epochConfig",
+      "signature": "epochConfig()",
+      "selector": "0xb7bbb79e",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "startTimestamp",
+              "type": "uint256"
+            },
+            {
+              "name": "maxEpochs",
+              "type": "uint256"
+            },
+            {
+              "name": "epochLength",
+              "type": "uint256"
+            },
+            {
+              "name": "normalDuration",
+              "type": "uint256"
+            },
+            {
+              "name": "preCallDuration",
+              "type": "uint256"
+            },
+            {
+              "name": "fundingDuration",
+              "type": "uint256"
+            },
+            {
+              "name": "marginRatioBps",
+              "type": "uint256"
+            },
+            {
+              "name": "exitDelayEpochs",
+              "type": "uint256"
+            },
+            {
+              "name": "minCommitmentEpochs",
+              "type": "uint256"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "exitBucketCommitmentByMaturity",
+      "signature": "exitBucketCommitmentByMaturity(uint256)",
+      "selector": "0xef5223f5",
+      "stateMutability": "view",
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "exitBucketMarginByMaturity",
+      "signature": "exitBucketMarginByMaturity(uint256)",
+      "selector": "0x8801c1d7",
+      "stateMutability": "view",
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "finalizeEpochSlash",
+      "signature": "finalizeEpochSlash(uint256)",
+      "selector": "0x723bc4df",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "fundCall",
+      "signature": "fundCall(address)",
+      "selector": "0x6a4e03f0",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "user",
+          "type": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "obligationAmount",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "fundCall",
+      "signature": "fundCall(bool)",
+      "selector": "0xd1e0c2be",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "roll",
+          "type": "bool"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "obligationAmount",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "fundedEpoch",
+      "signature": "fundedEpoch(uint256,address)",
+      "selector": "0x90704ff9",
+      "stateMutability": "view",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "getAccount",
+      "signature": "getAccount(address)",
+      "selector": "0xfbcbc0f1",
+      "stateMutability": "view",
+      "inputs": [
+        {
+          "name": "user",
+          "type": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "activeMargin",
+              "type": "uint256"
+            },
+            {
+              "name": "activeCommitment",
+              "type": "uint256"
+            },
+            {
+              "name": "pendingMargin",
+              "type": "uint256"
+            },
+            {
+              "name": "pendingCommitment",
+              "type": "uint256"
+            },
+            {
+              "name": "pendingActivationEpoch",
+              "type": "uint256"
+            },
+            {
+              "name": "calledEpochCursor",
+              "type": "uint256"
+            },
+            {
+              "name": "claimableExitMargin",
+              "type": "uint256"
+            },
+            {
+              "name": "exitBucketMargin",
+              "type": "uint256"
+            },
+            {
+              "name": "exitBucketCommitment",
+              "type": "uint256"
+            },
+            {
+              "name": "exitRequested",
+              "type": "bool"
+            },
+            {
+              "name": "exitMaturityEpoch",
+              "type": "uint256"
+            },
+            {
+              "name": "exitClaimed",
+              "type": "bool"
+            },
+            {
+              "name": "exitMatured",
+              "type": "bool"
+            },
+            {
+              "name": "commitmentStartEpoch",
+              "type": "uint256"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "getAuctionState",
+      "signature": "getAuctionState(uint256)",
+      "selector": "0x09881007",
+      "stateMutability": "view",
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "shortfallAmount",
+              "type": "uint128"
+            },
+            {
+              "name": "filledAmount",
+              "type": "uint128"
+            },
+            {
+              "name": "marginPool",
+              "type": "uint128"
+            },
+            {
+              "name": "marginAwarded",
+              "type": "uint128"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "getEpochState",
+      "signature": "getEpochState(uint256)",
+      "selector": "0x3033bc10",
+      "stateMutability": "view",
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "callOpened",
+              "type": "bool"
+            },
+            {
+              "name": "commitmentDenominator",
+              "type": "uint256"
+            },
+            {
+              "name": "callAmount",
+              "type": "uint256"
+            },
+            {
+              "name": "marginAtCallOpen",
+              "type": "uint256"
+            },
+            {
+              "name": "fundedAmount",
+              "type": "uint256"
+            },
+            {
+              "name": "marginReleased",
+              "type": "uint256"
+            },
+            {
+              "name": "fundedUsersRemainingMargin",
+              "type": "uint256"
+            },
+            {
+              "name": "fundedUsersRemainingCommitment",
+              "type": "uint256"
+            },
+            {
+              "name": "slashFinalized",
+              "type": "bool"
+            },
+            {
+              "name": "slashDisabledByShutdown",
+              "type": "bool"
+            },
+            {
+              "name": "slashedMargin",
+              "type": "uint256"
+            },
+            {
+              "name": "returnPool",
+              "type": "uint256"
+            },
+            {
+              "name": "returnCommitment",
+              "type": "uint256"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "initialize",
+      "signature": "initialize((address,address,address,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256))",
+      "selector": "0x13b1be11",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "params",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "owner",
+              "type": "address"
+            },
+            {
+              "name": "marginAsset",
+              "type": "address"
+            },
+            {
+              "name": "marginOracle",
+              "type": "address"
+            },
+            {
+              "name": "startTimestamp",
+              "type": "uint256"
+            },
+            {
+              "name": "maxEpochs",
+              "type": "uint256"
+            },
+            {
+              "name": "epochLength",
+              "type": "uint256"
+            },
+            {
+              "name": "normalDuration",
+              "type": "uint256"
+            },
+            {
+              "name": "preCallDuration",
+              "type": "uint256"
+            },
+            {
+              "name": "fundingDuration",
+              "type": "uint256"
+            },
+            {
+              "name": "marginRatioBps",
+              "type": "uint256"
+            },
+            {
+              "name": "protocolCommitmentCap",
+              "type": "uint256"
+            },
+            {
+              "name": "userCommitmentCap",
+              "type": "uint256"
+            },
+            {
+              "name": "exitCapBps",
+              "type": "uint256"
+            },
+            {
+              "name": "exitDelayEpochs",
+              "type": "uint256"
+            },
+            {
+              "name": "minCommitmentEpochs",
+              "type": "uint256"
+            },
+            {
+              "name": "minDepositAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "auctionStepCount",
+              "type": "uint256"
+            },
+            {
+              "name": "auctionStepDecayRateBps",
+              "type": "uint256"
+            },
+            {
+              "name": "maxAuctionAwardBps",
+              "type": "uint256"
+            },
+            {
+              "name": "slashFeeBps",
+              "type": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "materializeAccount",
+      "signature": "materializeAccount(address)",
+      "selector": "0x7e0b1f4f",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "user",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "obligationOf",
+      "signature": "obligationOf(uint256,address)",
+      "selector": "0x8f4fe343",
+      "stateMutability": "view",
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256"
+        },
+        {
+          "name": "user",
+          "type": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "openEpochCall",
+      "signature": "openEpochCall(uint256,uint256)",
+      "selector": "0x818c24ed",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256"
+        },
+        {
+          "name": "callAmount",
+          "type": "uint256"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "owner",
+      "signature": "owner()",
+      "selector": "0x8da5cb5b",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address"
+        }
+      ]
+    },
+    {
+      "name": "pause",
+      "signature": "pause()",
+      "selector": "0x8456cb59",
+      "stateMutability": "nonpayable",
+      "inputs": [],
+      "outputs": []
+    },
+    {
+      "name": "pauseState",
+      "signature": "pauseState()",
+      "selector": "0xd7118351",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "guardian",
+          "type": "address"
+        },
+        {
+          "name": "paused",
+          "type": "bool"
+        },
+        {
+          "name": "pausedAt",
+          "type": "uint64"
+        },
+        {
+          "name": "pausedAccumulated",
+          "type": "uint64"
+        }
+      ]
+    },
+    {
+      "name": "pendingCommitmentByActivationEpoch",
+      "signature": "pendingCommitmentByActivationEpoch(uint256)",
+      "selector": "0xcfcb237b",
+      "stateMutability": "view",
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "pendingMarginByActivationEpoch",
+      "signature": "pendingMarginByActivationEpoch(uint256)",
+      "selector": "0x4c31db01",
+      "stateMutability": "view",
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "pendingTreasuryMargin",
+      "signature": "pendingTreasuryMargin()",
+      "selector": "0x4c1f9463",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "phaseEndsAt",
+      "signature": "phaseEndsAt(uint256,uint8)",
+      "selector": "0x88d637b5",
+      "stateMutability": "view",
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256"
+        },
+        {
+          "name": "phase",
+          "type": "uint8"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "renounceOwnership",
+      "signature": "renounceOwnership()",
+      "selector": "0x715018a6",
+      "stateMutability": "pure",
+      "inputs": [],
+      "outputs": []
+    },
+    {
+      "name": "requestExit",
+      "signature": "requestExit()",
+      "selector": "0x7f8e3b4e",
+      "stateMutability": "nonpayable",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "maturityEpoch",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "riskConfig",
+      "signature": "riskConfig()",
+      "selector": "0x7c90a6ca",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "protocolCommitmentCap",
+              "type": "uint256"
+            },
+            {
+              "name": "userCommitmentCap",
+              "type": "uint256"
+            },
+            {
+              "name": "exitCapBps",
+              "type": "uint256"
+            },
+            {
+              "name": "minDepositAssets",
+              "type": "uint256"
+            },
+            {
+              "name": "maxAuctionAwardBps",
+              "type": "uint256"
+            },
+            {
+              "name": "slashFeeBps",
+              "type": "uint256"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "setGuardian",
+      "signature": "setGuardian(address)",
+      "selector": "0x8a0dac4a",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "newGuardian",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "setMarginOracle",
+      "signature": "setMarginOracle(address)",
+      "selector": "0x06638ea5",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "newOracle",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "setMaxAuctionAwardBps",
+      "signature": "setMaxAuctionAwardBps(uint256)",
+      "selector": "0x1198bc85",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "newMaxAuctionAwardBps",
+          "type": "uint256"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "setRiskCaps",
+      "signature": "setRiskCaps(uint256,uint256,uint256,uint256)",
+      "selector": "0x3ff5ba17",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "newProtocolCommitmentCap",
+          "type": "uint256"
+        },
+        {
+          "name": "newUserCommitmentCap",
+          "type": "uint256"
+        },
+        {
+          "name": "newExitCapBps",
+          "type": "uint256"
+        },
+        {
+          "name": "newMinDeposit",
+          "type": "uint256"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "setSlashFeeBps",
+      "signature": "setSlashFeeBps(uint256)",
+      "selector": "0x4158f0af",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "newSlashFeeBps",
+          "type": "uint256"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "shutdown",
+      "signature": "shutdown()",
+      "selector": "0xfc0e74d1",
+      "stateMutability": "nonpayable",
+      "inputs": [],
+      "outputs": []
+    },
+    {
+      "name": "shutdownState",
+      "signature": "shutdownState()",
+      "selector": "0xeeafff6d",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "active",
+              "type": "bool"
+            },
+            {
+              "name": "timestamp",
+              "type": "uint64"
+            },
+            {
+              "name": "epoch",
+              "type": "uint64"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sweepTreasury",
+      "signature": "sweepTreasury()",
+      "selector": "0x582e4396",
+      "stateMutability": "nonpayable",
+      "inputs": [],
+      "outputs": []
+    },
+    {
+      "name": "syncState",
+      "signature": "syncState()",
+      "selector": "0x805e1f53",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "lastActivationFolded",
+              "type": "uint64"
+            },
+            {
+              "name": "lastMaturityFolded",
+              "type": "uint64"
+            },
+            {
+              "name": "finalizedCallPrefix",
+              "type": "uint64"
+            },
+            {
+              "name": "pendingAuctionEpochPlusOne",
+              "type": "uint64"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "takeAuction",
+      "signature": "takeAuction(uint256)",
+      "selector": "0x34ad92e6",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "maxFillAmount",
+          "type": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "filledAmount",
+          "type": "uint256"
+        },
+        {
+          "name": "marginAward",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "totals",
+      "signature": "totals()",
+      "selector": "0xc038a38e",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "activeMargin",
+              "type": "uint128"
+            },
+            {
+              "name": "activeCommitment",
+              "type": "uint128"
+            },
+            {
+              "name": "pendingMargin",
+              "type": "uint128"
+            },
+            {
+              "name": "pendingCommitment",
+              "type": "uint128"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "transferOwnership",
+      "signature": "transferOwnership(address)",
+      "selector": "0xf2fde38b",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        {
+          "name": "newOwner",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "unpause",
+      "signature": "unpause()",
+      "selector": "0x3f4ba83a",
+      "stateMutability": "nonpayable",
+      "inputs": [],
+      "outputs": []
+    }
+  ],
+  "events": [
+    {
+      "name": "AuctionAwardCapUpdated",
+      "signature": "AuctionAwardCapUpdated(uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "maxAuctionAwardBps",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "AuctionFill",
+      "signature": "AuctionFill(address,uint256,uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "filler",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "epoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "fillAmount",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "marginAward",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "AuctionKicked",
+      "signature": "AuctionKicked(uint256,uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "shortfallAmount",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "marginPool",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "AuctionSettled",
+      "signature": "AuctionSettled(uint256,uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "filledAmount",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "marginAwarded",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "CallFunded",
+      "signature": "CallFunded(address,address,uint256,uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "payer",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "user",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "epoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "obligationAmount",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "fundingAmount",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "DepositCheckpointed",
+      "signature": "DepositCheckpointed(address,uint256,uint256,uint256,uint256,bool)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "user",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "marginAssets",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "marginValue",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "commitment",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "activationEpoch",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "immediate",
+          "type": "bool",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "EmergencyShutdown",
+      "signature": "EmergencyShutdown(uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "timestamp",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "EpochCallOpened",
+      "signature": "EpochCallOpened(uint256,uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "callAmount",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "commitmentDenominator",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "EpochSlashFinalized",
+      "signature": "EpochSlashFinalized(uint256,uint256,uint256,bool)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "slashedMargin",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "slashedCommitment",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "disabledByShutdown",
+          "type": "bool",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "ExitMatured",
+      "signature": "ExitMatured(uint256,uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "maturityEpoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "marginAssets",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "commitment",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "ExitRequested",
+      "signature": "ExitRequested(address,uint256,uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "user",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "maturityEpoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "marginAssets",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "commitment",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "ExitedMarginClaimed",
+      "signature": "ExitedMarginClaimed(address,address,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "user",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "receiver",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "marginAssets",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "GuardianUpdated",
+      "signature": "GuardianUpdated(address,address)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "oldGuardian",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "newGuardian",
+          "type": "address",
+          "indexed": true
+        }
+      ]
+    },
+    {
+      "name": "Initialized",
+      "signature": "Initialized(uint64)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "version",
+          "type": "uint64",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "MarginOracleUpdated",
+      "signature": "MarginOracleUpdated(address,address)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "oldOracle",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "newOracle",
+          "type": "address",
+          "indexed": true
+        }
+      ]
+    },
+    {
+      "name": "MarginReleased",
+      "signature": "MarginReleased(address,uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "user",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "epoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "marginAssets",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "OwnershipTransferred",
+      "signature": "OwnershipTransferred(address,address)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "previousOwner",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "newOwner",
+          "type": "address",
+          "indexed": true
+        }
+      ]
+    },
+    {
+      "name": "Paused",
+      "signature": "Paused(address)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "by",
+          "type": "address",
+          "indexed": true
+        }
+      ]
+    },
+    {
+      "name": "PendingActivated",
+      "signature": "PendingActivated(uint256,uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "marginAssets",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "commitment",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "RemainingMarginClaimed",
+      "signature": "RemainingMarginClaimed(address,address,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "user",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "receiver",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "marginAssets",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "ReturnPoolCredited",
+      "signature": "ReturnPoolCredited(address,uint256,uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "user",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "epoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "marginAssets",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "commitment",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "RiskCapUpdated",
+      "signature": "RiskCapUpdated(uint256,uint256,uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "protocolCommitmentCap",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "userCommitmentCap",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "exitCapBps",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "minDepositAssets",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "SlashFeeUpdated",
+      "signature": "SlashFeeUpdated(uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "slashFeeBps",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "SlashSurplusDisposed",
+      "signature": "SlashSurplusDisposed(uint256,uint256,uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "epoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "treasuryAmount",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "returnPool",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "returnCommitment",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "TreasurySwept",
+      "signature": "TreasurySwept(uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "marginAssets",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "Unpaused",
+      "signature": "Unpaused(address)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "by",
+          "type": "address",
+          "indexed": true
+        }
+      ]
+    },
+    {
+      "name": "UserDefaulted",
+      "signature": "UserDefaulted(address,uint256,uint256,uint256)",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "user",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "epoch",
+          "type": "uint256",
+          "indexed": true
+        },
+        {
+          "name": "slashedMargin",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "slashedCommitment",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "name": "AccountMaterializationIncomplete",
+      "signature": "AccountMaterializationIncomplete()",
+      "inputs": []
+    },
+    {
+      "name": "AlreadyFunded",
+      "signature": "AlreadyFunded()",
+      "inputs": []
+    },
+    {
+      "name": "AlreadyPaused",
+      "signature": "AlreadyPaused()",
+      "inputs": []
+    },
+    {
+      "name": "AuctionNotLive",
+      "signature": "AuctionNotLive()",
+      "inputs": []
+    },
+    {
+      "name": "CallAlreadyOpened",
+      "signature": "CallAlreadyOpened()",
+      "inputs": []
+    },
+    {
+      "name": "CapExceeded",
+      "signature": "CapExceeded()",
+      "inputs": []
+    },
+    {
+      "name": "CommitmentNotMature",
+      "signature": "CommitmentNotMature()",
+      "inputs": []
+    },
+    {
+      "name": "ExitCapacityReached",
+      "signature": "ExitCapacityReached()",
+      "inputs": []
+    },
+    {
+      "name": "ExitInProgress",
+      "signature": "ExitInProgress()",
+      "inputs": []
+    },
+    {
+      "name": "ExitNotMature",
+      "signature": "ExitNotMature()",
+      "inputs": []
+    },
+    {
+      "name": "FundingDeliveryImpossible",
+      "signature": "FundingDeliveryImpossible()",
+      "inputs": []
+    },
+    {
+      "name": "FundingTopUpExcessive",
+      "signature": "FundingTopUpExcessive()",
+      "inputs": []
+    },
+    {
+      "name": "InvalidAmount",
+      "signature": "InvalidAmount()",
+      "inputs": []
+    },
+    {
+      "name": "InvalidEpoch",
+      "signature": "InvalidEpoch()",
+      "inputs": []
+    },
+    {
+      "name": "InvalidInitialization",
+      "signature": "InvalidInitialization()",
+      "inputs": []
+    },
+    {
+      "name": "InvalidParams",
+      "signature": "InvalidParams()",
+      "inputs": []
+    },
+    {
+      "name": "InvalidPhase",
+      "signature": "InvalidPhase()",
+      "inputs": []
+    },
+    {
+      "name": "NoExitRequested",
+      "signature": "NoExitRequested()",
+      "inputs": []
+    },
+    {
+      "name": "NotInitializing",
+      "signature": "NotInitializing()",
+      "inputs": []
+    },
+    {
+      "name": "NotPaused",
+      "signature": "NotPaused()",
+      "inputs": []
+    },
+    {
+      "name": "NotWithdrawable",
+      "signature": "NotWithdrawable()",
+      "inputs": []
+    },
+    {
+      "name": "NothingToClaim",
+      "signature": "NothingToClaim()",
+      "inputs": []
+    },
+    {
+      "name": "OraclePriceInvalid",
+      "signature": "OraclePriceInvalid()",
+      "inputs": []
+    },
+    {
+      "name": "OwnableInvalidOwner",
+      "signature": "OwnableInvalidOwner(address)",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address"
+        }
+      ]
+    },
+    {
+      "name": "OwnableUnauthorizedAccount",
+      "signature": "OwnableUnauthorizedAccount(address)",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address"
+        }
+      ]
+    },
+    {
+      "name": "Paused",
+      "signature": "Paused()",
+      "inputs": []
+    },
+    {
+      "name": "PendingDepositExists",
+      "signature": "PendingDepositExists()",
+      "inputs": []
+    },
+    {
+      "name": "PriorCallUnsettled",
+      "signature": "PriorCallUnsettled()",
+      "inputs": []
+    },
+    {
+      "name": "ReentrancyGuardReentrantCall",
+      "signature": "ReentrancyGuardReentrantCall()",
+      "inputs": []
+    },
+    {
+      "name": "SafeCastOverflowedUintDowncast",
+      "signature": "SafeCastOverflowedUintDowncast(uint8,uint256)",
+      "inputs": [
+        {
+          "name": "bits",
+          "type": "uint8"
+        },
+        {
+          "name": "value",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "SafeERC20FailedOperation",
+      "signature": "SafeERC20FailedOperation(address)",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address"
+        }
+      ]
+    },
+    {
+      "name": "ShutdownActive",
+      "signature": "ShutdownActive()",
+      "inputs": []
+    },
+    {
+      "name": "SlashNotEligible",
+      "signature": "SlashNotEligible()",
+      "inputs": []
+    },
+    {
+      "name": "Unauthorized",
+      "signature": "Unauthorized()",
+      "inputs": []
+    },
+    {
+      "name": "VaultTerminal",
+      "signature": "VaultTerminal()",
+      "inputs": []
+    },
+    {
+      "name": "ZeroAddress",
+      "signature": "ZeroAddress()",
+      "inputs": []
+    }
+  ]
+}

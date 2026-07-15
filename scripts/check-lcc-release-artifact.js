@@ -8,6 +8,7 @@ const MAX_RUNTIME_BYTES = 24_276;
 const EIP_170_LIMIT = 24_576;
 const AUCTION_LIBRARY_SOURCE = "src/lcc/libraries/LCCAuctionLib.sol";
 const STORAGE_LAYOUT_BASELINE = "docs/lcc-vault-storage-layout.json";
+const ABI_BASELINE = "docs/lcc-vault-abi-baseline.json";
 const NEGATIVE_FIXTURE_DIRECTORY = "scripts/fixtures/lcc-storage-layout";
 const EXPECTED_NEGATIVE_FIXTURES = [
   "base-storage-insertion.json",
@@ -89,6 +90,96 @@ function canonicalLayout(layout) {
     offset: entry.offset,
     type: canonicalType(entry.type, layout.types),
   }));
+}
+
+function canonicalAbiType(parameter) {
+  if (typeof parameter?.type !== "string") throw new Error("ABI parameter is missing its type");
+  if (!parameter.type.startsWith("tuple")) return parameter.type;
+  if (!Array.isArray(parameter.components)) throw new Error(`ABI ${parameter.type} parameter is missing components`);
+
+  const tupleSuffix = parameter.type.slice("tuple".length);
+  return `(${parameter.components.map(canonicalAbiType).join(",")})${tupleSuffix}`;
+}
+
+function canonicalAbiParameter(parameter, includeIndexed = false) {
+  const canonical = {
+    name: parameter.name ?? "",
+    type: parameter.type,
+  };
+  if (parameter.type.startsWith("tuple")) {
+    if (!Array.isArray(parameter.components)) throw new Error(`ABI ${parameter.type} parameter is missing components`);
+    canonical.components = parameter.components.map((component) => canonicalAbiParameter(component));
+  }
+  if (includeIndexed) canonical.indexed = parameter.indexed === true;
+  return canonical;
+}
+
+function canonicalAbiEntry(entry, methodIdentifiers) {
+  if (typeof entry?.name !== "string" || !Array.isArray(entry.inputs)) {
+    throw new Error(`malformed ${entry?.type ?? "unknown"} ABI entry`);
+  }
+
+  const signature = `${entry.name}(${entry.inputs.map(canonicalAbiType).join(",")})`;
+  if (entry.type === "function") {
+    if (!Array.isArray(entry.outputs) || typeof entry.stateMutability !== "string") {
+      throw new Error(`malformed function ABI entry ${signature}`);
+    }
+    const selector = methodIdentifiers[signature];
+    if (typeof selector !== "string" || !/^[0-9a-f]{8}$/.test(selector)) {
+      throw new Error(`artifact method identifiers are missing a selector for ${signature}`);
+    }
+    return {
+      name: entry.name,
+      signature,
+      selector: `0x${selector}`,
+      stateMutability: entry.stateMutability,
+      inputs: entry.inputs.map((parameter) => canonicalAbiParameter(parameter)),
+      outputs: entry.outputs.map((parameter) => canonicalAbiParameter(parameter)),
+    };
+  }
+  if (entry.type === "event") {
+    return {
+      name: entry.name,
+      signature,
+      anonymous: entry.anonymous === true,
+      inputs: entry.inputs.map((parameter) => canonicalAbiParameter(parameter, true)),
+    };
+  }
+  if (entry.type === "error") {
+    return {
+      name: entry.name,
+      signature,
+      inputs: entry.inputs.map((parameter) => canonicalAbiParameter(parameter)),
+    };
+  }
+  throw new Error(`unsupported ABI entry type ${entry.type}`);
+}
+
+function canonicalAbi(abi, methodIdentifiers) {
+  if (!Array.isArray(abi) || typeof methodIdentifiers !== "object" || methodIdentifiers === null) {
+    throw new Error("malformed artifact ABI or method identifiers");
+  }
+
+  const canonical = { functions: [], events: [], errors: [] };
+  for (const entry of abi) {
+    if (entry.type === "constructor") continue;
+    if (entry.type === "function") canonical.functions.push(canonicalAbiEntry(entry, methodIdentifiers));
+    else if (entry.type === "event") canonical.events.push(canonicalAbiEntry(entry, methodIdentifiers));
+    else if (entry.type === "error") canonical.errors.push(canonicalAbiEntry(entry, methodIdentifiers));
+    else throw new Error(`unsupported external ABI entry type ${entry.type}`);
+  }
+
+  for (const entries of Object.values(canonical)) {
+    entries.sort((left, right) => (left.signature < right.signature ? -1 : left.signature > right.signature ? 1 : 0));
+  }
+
+  const artifactSignatures = Object.keys(methodIdentifiers).sort();
+  const abiSignatures = canonical.functions.map((entry) => entry.signature).sort();
+  if (artifactSignatures.join("\n") !== abiSignatures.join("\n")) {
+    throw new Error("function ABI signatures do not match the artifact method identifiers");
+  }
+
+  return canonical;
 }
 
 function firstDifference(expected, actual, location = "layout") {
@@ -192,7 +283,24 @@ if (layoutResult.difference) {
 }
 verifyNegativeFixtures();
 
+let canonicalArtifactAbi;
+let abiDifference;
+try {
+  canonicalArtifactAbi = canonicalAbi(artifact.abi, artifact.methodIdentifiers);
+  abiDifference = firstDifference(readJson(ABI_BASELINE), canonicalArtifactAbi, "abi");
+} catch (error) {
+  fail(`could not compare the artifact external ABI: ${error.message}`);
+}
+if (abiDifference) {
+  fail(
+    `external ABI differs from reviewer-controlled baseline:\n` +
+      `--- ${ABI_BASELINE}\n` +
+      `+++ ${path.relative(process.cwd(), artifactPath)}\n` +
+      `@@ ${abiDifference} @@`,
+  );
+}
+
 console.log(
   `LCCVault release artifact: ${runtimeBytes} bytes, ${EIP_170_LIMIT - runtimeBytes} bytes below EIP-170, ` +
-    `${EXPECTED_OPTIMIZER_RUNS} runs; storage layout matches reviewer-controlled baseline`,
+    `${EXPECTED_OPTIMIZER_RUNS} runs; storage layout and external ABI match reviewer-controlled baselines`,
 );

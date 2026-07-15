@@ -18,6 +18,7 @@
     "test:forge:lcc:ir": "FOUNDRY_PROFILE=test-lcc-ir forge test --match-path 'test/forge/lcc/**/*.t.sol'",
     "test:forge:noninvariant": "FOUNDRY_PROFILE=test forge test --no-match-contract 'CoreInvariantHarness|InvariantsTest|DebtFloorInvariantsTest|USD3UpgradeForkTest|LCC.*StatefulInvariantTest'",
     "test:forge:irm": "FOUNDRY_PROFILE=test-irm forge test",
+    "test:forge:fork:pytlocker": "FOUNDRY_PROFILE=fork FOUNDRY_TEST=test/forge/jane/pytlocker forge test --match-contract PYTLockerForkTest -vvv",
     "test:forge:all": "yarn test:forge && yarn test:forge:irm",
     "test:forge:invariant": "FOUNDRY_MATCH_CONTRACT=InvariantTest yarn test:forge",
     "test:forge:invariant:core": "FOUNDRY_PROFILE=test forge test --match-contract CoreInvariantHarness --offline",
