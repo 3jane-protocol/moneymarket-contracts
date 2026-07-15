@@ -105,8 +105,16 @@ abstract contract SafeHelper is Script, Test {
         bytes signature;
     }
 
+    struct SafeTransaction {
+        address to;
+        uint256 value;
+        bytes data;
+        Operation operation;
+    }
+
     // New struct to track a batch and its gas
     struct BatchData {
+        SafeTransaction[] transactions;
         bytes[] encodedTxns; // Array to store encoded transactions
         uint256 totalGas; // Total gas used by the batch
     }
@@ -122,15 +130,11 @@ abstract contract SafeHelper is Script, Test {
 
     constructor() {
         // Initialize first batch
-        batches.push(BatchData({encodedTxns: new bytes[](0), totalGas: 0}));
+        batches.push();
     }
 
     modifier isBatch(address safe_) {
-        // Set the Safe API base URL and multisend address based on chain
-        chainId = block.chainid;
-        SAFE_API_BASE_URL = "https://api.safe.global/tx-service/eth/api/v1/";
-        SAFE_MULTISEND_ADDRESS = 0x40A2aCCbd92BCA938b02010E17A5b8929b49130D;
-        safe = safe_;
+        _configureSafe(safe_);
 
         // Load wallet information
         walletType = keccak256(abi.encodePacked(vm.envString("WALLET_TYPE")));
@@ -152,6 +156,14 @@ abstract contract SafeHelper is Script, Test {
             revert("Unsupported wallet type");
         }
         _;
+    }
+
+    function _configureSafe(address safe_) internal {
+        // Set the Safe API base URL and multisend address based on chain.
+        chainId = block.chainid;
+        SAFE_API_BASE_URL = "https://api.safe.global/tx-service/eth/api/v1/";
+        SAFE_MULTISEND_ADDRESS = 0x40A2aCCbd92BCA938b02010E17A5b8929b49130D;
+        safe = safe_;
     }
 
     // Adds an encoded transaction to the batch.
@@ -177,12 +189,14 @@ abstract contract SafeHelper is Script, Test {
             // Only create a new batch if the current one has transactions
             if (batches[currentBatchIndex].encodedTxns.length > 0) {
                 currentBatchIndex++;
-                batches.push(BatchData({encodedTxns: new bytes[](0), totalGas: 0}));
+                batches.push();
             }
         }
 
         // Encode the transaction and add it to the current batch
         bytes memory encodedTxn = abi.encodePacked(Operation.CALL, to_, value_, data_.length, data_);
+        batches[currentBatchIndex].transactions
+            .push(SafeTransaction({to: to_, value: value_, data: data_, operation: Operation.CALL}));
         batches[currentBatchIndex].encodedTxns.push(encodedTxn);
         batches[currentBatchIndex].totalGas += gasUsed;
 
@@ -216,14 +230,25 @@ abstract contract SafeHelper is Script, Test {
     }
 
     // Creates a batch from the transactions at the specified index
-    function _createBatchFromIndex(uint256 batchIndex, uint256 nonce_) private view returns (Batch memory batch) {
+    function _createBatchFromIndex(uint256 batchIndex, uint256 nonce_) internal view returns (Batch memory batch) {
+        uint256 len = batches[batchIndex].encodedTxns.length;
+        if (len == 1) {
+            SafeTransaction storage transaction = batches[batchIndex].transactions[0];
+            batch.to = transaction.to;
+            batch.value = transaction.value;
+            batch.data = transaction.data;
+            batch.operation = transaction.operation;
+            batch.nonce = nonce_;
+            batch.txHash = _getTransactionHash(safe, batch);
+            return batch;
+        }
+
         batch.to = SAFE_MULTISEND_ADDRESS;
         batch.value = 0;
         batch.operation = Operation.DELEGATECALL;
 
         // Concatenate all encoded transactions into a single data payload
         bytes memory data;
-        uint256 len = batches[batchIndex].encodedTxns.length;
         for (uint256 i; i < len; ++i) {
             data = bytes.concat(data, batches[batchIndex].encodedTxns[i]);
         }
