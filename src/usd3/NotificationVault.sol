@@ -127,9 +127,11 @@ contract NotificationVault is BaseHooksUpgradeable {
 
         uint256 userBalance = IERC20(address(this)).balanceOf(msg.sender);
         if (shares > userBalance) revert InsufficientShares();
+        if (shares > type(uint128).max) revert InvalidAmount();
 
         uint256 cooldownEnd = block.timestamp + cooldownDuration;
         uint256 windowEnd = cooldownEnd + withdrawalWindow;
+        if (windowEnd > type(uint64).max) revert InvalidCooldownConfig();
 
         cooldowns[msg.sender] =
             UserCooldown({cooldownEnd: uint64(cooldownEnd), windowEnd: uint64(windowEnd), shares: uint128(shares)});

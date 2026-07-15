@@ -98,6 +98,30 @@ contract NotificationVaultTest is Setup {
         assertFalse(success);
     }
 
+    function test_startCooldownRejectsSharesAboveUint128() public {
+        uint256 oversizedShares = uint256(type(uint128).max) + 1;
+        deal(address(vault), alice, oversizedShares);
+
+        vm.prank(alice);
+        vm.expectRevert(INotificationVault.InvalidAmount.selector);
+        vault.startCooldown(oversizedShares);
+    }
+
+    function test_startCooldownRejectsWindowEndAboveUint64() public {
+        uint256 shares = _depositToVault(alice, 100e6);
+        vm.warp(uint256(type(uint64).max) - COOLDOWN - WINDOW + 1);
+
+        vm.prank(alice);
+        vm.expectRevert(INotificationVault.InvalidCooldownConfig.selector);
+        vault.startCooldown(shares);
+    }
+
+    function test_cancelCooldownRevertsWithoutActiveCooldown() public {
+        vm.prank(alice);
+        vm.expectRevert(INotificationVault.NoActiveCooldown.selector);
+        vault.cancelCooldown();
+    }
+
     function test_standardDepositMintWithdrawRedeem() public {
         uint256 depositAmount = 200e6;
         uint256 shares = _depositToVault(alice, depositAmount);
@@ -168,6 +192,33 @@ contract NotificationVaultTest is Setup {
         assertEq(cooldownShares, 0);
     }
 
+    function test_withdrawalWindowIncludesBothEndpointsAndExcludesFollowingSecond() public {
+        uint256 shares = _depositToVault(alice, 90e6);
+
+        vm.prank(alice);
+        vault.startCooldown(shares);
+        (uint256 cooldownEnd, uint256 windowEnd,) = vault.getCooldownStatus(alice);
+
+        vm.warp(cooldownEnd);
+        assertEq(block.timestamp, cooldownEnd);
+        assertEq(vault.availableWithdrawLimit(alice), shares);
+        vm.prank(alice);
+        vault.redeem(shares / 3, alice, alice);
+
+        vm.warp(windowEnd);
+        assertEq(block.timestamp, windowEnd);
+        assertEq(vault.availableWithdrawLimit(alice), (shares * 2) / 3);
+        vm.prank(alice);
+        vault.withdraw(shares / 3, alice, alice);
+
+        vm.warp(windowEnd + 1);
+        assertEq(block.timestamp, windowEnd + 1);
+        assertEq(vault.availableWithdrawLimit(alice), 0);
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.redeem(1, alice, alice);
+    }
+
     function test_transferRestrictionOnlyBlocksCooldownedShares() public {
         uint256 shares = _depositToVault(alice, 100e6);
 
@@ -181,6 +232,74 @@ contract NotificationVaultTest is Setup {
         vm.prank(alice);
         vm.expectRevert(INotificationVault.InsufficientShares.selector);
         ERC20(address(vault)).transfer(bob, 1);
+    }
+
+    function test_delegatedTransferFromUsesOwnerCooldownAndConsumesAllowance() public {
+        uint256 shares = _depositToVault(alice, 100e6);
+        uint256 cooldownShares = shares / 2;
+        uint256 transferableShares = shares - cooldownShares;
+
+        vm.prank(alice);
+        vault.startCooldown(cooldownShares);
+        vm.prank(management);
+        vault.setCooldownBypass(bob, true);
+        vm.prank(alice);
+        ERC20(address(vault)).approve(bob, shares);
+
+        vm.prank(bob);
+        vm.expectRevert(INotificationVault.InsufficientShares.selector);
+        ERC20(address(vault)).transferFrom(alice, bob, transferableShares + 1);
+        assertEq(ERC20(address(vault)).allowance(alice, bob), shares);
+
+        vm.prank(bob);
+        ERC20(address(vault)).transferFrom(alice, bob, transferableShares);
+
+        assertEq(ERC20(address(vault)).allowance(alice, bob), cooldownShares);
+        assertEq(ERC20(address(vault)).balanceOf(alice), cooldownShares);
+        assertEq(ERC20(address(vault)).balanceOf(bob), transferableShares);
+        (,, uint256 aliceCooldownShares) = vault.getCooldownStatus(alice);
+        (,, uint256 bobCooldownShares) = vault.getCooldownStatus(bob);
+        assertEq(aliceCooldownShares, cooldownShares);
+        assertEq(bobCooldownShares, 0);
+    }
+
+    function test_delegatedWithdrawAndRedeemUseOwnerCooldownAndConsumeAllowance() public {
+        uint256 shares = _depositToVault(alice, 100e6);
+
+        vm.prank(alice);
+        vault.startCooldown(shares);
+        vm.prank(management);
+        vault.setCooldownBypass(bob, true);
+        vm.prank(alice);
+        ERC20(address(vault)).approve(bob, shares);
+
+        vm.prank(bob);
+        vm.expectRevert();
+        vault.withdraw(1, bob, alice);
+        vm.prank(bob);
+        vm.expectRevert();
+        vault.redeem(1, bob, alice);
+        assertEq(ERC20(address(vault)).allowance(alice, bob), shares);
+
+        (uint256 cooldownEnd,,) = vault.getCooldownStatus(alice);
+        vm.warp(cooldownEnd);
+
+        uint256 operationShares = shares / 4;
+        vm.prank(bob);
+        uint256 burnedShares = vault.withdraw(operationShares, bob, alice);
+        assertEq(burnedShares, operationShares);
+        assertEq(ERC20(address(vault)).allowance(alice, bob), shares - operationShares);
+
+        vm.prank(bob);
+        uint256 redeemedAssets = vault.redeem(operationShares, bob, alice);
+        assertEq(redeemedAssets, operationShares);
+        assertEq(ERC20(address(vault)).allowance(alice, bob), shares - (2 * operationShares));
+
+        assertEq(ERC20(address(vault)).balanceOf(alice), shares - (2 * operationShares));
+        (,, uint256 aliceCooldownShares) = vault.getCooldownStatus(alice);
+        (,, uint256 bobCooldownShares) = vault.getCooldownStatus(bob);
+        assertEq(aliceCooldownShares, shares - (2 * operationShares));
+        assertEq(bobCooldownShares, 0);
     }
 
     function test_zeroCooldownAllowsImmediateExitAndTransferWithLingeringCooldown() public {
