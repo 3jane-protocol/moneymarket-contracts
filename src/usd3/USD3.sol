@@ -210,29 +210,37 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /// @dev Wraps idle USDC into waUSDC via a fallible whole-share mint. Skips (leaving USDC idle,
-    /// counted at face by nav) when the wrapper is paused or the amount is below one share. The
-    /// sub-share remainder and the ≤1-unit redeem/mint rounding are accepted dust (see NOTE below).
-    function _wrapUSDC(uint256 amount) private {
+    /// counted at face by nav) when paused, below one share, or — on the deposit/tend path
+    /// (enforceSlack) — when the mint's ≤1-unit rounding cost is not covered by realized-but-unreported
+    /// interest, so deposit spam cannot walk totalAssets past nav()+2 and freeze withdrawals.
+    function _wrapUSDC(uint256 amount, uint256 pendingCredit, bool enforceSlack) private {
         if (amount == 0 || Pausable(address(WAUSDC)).paused()) return;
         uint256 shares = WAUSDC.previewDeposit(amount);
         uint256 maxShares = WAUSDC.maxMint(address(this));
         if (shares > maxShares) shares = maxShares;
         if (shares == 0) return;
+        if (enforceSlack) {
+            uint256 aggregate = suppliedWaUSDC() + balanceOfWaUSDC();
+            uint256 baseValue = WAUSDC.convertToAssets(aggregate);
+            uint256 cost = WAUSDC.previewMint(shares);
+            uint256 gain = WAUSDC.convertToAssets(aggregate + shares) - baseValue;
+            if (cost > gain) {
+                uint256 navNow = baseValue + asset.balanceOf(address(this));
+                if (TokenizedStrategy.totalAssets() + pendingCredit + (cost - gain) > navNow) return;
+            }
+        }
         try WAUSDC.mint(shares, address(this)) {} catch {}
     }
-
-    // NOTE: The ≤1-base-unit deposit-wrap and unwrap-redeem rounding drift is deliberately accepted,
-    // self-healing dust: each keeper report re-bases totalAssets to nav(). Rapid deposits batched in one
-    // transaction can cheaply repeat it and temporarily restrict withdrawals; this is deferred rather
-    // than gated for now, and a deposit-side skip gate may be reconsidered later.
 
     /// @dev Deploy funds to MorphoCredit market respecting maxOnCredit ratio and subordination cap
     /// @param _amount Amount of asset to deploy
     function _deployFunds(uint256 _amount) internal override {
         if (_amount == 0) return;
 
-        // Wrap USDC to waUSDC
-        _wrapUSDC(_amount);
+        // Wrap USDC to waUSDC. pendingCredit = _amount (the full loose balance) is exact for a fresh deposit
+        // and conservative otherwise: any pre-existing idle inflates it, so the slack gate can only over-skip,
+        // never over-wrap. A gate-deferred pile is cleared by the ungated report-time wrap.
+        _wrapUSDC(_amount, _amount, true);
 
         uint256 maxOnCreditRatio = maxOnCredit();
         if (maxOnCreditRatio == 0) {
@@ -304,7 +312,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         morphoCredit.accrueInterest(params);
 
-        if (!TokenizedStrategy.isShutdown()) _wrapUSDC(asset.balanceOf(address(this)));
+        if (!TokenizedStrategy.isShutdown()) _wrapUSDC(asset.balanceOf(address(this)), 0, false);
 
         return nav();
     }
@@ -318,7 +326,7 @@ contract USD3 is BaseHooksUpgradeable {
         if (Pausable(address(WAUSDC)).paused()) return;
 
         // First wrap any idle USDC to waUSDC
-        _wrapUSDC(_totalIdle);
+        _wrapUSDC(_totalIdle, 0, true);
 
         _applyDeployCap(true);
     }
@@ -431,6 +439,14 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 idleAsset = asset.balanceOf(address(this));
         uint256 totalAssets = TokenizedStrategy.totalAssets();
 
+        // First-loss guard: while nav trails totalAssets, an unrealized loss is pending, so halt withdrawals
+        // until report() burns it against the sUSD3 first-loss tranche rather than paying exiting senior holders at a
+        // stale price. The +2 tolerance absorbs the <=1-unit waUSDC wrap/unwrap rounding drift. Deposit-side drift is
+        // gated at the source in _wrapUSDC (enforceSlack); the withdraw-side redeem can still nudge the gap past +2,
+        // but that halt is transient and liveness-only: nav() converts at the live waUSDC rate, so accruing interest
+        // lifts nav() back over totalAssets on its own, and report() re-bases totalAssets to nav definitively. No
+        // funds are at risk, so the residual withdraw-side drift is accepted rather than tracked in mutable state
+        // under this guard.
         if (nav() + 2 < totalAssets) {
             return 0;
         }

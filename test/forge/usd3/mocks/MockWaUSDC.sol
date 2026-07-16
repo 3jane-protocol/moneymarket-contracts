@@ -13,11 +13,13 @@ import {Math} from "../../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 contract MockWaUSDC is ERC20 {
     using Math for uint256;
 
+    uint256 public constant RAY = 1e27;
+
     error EnforcedPause();
     error StaticATokenInvalidZeroShares();
     error AaveReservePaused();
 
-    // Storage slot 0 for underlying asset (avoiding immutables for etching)
+    // Storage slot 5 for the underlying asset (avoiding immutables for etching)
     address private _asset;
 
     // Share price in 6 decimals (1e6 = 1:1 ratio, 1.1e6 = 1.1:1 ratio)
@@ -28,10 +30,14 @@ contract MockWaUSDC is ERC20 {
 
     uint128 private _virtualUnderlyingBalance;
 
-    // Append-only test controls: storage slots 5/6 are etched by Setup.sol.
+    // Append-only test controls; Setup.sol etches only the earlier _asset/sharePrice slots 5/6.
     bool private _reserveFrozen;
     uint128 private _maxMintOverride;
     bool private _aaveReservePaused;
+
+    // Optional RAY-scale rate for realistic StataTokenV2 rounding tests. Kept append-only so the
+    // canonical etched mock's manually initialized _asset/sharePrice slots remain unchanged.
+    uint256 public rateOverride;
 
     constructor(address _usdc) ERC20("Wrapped Aave USDC", "waUSDC") {
         _asset = _usdc;
@@ -156,15 +162,11 @@ contract MockWaUSDC is ERC20 {
      * @dev Preview functions for ERC4626 compatibility
      */
     function convertToShares(uint256 assets) public view returns (uint256) {
-        // For first deposit, avoid rounding issues while still respecting share price
-        if (totalSupply() == 0 && sharePrice == 1e6) {
-            return assets; // 1:1 when price is exactly 1.0
-        }
-        return assets.mulDiv(1e6, sharePrice, Math.Rounding.Floor);
+        return assets.mulDiv(RAY, effectiveRate(), Math.Rounding.Floor);
     }
 
     function convertToAssets(uint256 shares) public view returns (uint256) {
-        return shares.mulDiv(sharePrice, 1e6, Math.Rounding.Floor);
+        return shares.mulDiv(effectiveRate(), RAY, Math.Rounding.Floor);
     }
 
     function previewDeposit(uint256 assets) public view returns (uint256) {
@@ -172,7 +174,7 @@ contract MockWaUSDC is ERC20 {
     }
 
     function previewWithdraw(uint256 assets) public view returns (uint256) {
-        return assets.mulDiv(1e6, sharePrice, Math.Rounding.Ceil);
+        return assets.mulDiv(RAY, effectiveRate(), Math.Rounding.Ceil);
     }
 
     function previewRedeem(uint256 shares) public view returns (uint256) {
@@ -180,7 +182,13 @@ contract MockWaUSDC is ERC20 {
     }
 
     function previewMint(uint256 shares) public view returns (uint256) {
-        return shares.mulDiv(sharePrice, 1e6, Math.Rounding.Ceil);
+        return shares.mulDiv(effectiveRate(), RAY, Math.Rounding.Ceil);
+    }
+
+    /// @dev Returns a StataTokenV2-compatible RAY rate. The share-price fallback makes an etched
+    /// mock immediately usable because Setup initializes slot 6 while appended slots remain zero.
+    function effectiveRate() public view returns (uint256) {
+        return rateOverride != 0 ? rateOverride : sharePrice * 1e21;
     }
 
     /**
@@ -244,5 +252,11 @@ contract MockWaUSDC is ERC20 {
     function setSharePrice(uint256 newPrice) external {
         require(newPrice > 0, "Invalid price");
         sharePrice = newPrice;
+    }
+
+    /// @dev Override the effective conversion rate with a RAY-scale value; zero restores the
+    /// sharePrice-derived fallback.
+    function setRate(uint256 rayRate) external {
+        rateOverride = rayRate;
     }
 }

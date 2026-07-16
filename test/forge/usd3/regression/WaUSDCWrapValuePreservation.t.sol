@@ -14,7 +14,9 @@ contract WaUSDCWrapValuePreservationTest is Setup {
 
     address internal alice = makeAddr("alice");
 
+    uint256 internal constant RAY = 1e27;
     uint256 internal constant STATIC_PRICE = 1_178_000;
+    uint256 internal constant REALISTIC_RATE = 1_178_000_000_000_000_000_000_000_019;
 
     function setUp() public override {
         super.setUp();
@@ -28,7 +30,7 @@ contract WaUSDCWrapValuePreservationTest is Setup {
     }
 
     /*//////////////////////////////////////////////////////////////
-                         PRE-FIX REPRODUCTIONS
+                         ROUNDING REGRESSIONS
     //////////////////////////////////////////////////////////////*/
 
     function test_reportMainnetTrace_zeroShareMintDoesNotDoS() public {
@@ -41,6 +43,73 @@ contract WaUSDCWrapValuePreservationTest is Setup {
         tokenized.report();
 
         _assertAccounted("report must crystallize wrapping value");
+    }
+
+    function test_depositSpamCannotFreezeWithdrawals_realisticRate() public {
+        wrapper.setRate(REALISTIC_RATE);
+        setMaxOnCredit(0);
+        _depositExactShares(5_000_000_000);
+
+        vm.prank(keeper);
+        tokenized.report();
+
+        for (uint256 i; i < 50; ++i) {
+            _deposit(2);
+
+            vm.prank(keeper);
+            tokenized.tend();
+
+            assertLe(tokenized.totalAssets(), usd3.nav() + 2, "dust deposit/tend exceeded accounting slack");
+            assertGt(usd3.availableWithdrawLimit(alice), 0, "dust spam froze withdrawals");
+        }
+    }
+
+    function testFuzz_realisticRateDepositsPreserveSlackAndReportClearsPile(
+        uint256 rayRate,
+        uint256[8] memory depositAmounts
+    ) public {
+        rayRate = bound(rayRate, 1_150_000_000_000_000_000_000_000_000, 1_250_000_000_000_000_000_000_000_000);
+        if (rayRate % 2 == 0) ++rayRate;
+        wrapper.setRate(rayRate);
+        setMaxOnCredit(0);
+        _depositExactShares(5_000_000_000);
+
+        vm.prank(keeper);
+        tokenized.report();
+
+        for (uint256 i; i < depositAmounts.length; ++i) {
+            uint256 depositAmount = bound(depositAmounts[i], 2, 1_000_000e6);
+            _deposit(depositAmount);
+
+            vm.prank(keeper);
+            tokenized.tend();
+
+            assertLe(tokenized.totalAssets(), usd3.nav() + 2, "fuzzed deposit/tend exceeded accounting slack");
+            assertGt(usd3.availableWithdrawLimit(alice), 0, "fuzzed deposit/tend froze withdrawals");
+        }
+
+        // A non-integer rate must eventually make a two-unit deposit lossy. Its deposit and tend
+        // wraps are gated, leaving a wrappable pile for the deliberately ungated report path.
+        for (uint256 i; i < 16 && wrapper.previewDeposit(asset.balanceOf(address(usd3))) == 0; ++i) {
+            _deposit(2);
+
+            vm.prank(keeper);
+            tokenized.tend();
+
+            assertLe(tokenized.totalAssets(), usd3.nav() + 2, "dust setup exceeded accounting slack");
+            assertGt(usd3.availableWithdrawLimit(alice), 0, "dust setup froze withdrawals");
+        }
+
+        uint256 idleBeforeReport = asset.balanceOf(address(usd3));
+        assertGt(wrapper.previewDeposit(idleBeforeReport), 0, "fuzz setup did not create a wrappable pile");
+
+        vm.prank(keeper);
+        tokenized.report();
+
+        uint256 idleAfterReport = asset.balanceOf(address(usd3));
+        assertLt(idleAfterReport, idleBeforeReport, "report did not consume the gated pile");
+        assertEq(wrapper.previewDeposit(idleAfterReport), 0, "report left a wrappable USDC pile");
+        assertLe(tokenized.totalAssets(), usd3.nav() + 2, "report left stale accounting");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -147,31 +216,32 @@ contract WaUSDCWrapValuePreservationTest is Setup {
         _assertAccounted("zero-balance sUSD3 branch left deficit");
     }
 
-    function test_characterization_repeatedDepositDustSelfHealsOnReport() public {
+    // Remaining defect 3: repeated unwrap/redeem rounding can temporarily cross the +2 guard.
+    // It is a self-healing Low because the next report re-bases totalAssets to live NAV.
+    function test_characterization_repeatedWithdrawDustSelfHealsOnReport() public {
         wrapper.setSharePrice(STATIC_PRICE);
         setMaxOnCredit(0);
+        _depositExactShares(5_000_000_000);
 
-        uint256 depositAmount = 2;
-        uint256 depositCount = 5;
-        assertEq(wrapper.previewDeposit(depositAmount), 1, "setup must mint one whole wrapper share");
-        assertEq(wrapper.previewMint(1), depositAmount, "setup must consume the full deposit");
+        vm.prank(keeper);
+        tokenized.report();
 
-        uint256 previousDrift;
-        for (uint256 i; i < depositCount; ++i) {
-            _deposit(depositAmount);
-
-            uint256 currentDrift = tokenized.totalAssets() - usd3.nav();
-            assertEq(currentDrift, previousDrift + 1, "accepted drift must grow by one unit per deposit");
-            previousDrift = currentDrift;
+        uint256 withdrawals;
+        while (usd3.availableWithdrawLimit(alice) > 0 && withdrawals < 32) {
+            vm.prank(alice);
+            tokenized.withdraw(1, alice, alice);
+            ++withdrawals;
         }
 
-        assertEq(previousDrift, depositCount, "repeated-deposit drift characterization changed");
-        assertEq(usd3.availableWithdrawLimit(alice), 0, "unreported drift should temporarily restrict withdrawals");
+        uint256 drift = tokenized.totalAssets() - usd3.nav();
+        assertEq(drift, 3, "unwrap-side drift characterization changed");
+        assertLt(withdrawals, 32, "withdrawal bundle did not reach the stale-NAV guard");
+        assertEq(usd3.availableWithdrawLimit(alice), 0, "unwrap drift should temporarily restrict withdrawals");
 
         vm.prank(keeper);
         (, uint256 loss) = tokenized.report();
 
-        assertEq(loss, previousDrift, "report must recognize the accepted deposit dust");
+        assertEq(loss, drift, "report must recognize the unwrap dust");
         assertEq(tokenized.totalAssets(), usd3.nav(), "report must rebase totalAssets to NAV");
         assertGt(usd3.availableWithdrawLimit(alice), 0, "report must restore withdrawal availability");
     }
@@ -215,6 +285,8 @@ contract WaUSDCWrapValuePreservationTest is Setup {
 
         wrapper.setReserveFrozen(false);
         wrapper.setMaxMintOverride(10);
+        // Fund the clamped wrap's one-unit rounding cost so the slack gate permits it.
+        deal(address(asset), address(usd3), asset.balanceOf(address(usd3)) + 1);
         uint256 sharesBefore = wrapper.balanceOf(address(usd3));
         uint256 idleBefore = asset.balanceOf(address(usd3));
         uint256 expectedCost = wrapper.previewMint(10);
@@ -229,6 +301,13 @@ contract WaUSDCWrapValuePreservationTest is Setup {
     /*//////////////////////////////////////////////////////////////
                             MOCK PARITY
     //////////////////////////////////////////////////////////////*/
+
+    function test_freshEtchedMockUsesRayFallbackAtOneToOne() public view {
+        uint256 amount = 123_456_789;
+        assertEq(wrapper.effectiveRate(), RAY, "etched mock rate fallback not initialized");
+        assertEq(wrapper.convertToAssets(amount), amount, "one-to-one asset conversion changed");
+        assertEq(wrapper.convertToShares(amount), amount, "one-to-one share conversion changed");
+    }
 
     function test_mockZeroShareParity() public {
         wrapper.setSharePrice(STATIC_PRICE);
