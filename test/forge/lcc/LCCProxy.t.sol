@@ -79,7 +79,7 @@ contract LCCProxyTest is LCCBase {
         LCCVaultFactory factory = new LCCVaultFactory(owner, address(beacon));
         vm.startPrank(owner);
         LCCVault first = LCCVault(factory.createVault(params));
-        LCCVault second = LCCVault(factory.createVault(params));
+        LCCVault second = LCCVault(factory.createVault(params, keccak256("facility-b")));
         vm.stopPrank();
 
         _approveVault(first, alice);

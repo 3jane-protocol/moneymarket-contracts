@@ -12,7 +12,12 @@ import {LCCErrorsLib} from "./libraries/LCCErrorsLib.sol";
 /// @notice Deploys {LCCVault} instances and records them in a provenance registry.
 /// @dev Vault creation is owner-gated; registry membership (isVault/allVaults) records owner-vetted provenance, not
 /// exclusive deployment authority. Non-factory BeaconProxy instances can point at the same public beacon and remain
-/// unregistered.
+/// unregistered. For deterministic deployments, governance derives
+/// `salt = keccak256(abi.encode(bytes32("3JANE_LCC_VAULT_V1"), block.chainid, facilityId))`, where `facilityId` is a
+/// durable governance-assigned bytes32 identifier recorded in the deployment manifest. Tooling that starts from a
+/// string uses `facilityId = keccak256(bytes(facilityIdString))`, with the string interpreted as UTF-8. An exact
+/// duplicate `(salt, params)` fails closed on the CREATE2 collision, while reusing a salt with different params
+/// produces a different address because the initializer calldata changes the initcode hash.
 contract LCCVaultFactory {
     /// @notice Emitted when a vault is deployed through this factory.
     /// @param vault The newly deployed vault.
@@ -46,12 +51,48 @@ contract LCCVaultFactory {
     }
 
     /// @notice Deploys a new vault with the given parameters and records it in the registry.
+    /// @dev Equivalent to the two-argument overload with the default salt `bytes32(0)`. Deploying identical params
+    /// through this path twice reverts on the CREATE2 collision; pass an explicit salt to deploy a duplicate facility.
     /// @param params The facility configuration; see {ILCCVault.VaultParams}.
-    /// @return vault The address of the newly deployed vault.
+    /// @return vault The deterministic address of the newly deployed vault.
     function createVault(ILCCVault.VaultParams calldata params) external returns (address vault) {
         if (msg.sender != owner) revert LCCErrorsLib.NotOwner();
+        return _createAndRegister(params, bytes32(0));
+    }
 
-        vault = address(new BeaconProxy(beacon, abi.encodeCall(ILCCVault.initialize, (params))));
+    /// @notice Deploys a new vault at a salt-chosen deterministic address and records it in the registry.
+    /// @dev Governance should derive `salt` using the contract-level facility identifier policy. Repeating the same
+    /// `(salt, params)` reverts on a CREATE2 collision; the same salt with different params has different initcode and
+    /// therefore a different address.
+    /// @param params The facility configuration; see {ILCCVault.VaultParams}.
+    /// @param salt The governance-derived CREATE2 salt.
+    /// @return vault The deterministic address of the newly deployed vault.
+    function createVault(ILCCVault.VaultParams calldata params, bytes32 salt) external returns (address vault) {
+        if (msg.sender != owner) revert LCCErrorsLib.NotOwner();
+        return _createAndRegister(params, salt);
+    }
+
+    /// @notice Predicts the address produced by createVault for the given params and salt.
+    /// @dev For the single-argument createVault overload, pass the default salt `bytes32(0)`.
+    /// @param params The facility configuration included in the BeaconProxy initializer calldata.
+    /// @param salt The governance-derived CREATE2 salt.
+    /// @return vault The address at which this factory will deploy the vault.
+    function predictVaultAddress(ILCCVault.VaultParams calldata params, bytes32 salt)
+        external
+        view
+        returns (address vault)
+    {
+        bytes32 initCodeHash = keccak256(
+            abi.encodePacked(
+                type(BeaconProxy).creationCode, abi.encode(beacon, abi.encodeCall(ILCCVault.initialize, (params)))
+            )
+        );
+        return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, initCodeHash)))));
+    }
+
+    function _createAndRegister(ILCCVault.VaultParams calldata params, bytes32 salt) internal returns (address vault) {
+        vault = address(new BeaconProxy{salt: salt}(beacon, abi.encodeCall(ILCCVault.initialize, (params))));
+
         isVault[vault] = true;
         vaultList.push(vault);
 
