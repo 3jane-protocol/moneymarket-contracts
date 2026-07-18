@@ -11,6 +11,7 @@
   "scripts": {
     "prepare": "husky install && forge install",
     "build:forge": "FOUNDRY_PROFILE=build forge build",
+    "build:forge:script": "FOUNDRY_PROFILE=script forge build",
     "build:forge:size": "yarn build:forge --sizes && yarn check:lcc-release-artifact",
     "check:lcc-release-artifact": "node scripts/check-lcc-release-artifact.js",
     "build:hardhat": "npx hardhat compile",

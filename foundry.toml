@@ -77,4 +77,27 @@ test = "test/forge/usd3/fork"
 via_ir = false
 fork_block_number = 23400200  # Fixed block for reproducibility
 
+[profile.script]
+test = "/dev/null"
+ffi = true
+extra_output = ["storageLayout"]
+evm_version = "cancun"
+# Keep these arrays in sync with [profile.default]: TOML profile keys replace inherited arrays rather than extending them.
+additional_compiler_profiles = [
+    { name = "lcc-cancun", evm_version = "cancun" },
+    { name = "lcc-vault-size", optimizer_runs = 150, evm_version = "cancun" },
+    { name = "usd3-size", optimizer_runs = 200, evm_version = "shanghai" },
+    { name = "usd3-shanghai", evm_version = "shanghai" },
+]
+compilation_restrictions = [
+    { paths = "src/lcc/**", version = "=0.8.35", evm_version = "cancun" },
+    { paths = "src/lcc/LCCVault.sol", optimizer_runs = 150, evm_version = "cancun" },
+    { paths = "src/usd3/USD3_old.sol", optimizer_runs = 200, evm_version = "shanghai" },
+    { paths = "src/usd3/**", evm_version = "shanghai" },
+    { paths = "src/usd3/NotificationVault.sol", version = "=0.8.35", evm_version = "shanghai" },
+]
+fs_permissions = [
+    { access = "read", path = "./data" },
+]
+
 # See more config options https://github.com/foundry-rs/foundry/tree/master/crates/config
