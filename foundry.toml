@@ -19,15 +19,18 @@ fs_permissions = [
 # otherwise immaterial. USD3 itself fits at the repo default with a thin ~862 B margin (23,714 B measured at 999999
 # runs), so future features may need a lower pin or cleanup. Foundry produces the canonical LCC deployment artifact
 # with official solc 0.8.35; Hardhat uses pinned stable solc-js for compilation but its output is non-canonical.
+# src/usd3 is a Shanghai module — explicit so cancun-based profiles (test, script) keep production codegen. NV's source pragma caps canonical builds below 0.8.36 everywhere; the deploy script pins the deployed unit to 0.8.35, and scripts/check-lcc-release-artifact.js backstops build settings.
 additional_compiler_profiles = [
     { name = "lcc-cancun", evm_version = "cancun" },
     { name = "lcc-vault-size", optimizer_runs = 150, evm_version = "cancun" },
-    { name = "usd3-size", optimizer_runs = 200 },
+    { name = "usd3-size", optimizer_runs = 200, evm_version = "shanghai" },
+    { name = "usd3-shanghai", evm_version = "shanghai" },
 ]
 compilation_restrictions = [
     { paths = "src/lcc/**", version = "=0.8.35", evm_version = "cancun" },
     { paths = "src/lcc/LCCVault.sol", optimizer_runs = 150, evm_version = "cancun" },
-    { paths = "src/usd3/USD3_old.sol", optimizer_runs = 200 },
+    { paths = "src/usd3/USD3_old.sol", optimizer_runs = 200, evm_version = "shanghai" },
+    { paths = "src/usd3/**", evm_version = "shanghai" },
 ]
 
 [profile.default.invariant]
@@ -44,7 +47,7 @@ script = "/dev/null"
 extra_output = ["storageLayout"]
 
 [profile.test]
-via-ir = false
+via_ir = false
 evm_version = "cancun"
 script = "/dev/null"
 # Run all tests but exclude IRM tests
@@ -52,14 +55,12 @@ no_match_path = "**/irm/**"
 
 [profile.test-lcc-ir]
 # Runs the LCC suite (via test:forge:lcc:ir) under via-IR + Cancun to match the release artifact's compiler settings.
-via_ir = true
 evm_version = "cancun"
 script = "/dev/null"
 no_match_path = "**/irm/**"
 
 [profile.test-irm]
 # IRM tests need via-ir due to stack complexity
-via-ir = true
 script = "/dev/null"
 optimizer_details.optimizerSteps = "u"
 # Only run IRM tests
@@ -67,7 +68,7 @@ match_path = "**/irm/**"
 
 [profile.halmos]
 # IRM tests need via-ir due to stack complexity
-via-ir = false
+via_ir = false
 script = "/dev/null"
 test = "test/halmos"
 
@@ -75,6 +76,7 @@ test = "test/halmos"
 # Fork tests configuration
 test = "test/forge/usd3/fork"
 via_ir = false
+script = "/dev/null"
 fork_block_number = 23400200  # Fixed block for reproducibility
 
 [profile.script]
@@ -82,20 +84,6 @@ test = "/dev/null"
 ffi = true
 extra_output = ["storageLayout"]
 evm_version = "cancun"
-# Keep these arrays in sync with [profile.default]: TOML profile keys replace inherited arrays rather than extending them.
-additional_compiler_profiles = [
-    { name = "lcc-cancun", evm_version = "cancun" },
-    { name = "lcc-vault-size", optimizer_runs = 150, evm_version = "cancun" },
-    { name = "usd3-size", optimizer_runs = 200, evm_version = "shanghai" },
-    { name = "usd3-shanghai", evm_version = "shanghai" },
-]
-compilation_restrictions = [
-    { paths = "src/lcc/**", version = "=0.8.35", evm_version = "cancun" },
-    { paths = "src/lcc/LCCVault.sol", optimizer_runs = 150, evm_version = "cancun" },
-    { paths = "src/usd3/USD3_old.sol", optimizer_runs = 200, evm_version = "shanghai" },
-    { paths = "src/usd3/**", evm_version = "shanghai" },
-    { paths = "src/usd3/NotificationVault.sol", version = "=0.8.35", evm_version = "shanghai" },
-]
 fs_permissions = [
     { access = "read", path = "./data" },
 ]

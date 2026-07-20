@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0
-pragma solidity ^0.8.18;
+// Caps canonical profile builds at 0.8.35; autodetect silently changes deployed/verified bytecode. Reverify each bump.
+pragma solidity >=0.8.18 <0.8.36;
 
 import {IERC20} from "../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.35;
+/// @dev Exact pin keeps deployed NotificationVault bytecode canonical independent of installed solc versions.
+pragma solidity =0.8.35;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {

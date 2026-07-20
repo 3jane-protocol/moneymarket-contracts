@@ -4,6 +4,7 @@ const path = require("path");
 
 const EXPECTED_COMPILER = "0.8.35+commit.47b9dedd";
 const EXPECTED_OPTIMIZER_RUNS = 150;
+const EXPECTED_NOTIFICATION_VAULT_OPTIMIZER_RUNS = 999999;
 const MAX_RUNTIME_BYTES = 24_276;
 const EIP_170_LIMIT = 24_576;
 const AUCTION_LIBRARY_SOURCE = "src/lcc/libraries/LCCAuctionLib.sol";
@@ -47,6 +48,52 @@ function readJson(relativePath) {
     return JSON.parse(fs.readFileSync(absolutePath, "utf8"));
   } catch (error) {
     fail(`could not parse ${absolutePath}: ${error.message}`);
+  }
+}
+
+function resolveArtifactByCompiler(outputDirectory, sourceName, contractName, expectedCompiler) {
+  const artifactDirectory = path.join(outputDirectory, sourceName);
+  const candidates = fs.existsSync(artifactDirectory)
+    ? fs
+        .readdirSync(artifactDirectory)
+        .filter((file) => file.endsWith(".json"))
+        .sort()
+        .map((file) => readJson(path.join(artifactDirectory, file)))
+    : [];
+  const matchingArtifact = candidates.find((candidate) => candidate.metadata?.compiler?.version === expectedCompiler);
+
+  if (!matchingArtifact) {
+    const foundVersions = [...new Set(candidates.map((candidate) => candidate.metadata?.compiler?.version ?? "unknown"))]
+      .sort()
+      .join(", ");
+    fail(
+      `missing ${contractName} artifact compiled with solc ${expectedCompiler} in ${artifactDirectory}; ` +
+        `found versions: ${foundVersions || "none"}; run yarn build:forge first`,
+    );
+  }
+
+  return matchingArtifact;
+}
+
+function assertArtifactSettings(contractName, metadata, expected) {
+  const settings = metadata?.settings;
+  if (metadata?.compiler?.version !== expected.compiler) {
+    fail(`${contractName}: expected solc ${expected.compiler}, found ${metadata?.compiler?.version}`);
+  }
+  if (settings?.evmVersion !== expected.evmVersion) {
+    fail(`${contractName}: expected ${expected.evmVersion} EVM, found ${settings?.evmVersion}`);
+  }
+  if (settings?.viaIR !== expected.viaIR) {
+    fail(`${contractName}: expected via IR ${expected.viaIR}, found ${settings?.viaIR}`);
+  }
+  if (settings?.optimizer?.enabled !== expected.optimizerEnabled) {
+    fail(`${contractName}: expected optimizer enabled ${expected.optimizerEnabled}, found ${settings?.optimizer?.enabled}`);
+  }
+  if (settings?.optimizer?.runs !== expected.optimizerRuns) {
+    fail(`${contractName}: expected ${expected.optimizerRuns} optimizer runs, found ${settings?.optimizer?.runs}`);
+  }
+  if (settings?.metadata?.bytecodeHash !== expected.bytecodeHash) {
+    fail(`${contractName}: expected metadata bytecode hash ${expected.bytecodeHash}, found ${settings?.metadata?.bytecodeHash}`);
   }
 }
 
@@ -235,24 +282,22 @@ function verifyNegativeFixtures() {
   }
 }
 
-const artifactPath = path.join(forgeOutputDirectory(), "LCCVault.sol", "LCCVault.json");
+const outputDirectory = forgeOutputDirectory();
+const artifactPath = path.join(outputDirectory, "LCCVault.sol", "LCCVault.json");
 if (!fs.existsSync(artifactPath)) fail(`missing ${artifactPath}; run yarn build:forge first`);
 
 const artifact = readJson(artifactPath);
 const metadata = artifact.metadata;
-const settings = metadata?.settings;
 const bytecode = artifact.deployedBytecode?.object;
 
-if (metadata?.compiler?.version !== EXPECTED_COMPILER) {
-  fail(`expected solc ${EXPECTED_COMPILER}, found ${metadata?.compiler?.version}`);
-}
-if (settings?.evmVersion !== "cancun") fail(`expected Cancun, found ${settings?.evmVersion}`);
-if (settings?.viaIR !== true) fail("via IR must be enabled");
-if (settings?.optimizer?.enabled !== true) fail("optimizer must be enabled");
-if (settings?.optimizer?.runs !== EXPECTED_OPTIMIZER_RUNS) {
-  fail(`expected ${EXPECTED_OPTIMIZER_RUNS} optimizer runs, found ${settings?.optimizer?.runs}`);
-}
-if (settings?.metadata?.bytecodeHash !== "none") fail("metadata bytecode hash must be disabled");
+assertArtifactSettings("LCCVault", metadata, {
+  compiler: EXPECTED_COMPILER,
+  evmVersion: "cancun",
+  viaIR: true,
+  optimizerEnabled: true,
+  optimizerRuns: EXPECTED_OPTIMIZER_RUNS,
+  bytecodeHash: "none",
+});
 if (typeof bytecode !== "string" || !bytecode.startsWith("0x") || bytecode.length % 2 !== 0) {
   fail("deployed bytecode is malformed");
 }
@@ -300,7 +345,23 @@ if (abiDifference) {
   );
 }
 
+const notificationVaultArtifact = resolveArtifactByCompiler(
+  outputDirectory,
+  "NotificationVault.sol",
+  "NotificationVault",
+  EXPECTED_COMPILER,
+);
+assertArtifactSettings("NotificationVault", notificationVaultArtifact.metadata, {
+  compiler: EXPECTED_COMPILER,
+  evmVersion: "shanghai",
+  viaIR: true,
+  optimizerEnabled: true,
+  optimizerRuns: EXPECTED_NOTIFICATION_VAULT_OPTIMIZER_RUNS,
+  bytecodeHash: "none",
+});
+
 console.log(
   `LCCVault release artifact: ${runtimeBytes} bytes, ${EIP_170_LIMIT - runtimeBytes} bytes below EIP-170, ` +
-    `${EXPECTED_OPTIMIZER_RUNS} runs; storage layout and external ABI match reviewer-controlled baselines`,
+    `${EXPECTED_OPTIMIZER_RUNS} runs; storage layout and external ABI match reviewer-controlled baselines; ` +
+    `NotificationVault artifact matches the canonical compiler, Shanghai EVM, via-IR, optimizer, and metadata settings`,
 );
