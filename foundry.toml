@@ -22,6 +22,7 @@ script = "/dev/null"
 
 [profile.test]
 via-ir = false
+ffi = true
 script = "/dev/null"
 # Run all tests but exclude IRM tests
 no_match_path = "**/irm/**"
