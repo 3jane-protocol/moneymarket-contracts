@@ -167,6 +167,41 @@ library LCCAuctionLib {
         state.marginAwarded = (uint256(state.marginAwarded) + award).toUint128();
     }
 
+    /// @notice Resolves the lifecycle phase at an effective timestamp.
+    /// @param timestamp Effective timestamp after excluding paused wall-clock time.
+    /// @param packedClock The vault's packed `LCCTypesLib.ClockConfig` word, passed by value.
+    /// @return The numeric value of the active `ILCCVault.Phase`.
+    function phaseAt(uint256 timestamp, uint256 packedClock) public pure returns (uint8) {
+        uint256 startTimestamp = uint64(packedClock);
+        uint256 epochLength = uint32(packedClock >> 128);
+        uint256 normalDuration = uint32(packedClock >> 160);
+        uint256 preCallDuration = uint32(packedClock >> 192);
+        uint256 fundingDuration = uint32(packedClock >> 224);
+        uint256 elapsed = timestamp >= startTimestamp ? (timestamp - startTimestamp) % epochLength : 0;
+        if (elapsed < normalDuration) return 0;
+        if (elapsed < normalDuration + preCallDuration) return 1;
+        if (elapsed < normalDuration + preCallDuration + fundingDuration) return 2;
+        return 3;
+    }
+
+    /// @notice Resolves an epoch phase's effective-time end boundary.
+    /// @param epoch Epoch whose boundary is requested.
+    /// @param phase Numeric value of the requested `ILCCVault.Phase`.
+    /// @param packedClock The vault's packed `LCCTypesLib.ClockConfig` word, passed by value.
+    /// @return effectiveEnd The phase end in effective time, before any live pause offset is restored.
+    function phaseEndsAt(uint256 epoch, uint8 phase, uint256 packedClock) public pure returns (uint256 effectiveEnd) {
+        uint256 startTimestamp = uint64(packedClock);
+        uint256 epochLength = uint32(packedClock >> 128);
+        uint256 normalDuration = uint32(packedClock >> 160);
+        uint256 preCallDuration = uint32(packedClock >> 192);
+        uint256 fundingDuration = uint32(packedClock >> 224);
+        uint256 start = startTimestamp + epoch * epochLength;
+        if (phase == 0) return start + normalDuration;
+        if (phase == 1) return start + normalDuration + preCallDuration;
+        if (phase == 2) return start + normalDuration + preCallDuration + fundingDuration;
+        return start + epochLength;
+    }
+
     /// @notice Values margin assets in funding-asset units and derives their callable commitment.
     /// @param assets Margin assets to value.
     /// @param price Margin-to-fundingAsset oracle price, scaled by ORACLE_PRICE_SCALE.
@@ -174,7 +209,7 @@ library LCCAuctionLib {
     /// @return marginValue Value of the margin assets in fundingAsset units.
     /// @return commitment Callable commitment derived from the margin value.
     function valueAndCommitment(uint256 assets, uint256 price, uint256 marginRatioBps)
-        internal
+        public
         pure
         returns (uint256 marginValue, uint256 commitment)
     {
