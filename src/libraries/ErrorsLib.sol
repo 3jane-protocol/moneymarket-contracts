@@ -146,4 +146,10 @@ library ErrorsLib {
 
     /// @notice Thrown when borrow or repay would result in debt below minimum borrow amount.
     error BelowMinimumBorrow();
+
+    /// @notice Thrown when supply shares exceed the maximum ratio to supply assets.
+    error SupplySharePriceBelowFloor();
+
+    /// @notice Thrown when new lending is attempted in a market that is winding down.
+    error MarketInWindDown();
 }
