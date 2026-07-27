@@ -112,7 +112,7 @@ contract LCCInvariantHandler is Test {
         _sync();
 
         address actor = actors[_index(actorSeed)];
-        uint256 amount = _range(amountSeed, 1e18, 10e18);
+        uint256 amount = _range(amountSeed, 1, 10e18);
         ILCCVault.Account memory account = invariantVault.getAccount(actor);
         if (account.exitRequested && !account.exitClaimed) return;
 
@@ -149,7 +149,10 @@ contract LCCInvariantHandler is Test {
         vm.prank(actor);
         try invariantVault.requestExit() returns (uint256 maturity) {
             ILCCVault.RiskConfig memory riskConfig = invariantVault.riskConfig();
-            uint256 capacity = Math.mulDiv(riskConfig.protocolCommitmentCap, riskConfig.exitCapBps, BPS);
+            uint256 activeCommitment = invariantVault.totals().activeCommitment;
+            uint256 capacity = Math.max(
+                1, Math.mulDiv(Math.max(riskConfig.protocolCommitmentCap, activeCommitment), riskConfig.exitCapBps, BPS)
+            );
             if (account.activeCommitment <= capacity) {
                 assertLe(invariantVault.exitBucketCommitmentByMaturity(maturity), capacity);
             }
@@ -469,21 +472,20 @@ contract LCCInvariantHandler is Test {
         ILCCVault.Totals memory totals = invariantVault.totals();
         uint256 currentUtilization = totals.activeCommitment + totals.pendingCommitment;
         uint256 maxCap = 10_000_000e18;
-        // Floor the fuzzed cap at a realistic minimum: a degenerate sub-1e18 protocolCap (reachable when utilization
-        // is 0) floors the exit-bucket capacity (protocolCap*exitCapBps/BPS) to 0, which requestExit legitimately
-        // rejects with InvalidParams (_assignExitMaturity, LCCVault.sol:1290) -- an unrealistic owner action, not a
-        // behavior worth fuzzing.
+        // Include base-unit-scale caps so the runtime exit-capacity clamp is exercised. The owner can also cut below
+        // live utilization; those grandfathered positions retain a capacity denominator of aggregate active
+        // commitment while capacity follows live utilization.
         uint256 protocolCap;
-        if (currentUtilization > 1e18 && protocolSeed % 4 == 0) {
+        if (currentUtilization > 1 && protocolSeed % 4 == 0) {
             // Exercise owner-authorized grandfathering: subsequent deposits and disposal may reduce, but never
             // increase, the resulting over-cap exposure.
-            protocolCap = _range(protocolSeed / 4, 1e18, currentUtilization - 1);
+            protocolCap = _range(protocolSeed / 4, 1, currentUtilization - 1);
         } else {
-            uint256 floorCap = currentUtilization < 1e18 ? 1e18 : currentUtilization;
+            uint256 floorCap = Math.max(1, currentUtilization);
             if (floorCap >= maxCap) return;
             protocolCap = _range(protocolSeed, floorCap, maxCap);
         }
-        uint256 exitCapBps = _range(exitCapSeed, 500, 5_000);
+        uint256 exitCapBps = _range(exitCapSeed, 313, 5_000);
 
         vm.prank(invariantOwner);
         try invariantVault.setRiskCaps(protocolCap, maxCap, exitCapBps, 0) {
@@ -600,7 +602,8 @@ contract LCCInvariantHandler is Test {
     // `_expectedMaterializeError` (the _replayForUpdate barrier + oracle-disposal revert) is the base for the actions
     // that run _replayForUpdate: deposit, requestExit, and the claims. deposit adds the activation/call-window
     // lifecycle errors, CapExceeded, and InvalidAmount; requestExit adds InvalidAmount (a synced default can zero
-    // its commitment after the stale guard) and ExitCapacityReached. Claims add NOTHING
+    // its commitment after the stale guard). With eight actors holding at most one live exit each, the 128-bucket
+    // limit is unreachable and ExitCapacityReached must not be accepted. Claims add NOTHING
     // beyond the base -- their preconditions make NoExitRequested/ExitNotMature/NothingToClaim unreachable, so
     // catching those would mask a preview-vs-claim divergence. materialize/setRiskCaps do NO per-account replay
     // (materializeAccount uses the bounded _replayAndRecordDefaults; setRiskCaps only folds global state), so the
@@ -615,8 +618,7 @@ contract LCCInvariantHandler is Test {
 
     function _expectedRequestExitError(bytes memory reason) internal pure returns (bool) {
         bytes4 selector = _revertSelector(reason);
-        return _expectedMaterializeError(reason) || selector == LCCErrorsLib.InvalidAmount.selector
-            || selector == LCCErrorsLib.ExitCapacityReached.selector;
+        return _expectedMaterializeError(reason) || selector == LCCErrorsLib.InvalidAmount.selector;
     }
 
     function _expectedSyncedOracleError(bytes memory reason) internal pure returns (bool) {

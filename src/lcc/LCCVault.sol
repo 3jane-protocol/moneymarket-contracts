@@ -73,10 +73,13 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// auctionStepDecayRateBps each completed step. auctionStepCount == 0 permanently disables the auction machinery.
     LCCTypesLib.AuctionConfigStorage internal _auctionConfig;
 
-    /// @dev Mutable risk configuration. Per-epoch exit capacity is `protocolCommitmentCap * exitCapBps / BPS`.
-    /// The protocol cap is used as the base (rather than live active commitment) so bucket assignment is
-    /// deterministic and not path-dependent. `maxAuctionAwardBps` is the runtime auction-kicker off-switch.
-    /// `slashFeeBps` is charged on auction-awarded slashed margin and capped by the unawarded surplus.
+    /// @dev Mutable risk configuration. Per-epoch exit capacity is `exitCapBps` of the greater of the configured
+    /// protocol cap and live active commitment, clamped to at least one funding-asset unit. The live-utilization
+    /// floor deliberately makes assignment path-dependent and ensures capacity never falls below the configured-cap
+    /// value at request time. Capacity is recomputed per request and can decline as active commitment declines.
+    /// `activeCommitment` is aggregate and may conservatively include unattributed return commitment, which only
+    /// widens capacity. `maxAuctionAwardBps` is the runtime auction-kicker off-switch. `slashFeeBps` is charged on
+    /// auction-awarded slashed margin and capped by the unawarded surplus.
     RiskConfig internal _riskConfig;
 
     /// @dev Packed aggregate totals. Commitment totals are cap-bounded by `protocolCommitmentCap <=
@@ -243,7 +246,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
     /// @inheritdoc ILCCVault
     /// @dev Lowering caps below current utilization does not force existing positions or assigned exit buckets to
-    /// unwind.
+    /// unwind. Capacity is recomputed per request from live utilization, so it cannot be worse than the configured-cap
+    /// formula at that request, but it can decline as active commitment declines through amortization or slashing.
     function setRiskCaps(
         uint256 newProtocolCommitmentCap,
         uint256 newUserCommitmentCap,
@@ -1393,12 +1397,24 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         }
     }
 
-    /// @dev Assignment is first-fit by request time, not strict FIFO: funded or slashed amounts can free bucket
-    /// capacity retroactively, and a request larger than the whole per-epoch capacity takes the first bucket with any
-    /// remaining room.
+    /// @dev Assignment is first-fit by request time, not strict FIFO. Capacity is recomputed from live active
+    /// commitment for every request, ensuring it is never below the configured-cap value at that request while
+    /// deliberately making later assignments path-dependent. It can decline as active commitment declines through
+    /// amortization or slashing. Aggregate active commitment may conservatively include unattributed return
+    /// commitment, which only widens capacity. Funded or slashed amounts can free bucket room retroactively, and a
+    /// request larger than the whole per-epoch capacity takes the first bucket with any remaining room. Cap-raise
+    /// sequences can still reach the 128-bucket limit.
+    ///
+    /// Termination invariant: the `Math.max(1, ...)` clamp below is load-bearing and must not be removed. Capacity of
+    /// at least one makes any empty bucket terminate the scan; only nonzero-commitment buckets are skipped.
+    /// `_trackExitMaturity` and `_pruneExitMaturityIfEmpty` keep those buckets in the 128-entry maturity list, so the
+    /// scan takes at most 129 iterations.
     function _assignExitMaturity(uint256 accountCommitment) internal view returns (uint256 maturityEpoch) {
-        uint256 capacity = _riskConfig.protocolCommitmentCap.mulDiv(_riskConfig.exitCapBps, BPS);
-        if (capacity == 0) revert LCCErrorsLib.InvalidParams();
+        uint256 capacity = Math.max(
+            1,
+            Math.max(_riskConfig.protocolCommitmentCap, uint256(_totals.activeCommitment))
+                .mulDiv(_riskConfig.exitCapBps, BPS)
+        );
 
         maturityEpoch = _currentEpoch() + _assetConfig.exitDelayEpochs;
         while (true) {

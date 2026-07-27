@@ -48,11 +48,11 @@ interface ILCCVault {
     /// @param preCallDuration Seconds of the PreCall phase. Bounded to uint32.
     /// @param fundingDuration Seconds of the Funding phase. Bounded to uint32.
     /// @param marginRatioBps Leverage ratio in bps: commitment = marginValue * BPS / marginRatioBps.
-    /// @param protocolCommitmentCap Vault-wide cap on active+pending commitment (fundingAsset); also the base for
-    /// per-epoch exit capacity. Bounded by type(uint128).max.
+    /// @param protocolCommitmentCap Vault-wide cap on active+pending commitment (fundingAsset). The exit-capacity
+    /// denominator is the greater of this cap and aggregate live `activeCommitment`. Bounded by type(uint128).max.
     /// @param userCommitmentCap Per-account cap on active+pending commitment (fundingAsset).
-    /// @param exitCapBps Per-epoch exit capacity as a fraction of `protocolCommitmentCap`, in bps; must satisfy
-    /// `exitCapBps * 64 >= 2 * BPS` (>= 313) and `<= BPS` so honest exit demand stays within the maturity-bucket cap.
+    /// @param exitCapBps Per-epoch exit capacity as a fraction of the exit-capacity denominator, in bps; must satisfy
+    /// `exitCapBps * 64 >= 2 * BPS` (>= 313) and `<= BPS`.
     /// @param exitDelayEpochs Minimum epochs between an exit request and its earliest maturity; at most 64.
     /// @param minCommitmentEpochs Minimum epochs an account must be committed (counted from its latest deposit's
     /// activation epoch) before it can request an exit; at most 64, 0 disables the gate. Composed lockup: the
@@ -144,9 +144,10 @@ interface ILCCVault {
     }
 
     /// @notice Mutable risk limits used by deposits, exits, and auction awards.
-    /// @param protocolCommitmentCap Vault-wide cap on active+pending commitment.
+    /// @param protocolCommitmentCap Vault-wide cap on active+pending commitment; exit capacity uses the greater of
+    /// this configured cap and aggregate live `activeCommitment`.
     /// @param userCommitmentCap Per-account cap on active+pending commitment.
-    /// @param exitCapBps Per-epoch exit capacity fraction, in bps.
+    /// @param exitCapBps Per-epoch exit capacity fraction of the configured-cap/live-utilization denominator, in bps.
     /// @param minDepositAssets Minimum margin deposit.
     /// @param maxAuctionAwardBps Oracle-valued auction award cap per fundingAsset filled, in bps.
     /// @param slashFeeBps Fee on auction-awarded slashed margin, clamped to the unawarded surplus, in bps.
@@ -310,8 +311,13 @@ interface ILCCVault {
         uint256 deadline
     ) external returns (uint256 commitment);
     /// @notice Requests a full-account exit, assigning the earliest maturity epoch with available exit capacity.
-    /// @dev The account stays callable until maturity. Reverts if an exit is already pending, if the account holds
-    /// pending margin, or if it has no active position.
+    /// @dev Capacity is at least one funding-asset unit and otherwise `exitCapBps` of the greater of the configured
+    /// protocol cap and aggregate live `activeCommitment`. The live-utilization floor is deliberately path-dependent
+    /// and ensures capacity is never below the configured-cap value at request time, but capacity can decline as
+    /// active commitment declines through amortization or slashing. Aggregate active commitment may conservatively
+    /// include unattributed return commitment, which only widens capacity. The account stays callable until maturity.
+    /// Reverts if an exit is already pending, if the account holds pending margin, or if it has no active position;
+    /// cap-raise sequences can still reach the 128-live-bucket limit and revert `ExitCapacityReached`.
     /// @return maturityEpoch The assigned maturity epoch.
     function requestExit() external returns (uint256 maturityEpoch);
     /// @notice Claims matured exit margin to `receiver`.
@@ -331,10 +337,12 @@ interface ILCCVault {
     function sweepTreasury() external;
     /// @notice Margin accrued for treasury but still held by the vault (marginAsset).
     function pendingTreasuryMargin() external view returns (uint256);
-    /// @notice Owner update of mutable risk caps; applies to future deposits and exit assignments only.
+    /// @notice Owner update of mutable risk caps; configured caps apply to future deposits, while exit capacity is
+    /// recomputed per request from the greater of the configured cap and live active utilization. It can decline with
+    /// live utilization but never below the configured-cap value at that request.
     /// @param newProtocolCommitmentCap New vault-wide commitment cap (fundingAsset); must be in (0, uint128.max].
     /// @param newUserCommitmentCap New per-account commitment cap (fundingAsset).
-    /// @param newExitCapBps New per-epoch exit capacity, in bps (0 < value <= BPS).
+    /// @param newExitCapBps New per-epoch exit capacity, in bps (313 <= value <= BPS).
     /// @param newMinDeposit New minimum margin deposit (marginAsset).
     function setRiskCaps(
         uint256 newProtocolCommitmentCap,

@@ -6,13 +6,16 @@ import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
+import {BPS} from "../../../src/libraries/ConstantsLib.sol";
+import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 
 contract LCCExitTest is LCCBase {
     uint256 internal constant MAX_EXIT_MATURITY_BUCKETS = 128;
     uint256 internal constant MAX_EXIT_DELAY_EPOCHS = 64;
     // Smallest exitCapBps accepted by the floor: exitCapBps * MAX_EXIT_DELAY_EPOCHS >= 2 * BPS.
     uint256 internal constant FLOOR_EXIT_CAP_BPS = 313;
-    uint256 internal constant OVERFLOW_EXIT_MARGIN = 600e18;
+    uint256 internal constant LADDER_INITIAL_CAP = 32e18;
+    uint256 internal constant EXIT_MATURITY_LIST_SLOT = 22;
     // Gas assertions target the mainnet block gas limit, not this environment's block.gaslimit.
     uint256 internal constant BLOCK_GAS_LIMIT = 30_000_000;
     uint256 internal constant GAS_HEADROOM = 5_000_000;
@@ -205,12 +208,10 @@ contract LCCExitTest is LCCBase {
 
     function testOverflowFillToCapRejectsNextNewExitBucket() public {
         _deployOverflowBucketVault();
+        uint256 activeCommitment = _buildExitBucketLadder();
+        _assertExitBucketCount(MAX_EXIT_MATURITY_BUCKETS);
 
-        address overflow = _actor(MAX_EXIT_MATURITY_BUCKETS + 1);
-        _mintAndApprove(overflow, OVERFLOW_EXIT_MARGIN, 0);
-        _deposit(overflow, OVERFLOW_EXIT_MARGIN);
-
-        _fillExitBucketsToCap();
+        (address overflow,) = _depositNextExactFitLadderAccount(MAX_EXIT_MATURITY_BUCKETS, activeCommitment);
 
         vm.expectRevert(LCCErrorsLib.ExitCapacityReached.selector);
         vm.prank(overflow);
@@ -219,17 +220,16 @@ contract LCCExitTest is LCCBase {
 
     function testExitIntoExistingBucketSucceedsAtCap() public {
         _deployOverflowBucketVault();
+        uint256 activeCommitment = _buildExitBucketLadder();
+        _assertExitBucketCount(MAX_EXIT_MATURITY_BUCKETS);
 
-        address joiner = _actor(MAX_EXIT_MATURITY_BUCKETS + 2);
-        _mintAndApprove(joiner, OVERFLOW_EXIT_MARGIN, 0);
-        _deposit(joiner, OVERFLOW_EXIT_MARGIN);
-
-        _fillExitBucketsToCap();
-
-        // Restore per-bucket capacity so the first tracked maturity has room again; with the list still at cap, an
-        // exit assigned to an existing maturity must not revert ExitCapacityReached.
+        // Restore deposit headroom with the smallest possible cap raise. The live capacity is now much larger than
+        // the first ladder rung, so this one-unit joiner fits the earliest existing bucket while the list stays full.
         vm.prank(owner);
-        vault.setRiskCaps(CAP, CAP, FLOOR_EXIT_CAP_BPS, 0);
+        vault.setRiskCaps(activeCommitment + 1, CAP, FLOOR_EXIT_CAP_BPS, 0);
+        address joiner = _actor(MAX_EXIT_MATURITY_BUCKETS);
+        _mintAndApprove(joiner, 1, 0);
+        assertEq(_deposit(joiner, 1), 1);
 
         vm.prank(joiner);
         assertEq(vault.requestExit(), MAX_EXIT_DELAY_EPOCHS);
@@ -238,19 +238,18 @@ contract LCCExitTest is LCCBase {
 
     function testMaxExitBucketOpenCallGasStaysBelowBlockLimit() public {
         _deployOverflowBucketVault();
-        uint256 totalCommitment = _depositGasRegressionAccounts();
+        uint256 totalCommitment = _buildExitBucketLadder();
+
+        address defaulter = _actor(MAX_EXIT_MATURITY_BUCKETS);
+        uint256 defaulterCommitment = LADDER_INITIAL_CAP;
+        vm.prank(owner);
+        vault.setRiskCaps(totalCommitment + defaulterCommitment, CAP, FLOOR_EXIT_CAP_BPS, 0);
+        _mintAndApprove(defaulter, defaulterCommitment, 0);
+        totalCommitment += _deposit(defaulter, defaulterCommitment);
 
         vm.warp(START + NORMAL);
         vm.prank(owner);
         vault.openEpochCall(0, totalCommitment / 2);
-
-        _shrinkExitBucketCapacity();
-
-        for (uint256 i = 0; i < MAX_EXIT_MATURITY_BUCKETS; ++i) {
-            address user = _actor(i);
-            vm.prank(user);
-            vault.requestExit();
-        }
 
         vm.warp(START + NORMAL + PRE_CALL);
         for (uint256 i = 0; i < MAX_EXIT_MATURITY_BUCKETS; ++i) {
@@ -259,6 +258,7 @@ contract LCCExitTest is LCCBase {
         }
 
         vm.warp(START + EPOCH + NORMAL);
+        _assertExitBucketCount(MAX_EXIT_MATURITY_BUCKETS);
         uint256 gasBefore = gasleft();
         vm.prank(owner);
         vault.openEpochCall(1, 1);
@@ -271,7 +271,8 @@ contract LCCExitTest is LCCBase {
 
     function testMaxExitBucketShutdownGasStaysBelowBlockLimit() public {
         _deployOverflowBucketVault();
-        _fillExitBucketsToCap();
+        _buildExitBucketLadder();
+        _assertExitBucketCount(MAX_EXIT_MATURITY_BUCKETS);
 
         uint256 gasBefore = gasleft();
         vm.prank(owner);
@@ -283,47 +284,178 @@ contract LCCExitTest is LCCBase {
         assertGt(BLOCK_GAS_LIMIT - gasUsed, GAS_HEADROOM);
     }
 
+    function testCapCutBelowLiveUtilizationPreservesDenseExitPacking() public {
+        uint256 accountCount = 64;
+        uint256 accountCommitment = 1e18;
+        ILCCVault.VaultParams memory params = _params(accountCount * accountCommitment, CAP);
+        params.marginRatioBps = BPS;
+        params.exitCapBps = FLOOR_EXIT_CAP_BPS;
+        _deployVaultWithParams(params);
+
+        for (uint256 i = 0; i < accountCount; ++i) {
+            address user = _actor(i);
+            _mintAndApprove(user, accountCommitment, 0);
+            assertEq(_deposit(user, accountCommitment), accountCommitment);
+        }
+
+        uint256 activeCommitment = vault.totals().activeCommitment;
+        assertEq(activeCommitment, accountCount * accountCommitment);
+        _lowerProtocolCapBelowLiveUtilization();
+
+        uint256 configuredCapCapacity = vault.riskConfig().protocolCommitmentCap * FLOOR_EXIT_CAP_BPS / BPS;
+        uint256 liveCapacity = activeCommitment * FLOOR_EXIT_CAP_BPS / BPS;
+        assertGt(liveCapacity, configuredCapCapacity);
+
+        for (uint256 i = 0; i < accountCount; ++i) {
+            vm.prank(_actor(i));
+            assertEq(vault.requestExit(), 1 + i / 2);
+        }
+
+        uint256 firstBucketCommitment = vault.exitBucketCommitmentByMaturity(1);
+        assertEq(firstBucketCommitment, 2 * accountCommitment);
+        assertLe(firstBucketCommitment, liveCapacity);
+        assertGt(firstBucketCommitment, configuredCapCapacity);
+    }
+
+    function testMinimumNonzeroConfiguredCapacityAssignsFirstBucket() public {
+        ILCCVault.VaultParams memory params = _params(address(oracle), 32, 32, FLOOR_EXIT_CAP_BPS);
+        params.marginRatioBps = BPS;
+        _deployVaultWithParams(params);
+
+        _mintAndApprove(alice, 1, 0);
+        assertEq(_deposit(alice, 1), 1);
+
+        vm.prank(alice);
+        assertEq(vault.requestExit(), 1);
+        assertEq(vault.exitBucketCommitmentByMaturity(1), 1);
+    }
+
+    function testSupportedFloorZeroCapacityPairAssignsUnderRuntimeClamp() public {
+        ILCCVault.VaultParams memory params = _params(address(oracle), 31, 31, FLOOR_EXIT_CAP_BPS);
+        params.marginRatioBps = BPS;
+        _deployVaultWithParams(params);
+
+        _mintAndApprove(alice, 1, 0);
+        assertEq(_deposit(alice, 1), 1);
+
+        assertEq(vault.riskConfig().protocolCommitmentCap, 31);
+        assertEq(vault.riskConfig().exitCapBps, FLOOR_EXIT_CAP_BPS);
+
+        vm.prank(alice);
+        assertEq(vault.requestExit(), 1);
+        assertEq(vault.exitBucketCommitmentByMaturity(1), 1);
+    }
+
+    function testMinimumCapacityScansPriorNonemptyBucketsAndTerminates() public {
+        uint256 protocolCap = 31;
+        uint256 accountCount = 8;
+        uint256 initialExitCapBps = Math.ceilDiv(BPS, protocolCap);
+        ILCCVault.VaultParams memory params = _params(address(oracle), protocolCap, protocolCap, initialExitCapBps);
+        params.marginRatioBps = BPS;
+        _deployVaultWithParams(params);
+
+        for (uint256 i = 0; i < accountCount; ++i) {
+            address user = _actor(i);
+            _mintAndApprove(user, 1, 0);
+            assertEq(_deposit(user, 1), 1);
+        }
+
+        assertEq(Math.mulDiv(protocolCap, initialExitCapBps, BPS), 1);
+        for (uint256 i = 0; i < accountCount - 1; ++i) {
+            address user = _actor(i);
+            vm.prank(user);
+            assertEq(vault.requestExit(), i + 1);
+            assertEq(vault.exitBucketCommitmentByMaturity(i + 1), 1);
+        }
+        _assertExitBucketCount(accountCount - 1);
+
+        vm.prank(owner);
+        vault.setRiskCaps(protocolCap, protocolCap, FLOOR_EXIT_CAP_BPS, 0);
+        assertEq(Math.mulDiv(protocolCap, FLOOR_EXIT_CAP_BPS, BPS), 0);
+
+        vm.prank(_actor(accountCount - 1));
+        assertEq(vault.requestExit(), accountCount);
+        assertEq(vault.exitBucketCommitmentByMaturity(accountCount), 1);
+        _assertExitBucketCount(accountCount);
+    }
+
+    /// @dev Characterizes accepted ordering sensitivity: unrelated amortizing funding can reduce live capacity and
+    /// move a later exit from maturity 1 to 2. Both assignments are no later than maturity 2, which the pre-change
+    /// configured-cap formula would have produced after the cap cut. A caller-supplied maximum-maturity bound is
+    /// planned separately.
+    function testCharacterizationAmortizationCanChangeSubsequentExitMaturity() public {
+        ILCCVault.VaultParams memory params = _params(address(oracle), 100e18, 100e18, 5_000);
+        params.marginRatioBps = BPS;
+        _deployVaultWithParams(params);
+
+        assertEq(_deposit(alice, 30e18), 30e18);
+        assertEq(_deposit(bob, 15e18), 15e18);
+        assertEq(_deposit(carol, 55e18), 55e18);
+
+        vm.prank(owner);
+        vault.setRiskCaps(10e18, 100e18, 5_000, 0);
+
+        vm.prank(alice);
+        assertEq(vault.requestExit(), 1);
+
+        uint256 snapshot = vm.snapshotState();
+        vm.prank(bob);
+        assertEq(vault.requestExit(), 1);
+        assertTrue(vm.revertToStateAndDelete(snapshot), "snapshot restore failed");
+
+        _openCall(20e18);
+        assertEq(_fund(carol), 11e18);
+        assertEq(vault.totals().activeCommitment, 89e18);
+
+        vm.prank(bob);
+        assertEq(vault.requestExit(), 2);
+    }
+
     function _deployOverflowBucketVault() internal {
         ILCCVault.VaultParams memory params = _params(CAP, CAP);
+        params.marginRatioBps = BPS;
         params.exitCapBps = FLOOR_EXIT_CAP_BPS;
         params.exitDelayEpochs = MAX_EXIT_DELAY_EPOCHS;
         _deployVaultWithParams(params);
     }
 
-    /// @dev Shrinks per-bucket exit capacity below a single account's commitment by lowering the protocol cap, so
-    /// each subsequent exit spills into its own maturity bucket (the owner-driven path to the bucket cap; a static
-    /// floor-valid config cannot reach it with honest demand).
-    function _shrinkExitBucketCapacity() internal {
+    /// @dev Lowers the configured protocol cap below aggregate active utilization. Runtime exit capacity uses live
+    /// utilization at each request, so it cannot fall below the configured-cap value but can decline with utilization.
+    function _lowerProtocolCapBelowLiveUtilization() internal {
         vm.prank(owner);
-        vault.setRiskCaps(1e18, CAP, FLOOR_EXIT_CAP_BPS, 0);
+        vault.setRiskCaps(32, CAP, FLOOR_EXIT_CAP_BPS, 0);
     }
 
-    function _fillExitBucketsToCap() internal {
+    /// @dev Builds 128 genuinely live buckets through public calls. Each rung deposits exactly the current capacity:
+    /// it cannot fit a prior nonempty bucket and is not oversized, so first-fit must open the next maturity.
+    function _buildExitBucketLadder() internal returns (uint256 activeCommitment) {
         for (uint256 i = 0; i < MAX_EXIT_MATURITY_BUCKETS; ++i) {
-            address user = _actor(i);
-            _mintAndApprove(user, OVERFLOW_EXIT_MARGIN, 0);
-            _deposit(user, OVERFLOW_EXIT_MARGIN);
-        }
-
-        _shrinkExitBucketCapacity();
-
-        for (uint256 i = 0; i < MAX_EXIT_MATURITY_BUCKETS; ++i) {
-            address user = _actor(i);
+            (address user, uint256 capacity) = _depositNextExactFitLadderAccount(i, activeCommitment);
+            activeCommitment += capacity;
             vm.prank(user);
             assertEq(vault.requestExit(), MAX_EXIT_DELAY_EPOCHS + i);
         }
+        assertEq(vault.totals().activeCommitment, activeCommitment);
     }
 
-    function _depositGasRegressionAccounts() internal returns (uint256 totalCommitment) {
-        for (uint256 i = 0; i < MAX_EXIT_MATURITY_BUCKETS; ++i) {
-            address user = _actor(i);
-            _mintAndApprove(user, OVERFLOW_EXIT_MARGIN, OVERFLOW_EXIT_MARGIN * 2);
-            totalCommitment += _deposit(user, OVERFLOW_EXIT_MARGIN);
-        }
+    function _depositNextExactFitLadderAccount(uint256 index, uint256 activeBefore)
+        internal
+        returns (address user, uint256 capacity)
+    {
+        uint256 protocolCap = Math.max(LADDER_INITIAL_CAP, Math.ceilDiv(activeBefore * BPS, BPS - FLOOR_EXIT_CAP_BPS));
+        capacity = Math.mulDiv(protocolCap, FLOOR_EXIT_CAP_BPS, BPS);
+        assertGe(protocolCap, activeBefore + capacity);
 
-        address defaulter = _actor(MAX_EXIT_MATURITY_BUCKETS);
-        _mintAndApprove(defaulter, OVERFLOW_EXIT_MARGIN, 0);
-        totalCommitment += _deposit(defaulter, OVERFLOW_EXIT_MARGIN);
+        vm.prank(owner);
+        vault.setRiskCaps(protocolCap, CAP, FLOOR_EXIT_CAP_BPS, 0);
+        user = _actor(index);
+        _mintAndApprove(user, capacity, capacity);
+        assertEq(_deposit(user, capacity), capacity);
+    }
+
+    function _assertExitBucketCount(uint256 expected) internal view {
+        _assertLayoutSlot("exitMaturityList", EXIT_MATURITY_LIST_SLOT);
+        assertEq(uint256(vm.load(address(vault), bytes32(EXIT_MATURITY_LIST_SLOT))), expected);
     }
 
     function _actor(uint256 index) internal view returns (address) {

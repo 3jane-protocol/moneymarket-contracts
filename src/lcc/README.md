@@ -103,7 +103,7 @@ and revert `InvalidPhase` while an auction is live.
 | `marginRatioBps`          | Leverage: `commitment = marginValue * BPS / marginRatioBps`              | `> 0` and `<= BPS`                                   |
 | `protocolCommitmentCap`   | Vault-wide active+pending commitment cap (mutable: setRiskCaps)          | `> 0` and `<= type(uint128).max`                     |
 | `userCommitmentCap`       | Per-account commitment cap (mutable: setRiskCaps)                        | `> 0` (no width bound)                               |
-| `exitCapBps`              | Per-epoch exit capacity fraction of the cap (mutable: setRiskCaps)       | `>= MIN_EXIT_CAP_BPS` (313) and `<= BPS`             |
+| `exitCapBps`              | Exit capacity fraction of max(configured cap, live active commitment)    | `>= MIN_EXIT_CAP_BPS` (313) and `<= BPS`             |
 | `exitDelayEpochs`         | Min epochs from request to earliest maturity                             | `> 0` and `<= 64` (`MAX_EXIT_DELAY_EPOCHS`)          |
 | `minCommitmentEpochs`     | Min committed epochs before an exit request; `0` disables                | `<= 64`                                              |
 | `minDepositAssets`        | Minimum margin deposit (mutable: setRiskCaps)                            | none (may be `0`)                                    |
@@ -113,8 +113,8 @@ and revert `InvalidPhase` while an auction is live.
 | `slashFeeBps`             | Fee on auction-awarded margin (mutable: setSlashFeeBps)                  | `<= BPS`; if auction disabled: `0`                   |
 
 `MIN_EXIT_CAP_BPS` is `(2 * BPS + 63) / 64 = 313`; it floors `exitCapBps` so full-cap honest exit demand plus the
-maximum temporal spread fits inside the 128 maturity-bucket cap (§9). When `auctionStepCount == 0` the disposal
-path still runs, but no collateral is ever awarded, so a nonzero decay, award cap, or slash fee is dead config and
+maximum temporal spread fits inside the 128 maturity-bucket cap (§9). When `auctionStepCount == 0` the disposal path
+still runs, but no collateral is ever awarded, so a nonzero decay, award cap, or slash fee is dead config and
 rejected. Only `protocolCommitmentCap` carries the `uint128` width bound; `validate` enforces just `> 0` on
 `userCommitmentCap`, which is transitively bounded below `uint128` because no account's active+pending commitment
 can exceed the protocol cap.
@@ -510,7 +510,11 @@ deposit activation; every deposit resets it, and no funding touches it.
 
 **Maturity assignment.** `_assignExitMaturity` is first-fit by request time (not strict FIFO): it starts at
 `currentEpoch + exitDelayEpochs` and walks forward to the first bucket with room, where per-epoch capacity is
-`protocolCommitmentCap * exitCapBps / BPS`. Funded or slashed amounts free bucket room retroactively. A request
+`max(1, max(protocolCommitmentCap, activeCommitment) * exitCapBps / BPS)`. Flooring the denominator at aggregate
+live utilization is deliberately path-dependent. Capacity is recomputed for every request, so it is never below
+the configured-cap value at that request, but it can decline as `activeCommitment` declines through amortizing
+funding or slash finalization. `activeCommitment` is the aggregate and can conservatively include unattributed
+return commitment, which only widens capacity. Funded or slashed amounts free bucket room retroactively. A request
 larger than the whole per-epoch capacity takes the first bucket with any remaining room.
 
 Each maturity bucket stores its margin and commitment as the two `uint128` halves of one `LCCTypesLib.Bucket` word;
@@ -521,7 +525,12 @@ The explicit flag is the exact-once guard for `exitMaturitiesByCall` membership 
 **Bucket-cap trio.** Live maturity buckets are hard-capped at `MAX_EXIT_MATURITY_BUCKETS = 2 * 64 = 128`; a request
 that would create a 129th bucket reverts `ExitCapacityReached`. `exitDelayEpochs <= 64` and `exitCapBps >= 313`
 (`MIN_EXIT_CAP_BPS`) are enforced at config so worst-case honest exit demand — including first-fit fragmentation —
-stays within 128 and every bucket scan is gas-bounded.
+stays within 128. Scan termination instead relies on the runtime capacity clamp: capacity is always at least one, so
+any empty bucket terminates the scan and only buckets with nonzero commitment are skipped. Every bucket increase is
+tracked by `_trackExitMaturity`, every empty bucket is removed by `_pruneExitMaturityIfEmpty`, and the live list is
+capped at 128, so the scan takes at most 129 iterations. The limit remains reachable through cap-raise
+sequences: each raise can restore deposit headroom and increase capacity, allowing an exact-capacity new account to
+open the next maturity without fitting any prior nonempty bucket.
 
 **Lockup arithmetic.** With `minCommitmentEpochs = 4`, `exitDelayEpochs = 2`, and a deposit activating at epoch `3`:
 
@@ -575,17 +584,19 @@ flowchart TD
 
 `LCCAuctionLib` and `LCCConfigLib` are the two externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-23,931 bytes, 345 bytes below the 24,276-byte release ceiling and 645 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+23,947 bytes, 329 bytes below the 24,276-byte release ceiling and 629 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls
 `_disableInitializers()`. `LCCVaultFactory` deploys per-facility `BeaconProxy` instances with atomic `initialize`
 calldata; per-facility params live in proxy storage. The factory registry (`isVault` / `allVaults`) records owner-vetted
 **provenance only** — the beacon is public, so anyone can point an unregistered proxy at it. Packed structs in
-`LCCTypesLib` are upgrade-frozen layout; the initial layout retains a 49-slot `__gap` after the treasury accrual slot, and new state must consume it;
-Both `LCCAuctionLib` and `LCCConfigLib` must be re-linked on every
-implementation redeploy. `yarn build:forge:size` embeds the build-profile storage layout in the canonical artifact
-and recursively compares its complete type graph against the reviewer-controlled
+`LCCTypesLib` are upgrade-frozen layout; the initial layout retains a 49-slot `__gap` after the treasury accrual slot,
+and new state must consume it. Both `LCCAuctionLib` and `LCCConfigLib` must be re-linked on every implementation
+redeploy. Every future implementation must preserve runtime exit capacity of at least one, or normalize existing
+configurations during the upgrade; the `Math.max(1, ...)` clamp in `_assignExitMaturity` is the scan-termination
+invariant. `yarn build:forge:size` embeds the build-profile storage layout in the canonical artifact and recursively
+compares its complete type graph against the reviewer-controlled
 `docs/lcc-vault-storage-layout.json`; the checker never regenerates that baseline. The full upgrade checklist of
 record lives in
 [`docs/architecture.md`](../../docs/architecture.md).
@@ -619,8 +630,11 @@ record lives in
   `AccountMaterializationIncomplete` until `materializeAccount` advances them.
 - **Exiters stay liable.** An exiting account remains callable and slashable until maturity; it may amortize but
   cannot roll (`ExitInProgress`). A fully-funded exiter must still call `claimExitedMargin` to free the account.
-- **Cap changes do not unwind.** `setRiskCaps` lowering caps below current utilization does not force existing
-  positions or assigned exit buckets to unwind.
+- **Cap changes do not unwind and retain the configured-cap floor.** `setRiskCaps` lowering caps below current
+  utilization does not force existing positions or assigned exit buckets to unwind. Exit capacity is recomputed per
+  request from aggregate live `activeCommitment`, deliberately introducing path dependence; it can decline as active
+  commitment declines, but never below the configured-cap value at that request. Any unattributed return commitment
+  in the aggregate only widens capacity.
 
 ## Related docs
 
