@@ -158,10 +158,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// in practice. The vault holds no fundingAsset or USD3 between transactions, so the allowances expose no idle
     /// balance.
     function initialize(VaultParams calldata params) external initializer {
-        LCCConfigLib.validate(params);
+        uint256 auctionStepDuration_ = LCCConfigLib.validate(params);
         _transferOwnership(params.owner);
-
-        uint256 auctionStepDuration_ = LCCConfigLib.auctionStepDuration(params);
 
         fundingAsset.forceApprove(address(usd3), type(uint256).max);
         IERC20(address(usd3)).forceApprove(address(notificationVault), type(uint256).max);
