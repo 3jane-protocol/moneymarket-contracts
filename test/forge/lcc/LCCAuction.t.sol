@@ -196,7 +196,6 @@ contract LCCAuctionTest is LCCBase {
 
         _openCall(150e18);
         _fund(carol);
-        _deposit(bob, 50e18);
         _finishFunding();
         vault.finalizeEpochSlash(0);
         oracle.setPrice(2 * ORACLE_PRICE_SCALE);

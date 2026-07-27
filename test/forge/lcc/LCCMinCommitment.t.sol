@@ -34,7 +34,7 @@ contract LCCMinCommitmentTest is LCCBase {
     function testPendingDepositAnchorsAtActivationEpoch() public {
         _deployMinCommitmentVault(2, 0);
 
-        vm.warp(START + NORMAL);
+        vm.warp(START + NORMAL + PRE_CALL);
         _deposit(alice, 100e18);
 
         assertEq(vault.getAccount(alice).commitmentStartEpoch, 1);

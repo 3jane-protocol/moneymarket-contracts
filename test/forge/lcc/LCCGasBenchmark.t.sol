@@ -8,7 +8,7 @@ contract LCCGasDepositBenchmarkTest is LCCBase {
     function testGasDeposit() public {
         vm.prank(alice);
         uint256 gasBefore = gasleft();
-        vault.deposit(100e18);
+        vault.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
         emit log_named_uint("deposit", gasBefore - gasleft());
     }
 }
@@ -149,7 +149,7 @@ contract LCCGasFinalizeSlashBenchmarkTest is LCCBase {
 contract LCCGasSynchronizationBenchmarkTest is LCCBase {
     function setUp() public override {
         super.setUp();
-        vm.warp(START + NORMAL);
+        vm.warp(START + NORMAL + PRE_CALL);
         _deposit(alice, 100e18);
         vm.warp(START + EPOCH);
     }

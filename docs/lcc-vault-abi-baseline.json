@@ -161,12 +161,28 @@
     },
     {
       "name": "deposit",
-      "signature": "deposit(uint256)",
-      "selector": "0xb6b55f25",
+      "signature": "deposit(uint256,uint256,uint256,bool,uint256)",
+      "selector": "0xcf69f63a",
       "stateMutability": "nonpayable",
       "inputs": [
         {
           "name": "assets",
+          "type": "uint256"
+        },
+        {
+          "name": "minCommitment",
+          "type": "uint256"
+        },
+        {
+          "name": "maxCommitment",
+          "type": "uint256"
+        },
+        {
+          "name": "allowPendingActivation",
+          "type": "bool"
+        },
+        {
+          "name": "deadline",
           "type": "uint256"
         }
       ],

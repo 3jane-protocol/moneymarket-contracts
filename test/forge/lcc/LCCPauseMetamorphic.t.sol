@@ -33,13 +33,13 @@ contract LCCPauseMetamorphicTest is LCCBase {
 
         vm.warp(START + 1);
         vm.prank(alice);
-        unpausedRun.deposit(100e18);
+        unpausedRun.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(alice);
-        pausedRun.deposit(100e18);
+        pausedRun.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(bob);
-        unpausedRun.deposit(100e18);
+        unpausedRun.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(bob);
-        pausedRun.deposit(100e18);
+        pausedRun.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
 
         vm.warp(START + NORMAL);
         vm.prank(owner);
@@ -79,11 +79,11 @@ contract LCCPauseMetamorphicTest is LCCBase {
         shift = _maybePause(target, pausePoint, 0, START + 1, shift, duration);
         vm.warp(START + 1 + shift);
         vm.prank(alice);
-        target.deposit(100e18);
+        target.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(bob);
-        target.deposit(50e18);
+        target.deposit(50e18, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(carol);
-        target.deposit(50e18);
+        target.deposit(50e18, 1, type(uint256).max, true, type(uint256).max);
 
         shift = _maybePause(target, pausePoint, 1, START + NORMAL, shift, duration);
         vm.warp(START + NORMAL + shift);

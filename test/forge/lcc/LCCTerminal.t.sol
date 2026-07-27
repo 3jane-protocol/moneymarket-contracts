@@ -25,11 +25,12 @@ contract LCCTerminalTest is LCCBase {
         vault.requestExit();
     }
 
-    function testClaimRemainingReturnsRemainingMarginAndClearsAccount() public {
+    function testLastCallableEpochAllowsImmediateDepositButRejectsTerminalActivation() public {
         _deployVaultWithParams(_termParams(1));
         _deposit(alice, 100e18);
 
         vm.warp(START + NORMAL);
+        vm.expectRevert(LCCErrorsLib.VaultTerminal.selector);
         _deposit(alice, 25e18);
 
         vm.warp(START + EPOCH);
@@ -38,8 +39,8 @@ contract LCCTerminalTest is LCCBase {
         vm.prank(alice);
         uint256 claimed = vault.claimRemainingMargin(alice);
 
-        assertEq(claimed, 125e18);
-        assertEq(margin.balanceOf(alice), beforeBalance + 125e18);
+        assertEq(claimed, 100e18);
+        assertEq(margin.balanceOf(alice), beforeBalance + 100e18);
 
         ILCCVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 0);

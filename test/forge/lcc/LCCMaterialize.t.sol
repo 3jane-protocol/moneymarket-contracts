@@ -57,7 +57,7 @@ contract LCCMaterializeTest is LCCBase {
     }
 
     function testDerivedViewMatchesMutatingMaterializationForPending() public {
-        vm.warp(START + NORMAL);
+        vm.warp(START + NORMAL + PRE_CALL);
         _deposit(alice, 100e18);
 
         vm.warp(START + EPOCH);
@@ -87,12 +87,12 @@ contract LCCMaterializeTest is LCCBase {
         assertEq(derived.calledEpochCursor, storedDerived.calledEpochCursor);
     }
 
-    function testPendingDepositDuringCallIsNotDefaultedForPriorEpoch() public {
+    function testPendingDepositAfterSettledCallIsNotDefaultedForPriorEpoch() public {
         vm.recordLogs();
         _deposit(alice, 100e18);
         _openCall(100e18);
 
-        vm.warp(START + NORMAL + PRE_CALL);
+        _finishFunding();
         _deposit(bob, 100e18);
 
         vm.warp(START + EPOCH);
@@ -105,16 +105,16 @@ contract LCCMaterializeTest is LCCBase {
         _assertNoUserDefaulted(logs, address(vault), bob, 0);
     }
 
-    function testOnlyOldActiveExposureDefaultsWhenUserAlsoHasPendingDeposit() public {
+    function testOldActiveExposureDefaultsBeforePostSettlementPendingDeposit() public {
         _deposit(alice, 100e18);
         _openCall(100e18);
 
-        vm.warp(START + NORMAL + PRE_CALL);
+        _finishFunding();
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.UserDefaulted(alice, 0, 100e18, 200e18);
         _deposit(alice, 50e18);
 
         vm.warp(START + EPOCH);
-        vm.expectEmit(true, true, false, true, address(vault));
-        emit LCCEventsLib.UserDefaulted(alice, 0, 100e18, 200e18);
         _syncAs(alice);
 
         ILCCVault.Account memory account = vault.getAccount(alice);

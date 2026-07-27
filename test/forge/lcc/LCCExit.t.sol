@@ -106,7 +106,7 @@ contract LCCExitTest is LCCBase {
     }
 
     function testCannotRequestExitWithPendingOnlyDeposit() public {
-        vm.warp(START + NORMAL);
+        vm.warp(START + NORMAL + PRE_CALL);
         _deposit(alice, 100e18);
 
         vm.expectRevert(LCCErrorsLib.PendingDepositExists.selector);
@@ -117,7 +117,7 @@ contract LCCExitTest is LCCBase {
     function testCannotRequestExitWithActiveAndPendingDeposit() public {
         _deposit(alice, 100e18);
 
-        vm.warp(START + NORMAL);
+        vm.warp(START + NORMAL + PRE_CALL);
         _deposit(alice, 50e18);
 
         vm.expectRevert(LCCErrorsLib.PendingDepositExists.selector);
@@ -126,7 +126,7 @@ contract LCCExitTest is LCCBase {
     }
 
     function testCanRequestExitAfterPendingDepositActivates() public {
-        vm.warp(START + NORMAL);
+        vm.warp(START + NORMAL + PRE_CALL);
         _deposit(alice, 100e18);
 
         vm.warp(START + EPOCH);

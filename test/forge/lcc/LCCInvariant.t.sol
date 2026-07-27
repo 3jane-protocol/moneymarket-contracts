@@ -117,7 +117,7 @@ contract LCCInvariantHandler is Test {
         if (account.exitRequested && !account.exitClaimed) return;
 
         vm.prank(actor);
-        try invariantVault.deposit(amount) returns (uint256) {
+        try invariantVault.deposit(amount, 1, type(uint256).max, true, type(uint256).max) returns (uint256) {
             // marginAsset enters the vault only via deposit; count the exact amount pulled in. Slash disposal may
             // accrue pending treasury margin in the same transaction, which remains in the vault until swept.
             ghostCumDeposited += amount;
@@ -241,7 +241,7 @@ contract LCCInvariantHandler is Test {
             if (invariantVault.currentPhase() != ILCCVault.Phase.Normal) return;
             if (invariantVault.getEpochState(invariantVault.currentEpoch()).callOpened) return;
             vm.prank(actor);
-            try invariantVault.deposit(1e18) returns (uint256) {
+            try invariantVault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max) returns (uint256) {
                 ghostCumDeposited += 1e18;
             } catch {
                 return;
@@ -317,6 +317,14 @@ contract LCCInvariantHandler is Test {
         _sync();
         if (invariantVault.shutdownState().active || _isTerminal(invariantVault)) return;
         if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
+
+        uint256 epoch = invariantVault.currentEpoch();
+        ILCCVault.Phase phase = invariantVault.currentPhase();
+        bool immediate = phase == ILCCVault.Phase.Normal && !invariantVault.getEpochState(epoch).callOpened;
+        uint256 activationEpoch = immediate ? epoch : epoch + 1;
+        if (phase == ILCCVault.Phase.PreCall || _hasPriorUnsettledCall(activationEpoch)) return;
+        uint256 maxEpochs = invariantVault.epochConfig().maxEpochs;
+        if (maxEpochs != 0 && activationEpoch >= maxEpochs) return;
 
         address actor = actors[_index(actorSeed)];
         try invariantVault.materializeAccount(actor) {}
@@ -563,7 +571,7 @@ contract LCCInvariantHandler is Test {
 
     function _expectDepositRevert(address actor, uint256 amount, bytes4 selector) internal {
         vm.prank(actor);
-        try invariantVault.deposit(amount) {
+        try invariantVault.deposit(amount, 1, type(uint256).max, true, type(uint256).max) {
             fail();
         } catch (bytes memory reason) {
             assertEq(_revertSelector(reason), selector);
@@ -590,9 +598,9 @@ contract LCCInvariantHandler is Test {
 
     // Per-action revert whitelists are kept minimal: only selectors reachable AND legitimate for that specific call.
     // `_expectedMaterializeError` (the _replayForUpdate barrier + oracle-disposal revert) is the base for the actions
-    // that run _replayForUpdate: deposit, requestExit, and the claims. deposit adds InvalidPhase for the live-auction
-    // freeze, CapExceeded, and InvalidAmount; requestExit adds InvalidAmount (a synced default can zero its commitment
-    // after the stale guard) and ExitCapacityReached. Claims add NOTHING
+    // that run _replayForUpdate: deposit, requestExit, and the claims. deposit adds the activation/call-window
+    // lifecycle errors, CapExceeded, and InvalidAmount; requestExit adds InvalidAmount (a synced default can zero
+    // its commitment after the stale guard) and ExitCapacityReached. Claims add NOTHING
     // beyond the base -- their preconditions make NoExitRequested/ExitNotMature/NothingToClaim unreachable, so
     // catching those would mask a preview-vs-claim divergence. materialize/setRiskCaps do NO per-account replay
     // (materializeAccount uses the bounded _replayAndRecordDefaults; setRiskCaps only folds global state), so the
@@ -601,7 +609,8 @@ contract LCCInvariantHandler is Test {
     function _expectedDepositError(bytes memory reason) internal pure returns (bool) {
         bytes4 selector = _revertSelector(reason);
         return _expectedMaterializeError(reason) || selector == LCCErrorsLib.CapExceeded.selector
-            || selector == LCCErrorsLib.InvalidAmount.selector || selector == LCCErrorsLib.InvalidPhase.selector;
+            || selector == LCCErrorsLib.InvalidAmount.selector || selector == LCCErrorsLib.InvalidPhase.selector
+            || selector == LCCErrorsLib.PriorCallUnsettled.selector || selector == LCCErrorsLib.VaultTerminal.selector;
     }
 
     function _expectedRequestExitError(bytes memory reason) internal pure returns (bool) {
@@ -919,7 +928,6 @@ contract LCCCutoffStatefulInvariantTest is LCCBase {
 
         _openCall(150e18);
         _fund(carol);
-        _deposit(bob, 50e18);
         _finishFunding();
         vault.finalizeEpochSlash(0);
         oracle.setPrice(2 * ORACLE_PRICE_SCALE);

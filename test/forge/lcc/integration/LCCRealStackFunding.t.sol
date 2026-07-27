@@ -120,7 +120,13 @@ struct AuctionState {
 interface ILCCVaultLike {
     function initialize(VaultParams calldata params) external;
     function owner() external view returns (address);
-    function deposit(uint256 assets) external returns (uint256 commitment);
+    function deposit(
+        uint256 assets,
+        uint256 minCommitment,
+        uint256 maxCommitment,
+        bool allowPendingActivation,
+        uint256 deadline
+    ) external returns (uint256 commitment);
     function openEpochCall(uint256 epoch, uint256 callAmount) external;
     function fundCall(bool roll) external returns (uint256 obligationAmount);
     function fundCall(address user) external returns (uint256 obligationAmount);
@@ -273,8 +279,20 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         _openCall(shimVault, 123e6);
         assertEq(_fund(shimVault, alice, false), 82e6);
 
-        // A funding-phase deposit is pending for epoch 1, giving every adjacent amount/cursor field a distinct
-        // independently-derived value before the call is finalized.
+        vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING);
+        shimVault.finalizeEpochSlash(0);
+        vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING + 5);
+        vm.startPrank(filler);
+        (uint256 filled, uint256 award) = shimVault.takeAuction(10e6);
+        assertEq(filled, 10e6);
+        assertEq(award, 6_097_560);
+        (filled, award) = shimVault.takeAuction(31e6);
+        assertEq(filled, 31e6);
+        assertEq(award, 18_902_439);
+        vm.stopPrank();
+
+        // Once the call and auction are settled, a Closed-phase deposit can safely remain pending for epoch 1,
+        // giving every adjacent amount/cursor field a distinct independently-derived value.
         _deposit(shimVault, alice, 13e6);
         _assertAccountEq(
             shimVault.getAccount(alice),
@@ -284,7 +302,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
                 pendingMargin: 13e6,
                 pendingCommitment: 26e6,
                 pendingActivationEpoch: 1,
-                calledEpochCursor: 0,
+                calledEpochCursor: 1,
                 claimableExitMargin: 0,
                 exitBucketMargin: 0,
                 exitBucketCommitment: 0,
@@ -295,14 +313,6 @@ contract LCCRealStackFundingIntegrationTest is Setup {
                 commitmentStartEpoch: 1
             })
         );
-
-        vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING);
-        shimVault.finalizeEpochSlash(0);
-        vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING + 5);
-        vm.prank(filler);
-        (uint256 filled, uint256 award) = shimVault.takeAuction(10e6);
-        assertEq(filled, 10e6);
-        assertEq(award, 6_097_560);
 
         vm.warp(startTimestamp + EPOCH);
         shimVault.materializeAccount(filler);
@@ -321,17 +331,17 @@ contract LCCRealStackFundingIntegrationTest is Setup {
                 slashFinalized: true,
                 slashDisabledByShutdown: false,
                 slashedMargin: 50e6,
-                returnPool: 43_292_684,
-                returnCommitment: 86_585_368
+                returnPool: 22_500_002,
+                returnCommitment: 45_000_004
             })
         );
         _assertAuctionStateEq(
             shimVault.getAuctionState(0),
             AuctionState({
                 shortfallAmount: uint128(41e6),
-                filledAmount: uint128(10e6),
+                filledAmount: uint128(41e6),
                 marginPool: uint128(50e6),
-                marginAwarded: uint128(6_097_560)
+                marginAwarded: uint128(24_999_999)
             })
         );
 
@@ -803,7 +813,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
 
     function _deposit(ILCCVaultLike target, address actor, uint256 amount) internal returns (uint256 commitment) {
         vm.prank(actor);
-        commitment = target.deposit(amount);
+        commitment = target.deposit(amount, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function _openCall(ILCCVaultLike target, uint256 amount) internal {

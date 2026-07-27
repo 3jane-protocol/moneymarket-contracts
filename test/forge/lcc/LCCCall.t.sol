@@ -8,7 +8,7 @@ import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCCallTest is LCCBase {
     function testOpenCallSnapshotsDenominatorAfterPendingActivation() public {
-        vm.warp(START + NORMAL);
+        vm.warp(START + NORMAL + PRE_CALL);
         _deposit(alice, 100e18);
 
         vm.warp(START + EPOCH + NORMAL);
@@ -36,7 +36,7 @@ contract LCCCallTest is LCCBase {
         // deposit is self-only: there is no receiver argument to credit a third party's obligation.
         vm.startPrank(alice);
         margin.approve(address(vault), type(uint256).max);
-        vault.deposit(100e18);
+        vault.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
         vm.stopPrank();
 
         assertEq(vault.getAccount(alice).activeMargin, 100e18);

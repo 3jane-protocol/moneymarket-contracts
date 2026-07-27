@@ -3,6 +3,7 @@ pragma solidity ^0.8.22;
 
 import {LCCBase, LCCBlacklistMockToken, LCCRevertingOracle} from "./LCCBase.t.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
+import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
 
 contract LCCShutdownTest is LCCBase {
@@ -122,7 +123,7 @@ contract LCCShutdownTest is LCCBase {
         assertEq(vault.totals().activeCommitment, 0);
     }
 
-    function testShutdownSettlesAuctionBeforeFoldingMaxWidthPendingActivation() public {
+    function testShutdownSettlesAuctionAfterMaxWidthDepositIsBlockedDuringCall() public {
         uint256 maxPacked = type(uint128).max;
         ILCCVault.VaultParams memory params = _auctionParams();
         params.protocolCommitmentCap = maxPacked;
@@ -136,6 +137,7 @@ contract LCCShutdownTest is LCCBase {
         uint256 commitment = _deposit(alice, auctionMargin);
         _openCall(commitment);
         vm.warp(START + NORMAL + PRE_CALL);
+        vm.expectRevert(LCCErrorsLib.PriorCallUnsettled.selector);
         _deposit(bob, maxPacked - auctionMargin);
         _finishFunding();
         vault.finalizeEpochSlash(0);
@@ -147,7 +149,7 @@ contract LCCShutdownTest is LCCBase {
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, auctionMargin);
-        assertEq(vault.totals().activeMargin, maxPacked);
+        assertEq(vault.totals().activeMargin, auctionMargin);
         assertEq(vault.totals().pendingMargin, 0);
         assertEq(vault.pendingTreasuryMargin(), 0);
     }

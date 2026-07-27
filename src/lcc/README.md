@@ -177,12 +177,15 @@ and immediately enables wind-down claims while recording the same frozen effecti
 must unpause again to resume claims. Each elapsed pause duration is accumulated into the clock offset, so all epochs,
 funding deadlines, auction windows, exit maturities, and terminal checks shift by exactly the paused duration.
 
-**Phase-free / lifecycle-gated entrypoints** (these have **no** phase check):
+**Lifecycle-gated entrypoints:**
 
-- `deposit(assets)` is callable in **any** phase. The phase only selects **immediate vs pending** activation:
-  immediate only during `Normal` **and before a call has opened** for the current epoch, otherwise the deposit is
-  pending for epoch `e+1`. Its gates are lifecycle, not phase: `ShutdownActive`, `VaultTerminal`, `InvalidAmount`
-  (zero / below `minDepositAssets` / zero commitment), `ExitInProgress`, `OraclePriceInvalid`, `CapExceeded`.
+- `deposit(assets, minCommitment, maxCommitment, allowPendingActivation, deadline)` selects **immediate vs pending**
+  activation: immediate only during `Normal` **and before a call has opened** for the current epoch, otherwise
+  pending for epoch `e+1`. PreCall is always blocked so a pending deposit cannot front-run the call snapshot; after
+  a call opens, deposits remain blocked until the call settles. A live auction remains blocking. In Funding or
+  Closed with no unsettled call, pending deposits require `allowPendingActivation = true`. The activation epoch
+  must remain below scheduled sunset. `minCommitment` and `maxCommitment` inclusively bound the oracle-derived
+  commitment, and `deadline` is checked against unadjusted wall-clock time so a pause does not extend freshness.
 - `requestExit()` has no phase check; it is gated by `VaultTerminal`, `ExitInProgress`, `PendingDepositExists`,
   `InvalidAmount` (no active position), `CommitmentNotMature`, and `ExitCapacityReached`.
 - `claimExitedMargin` / `claimRemainingMargin` have no phase check; they are gated by maturity, shutdown/terminal,
@@ -230,14 +233,19 @@ resolved.
 ## 6. Deposits and commitment
 
 `deposit` pulls `assets` of `marginAsset` from the caller (self-deposit only — a deposit creates a callable
-obligation), reads the oracle, and derives `commitment = marginValue * BPS / marginRatioBps`. Both caps are checked
-against active+pending totals: `protocolCommitmentCap` vault-wide and `userCommitmentCap` per account
-(`CapExceeded`).
+obligation), reads the oracle, and derives `commitment = marginValue * BPS / marginRatioBps`. The caller supplies
+inclusive nonzero `minCommitment` / `maxCommitment` bounds, an `allowPendingActivation` opt-in, and a wall-clock
+`deadline`. Both caps are checked against active+pending totals: `protocolCommitmentCap` vault-wide and
+`userCommitmentCap` per account (`CapExceeded`).
 
 Activation follows `_depositActivation`: **immediate** (credited to `activeMargin` / `activeCommitment` now) only
 when the phase is `Normal` and no call has opened for the current epoch; otherwise **pending** for epoch `e+1`,
 tracked in `pendingMarginByActivationEpoch` / `pendingCommitmentByActivationEpoch` and folded in later by sync.
 Those two ABI-compatible `uint256` getters read the halves of one packed `LCCTypesLib.Bucket` storage word.
+Deposits are unavailable throughout PreCall and, once a call opens, until its slash/auction path settles. This keeps
+post-snapshot commitments out of the live utilization used to bound a defaulter's return pool. The fixture's
+20-second PreCall plus 20-second Funding blocks 40% of its 100-second epoch after an early open; valid phase
+geometries can make that unavailable interval approach the full epoch.
 
 Every deposit sets `commitmentStartEpoch` to its activation epoch — this restarts the `minCommitmentEpochs` exit
 clock (§9). Funding of any kind never touches `commitmentStartEpoch`.
@@ -538,7 +546,9 @@ epochs already past their deadline slash normally. Shutdown blocks new `deposit`
 and enables `claimRemainingMargin`.
 
 **Scheduled sunset.** When `maxEpochs != 0`, epochs `0..maxEpochs-1` are callable and epoch `maxEpochs` begins a
-terminal withdraw-only phase (`_terminal()`). `deposit`, `requestExit`, and `openEpochCall` revert `VaultTerminal`.
+terminal withdraw-only phase (`_terminal()`). `deposit` also rejects any pending activation whose activation epoch
+would be `maxEpochs`, so a last-callable-epoch deposit must activate immediately. `requestExit` and `openEpochCall`
+revert `VaultTerminal` once terminal.
 `_callWindowClosed()` — true once the last callable epoch's PreCall window has elapsed — flips disposal into the
 oracle-tolerant, saturating-headroom mode even before the terminal boundary, since no returned commitment can ever
 back a future call.
@@ -565,7 +575,7 @@ flowchart TD
 
 `LCCAuctionLib` and `LCCConfigLib` are the two externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-23,697 bytes, 579 bytes below the 24,276-byte release ceiling and 879 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+23,931 bytes, 345 bytes below the 24,276-byte release ceiling and 645 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls

@@ -289,14 +289,26 @@ interface ILCCVault {
         external
         view
         returns (address guardian, bool paused, uint64 pausedAt, uint64 pausedAccumulated);
-    /// @notice Deposits margin for the caller, creating a leveraged commitment.
+    /// @notice Deposits margin for the caller, creating a bounded leveraged commitment.
     /// @dev Pulls `assets` of marginAsset from the caller and credits the caller's own account (self-deposit only,
     /// since a deposit creates a callable obligation). Activates immediately during Normal (before a call opens),
-    /// otherwise stages as pending for the next epoch. Reverts under shutdown, on a pending-blocking exit, on a
+    /// otherwise stages as pending for the next epoch when permitted. Deposits are unavailable during PreCall and
+    /// while an opened call remains unsettled. Reverts under shutdown, when activation would reach scheduled sunset,
+    /// on a pending-blocking exit, on an expired wall-clock deadline, on invalid commitment bounds, on a
     /// zero/sub-minimum amount, on a zero oracle price, or if a cap would be exceeded.
     /// @param assets Margin to deposit (marginAsset).
+    /// @param minCommitment Minimum acceptable commitment, inclusive and nonzero.
+    /// @param maxCommitment Maximum acceptable commitment, inclusive.
+    /// @param allowPendingActivation Whether the deposit may be staged for the next epoch.
+    /// @param deadline Wall-clock timestamp after which the deposit reverts.
     /// @return commitment Commitment created (fundingAsset).
-    function deposit(uint256 assets) external returns (uint256 commitment);
+    function deposit(
+        uint256 assets,
+        uint256 minCommitment,
+        uint256 maxCommitment,
+        bool allowPendingActivation,
+        uint256 deadline
+    ) external returns (uint256 commitment);
     /// @notice Requests a full-account exit, assigning the earliest maturity epoch with available exit capacity.
     /// @dev The account stays callable until maturity. Reverts if an exit is already pending, if the account holds
     /// pending margin, or if it has no active position.

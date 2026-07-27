@@ -86,9 +86,9 @@ contract LCCProxyTest is LCCBase {
         _approveVault(second, alice);
 
         vm.prank(alice);
-        first.deposit(10e18);
+        first.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(alice);
-        second.deposit(20e18);
+        second.deposit(20e18, 1, type(uint256).max, true, type(uint256).max);
 
         vm.warp(START + NORMAL);
         vm.startPrank(owner);

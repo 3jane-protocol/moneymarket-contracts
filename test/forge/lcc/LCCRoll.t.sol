@@ -158,6 +158,7 @@ contract LCCRollTest is LCCBase {
         vm.prank(alice);
         vault.fundCall(true);
 
+        _finishFunding();
         _deposit(alice, 25e18);
         account = vault.getAccount(alice);
         assertEq(account.activeMargin + account.pendingMargin, 100e18);

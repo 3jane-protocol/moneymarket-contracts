@@ -9,7 +9,7 @@ contract LCCSyncTest is LCCBase {
     uint256 internal constant HUGE_EPOCH_GAP = 20_000;
 
     function testSyncActivatesPendingBeforeCapSensitiveDeposit() public {
-        vm.warp(START + NORMAL);
+        vm.warp(START + NORMAL + PRE_CALL);
         _deposit(alice, 100e18);
 
         vm.warp(START + EPOCH);
@@ -58,7 +58,7 @@ contract LCCSyncTest is LCCBase {
     }
 
     function testSparseSyncFoldsPendingAfterLargeDormantGapOnce() public {
-        vm.warp(START + NORMAL);
+        vm.warp(START + NORMAL + PRE_CALL);
         _deposit(alice, 100e18);
 
         vm.warp(START + EPOCH * HUGE_EPOCH_GAP);
@@ -93,7 +93,7 @@ contract LCCSyncTest is LCCBase {
         vm.prank(alice);
         uint256 maturity = vault.requestExit();
 
-        vm.warp(START + NORMAL);
+        vm.warp(START + NORMAL + PRE_CALL);
         _deposit(bob, 50e18);
 
         vm.warp(START + EPOCH * HUGE_EPOCH_GAP);

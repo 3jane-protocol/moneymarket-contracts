@@ -107,7 +107,7 @@ contract LCCReentrancyTest is LCCBase {
         reentrantMargin.arm(address(probe));
 
         vm.prank(alice);
-        vault.deposit(10e18);
+        vault.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
 
         assertFalse(probe.lockedCallSucceeded());
         assertEq(bytes4(probe.lockedCallResult()), ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector);
@@ -121,13 +121,14 @@ contract LCCReentrancyTest is LCCBase {
 
     function testRevertedProtectedCallRollsBackTransientLock() public {
         vm.prank(alice);
-        (bool success, bytes memory result) = address(vault).call(abi.encodeCall(ILCCVault.deposit, (0)));
+        (bool success, bytes memory result) =
+            address(vault).call(abi.encodeCall(ILCCVault.deposit, (0, 1, type(uint256).max, true, type(uint256).max)));
 
         assertFalse(success);
         assertEq(bytes4(result), LCCErrorsLib.InvalidAmount.selector);
 
         vm.prank(alice);
-        vault.deposit(1e18);
+        vault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function testSweepTreasuryCallbackReentryIsBlockedAndRetrySucceeds() public {

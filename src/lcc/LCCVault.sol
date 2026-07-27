@@ -356,10 +356,26 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// @inheritdoc ILCCVault
     /// @dev The margin oracle is fully trusted to return a fresh marginAsset-to-fundingAsset price scaled by
     /// ORACLE_PRICE_SCALE, including any token decimal conversion.
-    function deposit(uint256 assets) external nonReentrant synced returns (uint256 commitment) {
+    function deposit(
+        uint256 assets,
+        uint256 minCommitment,
+        uint256 maxCommitment,
+        bool allowPendingActivation,
+        uint256 deadline
+    ) external nonReentrant synced returns (uint256 commitment) {
         if (_syncState.pendingAuctionEpochPlusOne != 0) revert LCCErrorsLib.InvalidPhase();
         if (_shutdown.active) revert LCCErrorsLib.ShutdownActive();
-        if (_terminal()) revert LCCErrorsLib.VaultTerminal();
+
+        (uint256 activationEpoch, bool immediate) = _depositActivation();
+        if (_clockConfig.maxEpochs != 0 && activationEpoch >= _clockConfig.maxEpochs) {
+            revert LCCErrorsLib.VaultTerminal();
+        }
+        if (!immediate && _phaseAt(_now()) == Phase.PreCall) revert LCCErrorsLib.InvalidPhase();
+        _requireNoPriorUnsettledCall(activationEpoch);
+
+        if (minCommitment == 0 || minCommitment > maxCommitment) revert LCCErrorsLib.InvalidAmount();
+        if (block.timestamp > deadline) revert LCCErrorsLib.InvalidParams(); // deliberate wall-clock read
+        if (!immediate && !allowPendingActivation) revert LCCErrorsLib.InvalidPhase();
         if (assets == 0 || assets < _riskConfig.minDepositAssets) revert LCCErrorsLib.InvalidAmount();
         if (
             uint256(_totals.activeMargin).saturatingAdd(_totals.pendingMargin).saturatingAdd(assets) > type(uint128).max
@@ -373,7 +389,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
         uint256 marginValue;
         (marginValue, commitment) = _marginValueAndCommitment(assets, price);
-        if (commitment == 0) revert LCCErrorsLib.InvalidAmount();
+        if (commitment < minCommitment || commitment > maxCommitment) revert LCCErrorsLib.InvalidAmount();
 
         if (
             _totals.activeCommitment + _totals.pendingCommitment + commitment > _riskConfig.protocolCommitmentCap
@@ -384,7 +400,6 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
         IERC20(_assetConfig.marginAsset).safeTransferFrom(msg.sender, address(this), assets);
 
-        (uint256 activationEpoch, bool immediate) = _depositActivation();
         if (immediate) {
             account.activeMargin += assets;
             account.activeCommitment += commitment;

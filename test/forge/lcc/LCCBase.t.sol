@@ -326,7 +326,7 @@ contract LCCBase is Test {
 
     function _deposit(address user, uint256 assets) internal returns (uint256 commitment) {
         vm.prank(user);
-        commitment = vault.deposit(assets);
+        commitment = vault.deposit(assets, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function _openCall(uint256 amount) internal {

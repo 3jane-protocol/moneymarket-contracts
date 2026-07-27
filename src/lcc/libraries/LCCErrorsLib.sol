@@ -10,7 +10,7 @@ library LCCErrorsLib {
     error ZeroAddress();
     /// @notice Thrown when an action is restricted to the owner.
     error NotOwner();
-    /// @notice Thrown when a constructor or setter argument is outside its valid range.
+    /// @notice Thrown when an input parameter is outside its valid range.
     error InvalidParams();
     /// @notice Thrown when an action is attempted that is blocked by emergency shutdown.
     error ShutdownActive();
@@ -36,7 +36,7 @@ library LCCErrorsLib {
     error InvalidEpoch();
     /// @notice Thrown when opening a call for an epoch that already has one.
     error CallAlreadyOpened();
-    /// @notice Thrown when opening a call while an earlier call remains unsettled.
+    /// @notice Thrown when opening a call or depositing while an earlier call remains unsettled.
     error PriorCallUnsettled();
     /// @notice Thrown when an amount argument is zero or otherwise invalid for the operation.
     error InvalidAmount();

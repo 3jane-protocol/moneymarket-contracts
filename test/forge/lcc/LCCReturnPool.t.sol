@@ -216,7 +216,6 @@ contract LCCReturnPoolTest is LCCBase {
 
         _openCall(150e18);
         _fund(carol);
-        _deposit(bob, 50e18);
         oracle.setPrice(2 * ORACLE_PRICE_SCALE);
     }
 
