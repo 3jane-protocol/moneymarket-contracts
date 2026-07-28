@@ -13,7 +13,7 @@ fs_permissions = [
     { access = "read", path = "out/LCCAuctionLib.sol" },
     { access = "read", path = "out/LCCConfigLib.sol" },
 ]
-# LCCVault pins optimizer_runs = 150 (23,992 B runtime, 284 B below the 24,276 release ceiling, 584 B EIP-170 margin). The frozen USD3_old
+# LCCVault pins optimizer_runs = 150 (24,082 B runtime, 194 B below the 24,276 release ceiling, 494 B EIP-170 margin). The frozen USD3_old
 # upgrade-test artifact pins optimizer_runs = 200 for a different reason: it is the pre-cleanup implementation, and
 # under the test profile (via-ir disabled) it hits solc "Stack too deep" at higher runs, so the low pin is what lets
 # it compile without via-ir. It is a test-only fixture (deployed only inside the upgrade tests), so its runs are

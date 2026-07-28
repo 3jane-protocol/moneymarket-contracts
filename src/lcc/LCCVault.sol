@@ -131,8 +131,12 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// @inheritdoc ILCCVault
     uint256 public pendingTreasuryMargin;
 
-    /// @dev Reserved storage for future versions. New storage must be appended by consuming gap slots.
-    uint256[49] private __gap;
+    /// @dev Epoch in which each call's nonzero return pool was created.
+    mapping(uint256 => uint256) internal returnCreditEpochByCall;
+
+    /// @dev Reserved storage for future versions. Pre-deployment additions are declared above this gap so the
+    /// post-deployment reserve stays at its full 50 slots; only upgrades after deployment consume gap slots.
+    uint256[50] private __gap;
 
     /* CONSTRUCTOR / INITIALIZER */
 
@@ -411,8 +415,10 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         } else {
             _addPending(account, assets, commitment, activationEpoch);
         }
-        // Every deposit restarts the minimum-commitment exit clock from its activation epoch.
-        account.commitmentStartEpoch = activationEpoch;
+        // commitmentStartEpoch is monotone: a deposit only ever moves it forward, and it never drops below a
+        // staged deposit's activation epoch.
+        account.commitmentStartEpoch =
+            Math.max(account.commitmentStartEpoch, Math.max(activationEpoch, account.pendingActivationEpoch));
         _storeAccount(msg.sender, account);
 
         emit LCCEventsLib.DepositCheckpointed(msg.sender, assets, marginValue, commitment, activationEpoch, immediate);
@@ -1049,7 +1055,10 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
         state.returnPool = returnPool;
         state.returnCommitment = returnCommitment;
-        if (returnPool != 0) _increaseGlobalActive(returnPool, returnCommitment);
+        if (returnPool != 0) {
+            returnCreditEpochByCall[epoch] = _currentEpoch();
+            _increaseGlobalActive(returnPool, returnCommitment);
+        }
         uint256 toTreasury = surplus - returnPool;
         pendingTreasuryMargin += toTreasury;
         emit LCCEventsLib.SlashSurplusDisposed(epoch, toTreasury, returnPool, returnCommitment);
@@ -1173,6 +1182,10 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
                         ++replay.defaultCount;
                     }
                 }
+                if ((marginShare | commitmentShare) != 0) {
+                    replay.account.commitmentStartEpoch =
+                        Math.max(replay.account.commitmentStartEpoch, Math.max(epoch, returnCreditEpochByCall[epoch]));
+                }
                 replay.account.defaultAccount();
                 replay.account.activeMargin += marginShare;
                 replay.account.activeCommitment += commitmentShare;
@@ -1229,6 +1242,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         if (commitmentShare == 0) return (0, 0);
 
         marginShare = state.returnPool.mulDiv(slashedMargin, aggregateSlashedMargin);
+        // Keep the tuple literal: replay's any-credit clock guard relies on both paired shares being zero here.
         if (marginShare == 0) return (0, 0);
     }
 

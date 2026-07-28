@@ -248,7 +248,9 @@ post-snapshot commitments out of the live utilization used to bound a defaulter'
 20-second PreCall plus 20-second Funding blocks 40% of its 100-second epoch after an early open; valid phase
 geometries can make that unavailable interval approach the full epoch.
 
-Every deposit sets `commitmentStartEpoch` to its activation epoch — this restarts the `minCommitmentEpochs` exit
+Every deposit advances `commitmentStartEpoch` to at least its activation epoch. A default that receives a nonzero
+paired return-pool re-credit advances it to the later of its current value and the epoch in which that credit was
+created; zero or rounding-dropped credits leave it unchanged. These events restart the `minCommitmentEpochs` exit
 clock (§9). Funding of any kind never touches `commitmentStartEpoch`.
 
 ## 7. Capital calls and funding
@@ -506,8 +508,10 @@ stateDiagram-v2
 ```
 
 **Commitment gate.** `requestExit` reverts `CommitmentNotMature` while
-`currentEpoch < commitmentStartEpoch + minCommitmentEpochs`. The clock is anchored at the account's **latest**
-deposit activation; every deposit resets it, and no funding touches it.
+`currentEpoch < commitmentStartEpoch + minCommitmentEpochs`. The clock is anchored at the later of the account's
+**latest deposit activation epoch** and **the epoch in which its latest nonzero paired return-pool re-credit was
+created**. Every deposit and such re-credit advances it monotonically, zero credits leave it unchanged, and no
+funding touches it.
 
 **Maturity assignment.** `_assignExitMaturity` is first-fit by request time (not strict FIFO): it starts at
 `currentEpoch + exitDelayEpochs` and walks forward to the first bucket with room, where per-epoch capacity is
@@ -593,19 +597,20 @@ flowchart TD
 
 `LCCAuctionLib` and `LCCConfigLib` are the two externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-23,992 bytes, 284 bytes below the 24,276-byte release ceiling and 584 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+24,082 bytes, 194 bytes below the 24,276-byte release ceiling and 494 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls
 `_disableInitializers()`. `LCCVaultFactory` deploys per-facility `BeaconProxy` instances with atomic `initialize`
 calldata; per-facility params live in proxy storage. The factory registry (`isVault` / `allVaults`) records owner-vetted
 **provenance only** — the beacon is public, so anyone can point an unregistered proxy at it. Packed structs in
-`LCCTypesLib` are upgrade-frozen layout; the initial layout retains a 49-slot `__gap` after the treasury accrual slot,
-and new state must consume it. Both `LCCAuctionLib` and `LCCConfigLib` must be re-linked on every implementation
-redeploy. Every future implementation must preserve runtime exit capacity of at least one, or normalize existing
-configurations during the upgrade; the `Math.max(1, ...)` clamp in `_assignExitMaturity` is the scan-termination
-invariant. `yarn build:forge:size` embeds the build-profile storage layout in the canonical artifact and recursively
-compares its complete type graph against the reviewer-controlled
+`LCCTypesLib` are upgrade-frozen layout. The layout retains the full 50-slot `__gap` after the treasury accrual slot:
+while LCC is pre-deployment, new state such as `returnCreditEpochByCall` is declared above the gap rather than
+consuming it, so the post-deployment reserve stays at 50. Once deployed, new state must consume gap slots. Both `LCCAuctionLib` and `LCCConfigLib` must be re-linked on every implementation redeploy. Every future
+implementation must preserve runtime exit capacity of at least one, or normalize existing configurations during the
+upgrade; the `Math.max(1, ...)` clamp in `_assignExitMaturity` is the scan-termination invariant.
+`yarn build:forge:size` embeds the build-profile storage layout in the canonical artifact and recursively compares
+its complete type graph against the reviewer-controlled
 `docs/lcc-vault-storage-layout.json`; the checker never regenerates that baseline. The full upgrade checklist of
 record lives in
 [`docs/architecture.md`](../../docs/architecture.md).

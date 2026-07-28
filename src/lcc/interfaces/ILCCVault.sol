@@ -54,8 +54,9 @@ interface ILCCVault {
     /// @param exitCapBps Per-epoch exit capacity as a fraction of the exit-capacity denominator, in bps; must satisfy
     /// `exitCapBps * 64 >= 2 * BPS` (>= 313) and `<= BPS`.
     /// @param exitDelayEpochs Minimum epochs between an exit request and its earliest maturity; at most 64.
-    /// @param minCommitmentEpochs Minimum epochs an account must be committed (counted from its latest deposit's
-    /// activation epoch) before it can request an exit; at most 64, 0 disables the gate. Composed lockup: the
+    /// @param minCommitmentEpochs Minimum epochs an account must be committed (counted from commitmentStartEpoch,
+    /// the later of its latest deposit activation and the epoch in which its latest nonzero paired return-pool
+    /// re-credit was created) before it can request an exit; at most 64, 0 disables the gate. Composed lockup: the
     /// earliest exit request is commitmentStartEpoch + minCommitmentEpochs and the earliest maturity adds
     /// exitDelayEpochs. Wind-down claims (shutdown or terminal) bypass the gate.
     /// @param minDepositAssets Minimum margin deposit, in marginAsset units.
@@ -118,8 +119,9 @@ interface ILCCVault {
     /// @param fundingDuration Seconds of the Funding phase.
     /// @param marginRatioBps Leverage ratio in bps.
     /// @param exitDelayEpochs Minimum epochs between exit request and earliest maturity.
-    /// @param minCommitmentEpochs Minimum epochs since the latest deposit activation before an exit request; 0
-    /// disables the gate.
+    /// @param minCommitmentEpochs Minimum epochs since commitmentStartEpoch (the later of the latest deposit
+    /// activation and the creation epoch of the latest nonzero paired return-pool re-credit) before an exit request;
+    /// 0 disables the gate.
     struct EpochConfig {
         uint256 startTimestamp;
         uint256 maxEpochs;
@@ -210,8 +212,9 @@ interface ILCCVault {
     /// @param exitMaturityEpoch Epoch at which the requested exit matures (callable until then).
     /// @param exitClaimed True once the matured exit margin has been claimed.
     /// @param exitMatured True once the exit has matured (margin moved to `claimableExitMargin`).
-    /// @param commitmentStartEpoch Activation epoch of the account's latest deposit; the minCommitmentEpochs
-    /// exit gate counts from here. Funding of any kind never changes it.
+    /// @param commitmentStartEpoch Later of the account's latest deposit activation epoch and the epoch in which its
+    /// latest nonzero paired return-pool re-credit was created, floored at that credit's call epoch when no creation
+    /// epoch is recorded; the minCommitmentEpochs exit gate counts from here. Funding of any kind never changes it.
     struct Account {
         uint256 activeMargin;
         uint256 activeCommitment;

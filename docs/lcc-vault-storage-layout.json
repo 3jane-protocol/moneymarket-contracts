@@ -187,10 +187,18 @@
     {
       "astId": 5206,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
-      "label": "__gap",
+      "label": "returnCreditEpochByCall",
       "offset": 0,
       "slot": "29",
-      "type": "t_array(t_uint256)49_storage"
+      "type": "t_mapping(t_uint256,t_uint256)"
+    },
+    {
+      "astId": 5211,
+      "contract": "src/lcc/LCCVault.sol:LCCVault",
+      "label": "__gap",
+      "offset": 0,
+      "slot": "30",
+      "type": "t_array(t_uint256)50_storage"
     }
   ],
   "types": {
@@ -199,10 +207,10 @@
       "label": "address",
       "numberOfBytes": "20"
     },
-    "t_array(t_uint256)49_storage": {
+    "t_array(t_uint256)50_storage": {
       "encoding": "inplace",
-      "label": "uint256[49]",
-      "numberOfBytes": "1568",
+      "label": "uint256[50]",
+      "numberOfBytes": "1600",
       "base": "t_uint256"
     },
     "t_array(t_uint256)dyn_storage": {
