@@ -809,10 +809,19 @@
     },
     {
       "name": "requestExit",
-      "signature": "requestExit()",
-      "selector": "0x7f8e3b4e",
+      "signature": "requestExit(uint256,uint256)",
+      "selector": "0xbb77c1f5",
       "stateMutability": "nonpayable",
-      "inputs": [],
+      "inputs": [
+        {
+          "name": "maxDeferralEpochs",
+          "type": "uint256"
+        },
+        {
+          "name": "deadline",
+          "type": "uint256"
+        }
+      ],
       "outputs": [
         {
           "name": "maturityEpoch",
@@ -1698,8 +1707,18 @@
       "inputs": []
     },
     {
+      "name": "DeadlineExpired",
+      "signature": "DeadlineExpired()",
+      "inputs": []
+    },
+    {
       "name": "ExitCapacityReached",
       "signature": "ExitCapacityReached()",
+      "inputs": []
+    },
+    {
+      "name": "ExitDeferralExceeded",
+      "signature": "ExitDeferralExceeded()",
       "inputs": []
     },
     {

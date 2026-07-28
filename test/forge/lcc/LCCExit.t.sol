@@ -24,7 +24,7 @@ contract LCCExitTest is LCCBase {
         _deposit(alice, 100e18);
 
         vm.prank(alice);
-        uint256 maturity = vault.requestExit();
+        uint256 maturity = vault.requestExit(type(uint256).max, type(uint256).max);
         assertEq(maturity, 1);
 
         vm.warp(START + EPOCH);
@@ -43,7 +43,7 @@ contract LCCExitTest is LCCBase {
         _deposit(alice, 100e18);
 
         vm.prank(alice);
-        uint256 maturity = vault.requestExit();
+        uint256 maturity = vault.requestExit(type(uint256).max, type(uint256).max);
         assertEq(maturity, 1);
 
         // Call consumes the exiter's entire commitment; funding releases all margin, leaving nothing to claim.
@@ -70,7 +70,7 @@ contract LCCExitTest is LCCBase {
         _deposit(alice, 100e18);
 
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.expectRevert(LCCErrorsLib.ExitInProgress.selector);
         _deposit(alice, 1e18);
@@ -92,16 +92,99 @@ contract LCCExitTest is LCCBase {
         _deposit(bob, 60e18);
 
         vm.prank(alice);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
 
         vm.prank(bob);
-        assertEq(vault.requestExit(), 2);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+    }
+
+    function testZeroDeferralAcceptsEarliestMaturityWithRoom() public {
+        _deposit(alice, 100e18);
+
+        vm.prank(alice);
+        assertEq(vault.requestExit(0, type(uint256).max), 1);
+    }
+
+    function testZeroDeferralRejectsDisplacementFromEarliestMaturity() public {
+        ILCCVault.VaultParams memory params = _params(address(oracle), 100e18, 100e18, 2_000);
+        params.marginRatioBps = BPS;
+        _deployVaultWithParams(params);
+
+        assertEq(_deposit(alice, 20e18), 20e18);
+        assertEq(_deposit(bob, 1e18), 1e18);
+
+        vm.prank(alice);
+        assertEq(vault.requestExit(0, type(uint256).max), 1);
+
+        vm.expectRevert(LCCErrorsLib.ExitDeferralExceeded.selector);
+        vm.prank(bob);
+        vault.requestExit(0, type(uint256).max);
+    }
+
+    function testPositiveDeferralAcceptsAtBoundAndRejectsOnePastIt() public {
+        ILCCVault.VaultParams memory params = _params(address(oracle), 100e18, 100e18, 2_000);
+        params.marginRatioBps = BPS;
+        _deployVaultWithParams(params);
+
+        assertEq(_deposit(alice, 20e18), 20e18);
+        assertEq(_deposit(bob, 20e18), 20e18);
+        assertEq(_deposit(carol, 1e18), 1e18);
+
+        vm.prank(alice);
+        assertEq(vault.requestExit(0, type(uint256).max), 1);
+
+        vm.prank(bob);
+        assertEq(vault.requestExit(1, type(uint256).max), 2);
+
+        vm.expectRevert(LCCErrorsLib.ExitDeferralExceeded.selector);
+        vm.prank(carol);
+        vault.requestExit(1, type(uint256).max);
+    }
+
+    function testOversizedCommitmentWithZeroDeferralUsesEscapeClause() public {
+        ILCCVault.VaultParams memory params = _params(address(oracle), 100e18, 100e18, 2_000);
+        params.marginRatioBps = BPS;
+        _deployVaultWithParams(params);
+
+        assertEq(_deposit(alice, 21e18), 21e18);
+
+        vm.prank(alice);
+        assertEq(vault.requestExit(0, type(uint256).max), 1);
+    }
+
+    function testExitWallClockDeadlineRejectsExpiredAndAcceptsInclusiveDeadline() public {
+        vm.expectRevert(LCCErrorsLib.DeadlineExpired.selector);
+        vm.prank(alice);
+        vault.requestExit(type(uint256).max, block.timestamp - 1);
+
+        _deposit(alice, 100e18);
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, block.timestamp), 1);
+    }
+
+    function testExitDeadlineUsesWallClockAfterPause() public {
+        _deposit(alice, 100e18);
+
+        vm.prank(owner);
+        vault.pause();
+        vm.warp(block.timestamp + 100);
+        vm.prank(owner);
+        vault.unpause();
+
+        uint256 effectiveNow = _effectiveTime(vault);
+        uint256 deadline = effectiveNow + 50;
+        assertGt(deadline, effectiveNow);
+        assertLt(deadline, block.timestamp);
+
+        vm.expectRevert(LCCErrorsLib.DeadlineExpired.selector);
+        vm.prank(alice);
+        vault.requestExit(type(uint256).max, deadline);
     }
 
     function testCannotClaimBeforeMaturity() public {
         _deposit(alice, 100e18);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.expectRevert(LCCErrorsLib.ExitNotMature.selector);
         vm.prank(alice);
@@ -114,7 +197,7 @@ contract LCCExitTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.PendingDepositExists.selector);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
     }
 
     function testCannotRequestExitWithActiveAndPendingDeposit() public {
@@ -125,7 +208,7 @@ contract LCCExitTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.PendingDepositExists.selector);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
     }
 
     function testCanRequestExitAfterPendingDepositActivates() public {
@@ -134,13 +217,13 @@ contract LCCExitTest is LCCBase {
 
         vm.warp(START + EPOCH);
         vm.prank(alice);
-        assertEq(vault.requestExit(), 2);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
     }
 
     function testExitingFunderReducesMaturityBucketAndClaimsRemainder() public {
         _deposit(alice, 100e18);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         _openCall(100e18);
         _fund(alice);
@@ -159,7 +242,7 @@ contract LCCExitTest is LCCBase {
         _deposit(bob, 100e18);
 
         vm.prank(alice);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
 
         _openCall(400e18);
         _fund(alice);
@@ -168,7 +251,7 @@ contract LCCExitTest is LCCBase {
         assertEq(vault.exitBucketCommitmentByMaturity(1), 0);
 
         vm.prank(bob);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
 
         assertEq(vault.exitBucketMarginByMaturity(1), 100e18);
         assertEq(vault.exitBucketCommitmentByMaturity(1), 200e18);
@@ -179,7 +262,7 @@ contract LCCExitTest is LCCBase {
         _openCall(100e18);
 
         vm.prank(alice);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
 
         vm.warp(START + EPOCH);
         vm.expectEmit(true, true, false, true, address(vault));
@@ -202,7 +285,7 @@ contract LCCExitTest is LCCBase {
             _deposit(user, 1e18);
 
             vm.prank(user);
-            assertEq(vault.requestExit(), epoch + MAX_EXIT_DELAY_EPOCHS);
+            assertEq(vault.requestExit(type(uint256).max, type(uint256).max), epoch + MAX_EXIT_DELAY_EPOCHS);
         }
     }
 
@@ -213,9 +296,14 @@ contract LCCExitTest is LCCBase {
 
         (address overflow,) = _depositNextExactFitLadderAccount(MAX_EXIT_MATURITY_BUCKETS, activeCommitment);
 
+        // The unbounded assignment would open a 129th bucket, but the caller's narrower consent takes precedence.
+        vm.expectRevert(LCCErrorsLib.ExitDeferralExceeded.selector);
+        vm.prank(overflow);
+        vault.requestExit(MAX_EXIT_MATURITY_BUCKETS - 1, type(uint256).max);
+
         vm.expectRevert(LCCErrorsLib.ExitCapacityReached.selector);
         vm.prank(overflow);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
     }
 
     function testExitIntoExistingBucketSucceedsAtCap() public {
@@ -232,7 +320,7 @@ contract LCCExitTest is LCCBase {
         assertEq(_deposit(joiner, 1), 1);
 
         vm.prank(joiner);
-        assertEq(vault.requestExit(), MAX_EXIT_DELAY_EPOCHS);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), MAX_EXIT_DELAY_EPOCHS);
         assertTrue(vault.getAccount(joiner).exitRequested);
     }
 
@@ -308,7 +396,7 @@ contract LCCExitTest is LCCBase {
 
         for (uint256 i = 0; i < accountCount; ++i) {
             vm.prank(_actor(i));
-            assertEq(vault.requestExit(), 1 + i / 2);
+            assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1 + i / 2);
         }
 
         uint256 firstBucketCommitment = vault.exitBucketCommitmentByMaturity(1);
@@ -326,7 +414,7 @@ contract LCCExitTest is LCCBase {
         assertEq(_deposit(alice, 1), 1);
 
         vm.prank(alice);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
         assertEq(vault.exitBucketCommitmentByMaturity(1), 1);
     }
 
@@ -342,7 +430,7 @@ contract LCCExitTest is LCCBase {
         assertEq(vault.riskConfig().exitCapBps, FLOOR_EXIT_CAP_BPS);
 
         vm.prank(alice);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
         assertEq(vault.exitBucketCommitmentByMaturity(1), 1);
     }
 
@@ -364,7 +452,7 @@ contract LCCExitTest is LCCBase {
         for (uint256 i = 0; i < accountCount - 1; ++i) {
             address user = _actor(i);
             vm.prank(user);
-            assertEq(vault.requestExit(), i + 1);
+            assertEq(vault.requestExit(type(uint256).max, type(uint256).max), i + 1);
             assertEq(vault.exitBucketCommitmentByMaturity(i + 1), 1);
         }
         _assertExitBucketCount(accountCount - 1);
@@ -374,15 +462,13 @@ contract LCCExitTest is LCCBase {
         assertEq(Math.mulDiv(protocolCap, FLOOR_EXIT_CAP_BPS, BPS), 0);
 
         vm.prank(_actor(accountCount - 1));
-        assertEq(vault.requestExit(), accountCount);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), accountCount);
         assertEq(vault.exitBucketCommitmentByMaturity(accountCount), 1);
         _assertExitBucketCount(accountCount);
     }
 
-    /// @dev Characterizes accepted ordering sensitivity: unrelated amortizing funding can reduce live capacity and
-    /// move a later exit from maturity 1 to 2. Both assignments are no later than maturity 2, which the pre-change
-    /// configured-cap formula would have produced after the cap cut. A caller-supplied maximum-maturity bound is
-    /// planned separately.
+    /// @dev Characterizes ordering sensitivity: unrelated amortizing funding can reduce live capacity and move a
+    /// later unbounded exit from maturity 1 to 2.
     function testCharacterizationAmortizationCanChangeSubsequentExitMaturity() public {
         ILCCVault.VaultParams memory params = _params(address(oracle), 100e18, 100e18, 5_000);
         params.marginRatioBps = BPS;
@@ -396,11 +482,11 @@ contract LCCExitTest is LCCBase {
         vault.setRiskCaps(10e18, 100e18, 5_000, 0);
 
         vm.prank(alice);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
 
         uint256 snapshot = vm.snapshotState();
         vm.prank(bob);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
         assertTrue(vm.revertToStateAndDelete(snapshot), "snapshot restore failed");
 
         _openCall(20e18);
@@ -408,7 +494,36 @@ contract LCCExitTest is LCCBase {
         assertEq(vault.totals().activeCommitment, 89e18);
 
         vm.prank(bob);
-        assertEq(vault.requestExit(), 2);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+    }
+
+    function testBoundedExitRejectsAmortizationDrivenMaturityChange() public {
+        ILCCVault.VaultParams memory params = _params(address(oracle), 100e18, 100e18, 5_000);
+        params.marginRatioBps = BPS;
+        _deployVaultWithParams(params);
+
+        assertEq(_deposit(alice, 30e18), 30e18);
+        assertEq(_deposit(bob, 15e18), 15e18);
+        assertEq(_deposit(carol, 55e18), 55e18);
+
+        vm.prank(owner);
+        vault.setRiskCaps(10e18, 100e18, 5_000, 0);
+
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
+
+        uint256 snapshot = vm.snapshotState();
+        vm.prank(bob);
+        assertEq(vault.requestExit(0, type(uint256).max), 1);
+        assertTrue(vm.revertToStateAndDelete(snapshot), "snapshot restore failed");
+
+        _openCall(20e18);
+        assertEq(_fund(carol), 11e18);
+        assertEq(vault.totals().activeCommitment, 89e18);
+
+        vm.expectRevert(LCCErrorsLib.ExitDeferralExceeded.selector);
+        vm.prank(bob);
+        vault.requestExit(0, type(uint256).max);
     }
 
     function _deployOverflowBucketVault() internal {
@@ -433,7 +548,7 @@ contract LCCExitTest is LCCBase {
             (address user, uint256 capacity) = _depositNextExactFitLadderAccount(i, activeCommitment);
             activeCommitment += capacity;
             vm.prank(user);
-            assertEq(vault.requestExit(), MAX_EXIT_DELAY_EPOCHS + i);
+            assertEq(vault.requestExit(type(uint256).max, type(uint256).max), MAX_EXIT_DELAY_EPOCHS + i);
         }
         assertEq(vault.totals().activeCommitment, activeCommitment);
     }

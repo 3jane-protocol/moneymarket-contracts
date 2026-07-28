@@ -91,7 +91,7 @@ contract LCCGasRequestExitBenchmarkTest is LCCBase {
     function testGasRequestExit() public {
         vm.prank(alice);
         uint256 gasBefore = gasleft();
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
         emit log_named_uint("request exit", gasBefore - gasleft());
     }
 }
@@ -101,7 +101,7 @@ contract LCCGasClaimExitedMarginBenchmarkTest is LCCBase {
         super.setUp();
         _deposit(alice, 100e18);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
         vm.warp(START + EPOCH);
     }
 

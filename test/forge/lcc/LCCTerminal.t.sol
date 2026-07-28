@@ -22,7 +22,7 @@ contract LCCTerminalTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.VaultTerminal.selector);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
     }
 
     function testLastCallableEpochAllowsImmediateDepositButRejectsTerminalActivation() public {
@@ -209,10 +209,10 @@ contract LCCTerminalTest is LCCBase {
         _deposit(bob, 100e18);
 
         vm.prank(alice);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
 
         vm.prank(bob);
-        assertEq(vault.requestExit(), 2);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
 
         vm.warp(START + EPOCH);
         vm.prank(alice);
@@ -230,7 +230,7 @@ contract LCCTerminalTest is LCCBase {
         _deposit(alice, 100e18);
 
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + EPOCH);
         vm.prank(alice);
@@ -245,7 +245,7 @@ contract LCCTerminalTest is LCCBase {
         vault.claimRemainingMargin(alice);
 
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + EPOCH);
         vm.prank(owner);

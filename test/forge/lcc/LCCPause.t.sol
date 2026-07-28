@@ -73,7 +73,7 @@ contract LCCPauseTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.Paused.selector);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.expectRevert(LCCErrorsLib.Paused.selector);
         vm.prank(alice);

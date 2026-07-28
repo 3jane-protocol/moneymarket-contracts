@@ -378,7 +378,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         _requireNoPriorUnsettledCall(activationEpoch);
 
         if (minCommitment == 0 || minCommitment > maxCommitment) revert LCCErrorsLib.InvalidAmount();
-        if (block.timestamp > deadline) revert LCCErrorsLib.InvalidParams(); // deliberate wall-clock read
+        if (block.timestamp > deadline) revert LCCErrorsLib.DeadlineExpired(); // deliberate wall-clock read
         if (!immediate && !allowPendingActivation) revert LCCErrorsLib.InvalidPhase();
         if (assets == 0 || assets < _riskConfig.minDepositAssets) revert LCCErrorsLib.InvalidAmount();
         if (
@@ -419,8 +419,14 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     }
 
     /// @inheritdoc ILCCVault
-    function requestExit() external nonReentrant synced returns (uint256 maturityEpoch) {
+    function requestExit(uint256 maxDeferralEpochs, uint256 deadline)
+        external
+        nonReentrant
+        synced
+        returns (uint256 maturityEpoch)
+    {
         if (_terminal()) revert LCCErrorsLib.VaultTerminal();
+        if (block.timestamp > deadline) revert LCCErrorsLib.DeadlineExpired(); // deliberate wall-clock read
         Account memory account = _replayForUpdate(msg.sender);
         if (account.exitRequested && !account.exitClaimed) revert LCCErrorsLib.ExitInProgress();
         if (account.pendingMargin != 0 || account.pendingCommitment != 0) revert LCCErrorsLib.PendingDepositExists();
@@ -432,7 +438,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
             revert LCCErrorsLib.CommitmentNotMature();
         }
 
-        maturityEpoch = _assignExitMaturity(accountCommitment);
+        maturityEpoch = _assignExitMaturity(accountCommitment, maxDeferralEpochs);
         if (exitMaturityIndexPlusOne[maturityEpoch] == 0 && exitMaturityList.length >= MAX_EXIT_MATURITY_BUCKETS) {
             revert LCCErrorsLib.ExitCapacityReached();
         }
@@ -1409,7 +1415,11 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// at least one makes any empty bucket terminate the scan; only nonzero-commitment buckets are skipped.
     /// `_trackExitMaturity` and `_pruneExitMaturityIfEmpty` keep those buckets in the 128-entry maturity list, so the
     /// scan takes at most 129 iterations.
-    function _assignExitMaturity(uint256 accountCommitment) internal view returns (uint256 maturityEpoch) {
+    function _assignExitMaturity(uint256 accountCommitment, uint256 maxDeferralEpochs)
+        internal
+        view
+        returns (uint256 maturityEpoch)
+    {
         uint256 capacity = Math.max(
             1,
             Math.max(_riskConfig.protocolCommitmentCap, uint256(_totals.activeCommitment))
@@ -1423,7 +1433,9 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
                 uint256 remaining = capacity - assigned;
                 if (accountCommitment <= remaining || accountCommitment > capacity) return maturityEpoch;
             }
+            if (maxDeferralEpochs == 0) revert LCCErrorsLib.ExitDeferralExceeded();
             unchecked {
+                --maxDeferralEpochs;
                 ++maturityEpoch;
             }
         }

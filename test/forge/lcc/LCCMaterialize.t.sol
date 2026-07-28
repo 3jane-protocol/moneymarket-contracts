@@ -40,7 +40,7 @@ contract LCCMaterializeTest is LCCBase {
     function testViewDoesNotReportClaimableExitPastUnfinalizedEligibleCall() public {
         _deposit(alice, 100e18);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
         _openCall(100e18);
 
         vm.warp(START + EPOCH);
@@ -127,7 +127,7 @@ contract LCCMaterializeTest is LCCBase {
         vm.recordLogs();
         _deposit(alice, 100e18);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + EPOCH);
         _deposit(bob, 100e18);

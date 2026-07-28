@@ -186,8 +186,9 @@ funding deadlines, auction windows, exit maturities, and terminal checks shift b
   Closed with no unsettled call, pending deposits require `allowPendingActivation = true`. The activation epoch
   must remain below scheduled sunset. `minCommitment` and `maxCommitment` inclusively bound the oracle-derived
   commitment, and `deadline` is checked against unadjusted wall-clock time so a pause does not extend freshness.
-- `requestExit()` has no phase check; it is gated by `VaultTerminal`, `ExitInProgress`, `PendingDepositExists`,
-  `InvalidAmount` (no active position), `CommitmentNotMature`, and `ExitCapacityReached`.
+- `requestExit(maxDeferralEpochs, deadline)` has no phase check; it is gated by `VaultTerminal`,
+  `DeadlineExpired`, `ExitInProgress`, `PendingDepositExists`, `InvalidAmount` (no active position),
+  `CommitmentNotMature`, `ExitDeferralExceeded`, and `ExitCapacityReached`.
 - `claimExitedMargin` / `claimRemainingMargin` have no phase check; they are gated by maturity, shutdown/terminal,
   and materialization lifecycle conditions.
 
@@ -517,6 +518,14 @@ funding or slash finalization. `activeCommitment` is the aggregate and can conse
 return commitment, which only widens capacity. Funded or slashed amounts free bucket room retroactively. A request
 larger than the whole per-epoch capacity takes the first bucket with any remaining room.
 
+The caller bounds that first-fit scan with `maxDeferralEpochs`: 0 accepts only
+`currentEpoch + exitDelayEpochs`, `N` accepts up to `N` epochs past it, and `type(uint256).max` accepts any
+maturity. The names separate two intervals: `exitDelayEpochs` is the delay from now to the earliest available
+maturity, while deferral starts where that delay ends. The deferral bound is unrelated to the `maxEpochs` sunset
+schedule. `deadline` is inclusive and uses unadjusted wall-clock time, so a pause cannot extend transaction
+freshness. If both the caller's window and the 128-live-bucket limit would reject an exit, `ExitDeferralExceeded`
+takes precedence.
+
 Each maturity bucket stores its margin and commitment as the two `uint128` halves of one `LCCTypesLib.Bucket` word;
 the original `exitBucketMarginByMaturity` and `exitBucketCommitmentByMaturity` getters still return `uint256`.
 Per-call exit exposure similarly packs six `uint128` values into three words and keeps `listed` in a fourth word.
@@ -584,7 +593,7 @@ flowchart TD
 
 `LCCAuctionLib` and `LCCConfigLib` are the two externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-23,947 bytes, 329 bytes below the 24,276-byte release ceiling and 629 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+23,992 bytes, 284 bytes below the 24,276-byte release ceiling and 584 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls

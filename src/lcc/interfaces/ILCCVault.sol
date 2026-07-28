@@ -310,16 +310,31 @@ interface ILCCVault {
         bool allowPendingActivation,
         uint256 deadline
     ) external returns (uint256 commitment);
-    /// @notice Requests a full-account exit, assigning the earliest maturity epoch with available exit capacity.
+    /// @notice Requests a full-account exit within caller-supplied maturity-deferral and wall-clock bounds.
     /// @dev Capacity is at least one funding-asset unit and otherwise `exitCapBps` of the greater of the configured
     /// protocol cap and aggregate live `activeCommitment`. The live-utilization floor is deliberately path-dependent
     /// and ensures capacity is never below the configured-cap value at request time, but capacity can decline as
     /// active commitment declines through amortization or slashing. Aggregate active commitment may conservatively
     /// include unattributed return commitment, which only widens capacity. The account stays callable until maturity.
-    /// Reverts if an exit is already pending, if the account holds pending margin, or if it has no active position;
-    /// cap-raise sequences can still reach the 128-live-bucket limit and revert `ExitCapacityReached`.
+    /// At execution, the earliest available maturity is re-evaluated from the executing `currentEpoch` plus
+    /// `exitDelayEpochs`, and `maxDeferralEpochs` bounds displacement from that maturity: 0 accepts only that maturity
+    /// and `type(uint256).max` accepts any maturity. It therefore bounds displacement within the executing epoch
+    /// rather than pinning an absolute maturity on its own. The two bounds compose: because execution cannot occur
+    /// after `deadline`, the assigned maturity never exceeds the epoch containing `deadline` plus `exitDelayEpochs`
+    /// plus `maxDeferralEpochs`. Shortening `deadline` therefore tightens the absolute guarantee as well as limiting
+    /// mempool staleness. The deferral bound is unrelated to the `maxEpochs` scheduled-sunset configuration.
+    ///
+    /// An account whose commitment exceeds the entire per-epoch capacity uses the oversized-account escape clause
+    /// only inside the `assigned < capacity` guard. It takes the first bucket with any remaining room and therefore
+    /// cannot be guaranteed the earliest bucket. Consequently `maxDeferralEpochs == 0` is systematically most likely
+    /// to revert for the largest positions, contrary to the natural intuition that they receive priority. Reverts if
+    /// the wall-clock deadline has expired, an exit is already pending, the account holds pending margin, or it has
+    /// no active position; cap-raise sequences can still reach the 128-live-bucket limit and revert
+    /// `ExitCapacityReached`.
+    /// @param maxDeferralEpochs Maximum accepted epochs past the earliest available maturity.
+    /// @param deadline Wall-clock timestamp after which the exit request reverts.
     /// @return maturityEpoch The assigned maturity epoch.
-    function requestExit() external returns (uint256 maturityEpoch);
+    function requestExit(uint256 maxDeferralEpochs, uint256 deadline) external returns (uint256 maturityEpoch);
     /// @notice Claims matured exit margin to `receiver`.
     /// @param receiver Recipient of the margin.
     /// @return assets Margin transferred (marginAsset).

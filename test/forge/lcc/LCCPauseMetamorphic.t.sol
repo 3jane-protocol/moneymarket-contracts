@@ -111,7 +111,7 @@ contract LCCPauseMetamorphicTest is LCCBase {
         shift = _maybePause(target, pausePoint, 6, START + EPOCH + 1, shift, duration);
         vm.warp(START + EPOCH + 1 + shift);
         vm.prank(alice);
-        target.requestExit();
+        target.requestExit(type(uint256).max, type(uint256).max);
 
         shift = _maybePause(target, pausePoint, 7, START + 2 * EPOCH, shift, duration);
         vm.warp(START + 2 * EPOCH + shift);

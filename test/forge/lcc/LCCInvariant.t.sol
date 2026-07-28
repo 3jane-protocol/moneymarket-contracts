@@ -126,10 +126,20 @@ contract LCCInvariantHandler is Test {
         }
     }
 
-    function requestExit(uint256 actorSeed) external {
+    function requestExit(uint256 actorSeed, uint256 maxDeferralSeed) external {
         _sync();
         if (invariantVault.shutdownState().active) return;
         if (_isTerminal(invariantVault)) return;
+
+        // Keep 15/16 draws binding-sized while reserving 1/32 each for raw-large and unbounded requests.
+        uint256 maxDeferralEpochs;
+        if (maxDeferralSeed == type(uint256).max || maxDeferralSeed % 32 == 0) {
+            maxDeferralEpochs = type(uint256).max;
+        } else if (maxDeferralSeed % 16 == 0) {
+            maxDeferralEpochs = maxDeferralSeed;
+        } else {
+            maxDeferralEpochs = _range(maxDeferralSeed, 0, 4);
+        }
 
         address actor = actors[_index(actorSeed)];
         try invariantVault.materializeAccount(actor) {}
@@ -146,8 +156,23 @@ contract LCCInvariantHandler is Test {
                 < account.commitmentStartEpoch + invariantVault.epochConfig().minCommitmentEpochs
         ) return;
 
+        uint256 expectedMaturity = _expectedExitMaturity(account.activeCommitment);
+        uint256 earliestMaturity = invariantVault.currentEpoch() + invariantVault.epochConfig().exitDelayEpochs;
+        if (expectedMaturity - earliestMaturity > maxDeferralEpochs) {
+            vm.prank(actor);
+            try invariantVault.requestExit(maxDeferralEpochs, type(uint256).max) {
+                fail();
+            } catch (bytes memory reason) {
+                if (!_expectedRequestExitError(reason)) {
+                    assertEq(_revertSelector(reason), LCCErrorsLib.ExitDeferralExceeded.selector);
+                }
+            }
+            return;
+        }
+
         vm.prank(actor);
-        try invariantVault.requestExit() returns (uint256 maturity) {
+        try invariantVault.requestExit(maxDeferralEpochs, type(uint256).max) returns (uint256 maturity) {
+            assertEq(maturity, expectedMaturity);
             ILCCVault.RiskConfig memory riskConfig = invariantVault.riskConfig();
             uint256 activeCommitment = invariantVault.totals().activeCommitment;
             uint256 capacity = Math.max(
@@ -582,10 +607,34 @@ contract LCCInvariantHandler is Test {
 
     function _expectRequestExitRevert(address actor, bytes4 selector) internal {
         vm.prank(actor);
-        try invariantVault.requestExit() {
+        try invariantVault.requestExit(type(uint256).max, type(uint256).max) {
             fail();
         } catch (bytes memory reason) {
             assertEq(_revertSelector(reason), selector);
+        }
+    }
+
+    function _expectedExitMaturity(uint256 accountCommitment) internal view returns (uint256 maturity) {
+        ILCCVault.RiskConfig memory riskConfig = invariantVault.riskConfig();
+        uint256 capacity = Math.max(
+            1,
+            Math.mulDiv(
+                Math.max(riskConfig.protocolCommitmentCap, invariantVault.totals().activeCommitment),
+                riskConfig.exitCapBps,
+                BPS
+            )
+        );
+        maturity = invariantVault.currentEpoch() + invariantVault.epochConfig().exitDelayEpochs;
+
+        while (true) {
+            uint256 assigned = invariantVault.exitBucketCommitmentByMaturity(maturity);
+            if (assigned < capacity) {
+                uint256 remaining = capacity - assigned;
+                if (accountCommitment <= remaining || accountCommitment > capacity) return maturity;
+            }
+            unchecked {
+                ++maturity;
+            }
         }
     }
 
@@ -602,8 +651,11 @@ contract LCCInvariantHandler is Test {
     // `_expectedMaterializeError` (the _replayForUpdate barrier + oracle-disposal revert) is the base for the actions
     // that run _replayForUpdate: deposit, requestExit, and the claims. deposit adds the activation/call-window
     // lifecycle errors, CapExceeded, and InvalidAmount; requestExit adds InvalidAmount (a synced default can zero
-    // its commitment after the stale guard). With eight actors holding at most one live exit each, the 128-bucket
-    // limit is unreachable and ExitCapacityReached must not be accepted. Claims add NOTHING
+    // its commitment after the stale guard). The handler predicts the first-fit maturity before every bounded exit:
+    // an insufficient fuzzed deferral must revert with ExitDeferralExceeded, while that selector is never accepted
+    // by this whitelist. The deadline is fixed at type(uint256).max, so DeadlineExpired is likewise never accepted.
+    // With eight actors holding at most one live exit each, the 128-bucket limit is unreachable and
+    // ExitCapacityReached must not be accepted. Claims add NOTHING
     // beyond the base -- their preconditions make NoExitRequested/ExitNotMature/NothingToClaim unreachable, so
     // catching those would mask a preview-vs-claim divergence. materialize/setRiskCaps do NO per-account replay
     // (materializeAccount uses the bounded _replayAndRecordDefaults; setRiskCaps only folds global state), so the
@@ -926,7 +978,7 @@ contract LCCCutoffStatefulInvariantTest is LCCBase {
         _deposit(carol, 100e18);
         _deposit(alice, 50e18);
         vm.prank(carol);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
 
         _openCall(150e18);
         _fund(carol);

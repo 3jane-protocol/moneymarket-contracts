@@ -192,7 +192,7 @@ contract LCCAuctionTest is LCCBase {
         _deposit(carol, 100e18);
         _deposit(alice, 50e18);
         vm.prank(carol);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
 
         _openCall(150e18);
         _fund(carol);
@@ -399,7 +399,7 @@ contract LCCAuctionTest is LCCBase {
         _deposit(alice, 100e18);
         _deposit(bob, 50e18);
         vm.prank(bob);
-        uint256 maturity = vault.requestExit();
+        uint256 maturity = vault.requestExit(type(uint256).max, type(uint256).max);
 
         _openCall(150e18);
         _fund(alice);

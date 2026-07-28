@@ -254,7 +254,7 @@ contract LCCLifecycleFuzz is LCCBase {
         if (vault.currentEpoch() < requestEpoch) return 0;
 
         vm.prank(actor);
-        uint256 maturity = vault.requestExit();
+        uint256 maturity = vault.requestExit(type(uint256).max, type(uint256).max);
         vm.warp(params.startTimestamp + maturity * params.epochLength);
         vault.materializeAccount(actor);
 

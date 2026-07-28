@@ -10,7 +10,7 @@ contract LCCMinCommitmentTest is LCCBase {
         _deposit(alice, 100e18);
 
         vm.prank(alice);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
     }
 
     function testGateBlocksUntilMinEpochsElapse() public {
@@ -19,16 +19,16 @@ contract LCCMinCommitmentTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + EPOCH);
         vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + 2 * EPOCH);
         vm.prank(alice);
-        assertEq(vault.requestExit(), 3);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 3);
     }
 
     function testPendingDepositAnchorsAtActivationEpoch() public {
@@ -42,11 +42,11 @@ contract LCCMinCommitmentTest is LCCBase {
         vm.warp(START + 2 * EPOCH);
         vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + 3 * EPOCH);
         vm.prank(alice);
-        assertEq(vault.requestExit(), 4);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 4);
     }
 
     function testTopUpResetsTheClock() public {
@@ -60,11 +60,11 @@ contract LCCMinCommitmentTest is LCCBase {
         vm.warp(START + 4 * EPOCH);
         vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + 5 * EPOCH);
         vm.prank(alice);
-        assertEq(vault.requestExit(), 6);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 6);
     }
 
     function testFundingNeverTouchesTheClock() public {
@@ -103,11 +103,11 @@ contract LCCMinCommitmentTest is LCCBase {
         vm.warp(START + 2 * EPOCH);
         vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + 3 * EPOCH);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
     }
 
     function testReturnPoolCreditKeepsOriginalAnchor() public {
@@ -131,11 +131,11 @@ contract LCCMinCommitmentTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
         vm.prank(bob);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + 3 * EPOCH);
         vm.prank(bob);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
     }
 
     function testExitClaimThenRedepositResets() public {
@@ -144,7 +144,7 @@ contract LCCMinCommitmentTest is LCCBase {
 
         vm.warp(START + 2 * EPOCH);
         vm.prank(alice);
-        uint256 maturity = vault.requestExit();
+        uint256 maturity = vault.requestExit(type(uint256).max, type(uint256).max);
         assertEq(maturity, 3);
 
         vm.warp(START + 3 * EPOCH);
@@ -158,11 +158,11 @@ contract LCCMinCommitmentTest is LCCBase {
         vm.warp(START + 6 * EPOCH);
         vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + 7 * EPOCH);
         vm.prank(alice);
-        assertEq(vault.requestExit(), 8);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 8);
     }
 
     function testTerminalClaimRemainingBypassesGate() public {
@@ -193,7 +193,7 @@ contract LCCMinCommitmentTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + EPOCH);
         vm.prank(alice);

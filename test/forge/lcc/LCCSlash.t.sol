@@ -131,7 +131,7 @@ contract LCCSlashTest is LCCBase {
     function testExitingDefaulterDoesNotBrickMaturityFoldWithoutUserMaterialization() public {
         _deposit(alice, 100e18);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         _openCall(100e18);
 
@@ -149,7 +149,7 @@ contract LCCSlashTest is LCCBase {
     function testExitingDefaulterMaterializedAfterMaturityCannotDoubleDecrement() public {
         _deposit(alice, 100e18);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         _openCall(100e18);
 

@@ -105,7 +105,7 @@ contract LCCShutdownTest is LCCBase {
         _deposit(alice, 100e18);
 
         vm.prank(alice);
-        uint256 maturity = vault.requestExit();
+        uint256 maturity = vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.prank(owner);
         vault.shutdown();

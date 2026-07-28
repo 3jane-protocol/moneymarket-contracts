@@ -131,12 +131,29 @@ contract LCCDepositTest is LCCBase {
     }
 
     function testWallClockDeadlineRejectsExpiredAndAcceptsInclusiveDeadline() public {
-        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
+        vm.expectRevert(LCCErrorsLib.DeadlineExpired.selector);
         vm.prank(alice);
         vault.deposit(100e18, 200e18, 200e18, true, block.timestamp - 1);
 
         vm.prank(alice);
         assertEq(vault.deposit(100e18, 200e18, 200e18, true, block.timestamp), 200e18);
+    }
+
+    function testDepositDeadlineUsesWallClockAfterPause() public {
+        vm.prank(owner);
+        vault.pause();
+        vm.warp(block.timestamp + 100);
+        vm.prank(owner);
+        vault.unpause();
+
+        uint256 effectiveNow = _effectiveTime(vault);
+        uint256 deadline = effectiveNow + 50;
+        assertGt(deadline, effectiveNow);
+        assertLt(deadline, block.timestamp);
+
+        vm.expectRevert(LCCErrorsLib.DeadlineExpired.selector);
+        vm.prank(alice);
+        vault.deposit(100e18, 200e18, 200e18, true, deadline);
     }
 
     function testPendingActivationRequiresOptInAtEndOfPreCallBoundary() public {

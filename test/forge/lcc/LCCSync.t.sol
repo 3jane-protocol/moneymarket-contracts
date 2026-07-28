@@ -22,7 +22,7 @@ contract LCCSyncTest is LCCBase {
     function testSyncFoldsMaturedExitsBeforeNextAction() public {
         _deposit(alice, 100e18);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + EPOCH);
         _deposit(bob, 50e18);
@@ -75,7 +75,7 @@ contract LCCSyncTest is LCCBase {
     function testSparseSyncFoldsMaturityAfterLargeDormantGapOnce() public {
         _deposit(alice, 100e18);
         vm.prank(alice);
-        uint256 maturity = vault.requestExit();
+        uint256 maturity = vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + EPOCH * HUGE_EPOCH_GAP);
         _syncAs(alice);
@@ -91,7 +91,7 @@ contract LCCSyncTest is LCCBase {
     function testSparseSyncFoldsPendingAndMaturityInSameSync() public {
         _deposit(alice, 100e18);
         vm.prank(alice);
-        uint256 maturity = vault.requestExit();
+        uint256 maturity = vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + NORMAL + PRE_CALL);
         _deposit(bob, 50e18);
@@ -111,7 +111,7 @@ contract LCCSyncTest is LCCBase {
     function testEligibleUnfinalizedReplayBarrierDoesNotAdvanceStoredFoldWatermarks() public {
         _deposit(alice, 100e18);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
         _openCall(100e18);
 
         vm.warp(START + EPOCH);
@@ -139,11 +139,11 @@ contract LCCSyncTest is LCCBase {
         _deposit(carol, 100e18);
 
         vm.prank(alice);
-        uint256 aliceMaturity = vault.requestExit();
+        uint256 aliceMaturity = vault.requestExit(type(uint256).max, type(uint256).max);
         vm.prank(bob);
-        uint256 bobMaturity = vault.requestExit();
+        uint256 bobMaturity = vault.requestExit(type(uint256).max, type(uint256).max);
         vm.prank(carol);
-        uint256 carolMaturity = vault.requestExit();
+        uint256 carolMaturity = vault.requestExit(type(uint256).max, type(uint256).max);
 
         assertTrue(aliceMaturity < bobMaturity && bobMaturity < carolMaturity);
 

@@ -133,7 +133,7 @@ interface ILCCVaultLike {
     function takeAuction(uint256 maxFillAmount) external returns (uint256 filledAmount, uint256 marginAward);
     function finalizeEpochSlash(uint256 epoch) external;
     function materializeAccount(address user) external;
-    function requestExit() external returns (uint256 maturityEpoch);
+    function requestExit(uint256 maxDeferralEpochs, uint256 deadline) external returns (uint256 maturityEpoch);
     function claimExitedMargin(address receiver) external returns (uint256 assets);
     function fundedEpoch(uint256 epoch, address user) external view returns (bool);
     function getAccount(address user) external view returns (LCCAccount memory);
@@ -347,7 +347,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
 
         shimVault.materializeAccount(alice);
         vm.prank(alice);
-        assertEq(shimVault.requestExit(), 2);
+        assertEq(shimVault.requestExit(type(uint256).max, type(uint256).max), 2);
         _assertAccountEq(
             shimVault.getAccount(alice),
             LCCAccount({

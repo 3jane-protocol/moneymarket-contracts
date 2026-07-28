@@ -147,7 +147,7 @@ contract LCCReturnPoolTest is LCCBase {
         _deposit(bob, 45e18);
         _deposit(alice, 50e18);
         vm.prank(carol);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
 
         _openCall(100e18);
         _fund(carol);
@@ -183,7 +183,7 @@ contract LCCReturnPoolTest is LCCBase {
         _deposit(carol, 10e18);
         _deposit(alice, 10e18);
         vm.prank(carol);
-        assertEq(vault.requestExit(), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
 
         _openCall((maxPacked - 1) / 2);
         _fundRolling(bob);
@@ -211,7 +211,7 @@ contract LCCReturnPoolTest is LCCBase {
         _deposit(carol, 100e18);
         _deposit(alice, 50e18);
         vm.prank(carol);
-        maturity = vault.requestExit();
+        maturity = vault.requestExit(type(uint256).max, type(uint256).max);
         assertEq(maturity, 1);
 
         _openCall(150e18);
