@@ -222,9 +222,9 @@ library LCCAuctionLib {
     /// at the margin oracle. Going-concern disposal reverts on a zero oracle price; wind-down disposal treats an
     /// unreadable, zero, or valuation-overflowing price as zero so recovery can never brick, dropping the pool to
     /// the treasury instead. The returned commitment is clamped by `headroom` and zeroed below
-    /// `minReturnCommitment`, with the pool scaled down pro-rata to any clamp. The saturating headroom above
-    /// `usedMargin` independently caps the pool before valuation, which scales its paired commitment pro-rata and
-    /// keeps packed aggregate margin in range.
+    /// `minReturnCommitment`; a zero commitment also zeroes the pool so the returned pair is always attributable.
+    /// A nonzero commitment clamp does not reduce the pool. The saturating headroom above `usedMargin`
+    /// independently caps the pool before valuation and keeps packed aggregate margin in range.
     /// @param surplus Unawarded slashed margin being disposed (marginAsset).
     /// @param auctionedMargin Collateral awarded to auction fillers, the fee basis (marginAsset).
     /// @param slashFeeBps Fee on auction-awarded collateral, in bps.
@@ -271,7 +271,7 @@ library LCCAuctionLib {
                 (, uint256 rawCommitment) = valueAndCommitment(returnPool, price, marginRatioBps);
                 returnCommitment = Math.min(rawCommitment, commitmentHeadroom);
                 if (returnCommitment < minReturnCommitment) returnCommitment = 0;
-                returnPool = returnCommitment == 0 ? 0 : Math.mulDiv(returnPool, returnCommitment, rawCommitment);
+                if (returnCommitment == 0) returnPool = 0;
             }
         }
 

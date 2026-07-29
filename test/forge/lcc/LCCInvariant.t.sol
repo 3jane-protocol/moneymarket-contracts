@@ -8,9 +8,11 @@ import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
+import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
 import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ORACLE_PRICE_SCALE, BPS} from "../../../src/libraries/ConstantsLib.sol";
 import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
+import {Vm} from "../../../lib/forge-std/src/Vm.sol";
 
 function _revertSelector(bytes memory reason) pure returns (bytes4 selector) {
     if (reason.length < 4) return bytes4(0);
@@ -54,9 +56,46 @@ contract LCCInvariantTest is LCCBase {
 
         assertEq(state.marginReleased + state.fundedUsersRemainingMargin + disposedSlash, state.marginAtCallOpen);
     }
+
+    function testLiveAuctionCapWritePreservesGrandfatheredExposureGhost() public {
+        _deployAuctionVault();
+
+        _deposit(alice, 100e18);
+        vm.warp(START + NORMAL);
+        _deposit(bob, 500e18);
+        vm.prank(owner);
+        vault.openEpochCall(0, 200e18);
+
+        address[] memory actors = new address[](3);
+        actors[0] = alice;
+        actors[1] = bob;
+        actors[2] = carol;
+        LCCInvariantHandler replayHandler = new LCCInvariantHandler(vault, margin, usd3, oracle, owner, actors);
+
+        uint256 protocolCap = 500e18;
+        uint256 grandfatheringSeed = 4 * (protocolCap - 1);
+        replayHandler.setRiskCaps(grandfatheringSeed, 313);
+        uint256 safelyMeasuredGhost = replayHandler.ghostGrandfatheredOverCapExposure();
+        assertEq(safelyMeasuredGhost, 700e18);
+
+        vm.warp(START + NORMAL + PRE_CALL + FUNDING);
+        replayHandler.setRiskCaps(grandfatheringSeed, 313);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
+
+        vm.prank(carol);
+        vault.takeAuction(type(uint256).max);
+
+        ILCCVault.Totals memory totals = vault.totals();
+        uint256 settledUtilization = uint256(totals.activeCommitment) + uint256(totals.pendingCommitment);
+        uint256 settledOverCapExposure = Math.saturatingSub(settledUtilization, protocolCap);
+        assertEq(settledOverCapExposure, safelyMeasuredGhost);
+        assertLe(settledOverCapExposure, replayHandler.ghostGrandfatheredOverCapExposure());
+    }
 }
 
 contract LCCInvariantHandler is Test {
+    uint256 internal constant MIN_RETURN_COMMITMENT = 1e6;
+
     LCCVault internal invariantVault;
     LCCMockToken internal invariantMargin;
     LCCMockUSD3 internal invariantUsd3;
@@ -67,6 +106,14 @@ contract LCCInvariantHandler is Test {
     uint256 public ghostCumDeposited;
     uint256 public ghostCumMarginOut;
     uint256 public ghostGrandfatheredOverCapExposure;
+
+    modifier capWatch() {
+        uint256 capBefore = invariantVault.riskConfig().protocolCommitmentCap;
+        bool shutdownBefore = invariantVault.shutdownState().active;
+        vm.recordLogs();
+        _;
+        _assertDisposalsRespectHeadroom(capBefore, shutdownBefore);
+    }
 
     constructor(
         LCCVault vault_,
@@ -95,7 +142,7 @@ contract LCCInvariantHandler is Test {
         invariantOracle.setPrice(_range(priceSeed, ORACLE_PRICE_SCALE / 100, ORACLE_PRICE_SCALE * 100));
     }
 
-    function oracleOutageProbe(uint256 seed) external {
+    function oracleOutageProbe(uint256 seed) external capWatch {
         if (seed % 16 != 0) return;
 
         invariantOracle.setPrice(0);
@@ -106,7 +153,7 @@ contract LCCInvariantHandler is Test {
         invariantOracle.setPrice(ORACLE_PRICE_SCALE);
     }
 
-    function deposit(uint256 actorSeed, uint256 amountSeed) external {
+    function deposit(uint256 actorSeed, uint256 amountSeed) external capWatch {
         if (invariantVault.shutdownState().active) return;
         if (_isTerminal(invariantVault)) return;
         _sync();
@@ -126,7 +173,7 @@ contract LCCInvariantHandler is Test {
         }
     }
 
-    function requestExit(uint256 actorSeed, uint256 maxDeferralSeed) external {
+    function requestExit(uint256 actorSeed, uint256 maxDeferralSeed) external capWatch {
         _sync();
         if (invariantVault.shutdownState().active) return;
         if (_isTerminal(invariantVault)) return;
@@ -186,7 +233,7 @@ contract LCCInvariantHandler is Test {
         }
     }
 
-    function openCall(uint256 amountSeed) external {
+    function openCall(uint256 amountSeed) external capWatch {
         _sync();
         if (invariantVault.shutdownState().active) return;
         if (_isTerminal(invariantVault)) return;
@@ -205,7 +252,7 @@ contract LCCInvariantHandler is Test {
         invariantVault.openEpochCall(epoch, amount);
     }
 
-    function fund(uint256 actorSeed) external {
+    function fund(uint256 actorSeed) external capWatch {
         _sync();
         if (invariantVault.shutdownState().active) return;
         if (invariantVault.currentPhase() != ILCCVault.Phase.Funding) return;
@@ -253,7 +300,7 @@ contract LCCInvariantHandler is Test {
         }
     }
 
-    function probeEarlyRequestExit(uint256 actorSeed) external {
+    function probeEarlyRequestExit(uint256 actorSeed) external capWatch {
         if (invariantVault.epochConfig().minCommitmentEpochs == 0) return;
         if (invariantVault.shutdownState().active || _isTerminal(invariantVault)) return;
         _sync();
@@ -285,7 +332,7 @@ contract LCCInvariantHandler is Test {
         _expectRequestExitRevert(actor, LCCErrorsLib.CommitmentNotMature.selector);
     }
 
-    function probeDoubleFund(uint256 actorSeed) external {
+    function probeDoubleFund(uint256 actorSeed) external capWatch {
         _sync();
         if (invariantVault.shutdownState().active) return;
         if (invariantVault.currentPhase() != ILCCVault.Phase.Funding) return;
@@ -306,7 +353,7 @@ contract LCCInvariantHandler is Test {
         _expectFundRevert(actor, false, LCCErrorsLib.AlreadyFunded.selector);
     }
 
-    function probeFundAfterSlashFinalized(uint256 actorSeed) external {
+    function probeFundAfterSlashFinalized(uint256 actorSeed) external capWatch {
         _sync();
         if (invariantVault.shutdownState().active) return;
 
@@ -323,7 +370,7 @@ contract LCCInvariantHandler is Test {
         _expectFundRevert(actors[_index(actorSeed)], false, LCCErrorsLib.InvalidPhase.selector);
     }
 
-    function probeRollWhileExiting(uint256 actorSeed) external {
+    function probeRollWhileExiting(uint256 actorSeed) external capWatch {
         _sync();
         if (invariantVault.shutdownState().active || _isTerminal(invariantVault)) return;
         if (invariantVault.currentPhase() != ILCCVault.Phase.Funding) return;
@@ -341,7 +388,7 @@ contract LCCInvariantHandler is Test {
         _expectFundRevert(actor, true, LCCErrorsLib.ExitInProgress.selector);
     }
 
-    function probeDepositWhileExiting(uint256 actorSeed) external {
+    function probeDepositWhileExiting(uint256 actorSeed) external capWatch {
         _sync();
         if (invariantVault.shutdownState().active || _isTerminal(invariantVault)) return;
         if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0) return;
@@ -387,7 +434,7 @@ contract LCCInvariantHandler is Test {
         _expectRequestExitRevert(actor, LCCErrorsLib.VaultTerminal.selector);
     }
 
-    function takeAuction(uint256 actorSeed, uint256 fillSeed) external {
+    function takeAuction(uint256 actorSeed, uint256 fillSeed) external capWatch {
         if (invariantVault.shutdownState().active) return;
 
         uint256 slot = invariantVault.syncState().pendingAuctionEpochPlusOne;
@@ -427,7 +474,7 @@ contract LCCInvariantHandler is Test {
         vm.warp(target);
     }
 
-    function finalizeCall(uint256 epochSeed) external {
+    function finalizeCall(uint256 epochSeed) external capWatch {
         uint256[] memory called = invariantVault.calledEpochs();
         if (called.length == 0) return;
 
@@ -439,7 +486,7 @@ contract LCCInvariantHandler is Test {
         invariantVault.finalizeEpochSlash(epoch);
     }
 
-    function materialize(uint256 actorSeed) external {
+    function materialize(uint256 actorSeed) external capWatch {
         address actor = actors[_index(actorSeed)];
 
         try invariantVault.materializeAccount(actor) {}
@@ -448,7 +495,7 @@ contract LCCInvariantHandler is Test {
         }
     }
 
-    function claimExit(uint256 actorSeed) external {
+    function claimExit(uint256 actorSeed) external capWatch {
         _sync();
 
         address actor = actors[_index(actorSeed)];
@@ -464,7 +511,7 @@ contract LCCInvariantHandler is Test {
         }
     }
 
-    function claimRemaining(uint256 actorSeed) external {
+    function claimRemaining(uint256 actorSeed) external capWatch {
         if (!invariantVault.shutdownState().active && !_isTerminal(invariantVault)) return;
 
         address actor = actors[_index(actorSeed)];
@@ -490,12 +537,13 @@ contract LCCInvariantHandler is Test {
         }
     }
 
-    function setRiskCaps(uint256 protocolSeed, uint256 exitCapSeed) external {
+    function setRiskCaps(uint256 protocolSeed, uint256 exitCapSeed) external capWatch {
         _sync();
         if (invariantVault.shutdownState().active) return;
 
         ILCCVault.Totals memory totals = invariantVault.totals();
         uint256 currentUtilization = totals.activeCommitment + totals.pendingCommitment;
+        uint256 currentProtocolCap = invariantVault.riskConfig().protocolCommitmentCap;
         uint256 maxCap = 10_000_000e18;
         // Include base-unit-scale caps so the runtime exit-capacity clamp is exercised. The owner can also cut below
         // live utilization; those grandfathered positions retain a capacity denominator of aggregate active
@@ -505,24 +553,40 @@ contract LCCInvariantHandler is Test {
             // Exercise owner-authorized grandfathering: subsequent deposits and disposal may reduce, but never
             // increase, the resulting over-cap exposure.
             protocolCap = _range(protocolSeed / 4, 1, currentUtilization - 1);
+        } else if (protocolSeed % 4 == 1) {
+            (bool found, uint256 epoch) = _undisposedSlashEpoch();
+            if (!found) return;
+
+            ILCCVault.EpochState memory state = invariantVault.getEpochState(epoch);
+            uint256 funded = state.fundedAmount + state.fundedUsersRemainingCommitment;
+            uint256 denominator = state.commitmentDenominator;
+            if (denominator <= funded + MIN_RETURN_COMMITMENT) return;
+            protocolCap = _range(protocolSeed / 4, funded + MIN_RETURN_COMMITMENT, denominator - 1);
         } else {
             uint256 floorCap = Math.max(1, currentUtilization);
             if (floorCap >= maxCap) return;
             protocolCap = _range(protocolSeed, floorCap, maxCap);
         }
+        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0 && protocolCap < currentProtocolCap) return;
         uint256 exitCapBps = _range(exitCapSeed, 313, 5_000);
 
         vm.prank(invariantOwner);
         try invariantVault.setRiskCaps(protocolCap, maxCap, exitCapBps, 0) {
-            totals = invariantVault.totals();
-            uint256 utilizationAfter = uint256(totals.activeCommitment) + uint256(totals.pendingCommitment);
-            ghostGrandfatheredOverCapExposure = Math.saturatingSub(utilizationAfter, protocolCap);
+            // The invariant body already declines readings during live auctions, so mirror that discipline here and
+            // check after the call because its sync can kick one. The ghost is the last safely measured conservative
+            // bound, not necessarily the exact exposure after the latest live-auction cap write. A long run of such
+            // writes can leave it stale until the next auction-free write; the assertion remains meaningful but weaker.
+            if (invariantVault.syncState().pendingAuctionEpochPlusOne == 0) {
+                totals = invariantVault.totals();
+                uint256 utilizationAfter = uint256(totals.activeCommitment) + uint256(totals.pendingCommitment);
+                ghostGrandfatheredOverCapExposure = Math.saturatingSub(utilizationAfter, protocolCap);
+            }
         } catch (bytes memory reason) {
             if (!_expectedSyncedOracleError(reason)) fail();
         }
     }
 
-    function shutdown(uint256 seed) external {
+    function shutdown(uint256 seed) external capWatch {
         _sync();
         if (invariantVault.shutdownState().active) return;
         if (seed % 64 != 0) return;
@@ -594,6 +658,42 @@ contract LCCInvariantHandler is Test {
 
     function _treasury() internal view returns (address) {
         return invariantTreasury;
+    }
+
+    function _undisposedSlashEpoch() internal view returns (bool found, uint256 epoch) {
+        uint256 pendingAuctionEpochPlusOne = invariantVault.syncState().pendingAuctionEpochPlusOne;
+        if (pendingAuctionEpochPlusOne != 0) return (true, pendingAuctionEpochPlusOne - 1);
+
+        uint256[] memory called = invariantVault.calledEpochs();
+        uint256 finalizedPrefix = invariantVault.syncState().finalizedCallPrefix;
+        if (finalizedPrefix >= called.length) return (false, 0);
+
+        epoch = called[finalizedPrefix];
+        found = !invariantVault.getEpochState(epoch).slashFinalized;
+    }
+
+    function _assertDisposalsRespectHeadroom(uint256 capBefore, bool shutdownBefore) internal {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool windDown = shutdownBefore || _callWindowClosed(invariantVault);
+
+        for (uint256 i = 0; i < logs.length; ++i) {
+            Vm.Log memory entry = logs[i];
+            if (entry.emitter != address(invariantVault) || entry.topics.length == 0) continue;
+
+            if (entry.topics[0] == LCCEventsLib.EmergencyShutdown.selector) {
+                windDown = true;
+                continue;
+            }
+            if (entry.topics.length != 2 || entry.topics[0] != LCCEventsLib.SlashSurplusDisposed.selector) continue;
+
+            uint256 epoch = uint256(entry.topics[1]);
+            (,, uint256 returnCommitment) = abi.decode(entry.data, (uint256, uint256, uint256));
+            ILCCVault.EpochState memory state = invariantVault.getEpochState(epoch);
+            uint256 funded = state.fundedAmount + state.fundedUsersRemainingCommitment;
+            uint256 slashed = state.commitmentDenominator - funded;
+            uint256 headroom = windDown ? slashed : Math.min(slashed, Math.saturatingSub(capBefore, funded));
+            if (returnCommitment > headroom) fail();
+        }
     }
 
     function _expectDepositRevert(address actor, uint256 amount, bytes4 selector) internal {
@@ -804,7 +904,7 @@ contract LCCStatefulInvariantTest is LCCBase {
         );
     }
 
-    function invariant_GoingConcernProtocolCap() public {
+    function invariant_OverCapExposureNeverGrows() public {
         if (!_materializeEveryoneForInvariant()) return;
         if (vault.shutdownState().active || _callWindowClosed(vault)) return;
 
@@ -991,7 +1091,7 @@ contract LCCCutoffStatefulInvariantTest is LCCBase {
         targetContract(address(cutoffHandler));
     }
 
-    function invariant_GoingConcernProtocolCap() public {
+    function invariant_CutoffSettlementPathsMatch() public {
         uint256 snapshot = vm.snapshotState();
 
         vm.prank(bob);

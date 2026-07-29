@@ -213,9 +213,9 @@ contract LCCSlashFeeTest is LCCBase {
         vault.materializeAccount(alice);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(state.returnPool, 25e18);
+        assertEq(state.returnPool, 100e18);
         assertEq(state.returnCommitment, 50e18);
-        assertEq(_accruedTreasuryMargin(), 75e18);
+        assertEq(_accruedTreasuryMargin(), 0);
     }
 
     function testTightCapClampPinsPartialFillRecovery() public {
@@ -230,9 +230,9 @@ contract LCCSlashFeeTest is LCCBase {
         vault.materializeAccount(alice);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(state.returnPool, 25e18);
+        assertEq(state.returnPool, 94.5e18);
         assertEq(state.returnCommitment, 50e18);
-        assertEq(_accruedTreasuryMargin(), 70e18);
+        assertEq(_accruedTreasuryMargin(), 0.5e18);
     }
 
     function _setupShortfallAuction() internal {
@@ -257,11 +257,11 @@ contract LCCSlashFeeTest is LCCBase {
         _deposit(carol, 50e18);
         _openCall(300e18);
         _fundRolling(carol);
-        _finishFunding();
-        vault.finalizeEpochSlash(0);
-        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
 
         vm.prank(owner);
         vault.setRiskCaps(150e18, 300e18, 2_000, 0);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
     }
 }

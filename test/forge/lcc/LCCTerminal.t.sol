@@ -113,11 +113,10 @@ contract LCCTerminalTest is LCCBase {
         _deposit(alice, 99e18);
         _deposit(bob, 1e18);
         _openCall(200e18);
-        _finishFunding();
-        vault.finalizeEpochSlash(0);
-
         vm.prank(owner);
         vault.setRiskCaps(1, 200e18, 2_000, 0);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
         oracle.setPrice(2 * ORACLE_PRICE_SCALE);
 
         vm.warp(START + EPOCH);
@@ -126,7 +125,7 @@ contract LCCTerminalTest is LCCBase {
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, 100e18);
-        assertEq(state.returnCommitment, 400e18);
+        assertEq(state.returnCommitment, 200e18);
         assertEq(_accruedTreasuryMargin(), 0);
     }
 
@@ -143,12 +142,12 @@ contract LCCTerminalTest is LCCBase {
         _deposit(alice, 99e18);
         _deposit(bob, 1e18);
         _openCall(200e18);
+        vm.prank(owner);
+        vault.setRiskCaps(1, 200e18, 2_000, 0);
         _finishFunding();
         vault.finalizeEpochSlash(0); // both default; kicks the auction (shortfall 200e18, pool 100e18), pre-terminal
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
 
-        vm.prank(owner);
-        vault.setRiskCaps(1, 200e18, 2_000, 0);
         oracle.setPrice(2 * ORACLE_PRICE_SCALE);
 
         uint256 fillTime = START + NORMAL + PRE_CALL + FUNDING + 4; // Closed window, step 0 (award 0)
@@ -163,9 +162,10 @@ contract LCCTerminalTest is LCCBase {
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         // Wind-down applies (disposed epoch == maxEpochs-1): the full 100e18 returnPool is preserved for
-        // defaulters rather than clamped to 0 and swept to treasury. With a zero award, there is no fee basis.
+        // defaulters rather than clamped to 0 and swept to treasury. Commitment remains bounded by the 200e18
+        // slashed amount, and with a zero award there is no fee basis.
         assertEq(state.returnPool, 100e18);
-        assertEq(state.returnCommitment, 400e18);
+        assertEq(state.returnCommitment, 200e18);
         assertEq(_accruedTreasuryMargin(), 0);
     }
 

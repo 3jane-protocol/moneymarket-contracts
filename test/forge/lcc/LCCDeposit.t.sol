@@ -168,22 +168,27 @@ contract LCCDepositTest is LCCBase {
         assertEq(vault.getAccount(alice).pendingCommitment, 200e18);
     }
 
-    function testDepositsBlockedFromPreCallThroughOpenedCallSettlementWindow() public {
+    function testDepositsAllowedDuringPreCallAndOpenedCallButBlockedDuringLiveAuction() public {
+        _deployAuctionVault();
         _deposit(alice, 100e18);
         _deposit(bob, 50e18);
 
         vm.warp(START + NORMAL);
-        vm.expectRevert(LCCErrorsLib.InvalidPhase.selector);
-        vm.prank(carol);
-        vault.deposit(25e18, 50e18, 50e18, true, type(uint256).max);
+        _deposit(carol, 25e18);
+        assertEq(vault.getAccount(carol).pendingCommitment, 50e18);
 
         vm.prank(owner);
         vault.openEpochCall(0, 100e18);
         vm.warp(START + NORMAL + PRE_CALL);
+        _deposit(carol, 25e18);
+        assertEq(vault.getAccount(carol).pendingCommitment, 100e18);
 
-        vm.expectRevert(LCCErrorsLib.PriorCallUnsettled.selector);
-        vm.prank(carol);
-        vault.deposit(25e18, 50e18, 50e18, true, type(uint256).max);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
+
+        vm.expectRevert(LCCErrorsLib.InvalidPhase.selector);
+        _deposit(carol, 1e18);
     }
 }
 

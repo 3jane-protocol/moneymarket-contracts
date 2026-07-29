@@ -211,7 +211,7 @@ contract LCCAuctionTest is LCCBase {
         ILCCVault.EpochState memory midWindow = vault.getEpochState(0);
         uint256 midWindowTreasury = _accruedTreasuryMargin();
         assertEq(midWindow.returnPool, 50e18);
-        assertEq(midWindow.returnCommitment, 200e18);
+        assertEq(midWindow.returnCommitment, 100e18);
 
         assertTrue(vm.revertToState(snapshot));
         vm.warp(WINDOW_END);

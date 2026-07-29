@@ -251,9 +251,11 @@ interface ILCCVault {
     /// @param slashDisabledByShutdown True if shutdown landed before/within this epoch's funding window, so no
     /// slash is taken.
     /// @param slashedMargin Aggregate margin slashed for this epoch (marginAsset).
-    /// @param returnPool Slashed surplus returned to defaulters after treasury fee, when backed by nonzero
-    /// settlement commitment (marginAsset).
-    /// @param returnCommitment Callable commitment created by `returnPool` at settlement (fundingAsset).
+    /// @param returnPool Slashed surplus returned to defaulters after the treasury fee and aggregate-margin packing
+    /// clamp. Retained in full when backed by nonzero settlement commitment (marginAsset).
+    /// @param returnCommitment Callable commitment paired with `returnPool`, bounded by the call-local slashed
+    /// commitment and, during going concern, current protocol-cap headroom over funded call-open exposure
+    /// (fundingAsset).
     struct EpochState {
         bool callOpened;
         uint256 commitmentDenominator;
@@ -296,10 +298,10 @@ interface ILCCVault {
     /// @notice Deposits margin for the caller, creating a bounded leveraged commitment.
     /// @dev Pulls `assets` of marginAsset from the caller and credits the caller's own account (self-deposit only,
     /// since a deposit creates a callable obligation). Activates immediately during Normal (before a call opens),
-    /// otherwise stages as pending for the next epoch when permitted. Deposits are unavailable during PreCall and
-    /// while an opened call remains unsettled. Reverts under shutdown, when activation would reach scheduled sunset,
-    /// on a pending-blocking exit, on an expired wall-clock deadline, on invalid commitment bounds, on a
-    /// zero/sub-minimum amount, on a zero oracle price, or if a cap would be exceeded.
+    /// otherwise stages as pending for the next epoch when permitted. Deposits remain available during PreCall and
+    /// while an opened call is unsettled, but are unavailable while an auction is live. Reverts under shutdown, when
+    /// activation would reach scheduled sunset, on a pending-blocking exit, on an expired wall-clock deadline, on
+    /// invalid commitment bounds, on a zero/sub-minimum amount, on a zero oracle price, or if a cap would be exceeded.
     /// @param assets Margin to deposit (marginAsset).
     /// @param minCommitment Minimum acceptable commitment, inclusive and nonzero.
     /// @param maxCommitment Maximum acceptable commitment, inclusive.
@@ -358,6 +360,8 @@ interface ILCCVault {
     /// @notice Owner update of mutable risk caps; configured caps apply to future deposits, while exit capacity is
     /// recomputed per request from the greater of the configured cap and live active utilization. It can decline with
     /// live utilization but never below the configured-cap value at that request.
+    /// @dev A strict protocol-cap reduction is blocked while finalized slash surplus awaits auction settlement.
+    /// Protocol-cap increases and updates to the other three parameters remain available in that window.
     /// @param newProtocolCommitmentCap New vault-wide commitment cap (fundingAsset); must be in (0, uint128.max].
     /// @param newUserCommitmentCap New per-account commitment cap (fundingAsset).
     /// @param newExitCapBps New per-epoch exit capacity, in bps (313 <= value <= BPS).

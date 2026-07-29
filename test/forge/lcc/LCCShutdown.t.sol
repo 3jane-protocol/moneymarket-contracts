@@ -46,11 +46,10 @@ contract LCCShutdownTest is LCCBase {
         _deposit(alice, 99e18);
         _deposit(bob, 1e18);
         _openCall(200e18);
-        _finishFunding();
-        vault.finalizeEpochSlash(0);
-
         vm.prank(owner);
         vault.setRiskCaps(1, 200e18, 2_000, 0);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
 
         vm.warp(START + EPOCH);
         vm.prank(owner);
@@ -123,7 +122,7 @@ contract LCCShutdownTest is LCCBase {
         assertEq(vault.totals().activeCommitment, 0);
     }
 
-    function testShutdownSettlesAuctionAfterMaxWidthDepositIsBlockedDuringCall() public {
+    function testShutdownSettlesAuctionAfterMaxWidthPendingDepositDuringCall() public {
         uint256 maxPacked = type(uint128).max;
         ILCCVault.VaultParams memory params = _auctionParams();
         params.protocolCommitmentCap = maxPacked;
@@ -137,8 +136,8 @@ contract LCCShutdownTest is LCCBase {
         uint256 commitment = _deposit(alice, auctionMargin);
         _openCall(commitment);
         vm.warp(START + NORMAL + PRE_CALL);
-        vm.expectRevert(LCCErrorsLib.PriorCallUnsettled.selector);
         _deposit(bob, maxPacked - auctionMargin);
+        assertEq(vault.totals().activeMargin + vault.totals().pendingMargin, maxPacked);
         _finishFunding();
         vault.finalizeEpochSlash(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
@@ -149,7 +148,7 @@ contract LCCShutdownTest is LCCBase {
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(state.returnPool, auctionMargin);
-        assertEq(vault.totals().activeMargin, auctionMargin);
+        assertEq(vault.totals().activeMargin, maxPacked);
         assertEq(vault.totals().pendingMargin, 0);
         assertEq(vault.pendingTreasuryMargin(), 0);
     }

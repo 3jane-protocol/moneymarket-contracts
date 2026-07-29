@@ -264,6 +264,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         if (newUserCommitmentCap == 0 || newExitCapBps < LCCConfigLib.MIN_EXIT_CAP_BPS || newExitCapBps > BPS) {
             revert LCCErrorsLib.InvalidParams();
         }
+        // Surplus disposal may be deferred past slash finalization only through the auction slot.
+        if (newProtocolCommitmentCap < _riskConfig.protocolCommitmentCap && _syncState.pendingAuctionEpochPlusOne != 0) revert LCCErrorsLib.InvalidPhase();
 
         _riskConfig.protocolCommitmentCap = newProtocolCommitmentCap;
         _riskConfig.userCommitmentCap = newUserCommitmentCap;
@@ -378,8 +380,6 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         if (_clockConfig.maxEpochs != 0 && activationEpoch >= _clockConfig.maxEpochs) {
             revert LCCErrorsLib.VaultTerminal();
         }
-        if (!immediate && _phaseAt(_now()) == Phase.PreCall) revert LCCErrorsLib.InvalidPhase();
-        _requireNoPriorUnsettledCall(activationEpoch);
 
         if (minCommitment == 0 || minCommitment > maxCommitment) revert LCCErrorsLib.InvalidAmount();
         if (block.timestamp > deadline) revert LCCErrorsLib.DeadlineExpired(); // deliberate wall-clock read
@@ -880,19 +880,6 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         }
     }
 
-    /// @dev Sums the exit-bucket commitment maturing at or before `cutoff` that is still counted in `_totals`, i.e.
-    /// commitment that cannot back any future call yet still inflates `usedCommitment`. Disposal subtracts it from
-    /// used commitment before the protocol-cap clamp (the separate packing clamp keeps the pre-subtraction total).
-    /// Callers pass the first epoch a call can still open as `cutoff`, so a maturity that will fold before that call
-    /// is excluded from headroom rather than clipping the defaulter return pool.
-    function _dueUnfoldedExitCommitment(uint256 cutoff) internal view returns (uint256 commitment) {
-        uint256 length = exitMaturityList.length;
-        for (uint256 i = 0; i < length; ++i) {
-            uint256 maturity = exitMaturityList[i];
-            if (maturity <= cutoff) commitment += exitBucketByMaturity[maturity].commitment;
-        }
-    }
-
     function _foldActivation(uint256 epoch) internal {
         LCCTypesLib.Bucket memory bucket = pendingBucketByActivationEpoch[epoch];
         uint256 margin = bucket.margin;
@@ -1010,8 +997,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// wind-down disposal remains tolerant of oracle reverts and invalid values. A gas-griefing oracle can still
     /// exhaust the transaction gas; the owner can recover by rotating it through `setMarginOracle` before retrying
     /// wind-down.
-    /// When protocol-cap headroom binds, removing the fee does not increase defaulter recovery because the cap clamp
-    /// diverts the excess to treasury; owners manage headroom with risk caps.
+    /// A positive commitment clamp preserves the full post-fee pool; zero or dust commitment headroom zeroes its
+    /// paired pool and diverts the surplus to treasury.
     function _disposeSlashSurplus(uint256 epoch, uint256 surplus, uint256 auctionedMargin) internal {
         if (surplus == 0) return;
 
@@ -1025,18 +1012,16 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         // for the first time in that late window (or at/after terminal).
         bool windDown = _shutdown.active || _callWindowClosed();
         uint256 usedCommitment = uint256(_totals.activeCommitment) + uint256(_totals.pendingCommitment);
-        // During wind-down no call can ever open, so returned commitment bounds no callable
-        // exposure: clamping by the protocol cap would only divert defaulters' recoverable
-        // margin to the treasury. Bound it by the packed-totals width instead.
         uint256 packingHeadroom = uint256(type(uint128).max).saturatingSub(usedCommitment);
         uint256 usedMargin = uint256(_totals.activeMargin) + uint256(_totals.pendingMargin);
-        uint256 headroom = packingHeadroom;
+        uint256 fundedCallOpenCommitment = state.fundedAmount + state.fundedUsersRemainingCommitment;
+        uint256 slashedCommitment = state.commitmentDenominator - fundedCallOpenCommitment;
+        // The call-local bound is frozen against unrelated deposits. During wind-down no future call can use the
+        // returned commitment, so the current protocol cap is intentionally omitted.
+        uint256 headroom = Math.min(slashedCommitment, packingHeadroom);
         if (!windDown) {
-            uint256 current = _currentEpoch();
-            uint256 cutoff = _phaseAt(_now()) >= Phase.Funding ? current + 1 : current;
             headroom = Math.min(
-                _riskConfig.protocolCommitmentCap
-                    .saturatingSub(usedCommitment.saturatingSub(_dueUnfoldedExitCommitment(cutoff))),
+                Math.min(slashedCommitment, _riskConfig.protocolCommitmentCap.saturatingSub(fundedCallOpenCommitment)),
                 packingHeadroom
             );
         }

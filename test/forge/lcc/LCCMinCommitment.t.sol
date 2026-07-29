@@ -345,13 +345,20 @@ contract LCCMinCommitmentTest is LCCBase {
         assertEq(account.commitmentStartEpoch, 3);
     }
 
-    function testPublicFlowCannotCreateFuturePendingBehindUnsettledCall() public {
+    function testPublicFlowCreatesFuturePendingBehindUnsettledCall() public {
         _deposit(alice, 100e18);
         _openCall(100e18);
 
         vm.warp(START + NORMAL + PRE_CALL);
-        vm.expectRevert(LCCErrorsLib.PriorCallUnsettled.selector);
         _deposit(alice, 50e18);
+
+        ILCCVault.Account memory account = vault.getAccount(alice);
+        assertEq(account.activeMargin, 100e18);
+        assertEq(account.activeCommitment, 200e18);
+        assertEq(account.pendingMargin, 50e18);
+        assertEq(account.pendingCommitment, 100e18);
+        assertEq(account.pendingActivationEpoch, 1);
+        assertEq(account.commitmentStartEpoch, 1);
     }
 
     function testAggregateZeroReturnDoesNotReanchor() public {

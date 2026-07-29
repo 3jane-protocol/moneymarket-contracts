@@ -193,7 +193,7 @@ contract LCCSetOracleTest is LCCBase {
         assertTrue(state.slashFinalized);
         assertEq(state.slashedMargin, 100e18);
         assertEq(state.returnPool, 100e18);
-        assertEq(state.returnCommitment, 400e18);
+        assertEq(state.returnCommitment, 200e18);
         assertEq(_accruedTreasuryMargin(), 0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
@@ -223,7 +223,7 @@ contract LCCSetOracleTest is LCCBase {
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         assertEq(state.returnPool, 47.25e18);
-        assertEq(state.returnCommitment, 945e18);
+        assertEq(state.returnCommitment, 100e18);
         assertEq(_accruedTreasuryMargin(), 0.25e18);
     }
 

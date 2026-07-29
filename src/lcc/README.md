@@ -181,11 +181,11 @@ funding deadlines, auction windows, exit maturities, and terminal checks shift b
 
 - `deposit(assets, minCommitment, maxCommitment, allowPendingActivation, deadline)` selects **immediate vs pending**
   activation: immediate only during `Normal` **and before a call has opened** for the current epoch, otherwise
-  pending for epoch `e+1`. PreCall is always blocked so a pending deposit cannot front-run the call snapshot; after
-  a call opens, deposits remain blocked until the call settles. A live auction remains blocking. In Funding or
-  Closed with no unsettled call, pending deposits require `allowPendingActivation = true`. The activation epoch
-  must remain below scheduled sunset. `minCommitment` and `maxCommitment` inclusively bound the oracle-derived
-  commitment, and `deadline` is checked against unadjusted wall-clock time so a pause does not extend freshness.
+  pending for epoch `e+1`. Pending deposits remain available during PreCall and while a call is unsettled; only a
+  live auction blocks them. In every non-Normal phase, pending deposits require `allowPendingActivation = true`.
+  The activation epoch must remain below scheduled sunset. `minCommitment` and `maxCommitment` inclusively bound the
+  oracle-derived commitment, and `deadline` is checked against unadjusted wall-clock time so a pause does not extend
+  freshness.
 - `requestExit(maxDeferralEpochs, deadline)` has no phase check; it is gated by `VaultTerminal`,
   `DeadlineExpired`, `ExitInProgress`, `PendingDepositExists`, `InvalidAmount` (no active position),
   `CommitmentNotMature`, `ExitDeferralExceeded`, and `ExitCapacityReached`.
@@ -221,8 +221,8 @@ flowchart LR
 
 **Slash before maturity folds** is intentional: finalizing a slash carves defaulted exiter exposure out of the exit
 buckets (`_reduceExitBucketsForSlash`) before those buckets decrement global active totals, so a defaulted exiter's
-exposure leaves the totals exactly once. `_dueUnfoldedExitCommitment` — matured-but-unfolded exit commitment added
-back into going-concern disposal headroom (§8) — relies on this ordering; reordering would double-count.
+exposure leaves the totals exactly once. Disposal's commitment bound is call-local and does not read exit buckets;
+the ordering remains necessary for aggregate accounting.
 
 **Per-account replay.** Account state is materialized on demand by replaying the sparse `calledEpochList` from each
 account's `calledEpochCursor` (`_replayAccount`). A mutating replay is bounded to `MAX_MATERIALIZE_STEPS = 64`
@@ -243,10 +243,10 @@ Activation follows `_depositActivation`: **immediate** (credited to `activeMargi
 when the phase is `Normal` and no call has opened for the current epoch; otherwise **pending** for epoch `e+1`,
 tracked in `pendingMarginByActivationEpoch` / `pendingCommitmentByActivationEpoch` and folded in later by sync.
 Those two ABI-compatible `uint256` getters read the halves of one packed `LCCTypesLib.Bucket` storage word.
-Deposits are unavailable throughout PreCall and, once a call opens, until its slash/auction path settles. This keeps
-post-snapshot commitments out of the live utilization used to bound a defaulter's return pool. The fixture's
-20-second PreCall plus 20-second Funding blocks 40% of its 100-second epoch after an early open; valid phase
-geometries can make that unavailable interval approach the full epoch.
+Deposits can stage throughout PreCall and an unsettled call because post-snapshot commitments cannot affect the
+call-local return bound. A live auction remains blocking because per-account replay halts at the live-auction epoch, so a deposit admitted
+there could not be materialized, and because it keeps the finalized-but-undisposed window free of new pending
+exposure. The auction's own collateral inventory is fixed at kick and is not the reason.
 
 Every deposit advances `commitmentStartEpoch` to at least its activation epoch. A default that receives a nonzero
 paired return-pool re-credit advances it to the later of its current value and the epoch in which that credit was
@@ -433,15 +433,15 @@ flowchart TD
     D -->|no| E{"wind-down? shutdown or call window closed"}
     E -->|going concern| F["oracle required<br/>revert if price == 0"]
     E -->|wind-down| G["try/catch oracle<br/>dead or overflow price -> 0"]
-    F --> H["rawCommitment from returnPool<br/>effectiveUsed = used - dueUnfoldedExit<br/>headroom = min(protocolCap - effectiveUsed,<br/>uint128 max - used)"]
+    F --> H["rawCommitment from returnPool<br/>D = commitmentDenominator<br/>B = fundedAmount + fundedUsersRemainingCommitment<br/>S = D - B<br/>headroom = min(S, saturating(protocolCap - B),<br/>uint128 max - used)"]
     G --> I{"price == 0?"}
     I -->|yes| J["returnPool = 0<br/>sweep surplus to treasury"]
-    I -->|no| K["rawCommitment from returnPool<br/>headroom = uint128 max - used"]
+    I -->|no| K["rawCommitment from returnPool<br/>headroom = min(S, uint128 max - used)"]
     H --> L["returnCommitment = min(raw, headroom)"]
     K --> L
     L --> M{"returnCommitment < MIN_RETURN_COMMITMENT?"}
     M -->|yes| J
-    M -->|no| N["credit returnPool and returnCommitment as active<br/>re-attributed to defaulters on replay"]
+    M -->|no| N["credit the full returnPool and bounded returnCommitment as active<br/>re-attributed to defaulters on replay"]
     N --> O["toTreasury = surplus - returnPool"]
     J --> O
     T --> O
@@ -452,24 +452,27 @@ paths always pass `auctionedMargin = 0`, so `fee = 0` there. The remaining `retu
 `returnCommitment` and re-attributed to defaulters as active margin/commitment; the rest goes to treasury.
 
 **Going concern vs wind-down.** Going-concern disposal requires a live oracle (reverts `OraclePriceInvalid` on a
-zero price) and clamps `returnCommitment` by real cap headroom
-(`protocolCommitmentCap - (used - dueUnfoldedExitCommitment)`, saturating each subtraction), additionally clamped by
-`type(uint128).max - used`, where `used = active + pending commitment`. Wind-down
-disposal — under `shutdown` or once `_callWindowClosed()` — wraps the oracle in try/catch, treats a dead or
-overflow-risk price as zero (sweeping the pool to treasury rather than bricking), and clamps by the packed-totals
-width (`type(uint128).max - used`) instead of the protocol cap, because no future call can ever use the returned
-commitment. If the clamped `returnCommitment` falls below `MIN_RETURN_COMMITMENT` (`1e6` funding base units, i.e.
-`1.0` unit of a 6-decimal `fundingAsset`), it is swept to treasury as dust.
+zero price). Let `D = commitmentDenominator`,
+`B = fundedAmount + fundedUsersRemainingCommitment`, and `S = D - B`. Going-concern headroom is
+`min(S, saturatingSub(protocolCommitmentCap, B), type(uint128).max - used)`, where `used` is current active plus
+pending commitment only for the packed-width guard. Wind-down disposal — under `shutdown` or once
+`_callWindowClosed()` — wraps the oracle in try/catch, treats a dead or overflow-risk price as zero (sweeping the
+pool to treasury rather than bricking), and uses `min(S, type(uint128).max - used)`, omitting the protocol cap
+because no future call can use the returned commitment. A positive commitment clamp retains the full recovered
+margin pool, producing a more-collateralized return position; if the bounded commitment falls below
+`MIN_RETURN_COMMITMENT` (`1e6` funding base units, i.e. `1.0` unit of a 6-decimal `fundingAsset`), both commitment
+and pool are zeroed and the surplus is swept to treasury as dust.
 
 Two subtleties carried in prose, not boxes:
 
-- **Headroom exclusion.** Going-concern headroom subtracts `_dueUnfoldedExitCommitment(currentEpoch)` from `used`
-  before applying the protocol-cap subtraction. This avoids granting headroom when utilization remains above a
-  reduced cap after the due exit folds. A separate packed-width clamp prevents the pre-fold return credit from
-  overflowing uint128 totals. On a mid-window full-fill settlement, due buckets are already folded and the sum is 0.
-- **Tight-cap diversion.** When protocol-cap headroom binds, removing the slash fee does **not** increase defaulter
-  recovery — the cap clamp diverts the excess to treasury anyway. Heavy rolling pins utilization and worsens this;
-  owners manage it with `setRiskCaps`.
+- **Call-local base.** `D`, `fundedAmount`, and `fundedUsersRemainingCommitment` are fixed at call-open or accumulated
+  only by funding, so deposits cannot influence the bound. `B` conservatively treats every funded account's
+  call-open commitment as surviving: both a roller's and an amortizer's obligation plus recorded remainder equal
+  its original commitment, while later exit folds can only reduce the real base. Reading the current
+  `protocolCommitmentCap` is intentional so an owner cap reduction after call-open is honored.
+- **Tight-cap zero.** A positive cap clamp preserves the full return pool. If the current cap is at or below `B`,
+  headroom is zero, the paired return pool is zeroed, and the surplus goes to treasury. Heavy rolling can keep `B`
+  high; owners manage the current cap with `setRiskCaps`.
 
 ### Table 3 — disposal split
 
@@ -480,7 +483,7 @@ Two subtleties carried in prose, not boxes:
 | Headroom scenario               | returnCommitment | returnPool          | toTreasury               |
 | ------------------------------- | ---------------- | ------------------- | ------------------------ |
 | Headroom `>= 290` (no clamp)    | 290              | 58                  | `60 - 58` = 2 (fee only) |
-| Headroom `= 100` (clamp)        | 100              | `58 * 100/290` = 20 | `60 - 20` = 40           |
+| Headroom `= 100` (clamp)        | 100              | 58                  | `60 - 58` = 2 (fee only) |
 | Dust (`returnCommitment < 1e6`) | 0 (swept)        | 0                   | 60 (entire surplus)      |
 
 ## 9. Exits
@@ -597,7 +600,7 @@ flowchart TD
 
 `LCCAuctionLib` and `LCCConfigLib` are the two externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-24,082 bytes, 194 bytes below the 24,276-byte release ceiling and 494 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+23,948 bytes, 328 bytes below the 24,276-byte release ceiling and 628 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls
@@ -624,8 +627,9 @@ record lives in
   forfeits its full margin under all-or-nothing slashing.
 - **Rolling is not exiting.** Rolled accounts keep full callable commitment and re-arm every epoch; lifetime
   obligations while rolling are unbounded.
-- **Rolling pins cap utilization.** Rolled accounts never decrement active commitment, shrinking deposit headroom
-  and diverting more defaulter surplus to treasury via the going-concern clamp in tight-cap vaults.
+- **Rolling pins cap utilization.** Rolled accounts never decrement active commitment, shrinking deposit headroom.
+  Disposal conservatively includes their call-open commitment in `B`; a cap at or below `B` zeroes the paired
+  return pool, while any positive commitment clamp preserves the full pool.
 - **Push funding front-runs rolls.** `fundCall(address)` always amortizes and can deny a user's intended roll for
   that epoch.
 - **Slash-disable is strict-before-deadline.** Shutdown strictly before an epoch's funding deadline disables its
@@ -636,8 +640,12 @@ record lives in
   independent of the fee, so zero-fee configs revert too; wind-down disposal is oracle-free.
 - **Dead-oracle wind-down sweep.** A dead or overflow-risk price during wind-down sends the return pool to treasury
   rather than bricking the claim.
-- **`MIN_RETURN_COMMITMENT` dust sweep.** A return commitment below `1e6` funding base units is zeroed and its pool
-  swept to treasury.
+- **`MIN_RETURN_COMMITMENT` dust sweep is a step, not a ramp.** A return commitment below `1e6` funding base units is
+  zeroed and its pool swept to treasury; at or above the threshold the pool is returned in full, because disposal no
+  longer scales the pool to the commitment clamp. A one-base-unit difference in the configured cap can therefore flip
+  the outcome between the whole pool and none of it. The same change does not alter which accounts have their paired
+  share floor to zero, but it enlarges what each such account forfeits, since the unscaled pool is larger; that margin
+  stays in aggregate active totals with no attributable owner.
 - **Single live-auction slot.** Only one epoch's auction is live at a time; sync settles the prior before kicking a
   new one, and replay halts at the live-auction epoch.
 - **Bounded replay barrier.** Accounts more than `MAX_MATERIALIZE_STEPS = 64` finalized calls behind revert
