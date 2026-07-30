@@ -545,6 +545,9 @@ the configured-cap value at that request, but it can decline as `activeCommitmen
 funding or slash finalization. `activeCommitment` is the aggregate and can conservatively include unattributed
 return commitment, which only widens capacity. Funded or slashed amounts free bucket room retroactively. A request
 larger than the whole per-epoch capacity takes the first bucket with any remaining room.
+During a live auction, capacity uses the post-slash trough before settlement restores return commitment, so a
+non-defaulting exiter can be deferred farther than the same request just after settlement; this is a fairness and
+UX artifact, not an accounting or fund-safety issue.
 
 The caller bounds that first-fit scan with `maxDeferralEpochs`: 0 accepts only
 `currentEpoch + exitDelayEpochs`, `N` accepts up to `N` epochs past it, and `type(uint256).max` accepts any

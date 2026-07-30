@@ -1161,12 +1161,14 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
                 unfinalizedEpoch = epoch;
                 break;
             }
-            if (_syncState.pendingAuctionEpochPlusOne == epoch + 1) break;
 
             replay.account.activatePendingForEpoch(epoch);
             replay.account.matureExitForEpoch(epoch);
 
-            if (_shouldDefault(replay.account, state, epoch, user)) {
+            bool shouldDefault = _shouldDefault(replay.account, state, epoch, user);
+            if (_syncState.pendingAuctionEpochPlusOne == epoch + 1 && shouldDefault) break;
+
+            if (shouldDefault) {
                 uint256 slashedMargin = replay.account.activeMargin;
                 uint256 slashedCommitment = replay.account.activeCommitment;
                 (uint256 marginShare, uint256 commitmentShare) = _pairedReturnPoolShare(epoch, slashedMargin);

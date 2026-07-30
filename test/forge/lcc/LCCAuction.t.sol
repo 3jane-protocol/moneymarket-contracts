@@ -12,10 +12,15 @@ import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
 contract LCCAuctionTest is LCCBase {
     uint256 internal constant DEADLINE = START + NORMAL + PRE_CALL + FUNDING;
     uint256 internal constant WINDOW_END = START + EPOCH;
+    uint256 internal constant CLOCK_CONFIG_SLOT = 1;
+    uint256 internal constant ACCOUNTS_SLOT = 15;
+    uint256 internal constant UINT64_MASK = type(uint64).max;
 
     function setUp() public override {
         super.setUp();
         _deployAuctionVault();
+        _assertLayoutSlot("_clockConfig", CLOCK_CONFIG_SLOT);
+        _assertLayoutSlot("accounts", ACCOUNTS_SLOT);
     }
 
     /// @dev alice honors, bob defaults: pool = 50e18 margin, shortfall = 50e18 funding asset, kicked at the deadline.
@@ -228,6 +233,127 @@ contract LCCAuctionTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.InvalidPhase.selector);
         _deposit(carol, 1e18);
+    }
+
+    function testLiveAuctionDoesNotBlockEarlierMaturedExiterClaim() public {
+        _deposit(alice, 100e18);
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
+
+        vm.warp(START + EPOCH);
+        _deposit(bob, 50e18);
+        vault.materializeAccount(alice);
+        assertEq(vault.claimableExitedMargin(alice), 100e18);
+
+        _openCallAtEpoch(2, 100e18);
+        _finishFundingAtEpoch(2);
+        vault.finalizeEpochSlash(2);
+
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 3);
+        // Descriptive only: this preview discards replay.complete; the successful claim below pins the behavior.
+        assertEq(vault.claimableExitedMargin(alice), 100e18);
+
+        uint256 beforeBalance = margin.balanceOf(alice);
+        vm.prank(alice);
+        assertEq(vault.claimExitedMargin(alice), 100e18);
+
+        assertEq(margin.balanceOf(alice), beforeBalance + 100e18);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 3);
+    }
+
+    function testLiveAuctionBlocksDefaultingAccountClaims() public {
+        _deposit(alice, 100e18);
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
+
+        vm.warp(START + EPOCH);
+        _deposit(bob, 50e18);
+        vault.materializeAccount(alice);
+
+        _openCallAtEpoch(2, 100e18);
+        _finishFundingAtEpoch(2);
+        vault.finalizeEpochSlash(2);
+
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 3);
+
+        vm.expectRevert(LCCErrorsLib.AccountMaterializationIncomplete.selector);
+        vm.prank(bob);
+        vault.claimExitedMargin(bob);
+
+        // Public shutdown/terminal transitions settle a live auction first. Force only the terminal flag here to
+        // prove claimRemainingMargin independently preserves the same replay barrier while the slot is unsettled.
+        _setMaxEpochsForTest(2);
+        vm.expectRevert(LCCErrorsLib.AccountMaterializationIncomplete.selector);
+        vm.prank(bob);
+        vault.claimRemainingMargin(bob);
+        _setMaxEpochsForTest(0);
+
+        ILCCVault.EpochState memory state = vault.getEpochState(2);
+        assertEq(state.returnPool, 0);
+        assertEq(state.returnCommitment, 0);
+
+        ILCCVault.Account memory account = vault.getAccount(bob);
+        assertEq(account.activeMargin, 50e18);
+        assertEq(account.activeCommitment, 100e18);
+        assertEq(account.claimableExitMargin, 0);
+        assertEq(account.calledEpochCursor, 0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 3);
+    }
+
+    function testLiveAuctionPersistsPendingActivationBeforeDefaultBarrier() public {
+        _deposit(alice, 100e18);
+
+        vm.warp(START + EPOCH + NORMAL + PRE_CALL);
+        _deposit(bob, 50e18);
+
+        ILCCVault.Account memory pending = _loadStoredAccount(bob);
+        assertEq(pending.activeMargin, 0);
+        assertEq(pending.activeCommitment, 0);
+        assertEq(pending.pendingMargin, 50e18);
+        assertEq(pending.pendingCommitment, 100e18);
+        assertEq(pending.pendingActivationEpoch, 2);
+
+        _openCallAtEpoch(2, 150e18);
+        _fundAtEpoch(alice, 2);
+        _finishFundingAtEpoch(2);
+        vault.finalizeEpochSlash(2);
+
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 3);
+
+        ILCCVault.Account memory expected = vault.getAccount(bob);
+        assertEq(expected.activeMargin, 50e18);
+        assertEq(expected.activeCommitment, 100e18);
+        assertEq(expected.pendingMargin, 0);
+        assertEq(expected.pendingCommitment, 0);
+        assertEq(expected.pendingActivationEpoch, 0);
+        assertEq(expected.calledEpochCursor, 0);
+
+        vault.materializeAccount(bob);
+        ILCCVault.Account memory stored = _loadStoredAccount(bob);
+        assertEq(keccak256(abi.encode(stored)), keccak256(abi.encode(expected)));
+
+        bytes32 firstMaterialization = _storedAccountHash(bob);
+        vault.materializeAccount(bob);
+        assertEq(_storedAccountHash(bob), firstMaterialization);
+
+        vm.expectRevert(LCCErrorsLib.AccountMaterializationIncomplete.selector);
+        vm.prank(bob);
+        vault.claimExitedMargin(bob);
+
+        _setMaxEpochsForTest(2);
+        vm.expectRevert(LCCErrorsLib.AccountMaterializationIncomplete.selector);
+        vm.prank(bob);
+        vault.claimRemainingMargin(bob);
+        _setMaxEpochsForTest(0);
+
+        vm.warp(START + 3 * EPOCH);
+        vault.materializeAccount(carol);
+
+        _setMaxEpochsForTest(3);
+        uint256 beforeBalance = margin.balanceOf(bob);
+        vm.prank(bob);
+        assertEq(vault.claimRemainingMargin(bob), 50e18);
+        assertEq(margin.balanceOf(bob), beforeBalance + 50e18);
     }
 
     function testOracleCapBindsAtFillTimePrice() public {
@@ -499,5 +625,48 @@ contract LCCAuctionTest is LCCBase {
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         vm.prank(owner);
         vault.setRiskCaps(uint256(type(uint128).max) + 1, CAP, 2_000, 0);
+    }
+
+    function _setMaxEpochsForTest(uint256 maxEpochs) internal {
+        uint256 word = uint256(vm.load(address(vault), bytes32(CLOCK_CONFIG_SLOT)));
+        word = (word & ~(UINT64_MASK << 64)) | (maxEpochs << 64);
+        vm.store(address(vault), bytes32(CLOCK_CONFIG_SLOT), bytes32(word));
+    }
+
+    function _loadStoredAccount(address user) internal view returns (ILCCVault.Account memory account) {
+        uint256 accountSlot = uint256(keccak256(abi.encode(user, ACCOUNTS_SLOT)));
+        uint256 word0 = uint256(vm.load(address(vault), bytes32(accountSlot)));
+        uint256 word1 = uint256(vm.load(address(vault), bytes32(accountSlot + 1)));
+        uint256 word2 = uint256(vm.load(address(vault), bytes32(accountSlot + 2)));
+        uint256 word3 = uint256(vm.load(address(vault), bytes32(accountSlot + 3)));
+        uint256 word4 = uint256(vm.load(address(vault), bytes32(accountSlot + 4)));
+
+        account.activeMargin = uint128(word0);
+        account.activeCommitment = uint128(word0 >> 128);
+        account.pendingMargin = uint128(word1);
+        account.pendingCommitment = uint128(word1 >> 128);
+        account.claimableExitMargin = uint128(word2);
+        account.exitBucketMargin = uint128(word2 >> 128);
+        account.exitBucketCommitment = uint128(word3);
+        account.pendingActivationEpoch = (word3 >> 128) & UINT64_MASK;
+        account.calledEpochCursor = word3 >> 192;
+        account.exitMaturityEpoch = word4 & UINT64_MASK;
+        account.exitRequested = ((word4 >> 64) & 0xff) != 0;
+        account.exitClaimed = ((word4 >> 72) & 0xff) != 0;
+        account.exitMatured = ((word4 >> 80) & 0xff) != 0;
+        account.commitmentStartEpoch = (word4 >> 88) & UINT64_MASK;
+    }
+
+    function _storedAccountHash(address user) internal view returns (bytes32) {
+        uint256 accountSlot = uint256(keccak256(abi.encode(user, ACCOUNTS_SLOT)));
+        return keccak256(
+            abi.encode(
+                vm.load(address(vault), bytes32(accountSlot)),
+                vm.load(address(vault), bytes32(accountSlot + 1)),
+                vm.load(address(vault), bytes32(accountSlot + 2)),
+                vm.load(address(vault), bytes32(accountSlot + 3)),
+                vm.load(address(vault), bytes32(accountSlot + 4))
+            )
+        );
     }
 }
