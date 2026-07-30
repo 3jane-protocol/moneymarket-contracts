@@ -32,7 +32,10 @@ library LCCEventsLib {
     /// @param epoch Epoch the call was opened for.
     /// @param callAmount Total amount called (fundingAsset).
     /// @param commitmentDenominator Active-commitment base snapshotted as the pro-rata denominator (fundingAsset).
-    event EpochCallOpened(uint256 indexed epoch, uint256 callAmount, uint256 commitmentDenominator);
+    /// @param marginPrice Margin-oracle price snapshotted for return-pool valuation.
+    event EpochCallOpened(
+        uint256 indexed epoch, uint256 callAmount, uint256 commitmentDenominator, uint256 marginPrice
+    );
 
     /// @notice Emitted when a user's epoch obligation is funded.
     /// @param payer Account supplying the funding asset.

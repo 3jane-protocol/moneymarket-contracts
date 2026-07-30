@@ -20,9 +20,9 @@ contract LCCMaterializeTest is LCCBase {
 
     function testClearedAccountCanDepositAfterManyMoreFinalizedCalls() public {
         _deposit(alice, 100e18);
+        oracle.setPrice(4_999e18);
         _openCall(100e18);
         _finishFunding();
-        oracle.setPrice(4_999e18);
         _syncAs(alice);
         oracle.setPrice(1e36);
 

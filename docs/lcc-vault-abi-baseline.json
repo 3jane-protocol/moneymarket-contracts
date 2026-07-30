@@ -1266,7 +1266,7 @@
     },
     {
       "name": "EpochCallOpened",
-      "signature": "EpochCallOpened(uint256,uint256,uint256)",
+      "signature": "EpochCallOpened(uint256,uint256,uint256,uint256)",
       "anonymous": false,
       "inputs": [
         {
@@ -1281,6 +1281,11 @@
         },
         {
           "name": "commitmentDenominator",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "marginPrice",
           "type": "uint256",
           "indexed": false
         }

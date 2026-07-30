@@ -151,7 +151,7 @@ contract LCCSetOracleTest is LCCBase {
         assertEq(vault.assetConfig().marginOracle, address(newOracle));
     }
 
-    function testSetMarginOracleRecoversFromDeadOracleWithWindowClosedAuction() public {
+    function testWindowClosedAuctionUsesSnapshotWhenLiveOracleIsDead() public {
         _deployAuctionVault();
         _setupShortfallAuction();
 
@@ -159,9 +159,6 @@ contract LCCSetOracleTest is LCCBase {
 
         oracle.setPrice(0);
         vm.warp(WINDOW_END + 1);
-
-        vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
-        vault.materializeAccount(alice);
 
         OracleMock newOracle = _oracleWithPrice(2 * ORACLE_PRICE_SCALE);
         vm.prank(owner);
@@ -172,17 +169,18 @@ contract LCCSetOracleTest is LCCBase {
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         assertTrue(state.slashFinalized);
+        assertEq(state.returnPool, 50e18);
+        assertEq(state.returnCommitment, 100e18);
+        assertEq(_accruedTreasuryMargin(), 0);
     }
 
-    function testSetMarginOracleRecoversDueSlashDisposalFromDeadOldOracle() public {
+    function testDueSlashDisposalUsesSnapshotWhenLiveOracleIsDead() public {
         _deposit(alice, 100e18);
+        oracle.setPrice(ORACLE_PRICE_SCALE);
         _openCall(100e18);
         _finishFunding();
 
         oracle.setPrice(0);
-        vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
-        vault.materializeAccount(alice);
-
         OracleMock newOracle = _oracleWithPrice(2 * ORACLE_PRICE_SCALE);
         vm.prank(owner);
         vault.setMarginOracle(address(newOracle));
@@ -198,7 +196,7 @@ contract LCCSetOracleTest is LCCBase {
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
-    function testSetMarginOracleRepricesUnsettledCallAuctionAndReturnPool() public {
+    function testSetMarginOracleRepricesFillButNotOpenedCallReturnPool() public {
         _deployAuctionVault();
         _deposit(alice, 100e18);
         _deposit(bob, 50e18);
@@ -223,7 +221,7 @@ contract LCCSetOracleTest is LCCBase {
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         assertEq(state.returnPool, 47.25e18);
-        assertEq(state.returnCommitment, 100e18);
+        assertEq(state.returnCommitment, 94.5e18);
         assertEq(_accruedTreasuryMargin(), 0.25e18);
     }
 

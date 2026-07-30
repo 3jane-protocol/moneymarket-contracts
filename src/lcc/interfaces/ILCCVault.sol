@@ -394,10 +394,11 @@ interface ILCCVault {
     function unpause() external;
     /// @notice Owner opens the current epoch's capital call during PreCall.
     /// @dev Reverts unless in PreCall of `epoch`, if a prior call is unsettled, if already opened, or if
-    /// `callAmount` exceeds the active-commitment base. Owner guidance: `callAmount` should be meaningful relative to
-    /// the active-commitment base and the account distribution. Because obligations are ceil-rounded per account
-    /// (see `obligationOf`), a dust-sized call can force every account to owe a single funding unit, and any account
-    /// that does not fund then forfeits its full margin under the all-or-nothing slash.
+    /// `callAmount` exceeds the active-commitment base. Reads and snapshots the current margin-oracle price, reverting
+    /// on zero and propagating an oracle revert. Owner guidance: `callAmount` should be meaningful relative to the
+    /// active-commitment base and the account distribution. Because obligations are ceil-rounded per account (see
+    /// `obligationOf`), a dust-sized call can force every account to owe a single funding unit, and any account that
+    /// does not fund then forfeits its full margin under the all-or-nothing slash.
     /// @param epoch Epoch to open the call for (must be current).
     /// @param callAmount Total amount to call (fundingAsset).
     function openEpochCall(uint256 epoch, uint256 callAmount) external;
@@ -449,13 +450,12 @@ interface ILCCVault {
     /// @param newSlashFeeBps New fee in bps.
     function setSlashFeeBps(uint256 newSlashFeeBps) external;
     /// @notice Owner update of the trusted margin oracle.
-    /// @dev Rotation is owner-trusted and reprices future auction awards and return-pool disposal for every
-    /// unsettled call, not only future calls. `openEpochCall` does not snapshot the oracle. While paused, no fills
-    /// can execute and the owner may rotate even a responsive current oracle before resuming the frozen auction.
-    /// While unpaused, the live-auction guard blocks rotation only while the current oracle still returns a nonzero
-    /// price for fills; a zero-price, reverting, or otherwise unreadable current oracle never blocks rotation. The
-    /// new oracle must return marginAsset-to-fundingAsset (USDC) prices at ORACLE_PRICE_SCALE with matching decimals;
-    /// the vault can only check that the price is nonzero.
+    /// @dev Rotation is owner-trusted and reprices subsequent deposits and auction fills, but not an opened call's
+    /// return-pool commitment. While paused, no fills can execute and the owner may rotate even a responsive current
+    /// oracle before resuming the frozen auction. While unpaused, the live-auction guard blocks rotation only while
+    /// the current oracle still returns a nonzero price for fills; a zero-price, reverting, or otherwise unreadable
+    /// current oracle never blocks rotation. The new oracle must return marginAsset-to-fundingAsset (USDC) prices at
+    /// ORACLE_PRICE_SCALE with matching decimals; the vault can only check that the price is nonzero.
     /// @param newOracle New margin oracle.
     function setMarginOracle(address newOracle) external;
     /// @notice Auction state for an epoch.

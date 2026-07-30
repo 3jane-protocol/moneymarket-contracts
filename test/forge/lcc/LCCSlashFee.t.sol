@@ -108,23 +108,19 @@ contract LCCSlashFeeTest is LCCBase {
         assertEq(state.returnCommitment, 89e18);
     }
 
-    function testFullFeeNeverAuctionedGoingConcernRetriesUntilOracleRecovery() public {
+    function testFullFeeNeverAuctionedGoingConcernUsesCallOpenSnapshot() public {
         // Full fee on an auction-enabled vault, but the call finalizes only after the auction window, so no
-        // auction is kicked: the fee basis is zero, the whole surplus is a return pool, and going-concern
-        // disposal needs the oracle.
+        // auction is kicked: the fee basis is zero and the whole surplus is valued at the call-open snapshot.
         ILCCVault.VaultParams memory params = _auctionParams();
         params.slashFeeBps = 10_000;
         _deployVaultWithParams(params);
 
         _deposit(alice, 100e18);
+        oracle.setPrice(ORACLE_PRICE_SCALE);
         _openCall(100e18);
         vm.warp(WINDOW_END);
 
         oracle.setPrice(0);
-        vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
-        vault.materializeAccount(alice);
-
-        oracle.setPrice(ORACLE_PRICE_SCALE);
         vault.materializeAccount(alice);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
@@ -133,7 +129,7 @@ contract LCCSlashFeeTest is LCCBase {
         assertEq(state.returnCommitment, 200e18);
     }
 
-    function testFullFeePartialFillDeadOracleRetriesButWindDownSettles() public {
+    function testFullFeePartialFillUsesCallOpenSnapshot() public {
         ILCCVault.VaultParams memory params = _auctionParams();
         params.slashFeeBps = 10_000;
         _deployVaultWithParams(params);
@@ -146,40 +142,12 @@ contract LCCSlashFeeTest is LCCBase {
 
         oracle.setPrice(0);
         vm.warp(WINDOW_END);
-        vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
-        vault.materializeAccount(alice);
-
-        oracle.setPrice(ORACLE_PRICE_SCALE);
         vault.materializeAccount(alice);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(_accruedTreasuryMargin(), 5e18);
         assertEq(state.returnPool, 40e18);
         assertEq(state.returnCommitment, 80e18);
-
-        uint256 treasuryBefore = margin.balanceOf(treasury);
-
-        params = _auctionParams();
-        params.maxEpochs = 1;
-        params.slashFeeBps = 10_000;
-        vm.warp(START);
-        _deployVaultWithParams(params);
-        _setupShortfallAuction();
-
-        vm.warp(DEADLINE + 5);
-        vm.prank(carol);
-        (, award) = vault.takeAuction(10e18);
-        assertEq(award, 5e18);
-
-        oracle.setPrice(0);
-        vm.warp(WINDOW_END);
-        vault.materializeAccount(alice);
-
-        state = vault.getEpochState(0);
-        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(_accruedTreasuryMargin() - treasuryBefore, 45e18);
-        assertEq(state.returnPool, 0);
-        assertEq(state.returnCommitment, 0);
     }
 
     function testFeeConsumedSurplusSettlesWithoutOracle() public {

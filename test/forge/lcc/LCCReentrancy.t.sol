@@ -134,10 +134,10 @@ contract LCCReentrancyTest is LCCBase {
     function testSweepTreasuryCallbackReentryIsBlockedAndRetrySucceeds() public {
         _deployAuctionVault();
         _deposit(alice, 100e18);
+        oracle.setPrice(4_999e18);
         _openCall(100e18);
         _finishFunding();
         vault.finalizeEpochSlash(0);
-        oracle.setPrice(0);
 
         vm.prank(owner);
         vault.shutdown();

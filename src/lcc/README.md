@@ -61,16 +61,19 @@ over the shared `LCCBase` harness.
   `setMaxAuctionAwardBps`, `setSlashFeeBps`, `setMarginOracle`), controls the pause guardian, can pause/unpause, and
   can trigger `shutdown`. Ownership is transferable for governance rotation and incident recovery but cannot be
   renounced, because an ownerless vault could never unpause, shut down, or open calls. `setMarginOracle` is an
-  owner-trusted rotation that reprices future auction awards and return-pool disposal for all unsettled calls;
-  `openEpochCall` does not snapshot the oracle. While paused the owner may rotate even a responsive oracle because
-  no fills can execute. While unpaused, rotation is blocked during a live auction only while the current oracle still
-  prices fills, so a zero-price or reverting oracle never blocks recovery; the new oracle must return a nonzero
+  owner-trusted rotation that reprices subsequent deposits and auction fill awards but not the price used to convert
+  an opened call's remaining return pool. While paused the owner may rotate even a responsive oracle because no fills can execute. While
+  unpaused, rotation is blocked during a live auction only while the current oracle still prices fills, so a
+  zero-price or reverting oracle never blocks recovery; the new oracle must return a nonzero
   `marginAsset`-to-`fundingAsset` price at `ORACLE_PRICE_SCALE`. The owner controls the call size; a dust-sized
   `callAmount` can force every account to owe a single funding unit (see §7), a documented owner surface.
+  The `setRiskCaps` live-auction guard is deliberately one-sided: it blocks a `protocolCommitmentCap` reduction but
+  permits an increase after the owner can observe which accounts funded. This is accepted trusted-owner policy.
 - **Pause guardian** — owner-appointed circuit-breaker account. The guardian may pause the vault but cannot unpause
   and cannot change configuration.
 - **Margin oracle** — fully trusted. Returns a fresh `marginAsset`-to-`fundingAsset` price scaled by
-  `ORACLE_PRICE_SCALE`, absorbing any token-decimal conversion. A zero price reverts (`OraclePriceInvalid`).
+  `ORACLE_PRICE_SCALE`, absorbing any token-decimal conversion. Deposits, call-open snapshots, and auction fills
+  reject a zero price (`OraclePriceInvalid`).
 - **Depositor / funder** — posts margin, funds its own obligation (`fundCall(bool)`), and exits (`requestExit`).
 - **Push funder** — funds another account's obligation with `fundCall(address)`; always amortizes.
 - **Auction filler** — fills an epoch's shortfall via `takeAuction` for wrapped USD3n plus a collateral kicker.
@@ -255,8 +258,11 @@ clock (§9). Funding of any kind never touches `commitmentStartEpoch`.
 
 ## 7. Capital calls and funding
 
-`openEpochCall` (PreCall only) snapshots `commitmentDenominator = activeCommitment`, records `callAmount` and
-`marginAtCallOpen`, pushes the epoch onto `calledEpochList`, and snapshots exit-bucket exposure for the call.
+`openEpochCall` (PreCall only) reads a validated nonzero oracle price and stores it in
+`marginPriceAtCallOpen[epoch]`, snapshots `commitmentDenominator = activeCommitment`, records `callAmount` and
+`marginAtCallOpen`, exposes the price in `EpochCallOpened`, pushes the epoch onto `calledEpochList`, and snapshots
+exit-bucket exposure for the call. A reverting oracle propagates and a zero price reverts `OraclePriceInvalid`, so
+no legitimate call can record a missing price snapshot.
 
 Each account's obligation is computed **independently** and **ceil-rounded** from the call-open snapshot:
 
@@ -430,13 +436,20 @@ flowchart TD
     B -->|no| C["fee = min(auctionedMargin * slashFeeBps / BPS, surplus)<br/>returnPool = surplus - fee"]
     C --> D{"returnPool == 0?"}
     D -->|yes| T["sweep surplus to treasury"]
-    D -->|no| E{"wind-down? shutdown or call window closed"}
-    E -->|going concern| F["oracle required<br/>revert if price == 0"]
-    E -->|wind-down| G["try/catch oracle<br/>dead or overflow price -> 0"]
-    F --> H["rawCommitment from returnPool<br/>D = commitmentDenominator<br/>B = fundedAmount + fundedUsersRemainingCommitment<br/>S = D - B<br/>headroom = min(S, saturating(protocolCap - B),<br/>uint128 max - used)"]
-    G --> I{"price == 0?"}
-    I -->|yes| J["returnPool = 0<br/>sweep surplus to treasury"]
-    I -->|no| K["rawCommitment from returnPool<br/>headroom = min(S, uint128 max - used)"]
+    D -->|no| E{"call-open price snapshot nonzero?"}
+    E -->|yes| P["use snapshot for conversion<br/>no live read in this step"]
+    E -->|no| F{"caller is owner?"}
+    F -->|no, going concern| R["revert OraclePriceInvalid"]
+    F -->|no, wind-down| J["returnPool = 0<br/>sweep surplus to treasury"]
+    F -->|yes, going concern| G["read live oracle<br/>revert if zero/unreadable"]
+    F -->|yes, wind-down| I["try/catch live oracle<br/>dead price -> 0"]
+    P --> W{"wind-down?"}
+    G --> H["rawCommitment from selected price<br/>D = commitmentDenominator<br/>B = fundedAmount + fundedUsersRemainingCommitment<br/>S = D - B<br/>headroom = min(S, saturating(protocolCap - B),<br/>uint128 max - used)"]
+    I --> Q{"selected price zero or overflow-risk?"}
+    W -->|no| H
+    W -->|yes| Q
+    Q -->|yes| J
+    Q -->|no| K["rawCommitment from selected price<br/>headroom = min(S, uint128 max - used)"]
     H --> L["returnCommitment = min(raw, headroom)"]
     K --> L
     L --> M{"returnCommitment < MIN_RETURN_COMMITMENT?"}
@@ -451,15 +464,22 @@ The **fee is an auction rake**: `fee = min(auctionedMargin * slashFeeBps / BPS, 
 paths always pass `auctionedMargin = 0`, so `fee = 0` there. The remaining `returnPool` is valued into a
 `returnCommitment` and re-attributed to defaulters as active margin/commitment; the rest goes to treasury.
 
-**Going concern vs wind-down.** Going-concern disposal requires a live oracle (reverts `OraclePriceInvalid` on a
-zero price). Let `D = commitmentDenominator`,
+**Price selection and wind-down.** The conversion step normally uses the validated oracle price frozen at call open
+and does not consult the live oracle, in either going-concern or wind-down mode. This freezes only the conversion
+price, not the amount converted: auction fills still use the live fill-time price to determine `marginAwarded`,
+which is deducted from the pool and is the sole slash-fee basis. A zero snapshot is not reachable through a
+legitimate call; it represents storage corruption or a future writer bug. In that exceptional state, a non-owner
+going-concern touch reverts `OraclePriceInvalid`, while the owner may recover by triggering any synced action and
+using the current live price. The owner fallback is a direct read in going concern and remains try/catch in
+wind-down; a non-owner wind-down touch treats the missing snapshot as zero. Let `D = commitmentDenominator`,
 `B = fundedAmount + fundedUsersRemainingCommitment`, and `S = D - B`. Going-concern headroom is
 `min(S, saturatingSub(protocolCommitmentCap, B), type(uint128).max - used)`, where `used` is current active plus
 pending commitment only for the packed-width guard. Wind-down disposal — under `shutdown` or once
-`_callWindowClosed()` — wraps the oracle in try/catch, treats a dead or overflow-risk price as zero (sweeping the
-pool to treasury rather than bricking), and uses `min(S, type(uint128).max - used)`, omitting the protocol cap
-because no future call can use the returned commitment. A positive commitment clamp retains the full recovered
-margin pool, producing a more-collateralized return position; if the bounded commitment falls below
+`_callWindowClosed()` — treats the selected price (snapshot or fallback) as zero only when either exact `mulDiv`
+stage would overflow, sweeping the pool to treasury rather than bricking, and uses
+`min(S, type(uint128).max - used)`, omitting the protocol cap because no future call can use the returned
+commitment. A positive commitment clamp retains the full recovered margin pool, producing a more-collateralized
+return position; if the bounded commitment falls below
 `MIN_RETURN_COMMITMENT` (`1e6` funding base units, i.e. `1.0` unit of a 6-decimal `fundingAsset`), both commitment
 and pool are zeroed and the surplus is swept to treasury as dust.
 
@@ -472,7 +492,8 @@ Two subtleties carried in prose, not boxes:
   `protocolCommitmentCap` is intentional so an owner cap reduction after call-open is honored.
 - **Tight-cap zero.** A positive cap clamp preserves the full return pool. If the current cap is at or below `B`,
   headroom is zero, the paired return pool is zeroed, and the surplus goes to treasury. Heavy rolling can keep `B`
-  high; owners manage the current cap with `setRiskCaps`.
+  high; owners manage the current cap with `setRiskCaps`. Its live-auction guard blocks reductions only, so a trusted
+  owner may raise the cap after observing which accounts funded.
 
 ### Table 3 — disposal split
 
@@ -576,7 +597,9 @@ would be `maxEpochs`, so a last-callable-epoch deposit must activate immediately
 revert `VaultTerminal` once terminal.
 `_callWindowClosed()` — true once the last callable epoch's PreCall window has elapsed — flips disposal into the
 oracle-tolerant, saturating-headroom mode even before the terminal boundary, since no returned commitment can ever
-back a future call.
+back a future call. Wind-down is deliberately evaluated from the current effective clock, not the epoch being
+disposed. The same flag gates the zero-price revert; anchoring it to the disposed epoch could let a corrupt snapshot
+brick `claimRemainingMargin` after terminal.
 
 **`claimRemainingMargin`** is the wind-down claim: under shutdown or terminal it pays out active margin, pending
 margin, and already-matured claimable exit margin, bypassing the maturity and `minCommitmentEpochs` gates that
@@ -600,7 +623,7 @@ flowchart TD
 
 `LCCAuctionLib` and `LCCConfigLib` are the two externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-23,948 bytes, 328 bytes below the 24,276-byte release ceiling and 628 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+23,927 bytes, 349 bytes below the 24,276-byte release ceiling and 649 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls
@@ -608,8 +631,9 @@ implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fun
 calldata; per-facility params live in proxy storage. The factory registry (`isVault` / `allVaults`) records owner-vetted
 **provenance only** — the beacon is public, so anyone can point an unregistered proxy at it. Packed structs in
 `LCCTypesLib` are upgrade-frozen layout. The layout retains the full 50-slot `__gap` after the treasury accrual slot:
-while LCC is pre-deployment, new state such as `returnCreditEpochByCall` is declared above the gap rather than
-consuming it, so the post-deployment reserve stays at 50. Once deployed, new state must consume gap slots. Both `LCCAuctionLib` and `LCCConfigLib` must be re-linked on every implementation redeploy. Every future
+while LCC is pre-deployment, new state such as `returnCreditEpochByCall` and `marginPriceAtCallOpen` is declared
+above the gap rather than consuming it, so the post-deployment reserve stays at 50. Once deployed, new state must
+consume gap slots. Both `LCCAuctionLib` and `LCCConfigLib` must be re-linked on every implementation redeploy. Every future
 implementation must preserve runtime exit capacity of at least one, or normalize existing configurations during the
 upgrade; the `Math.max(1, ...)` clamp in `_assignExitMaturity` is the scan-termination invariant.
 `yarn build:forge:size` embeds the build-profile storage layout in the canonical artifact and recursively compares
@@ -635,17 +659,18 @@ record lives in
 - **Slash-disable is strict-before-deadline.** Shutdown strictly before an epoch's funding deadline disables its
   slash (including during PreCall after the call opened); at/after the deadline defaults are final.
 - **Fee is an auction rake.** Non-auctioned disposal paths carry `marginAwarded = 0`, so the slash fee is `0` there.
-- **Going-concern disposal can revert.** Any going-concern disposal with a nonzero return pool (the surplus left
-  after the fee) and a dead oracle (`price == 0`) reverts `OraclePriceInvalid` until the oracle recovers — this is
-  independent of the fee, so zero-fee configs revert too; wind-down disposal is oracle-free.
-- **Dead-oracle wind-down sweep.** A dead or overflow-risk price during wind-down sends the return pool to treasury
-  rather than bricking the claim.
+- **Missing-snapshot recovery is owner-gated.** Legitimate calls always store a nonzero price. If corruption or a
+  future writer bug leaves a zero snapshot, non-owner going-concern settlement reverts `OraclePriceInvalid`; the
+  owner can recover from the current live oracle through any synced action. Wind-down remains non-bricking.
+- **Wind-down overflow sweep.** An overflow-risk selected price, including a pathological stored snapshot, sends the
+  return pool to treasury rather than bricking wind-down.
 - **`MIN_RETURN_COMMITMENT` dust sweep is a step, not a ramp.** A return commitment below `1e6` funding base units is
   zeroed and its pool swept to treasury; at or above the threshold the pool is returned in full, because disposal no
-  longer scales the pool to the commitment clamp. A one-base-unit difference in the configured cap can therefore flip
-  the outcome between the whole pool and none of it. The same change does not alter which accounts have their paired
-  share floor to zero, but it enlarges what each such account forfeits, since the unscaled pool is larger; that margin
-  stays in aggregate active totals with no attributable owner.
+  longer scales the pool to the commitment clamp. The conversion-price side of this threshold is fixed at call open,
+  but live-priced fill awards can still change the amount being converted. A one-base-unit difference in the
+  configured cap can also flip the outcome between the whole pool and none of it. The same change does not alter
+  which accounts have their paired share floor to zero, but it enlarges what each such account forfeits, since the
+  unscaled pool is larger; that margin stays in aggregate active totals with no attributable owner.
 - **Single live-auction slot.** Only one epoch's auction is live at a time; sync settles the prior before kicking a
   new one, and replay halts at the live-auction epoch.
 - **Bounded replay barrier.** Accounts more than `MAX_MATERIALIZE_STEPS = 64` finalized calls behind revert

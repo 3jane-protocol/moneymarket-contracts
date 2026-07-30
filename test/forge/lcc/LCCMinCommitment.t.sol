@@ -22,6 +22,7 @@ contract LCCMinCommitmentTest is LCCBase {
         _assertLayoutSlot("epochs", EPOCHS_SLOT);
         _assertLayoutSlot("calledEpochList", CALLED_EPOCH_LIST_SLOT);
         _assertLayoutSlot("returnCreditEpochByCall", RETURN_CREDIT_EPOCH_SLOT);
+        _assertLayoutSlot("marginPriceAtCallOpen", MARGIN_PRICE_AT_CALL_OPEN_SLOT);
     }
 
     function testMinZeroExitsSameEpoch() public {

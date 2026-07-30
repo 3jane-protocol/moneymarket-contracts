@@ -134,6 +134,9 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// @dev Epoch in which each call's nonzero return pool was created.
     mapping(uint256 => uint256) internal returnCreditEpochByCall;
 
+    /// @dev Margin-oracle price frozen when each epoch call opens.
+    mapping(uint256 => uint256) internal marginPriceAtCallOpen;
+
     /// @dev Reserved storage for future versions. Pre-deployment additions are declared above this gap so the
     /// post-deployment reserve stays at its full 50 slots; only upgrades after deployment consume gap slots.
     uint256[50] private __gap;
@@ -300,13 +303,13 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     }
 
     /// @inheritdoc ILCCVault
-    /// @dev Rotation is owner-trusted and reprices future auction awards and return-pool disposal for every
-    /// unsettled call, not only future calls. `openEpochCall` does not snapshot the oracle. The live-auction guard
-    /// blocks rotation only while unpaused and the current oracle still returns a nonzero price for fills. While
-    /// paused no fills can execute, so the owner may rotate even a responsive but compromised oracle before
-    /// resuming the frozen auction. A zero-price, reverting, or otherwise unreadable current oracle never blocks
-    /// rotation. The new oracle must return marginAsset-to-fundingAsset (USDC) prices at ORACLE_PRICE_SCALE with
-    /// matching decimals; the vault can only check that the price is nonzero.
+    /// @dev Rotation is owner-trusted and reprices subsequent deposits and auction fill awards, but does not reprice
+    /// conversion of an opened call's remaining return pool. The live-auction guard blocks rotation only while
+    /// unpaused and the current oracle still returns a nonzero price for fills. While paused no fills can execute, so
+    /// the owner may rotate even a responsive but compromised oracle before resuming the frozen auction. A
+    /// zero-price, reverting, or otherwise unreadable current oracle never blocks rotation. The new oracle must return
+    /// marginAsset-to-fundingAsset (USDC) prices at ORACLE_PRICE_SCALE with matching decimals; the vault can only
+    /// check that the price is nonzero.
     function setMarginOracle(address newOracle) external onlyOwner {
         if (newOracle == address(0)) revert LCCErrorsLib.ZeroAddress();
         uint256 auctionSlot = _syncState.pendingAuctionEpochPlusOne;
@@ -357,7 +360,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         _shutdown.epoch = uint64(_currentEpoch());
         emit LCCEventsLib.EmergencyShutdown(_shutdown.epoch, _shutdown.timestamp);
         // Shutdown is recorded before the sync so in-flight finalizations see it: mid-window epochs finalize
-        // with slash disabled, and disposal never requires a live oracle.
+        // with slash disabled, and legitimate called epochs dispose from their stored price snapshots.
         _syncGlobal();
     }
 
@@ -392,8 +395,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         Account memory account = _replayForUpdate(msg.sender);
         if (account.exitRequested && !account.exitClaimed) revert LCCErrorsLib.ExitInProgress();
 
-        uint256 price = IOracle(_auctionConfig.marginOracle).price();
-        if (price == 0) revert LCCErrorsLib.OraclePriceInvalid();
+        uint256 price = _marginOraclePrice();
 
         uint256 marginValue;
         (marginValue, commitment) = _marginValueAndCommitment(assets, price);
@@ -550,6 +552,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         if (state.callOpened) revert LCCErrorsLib.CallAlreadyOpened();
         if (callAmount > _totals.activeCommitment) revert LCCErrorsLib.InvalidAmount();
 
+        uint256 marginPrice = _marginOraclePrice();
+        marginPriceAtCallOpen[epoch] = marginPrice;
         state.callOpened = true;
         state.commitmentDenominator = _totals.activeCommitment;
         state.callAmount = callAmount;
@@ -557,7 +561,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         calledEpochList.push(epoch);
         _snapshotExitBucketsForCall(epoch);
 
-        emit LCCEventsLib.EpochCallOpened(epoch, callAmount, _totals.activeCommitment);
+        emit LCCEventsLib.EpochCallOpened(epoch, callAmount, _totals.activeCommitment, marginPrice);
     }
 
     /// @inheritdoc ILCCVault
@@ -595,8 +599,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         filledAmount = maxFillAmount < remainingShortfallAmount ? maxFillAmount : remainingShortfallAmount;
         if (filledAmount == 0) revert LCCErrorsLib.InvalidAmount();
 
-        uint256 price = IOracle(_auctionConfig.marginOracle).price();
-        if (price == 0) revert LCCErrorsLib.OraclePriceInvalid();
+        uint256 price = _marginOraclePrice();
 
         marginAward = LCCAuctionLib.applyFill(
             state,
@@ -991,28 +994,35 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         return LCCAuctionLib.valueAndCommitment(assets, price, _assetConfig.marginRatioBps);
     }
 
+    function _marginOraclePrice() internal view returns (uint256 price) {
+        price = IOracle(_auctionConfig.marginOracle).price();
+        if (price == 0) revert LCCErrorsLib.OraclePriceInvalid();
+    }
+
     /// @dev Charges the slash fee on auction-awarded collateral and caps it by the unawarded surplus being disposed.
-    /// Any surplus not consumed by the fee still needs a going-concern oracle valuation, so full-fee configs can
-    /// revert until the oracle recovers when no auction filled or when a partial-fill lazy settlement leaves surplus;
-    /// wind-down disposal remains tolerant of oracle reverts and invalid values. A gas-griefing oracle can still
-    /// exhaust the transaction gas; the owner can recover by rotating it through `setMarginOracle` before retrying
-    /// wind-down.
+    /// Any surplus not consumed by the fee is valued from the call-open price snapshot. A missing snapshot is an
+    /// invalid storage state: going-concern disposal is recoverable from the live oracle only when owner-triggered,
+    /// while wind-down remains tolerant of a missing, reverting, zero, or overflow-risk selected price.
     /// A positive commitment clamp preserves the full post-fee pool; zero or dust commitment headroom zeroes its
     /// paired pool and diverts the surplus to treasury.
     function _disposeSlashSurplus(uint256 epoch, uint256 surplus, uint256 auctionedMargin) internal {
         if (surplus == 0) return;
 
         EpochState storage state = epochs[epoch];
+        uint256 marginPriceSnapshot = marginPriceAtCallOpen[epoch];
 
-        // Wind-down disposal skips the going-concern oracle-revert and protocol-cap clamp so recoverable
+        // Wind-down disposal skips the going-concern missing-snapshot revert and protocol-cap clamp so recoverable
         // margin is never bricked or diverted to treasury once no future call can ever use the returned
         // commitment. That property is a function of the current clock, not the disposed epoch: it holds once
         // the last epoch's call-opening window has passed (`_callWindowClosed`), which covers both an early
         // settlement in the last epoch's own Closed phase and a lazy finalization of any older epoch disposed
         // for the first time in that late window (or at/after terminal).
         bool windDown = _shutdown.active || _callWindowClosed();
-        uint256 usedCommitment = uint256(_totals.activeCommitment) + uint256(_totals.pendingCommitment);
-        uint256 packingHeadroom = uint256(type(uint128).max).saturatingSub(usedCommitment);
+        uint256 packingHeadroom;
+        {
+            uint256 usedCommitment = uint256(_totals.activeCommitment) + uint256(_totals.pendingCommitment);
+            packingHeadroom = uint256(type(uint128).max).saturatingSub(usedCommitment);
+        }
         uint256 usedMargin = uint256(_totals.activeMargin) + uint256(_totals.pendingMargin);
         uint256 fundedCallOpenCommitment = state.fundedAmount + state.fundedUsersRemainingCommitment;
         uint256 slashedCommitment = state.commitmentDenominator - fundedCallOpenCommitment;
@@ -1030,7 +1040,9 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
             surplus,
             auctionedMargin,
             _riskConfig.slashFeeBps,
+            marginPriceSnapshot,
             _auctionConfig.marginOracle,
+            msg.sender == owner(),
             windDown,
             _assetConfig.marginRatioBps,
             usedMargin,
@@ -1493,8 +1505,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// @dev True once no call can ever open again: calls open only in a PreCall phase, so once the last callable
     /// epoch's PreCall window (`maxEpochs - 1`) has elapsed nothing can open a call. Perpetual vaults (`maxEpochs ==
     /// 0`) never close. Past this point a returned slash commitment can never back a future call, so surplus disposal
-    /// drops the going-concern oracle-revert and protocol-cap clamp. Monotonic and strictly before the terminal
-    /// boundary, so this also covers every disposal that runs once terminal.
+    /// drops the going-concern missing-snapshot revert and protocol-cap clamp. Monotonic and strictly before the
+    /// terminal boundary, so this also covers every disposal that runs once terminal.
     function _callWindowClosed() internal view returns (bool) {
         uint256 maxEpochs = _clockConfig.maxEpochs;
         if (maxEpochs == 0) return false;

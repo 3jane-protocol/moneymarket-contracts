@@ -21,12 +21,9 @@ function _revertSelector(bytes memory reason) pure returns (bytes4 selector) {
     }
 }
 
-/// @dev Reverts that lazy materialization is allowed to surface: the live-auction replay barrier and a
-/// zero/reverting oracle at a pending slash disposal. Anything else must fail the invariant.
+/// @dev The bounded replay barrier is the only revert lazy materialization is allowed to surface.
 function _expectedMaterializeError(bytes memory reason) pure returns (bool) {
-    bytes4 selector = _revertSelector(reason);
-    return selector == LCCErrorsLib.AccountMaterializationIncomplete.selector
-        || selector == LCCErrorsLib.OraclePriceInvalid.selector;
+    return _revertSelector(reason) == LCCErrorsLib.AccountMaterializationIncomplete.selector;
 }
 
 function _isTerminal(LCCVault vault_) view returns (bool) {
@@ -191,7 +188,7 @@ contract LCCInvariantHandler is Test {
         address actor = actors[_index(actorSeed)];
         try invariantVault.materializeAccount(actor) {}
         catch (bytes memory reason) {
-            if (!_expectedSyncedOracleError(reason)) fail();
+            if (!_expectedMaterializeError(reason)) fail();
             return;
         }
         ILCCVault.Account memory account = invariantVault.getAccount(actor);
@@ -404,7 +401,7 @@ contract LCCInvariantHandler is Test {
         address actor = actors[_index(actorSeed)];
         try invariantVault.materializeAccount(actor) {}
         catch (bytes memory reason) {
-            if (!_expectedSyncedOracleError(reason)) fail();
+            if (!_expectedMaterializeError(reason)) fail();
             return;
         }
         ILCCVault.Account memory account = invariantVault.getAccount(actor);
@@ -491,7 +488,7 @@ contract LCCInvariantHandler is Test {
 
         try invariantVault.materializeAccount(actor) {}
         catch (bytes memory reason) {
-            if (!_expectedSyncedOracleError(reason)) fail();
+            if (!_expectedMaterializeError(reason)) fail();
         }
     }
 
@@ -520,7 +517,7 @@ contract LCCInvariantHandler is Test {
         // Materializing here finalizes that epoch so the guard matches the claim and cannot pass on stale margin.
         try invariantVault.materializeAccount(actor) {}
         catch (bytes memory reason) {
-            if (!_expectedSyncedOracleError(reason)) fail();
+            if (!_expectedMaterializeError(reason)) fail();
             return;
         }
         ILCCVault.Account memory account = invariantVault.getAccount(actor);
@@ -582,7 +579,7 @@ contract LCCInvariantHandler is Test {
                 ghostGrandfatheredOverCapExposure = Math.saturatingSub(utilizationAfter, protocolCap);
             }
         } catch (bytes memory reason) {
-            if (!_expectedSyncedOracleError(reason)) fail();
+            if (!_expectedMaterializeError(reason)) fail();
         }
     }
 
@@ -593,8 +590,8 @@ contract LCCInvariantHandler is Test {
         ILCCVault.Totals memory totals = invariantVault.totals();
         if (totals.activeMargin + totals.pendingMargin == 0) return;
 
-        // shutdown() is onlyOwner with no synced modifier and an oracle-free wind-down disposal, so its only revert
-        // (ShutdownActive) is already guarded above; call it directly and let any unexpected revert fail the run.
+        // Every called epoch in this harness has a validated snapshot, so shutdown's wind-down disposal is live-oracle
+        // independent. ShutdownActive is guarded above; call directly and let any unexpected revert fail the run.
         vm.prank(invariantOwner);
         invariantVault.shutdown();
     }
@@ -748,18 +745,17 @@ contract LCCInvariantHandler is Test {
     }
 
     // Per-action revert whitelists are kept minimal: only selectors reachable AND legitimate for that specific call.
-    // `_expectedMaterializeError` (the _replayForUpdate barrier + oracle-disposal revert) is the base for the actions
-    // that run _replayForUpdate: deposit, requestExit, and the claims. deposit adds the activation/call-window
-    // lifecycle errors, CapExceeded, and InvalidAmount; requestExit adds InvalidAmount (a synced default can zero
-    // its commitment after the stale guard). The handler predicts the first-fit maturity before every bounded exit:
+    // `_expectedMaterializeError` (the bounded replay barrier) is the base for the actions that run
+    // _replayForUpdate: deposit, requestExit, and the claims. deposit adds the live-oracle read and the
+    // activation/call-window lifecycle errors, CapExceeded, and InvalidAmount; requestExit adds InvalidAmount (a
+    // synced default can zero its commitment after the stale guard). The handler predicts the first-fit maturity
+    // before every bounded exit:
     // an insufficient fuzzed deferral must revert with ExitDeferralExceeded, while that selector is never accepted
     // by this whitelist. The deadline is fixed at type(uint256).max, so DeadlineExpired is likewise never accepted.
     // With eight actors holding at most one live exit each, the 128-bucket limit is unreachable and
     // ExitCapacityReached must not be accepted. Claims add NOTHING
     // beyond the base -- their preconditions make NoExitRequested/ExitNotMature/NothingToClaim unreachable, so
-    // catching those would mask a preview-vs-claim divergence. materialize/setRiskCaps do NO per-account replay
-    // (materializeAccount uses the bounded _replayAndRecordDefaults; setRiskCaps only folds global state), so the
-    // only revert their synced fold can surface is the oracle-disposal one -- see `_expectedSyncedOracleError`.
+    // catching those would mask a preview-vs-claim divergence.
 
     function _expectedDepositError(bytes memory reason) internal pure returns (bool) {
         bytes4 selector = _revertSelector(reason);
@@ -771,10 +767,6 @@ contract LCCInvariantHandler is Test {
     function _expectedRequestExitError(bytes memory reason) internal pure returns (bool) {
         bytes4 selector = _revertSelector(reason);
         return _expectedMaterializeError(reason) || selector == LCCErrorsLib.InvalidAmount.selector;
-    }
-
-    function _expectedSyncedOracleError(bytes memory reason) internal pure returns (bool) {
-        return _revertSelector(reason) == LCCErrorsLib.OraclePriceInvalid.selector;
     }
 
     /// @dev Records margin that left the vault to a non-treasury recipient (funder release, filler award, exit
@@ -925,7 +917,6 @@ contract LCCStatefulInvariantTest is LCCBase {
 
         ILCCVault.RiskConfig memory config = vault.riskConfig();
         uint256 snapshot = vm.snapshotState();
-        if (oracle.price() == 0) oracle.setPrice(ORACLE_PRICE_SCALE);
         vm.warp(vault.phaseEndsAt(vault.currentEpoch(), ILCCVault.Phase.Closed));
         vm.prank(owner);
         vault.setRiskCaps(
@@ -1058,6 +1049,45 @@ contract LCCCutoffNoOpHandler {
 
     function noop() external {
         ++calls;
+    }
+}
+
+/// @dev Disposes the same called epoch after moving the live oracle to opposite sides of the return-commitment dust
+/// boundary. Both branches must produce the absolute result implied by the call-open snapshot.
+contract LCCOracleSnapshotTest is LCCBase {
+    function setUp() public override {
+        super.setUp();
+        _deployAuctionVault();
+
+        _deposit(alice, 100e18);
+        oracle.setPrice(5_556e18);
+        _openCall(100e18);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+    }
+
+    function testCalledEpochDisposalUsesCallOpenPriceAcrossPostOpenLivePrices() public {
+        uint256 snapshot = vm.snapshotState();
+
+        oracle.setPrice(4_999e18);
+        vm.warp(vault.phaseEndsAt(0, ILCCVault.Phase.Closed));
+        vault.materializeAccount(bob);
+        ILCCVault.EpochState memory lowLivePrice = vault.getEpochState(0);
+        uint256 lowLivePriceTreasury = vault.pendingTreasuryMargin();
+        assertEq(lowLivePrice.returnPool, 100e18);
+        assertEq(lowLivePrice.returnCommitment, 1_111_200);
+        assertEq(lowLivePriceTreasury, 0);
+
+        assertTrue(vm.revertToState(snapshot), "low-price branch restore failed");
+        oracle.setPrice(ORACLE_PRICE_SCALE);
+        vm.warp(vault.phaseEndsAt(0, ILCCVault.Phase.Closed));
+        vault.materializeAccount(bob);
+        ILCCVault.EpochState memory highLivePrice = vault.getEpochState(0);
+
+        assertEq(highLivePrice.returnPool, 100e18);
+        assertEq(highLivePrice.returnCommitment, 1_111_200);
+        assertEq(vault.pendingTreasuryMargin(), 0);
+        assertTrue(vm.revertToStateAndDelete(snapshot), "high-price branch restore failed");
     }
 }
 

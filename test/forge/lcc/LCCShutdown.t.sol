@@ -61,9 +61,10 @@ contract LCCShutdownTest is LCCBase {
         assertEq(_accruedTreasuryMargin(), 0);
     }
 
-    function testShutdownWithDeadOracleAndPendingAuctionSweepsSurplus() public {
+    function testShutdownWithDeadOracleAndPendingAuctionReturnsSnapshotValuedPool() public {
         _deployAuctionVault();
         _deposit(alice, 100e18);
+        oracle.setPrice(1e36);
         _openCall(100e18);
         _finishFunding();
         vault.finalizeEpochSlash(0);
@@ -77,9 +78,9 @@ contract LCCShutdownTest is LCCBase {
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(state.returnPool, 0);
-        assertEq(state.returnCommitment, 0);
-        assertEq(_accruedTreasuryMargin(), 100e18);
+        assertEq(state.returnPool, 100e18);
+        assertEq(state.returnCommitment, 200e18);
+        assertEq(_accruedTreasuryMargin(), 0);
     }
 
     function testRemainingClaimWithdrawsSafeMarginAndBlocksDeposits() public {
@@ -161,13 +162,13 @@ contract LCCShutdownTest is LCCBase {
         _mintAndApprove(bob, 50e18, 0);
         _deposit(alice, 100e18);
         _deposit(bob, 50e18);
+        oracle.setPrice(4_999e18);
         _openCall(150e18);
         _fund(alice);
         _finishFunding();
         vault.finalizeEpochSlash(0);
 
         blacklistMargin.setBlockedRecipient(treasury);
-        oracle.setPrice(0);
 
         vm.prank(owner);
         vault.shutdown();

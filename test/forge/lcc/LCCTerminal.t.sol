@@ -82,10 +82,11 @@ contract LCCTerminalTest is LCCBase {
         assertEq(margin.balanceOf(alice), aliceBefore + 50e18);
     }
 
-    function testDeadOracleAtTerminalSweepsSurplusAndDoesNotBrickClaim() public {
+    function testDeadOracleAtTerminalReturnsSnapshotValuedPoolAndDoesNotBrickClaim() public {
         _deployTermAuctionVault(1);
         _deposit(alice, 100e18);
         _deposit(bob, 50e18);
+        oracle.setPrice(ORACLE_PRICE_SCALE);
         _openCall(150e18);
         _fund(alice);
         _finishFunding();
@@ -99,9 +100,9 @@ contract LCCTerminalTest is LCCBase {
         assertEq(vault.claimRemainingMargin(alice), 50e18);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(state.returnPool, 0);
-        assertEq(state.returnCommitment, 0);
-        assertEq(_accruedTreasuryMargin(), 50e18);
+        assertEq(state.returnPool, 50e18);
+        assertEq(state.returnCommitment, 100e18);
+        assertEq(_accruedTreasuryMargin(), 0);
     }
 
     function testHigherTerminalOraclePriceKeepsReturnPoolDespiteCapHeadroom() public {
@@ -172,11 +173,12 @@ contract LCCTerminalTest is LCCBase {
     function testOlderEpochSettledInLastEpochClosedIsWindDown() public {
         // maxEpochs = 2 (epochs 0 and 1 callable; epoch 1 is the last). Epoch 0's auction is left pending and first
         // settles during epoch 1's Closed phase — after the last call-opening (PreCall) window has passed but before
-        // terminal. No call can ever open again, so disposal must be wind-down: a dead oracle sweeps to treasury
-        // instead of bricking the settlement, even though _currentEpoch() (1) has not reached maxEpochs (2).
+        // terminal. No call can ever open again, so disposal must be wind-down and retain the call-open valuation
+        // even if the live oracle dies, though _currentEpoch() (1) has not reached maxEpochs (2).
         _deployTermAuctionVault(2);
         _deposit(alice, 100e18);
         _deposit(bob, 50e18);
+        oracle.setPrice(ORACLE_PRICE_SCALE);
         _openCall(150e18);
         _fund(alice);
         _finishFunding();
@@ -195,8 +197,9 @@ contract LCCTerminalTest is LCCBase {
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(state.returnPool, 0);
-        assertEq(_accruedTreasuryMargin(), 50e18);
+        assertEq(state.returnPool, 50e18);
+        assertEq(state.returnCommitment, 100e18);
+        assertEq(_accruedTreasuryMargin(), 0);
     }
 
     function testMaturedExitersCanUseRemainingClaimAtAndAfterMaxEpochs() public {

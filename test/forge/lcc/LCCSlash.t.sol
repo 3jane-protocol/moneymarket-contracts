@@ -5,6 +5,7 @@ import {LCCBase} from "./LCCBase.t.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
+import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
 
 contract LCCSlashTest is LCCBase {
     function testSlashConservationAndTreasuryReceivesOnce() public {
@@ -58,16 +59,13 @@ contract LCCSlashTest is LCCBase {
         _newVault(params);
     }
 
-    function testNoAuctionDisposalRetriesUntilOracleRecoveryButWindDownSweeps() public {
+    function testNoAuctionDisposalUsesCallOpenPriceInGoingConcernAndWindDown() public {
         _deposit(alice, 100e18);
+        oracle.setPrice(1e36);
         _openCall(100e18);
         _finishFunding();
 
         oracle.setPrice(0);
-        vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
-        vault.finalizeEpochSlash(0);
-
-        oracle.setPrice(1e36);
         vault.finalizeEpochSlash(0);
 
         assertEq(_accruedTreasuryMargin(), 0);
@@ -75,13 +73,15 @@ contract LCCSlashTest is LCCBase {
 
         ILCCVault.VaultParams memory params = _termParams(1);
         vm.warp(START);
+        oracle.setPrice(ORACLE_PRICE_SCALE);
         _deployVaultWithParams(params);
 
         _deposit(alice, 100e18);
+        oracle.setPrice(4_999e18);
         _openCall(100e18);
         _finishFunding();
 
-        oracle.setPrice(0);
+        oracle.setPrice(1e36);
         vm.warp(START + EPOCH);
         vault.finalizeEpochSlash(0);
 
