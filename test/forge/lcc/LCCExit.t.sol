@@ -497,6 +497,36 @@ contract LCCExitTest is LCCBase {
         assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
     }
 
+    /// @dev Pins accepted L-07 behavior: first-fit maturity is fixed, so reopened earlier capacity can let a later
+    /// requester overtake an earlier requester whose still-outstanding exit remains assigned to a later epoch.
+    function testCharacterizationLaterRequesterCanOvertakeFixedEarlierExit() public {
+        ILCCVault.VaultParams memory params = _params(address(oracle), 100e18, 100e18, 5_000);
+        params.marginRatioBps = BPS;
+        _deployVaultWithParams(params);
+
+        assertEq(_deposit(alice, 40e18), 40e18);
+        assertEq(_deposit(bob, 20e18), 20e18);
+        assertEq(_deposit(carol, 20e18), 20e18);
+
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
+        vm.prank(bob);
+        uint256 earlierRequesterMaturity = vault.requestExit(type(uint256).max, type(uint256).max);
+        assertEq(earlierRequesterMaturity, 2);
+
+        _openCall(40e18);
+        assertEq(_fund(alice), 20e18);
+        assertEq(vault.exitBucketCommitmentByMaturity(1), 20e18);
+        assertEq(vault.getAccount(bob).exitMaturityEpoch, earlierRequesterMaturity);
+
+        vm.prank(carol);
+        uint256 laterRequesterMaturity = vault.requestExit(type(uint256).max, type(uint256).max);
+        assertEq(laterRequesterMaturity, 1);
+        assertEq(vault.getAccount(bob).exitMaturityEpoch, 2);
+        assertEq(vault.getAccount(carol).exitMaturityEpoch, 1);
+        assertLt(laterRequesterMaturity, earlierRequesterMaturity);
+    }
+
     function testBoundedExitRejectsAmortizationDrivenMaturityChange() public {
         ILCCVault.VaultParams memory params = _params(address(oracle), 100e18, 100e18, 5_000);
         params.marginRatioBps = BPS;

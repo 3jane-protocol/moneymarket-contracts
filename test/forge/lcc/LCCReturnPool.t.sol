@@ -546,6 +546,58 @@ contract LCCReturnPoolTest is LCCBase {
         assertGt(vault.totals().activeCommitment, vault.riskConfig().protocolCommitmentCap);
     }
 
+    /// @dev Pins accepted L-06 behavior: conservative returned commitment can temporarily deny deposits above the
+    /// protocol cap, and the next slash removes the unattributed overage through its commitment denominator.
+    function testCharacterizationReturnedCommitmentCreatesBoundedDepositDenialWindow() public {
+        ILCCVault.VaultParams memory params = _params(300e18, 100e18);
+        _deployVaultWithParams(params);
+
+        _deposit(alice, 50e18);
+        _deposit(carol, 50e18);
+        _openCall(200e18);
+        assertEq(_fund(carol), 100e18);
+
+        vm.prank(owner);
+        vault.setRiskCaps(300e18, 300e18, 2_000, 0);
+        assertEq(_deposit(alice, 100e18), 200e18);
+        vm.prank(owner);
+        vault.setRiskCaps(200e18, 300e18, 2_000, 0);
+
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+        vault.materializeAccount(alice);
+
+        ILCCVault.EpochState memory firstState = vault.getEpochState(0);
+        ILCCVault.Totals memory totals = vault.totals();
+        assertEq(firstState.returnCommitment, 100e18);
+        assertEq(totals.activeCommitment, 100e18);
+        assertEq(totals.pendingCommitment, 200e18);
+        assertEq(totals.activeCommitment + totals.pendingCommitment, 300e18);
+        assertGt(totals.activeCommitment + totals.pendingCommitment, vault.riskConfig().protocolCommitmentCap);
+
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        _deposit(bob, 1e18);
+
+        _openCallAtEpoch(1, 150e18);
+        assertEq(_fundAtEpoch(alice, 1), 100e18);
+        _finishFundingAtEpoch(1);
+        vault.finalizeEpochSlash(1);
+
+        ILCCVault.EpochState memory secondState = vault.getEpochState(1);
+        uint256 secondSlashedCommitment =
+            secondState.commitmentDenominator - secondState.fundedAmount - secondState.fundedUsersRemainingCommitment;
+        totals = vault.totals();
+        assertEq(secondState.commitmentDenominator, 300e18);
+        assertEq(secondState.slashedMargin, 0);
+        assertEq(secondSlashedCommitment, 100e18);
+        assertEq(totals.activeCommitment, 100e18);
+        assertEq(totals.pendingCommitment, 0);
+        assertLt(totals.activeCommitment, vault.riskConfig().protocolCommitmentCap);
+
+        assertEq(_deposit(bob, 1e18), 2e18);
+        assertEq(vault.getAccount(bob).pendingCommitment, 2e18);
+    }
+
     function testSlashedCommitmentBoundRemainsBelowPackedTotalsHeadroom() public {
         uint256 maxPacked = type(uint128).max;
         ILCCVault.VaultParams memory params = _auctionParams();
