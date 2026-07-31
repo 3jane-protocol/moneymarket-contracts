@@ -58,8 +58,10 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
             handlerActors[i] = address(uint160(uint256(keccak256(abi.encode("debt-floor-actor", i - 1)))));
         }
         conduit = makeAddr("debt-floor-conduit");
-        vm.prank(management);
+        vm.startPrank(management);
         usd3Strategy.setRingFenceConduit(conduit, true);
+        usd3Strategy.setSupplyCapExempt(conduit, true);
+        vm.stopPrank();
 
         handler = new DebtFloorHandler(
             address(usd3Strategy),
