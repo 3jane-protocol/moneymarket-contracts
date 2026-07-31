@@ -263,8 +263,9 @@ contract LCCFactoryTest is LCCBase {
         vault.setRiskCaps(CAP, CAP, 312, 0);
 
         vm.prank(owner);
-        vault.setRiskCaps(CAP, CAP, 313, 0);
+        vault.setRiskCaps(31, CAP, 313, 0);
         assertEq(vault.riskConfig().exitCapBps, 313);
+        assertEq(vault.riskConfig().protocolCommitmentCap, 31);
     }
 }
 

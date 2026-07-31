@@ -89,7 +89,7 @@ contract LCCRollTest is LCCBase {
 
         vm.warp(START + NORMAL + PRE_CALL + FUNDING + 5);
         vm.prank(alice);
-        (uint256 filled, uint256 award) = vault.takeAuction(100e18);
+        (uint256 filled, uint256 award) = vault.takeAuction(100e18, 50e18, type(uint256).max);
         assertEq(filled, 100e18);
         assertEq(award, 50e18);
 
@@ -110,7 +110,7 @@ contract LCCRollTest is LCCBase {
     function testLiveExiterCannotRollButCanAmortizeAndClaimedExiterCanRollAfterRedeposit() public {
         _deposit(alice, 100e18);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         _openCall(50e18);
         vm.warp(START + NORMAL + PRE_CALL);
@@ -125,7 +125,7 @@ contract LCCRollTest is LCCBase {
         _deployVaultWithParams(_params(CAP, CAP));
         _deposit(alice, 100e18);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + EPOCH);
         vm.prank(alice);
@@ -158,6 +158,7 @@ contract LCCRollTest is LCCBase {
         vm.prank(alice);
         vault.fundCall(true);
 
+        _finishFunding();
         _deposit(alice, 25e18);
         account = vault.getAccount(alice);
         assertEq(account.activeMargin + account.pendingMargin, 100e18);
@@ -205,7 +206,7 @@ contract LCCRollTest is LCCBase {
         _fundRolling(alice);
 
         vm.prank(alice);
-        uint256 maturity = vault.requestExit();
+        uint256 maturity = vault.requestExit(type(uint256).max, type(uint256).max);
 
         assertEq(vault.exitBucketMarginByMaturity(maturity), 100e18);
         assertEq(vault.exitBucketCommitmentByMaturity(maturity), 200e18);

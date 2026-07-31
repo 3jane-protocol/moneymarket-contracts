@@ -166,6 +166,10 @@ library EventsLib {
     /// @param newManager New markdown manager.
     event MarkdownManagerSet(Id indexed id, address oldManager, address newManager);
 
+    /// @notice Emitted when governance clears a market's wind-down state.
+    /// @param id Market id.
+    event MarketWindDownCleared(Id indexed id);
+
     /// @notice Emitted when an account is settled with all remaining debt written off.
     /// @param id Market id.
     /// @param settler Address that initiated the settlement.

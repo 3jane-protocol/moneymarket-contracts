@@ -128,7 +128,7 @@ contract USD3RingFenceTest is Setup {
         assertApproxEqAbs(expectedFence, balance, balance / 1000, "under-fencing bounded to rounding");
     }
 
-    function test_nonConduitAndThirdPartyDepositsDoNotIncrement() public {
+    function test_nonConduitAndNonExemptThirdPartyDepositsDoNotIncrement() public {
         vm.prank(management);
         usd3Strategy.setRingFenceConduit(address(conduit), true);
 
@@ -141,12 +141,27 @@ contract USD3RingFenceTest is Setup {
         unlistedConduit.depositSelf(MEDIUM_AMOUNT);
         assertEq(usd3Strategy.ringFencedLiquidity(), 0, "non-conduit self-deposit");
 
+        assertFalse(usd3Strategy.supplyCapExempt(address(conduit)), "conduit remains non-exempt");
         vm.prank(alice);
         usd3Strategy.deposit(SMALL_AMOUNT, address(conduit));
-        assertEq(usd3Strategy.ringFencedLiquidity(), 0, "third-party deposit to conduit");
+        assertEq(usd3Strategy.ringFencedLiquidity(), 0, "third-party deposit to non-exempt conduit");
 
         conduit.depositTo(SMALL_AMOUNT, bob);
         assertEq(usd3Strategy.ringFencedLiquidity(), 0, "conduit sender to different receiver");
+    }
+
+    function test_thirdPartyDepositToExemptConduitReverts() public {
+        vm.startPrank(management);
+        usd3Strategy.setRingFenceConduit(address(conduit), true);
+        usd3Strategy.setSupplyCapExempt(address(conduit), true);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("!self"));
+        usd3Strategy.deposit(SMALL_AMOUNT, address(conduit));
+
+        assertEq(usd3Strategy.ringFencedLiquidity(), 0, "reverted deposit does not increment fence");
+        assertEq(IERC20(address(usd3Strategy)).balanceOf(address(conduit)), 0, "reverted deposit does not mint shares");
     }
 
     function test_availableWithdrawLimitSubtractsFenceAndFeedsMaxWithdrawRedeem() public {

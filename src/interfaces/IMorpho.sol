@@ -346,6 +346,11 @@ interface IMorphoCredit {
     /// @param newUsd3 The new usd3 address
     function setUsd3(address newUsd3) external;
 
+    /// @notice Clears wind-down once `S + V <= R * (T + 1) / 2`, providing 2x margin to the floor.
+    /// @dev Only callable by the governance owner.
+    /// @param id The market ID
+    function clearMarketWindDown(Id id) external;
+
     /// @notice Sets the credit line and premium rate for a borrower
     /// @param id The market ID
     /// @param borrower The borrower address
@@ -429,4 +434,9 @@ interface IMorphoCredit {
     /// @param borrower Borrower address
     /// @return lastCalculatedMarkdown Last calculated markdown amount
     function markdownState(Id id, address borrower) external view returns (uint128 lastCalculatedMarkdown);
+
+    /// @notice Whether a supply-share floor truncated a market's markdown or settlement loss.
+    /// @dev Wind-down blocks new supply and borrowing while permitting withdrawal, repayment, and settlement. It can
+    /// only be cleared by governance through `clearMarketWindDown` once `S + V <= R * (T + 1) / 2`.
+    function marketInWindDown(Id id) external view returns (bool);
 }

@@ -203,6 +203,35 @@ contract USD3SupplyCapTest is Setup {
         assertEq(strategy.totalAssets(), usd3Strategy.nav(), "tend moved the withdrawal guard");
     }
 
+    function test_supplyCap_thirdPartyDepositToExemptReceiverReverts() public {
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("!self"));
+        strategy.deposit(SMALL_AMOUNT, bob);
+    }
+
+    function test_supplyCap_thirdPartyDepositToNonExemptReceiverSucceeds() public {
+        assertFalse(usd3Strategy.supplyCapExempt(bob), "receiver is non-exempt");
+        assertEq(strategy.balanceOf(bob), 0, "receiver starts without shares");
+
+        vm.prank(alice);
+        uint256 shares = strategy.deposit(SMALL_AMOUNT, bob);
+
+        assertGt(shares, 0, "deposit mints shares");
+        assertEq(strategy.balanceOf(bob), shares, "receiver gets the shares");
+    }
+
+    function test_supplyCap_thirdPartyMintToExemptReceiverReverts() public {
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("!self"));
+        strategy.mint(SMALL_AMOUNT, bob);
+    }
+
     function test_supplyCap_zeroCapBlocksExemptReceiver() public {
         vm.prank(management);
         usd3Strategy.setSupplyCapExempt(bob, true);
@@ -226,6 +255,18 @@ contract USD3SupplyCapTest is Setup {
 
         assertGt(shares, 0, "exempt receiver can deposit below first-time minimum");
         assertEq(strategy.balanceOf(bob), shares);
+    }
+
+    function test_supplyCap_thirdPartySubMinimumFirstDepositToExemptReceiverReverts() public {
+        vm.prank(management);
+        usd3Strategy.setMinDeposit(1_000e6);
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        assertEq(strategy.balanceOf(bob), 0, "receiver starts without shares");
+        vm.prank(alice);
+        vm.expectRevert(bytes("!self"));
+        strategy.deposit(SMALL_AMOUNT, bob);
     }
 
     function test_nonExemptReceiverStillEnforcesFirstTimeMinDeposit() public {

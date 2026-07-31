@@ -161,12 +161,28 @@
     },
     {
       "name": "deposit",
-      "signature": "deposit(uint256)",
-      "selector": "0xb6b55f25",
+      "signature": "deposit(uint256,uint256,uint256,bool,uint256)",
+      "selector": "0xcf69f63a",
       "stateMutability": "nonpayable",
       "inputs": [
         {
           "name": "assets",
+          "type": "uint256"
+        },
+        {
+          "name": "minCommitment",
+          "type": "uint256"
+        },
+        {
+          "name": "maxCommitment",
+          "type": "uint256"
+        },
+        {
+          "name": "allowPendingActivation",
+          "type": "bool"
+        },
+        {
+          "name": "deadline",
           "type": "uint256"
         }
       ],
@@ -793,10 +809,19 @@
     },
     {
       "name": "requestExit",
-      "signature": "requestExit()",
-      "selector": "0x7f8e3b4e",
+      "signature": "requestExit(uint256,uint256)",
+      "selector": "0xbb77c1f5",
       "stateMutability": "nonpayable",
-      "inputs": [],
+      "inputs": [
+        {
+          "name": "maxDeferralEpochs",
+          "type": "uint256"
+        },
+        {
+          "name": "deadline",
+          "type": "uint256"
+        }
+      ],
       "outputs": [
         {
           "name": "maturityEpoch",
@@ -996,12 +1021,20 @@
     },
     {
       "name": "takeAuction",
-      "signature": "takeAuction(uint256)",
-      "selector": "0x34ad92e6",
+      "signature": "takeAuction(uint256,uint256,uint256)",
+      "selector": "0xc011a6cc",
       "stateMutability": "nonpayable",
       "inputs": [
         {
           "name": "maxFillAmount",
+          "type": "uint256"
+        },
+        {
+          "name": "minMarginAward",
+          "type": "uint256"
+        },
+        {
+          "name": "deadline",
           "type": "uint256"
         }
       ],
@@ -1241,7 +1274,7 @@
     },
     {
       "name": "EpochCallOpened",
-      "signature": "EpochCallOpened(uint256,uint256,uint256)",
+      "signature": "EpochCallOpened(uint256,uint256,uint256,uint256)",
       "anonymous": false,
       "inputs": [
         {
@@ -1256,6 +1289,11 @@
         },
         {
           "name": "commitmentDenominator",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "marginPrice",
           "type": "uint256",
           "indexed": false
         }
@@ -1682,8 +1720,18 @@
       "inputs": []
     },
     {
+      "name": "DeadlineExpired",
+      "signature": "DeadlineExpired()",
+      "inputs": []
+    },
+    {
       "name": "ExitCapacityReached",
       "signature": "ExitCapacityReached()",
+      "inputs": []
+    },
+    {
+      "name": "ExitDeferralExceeded",
+      "signature": "ExitDeferralExceeded()",
       "inputs": []
     },
     {
@@ -1704,6 +1752,11 @@
     {
       "name": "FundingTopUpExcessive",
       "signature": "FundingTopUpExcessive()",
+      "inputs": []
+    },
+    {
+      "name": "InsufficientMarginAward",
+      "signature": "InsufficientMarginAward()",
       "inputs": []
     },
     {

@@ -77,7 +77,8 @@ library LCCTypesLib {
         bool exitRequested;
         bool exitClaimed;
         bool exitMatured;
-        // Activation epoch of the account's latest deposit; funding of any kind never touches it.
+        // Later of the latest deposit activation and creation epoch of the latest nonzero return-pool re-credit,
+        // whether paired or margin-only; funding never touches it.
         uint64 commitmentStartEpoch;
     }
 

@@ -8,7 +8,7 @@ contract LCCGasDepositBenchmarkTest is LCCBase {
     function testGasDeposit() public {
         vm.prank(alice);
         uint256 gasBefore = gasleft();
-        vault.deposit(100e18);
+        vault.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
         emit log_named_uint("deposit", gasBefore - gasleft());
     }
 }
@@ -77,7 +77,7 @@ contract LCCGasAuctionFillBenchmarkTest is LCCBase {
     function testGasAuctionFill() public {
         vm.prank(carol);
         uint256 gasBefore = gasleft();
-        vault.takeAuction(50e18);
+        vault.takeAuction(50e18, 0, type(uint256).max);
         emit log_named_uint("auction fill", gasBefore - gasleft());
     }
 }
@@ -91,7 +91,7 @@ contract LCCGasRequestExitBenchmarkTest is LCCBase {
     function testGasRequestExit() public {
         vm.prank(alice);
         uint256 gasBefore = gasleft();
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
         emit log_named_uint("request exit", gasBefore - gasleft());
     }
 }
@@ -101,7 +101,7 @@ contract LCCGasClaimExitedMarginBenchmarkTest is LCCBase {
         super.setUp();
         _deposit(alice, 100e18);
         vm.prank(alice);
-        vault.requestExit();
+        vault.requestExit(type(uint256).max, type(uint256).max);
         vm.warp(START + EPOCH);
     }
 
@@ -149,7 +149,7 @@ contract LCCGasFinalizeSlashBenchmarkTest is LCCBase {
 contract LCCGasSynchronizationBenchmarkTest is LCCBase {
     function setUp() public override {
         super.setUp();
-        vm.warp(START + NORMAL);
+        vm.warp(START + NORMAL + PRE_CALL);
         _deposit(alice, 100e18);
         vm.warp(START + EPOCH);
     }

@@ -172,15 +172,37 @@ contract LCCAuctionLibTest is Test {
         assertEq(commitment, Math.mulDiv(expectedValue, BPS, marginRatioBps));
     }
 
-    function testDisposeValuationClampsMarginAndCommitmentProRata() public {
+    function testDisposeValuationClampsMarginBeforeValuingCommitment() public {
         OracleMock oracle = new OracleMock();
         oracle.setPrice(ORACLE_PRICE_SCALE);
 
         (uint256 returnPool, uint256 returnCommitment) = LCCAuctionLib.disposeValuation(
-            100e18, 0, 0, address(oracle), false, 5_000, uint256(type(uint128).max) - 25e18, type(uint256).max, 1
+            100e18,
+            0,
+            0,
+            ORACLE_PRICE_SCALE,
+            address(oracle),
+            false,
+            false,
+            5_000,
+            uint256(type(uint128).max) - 25e18,
+            type(uint256).max,
+            1
         );
 
         assertEq(returnPool, 25e18);
+        assertEq(returnCommitment, 50e18);
+    }
+
+    function testDisposeValuationCommitmentClampPreservesNonzeroPool() public {
+        OracleMock oracle = new OracleMock();
+        oracle.setPrice(ORACLE_PRICE_SCALE);
+
+        (uint256 returnPool, uint256 returnCommitment) = LCCAuctionLib.disposeValuation(
+            100e18, 0, 0, ORACLE_PRICE_SCALE, address(oracle), false, false, 5_000, 0, 50e18, 1
+        );
+
+        assertEq(returnPool, 100e18);
         assertEq(returnCommitment, 50e18);
     }
 }

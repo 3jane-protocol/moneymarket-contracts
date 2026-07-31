@@ -58,8 +58,10 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
             handlerActors[i] = address(uint160(uint256(keccak256(abi.encode("debt-floor-actor", i - 1)))));
         }
         conduit = makeAddr("debt-floor-conduit");
-        vm.prank(management);
+        vm.startPrank(management);
         usd3Strategy.setRingFenceConduit(conduit, true);
+        usd3Strategy.setSupplyCapExempt(conduit, true);
+        vm.stopPrank();
 
         handler = new DebtFloorHandler(
             address(usd3Strategy),
@@ -109,11 +111,12 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
 
     function invariant_depositLimitTracksSubordinationCap() public view {
         uint256 capUsdc = susd3Strategy.getSubordinatedDebtCapInUSDC();
-        uint256 holdingsUsdc = ITokenizedStrategy(address(usd3Strategy))
-            .convertToAssets(IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)));
+        uint256 susd3Usd3Balance = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        uint256 holdingsUsdc = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(susd3Usd3Balance);
 
         uint256 expectedLimit;
-        if (capUsdc > holdingsUsdc) {
+        if (susd3Usd3Balance + 2 >= ITokenizedStrategy(address(susd3Strategy)).totalAssets() && capUsdc > holdingsUsdc)
+        {
             expectedLimit = ITokenizedStrategy(address(usd3Strategy)).convertToShares(capUsdc - holdingsUsdc);
         }
 
