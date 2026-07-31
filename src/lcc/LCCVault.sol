@@ -158,10 +158,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// in practice. The vault holds no fundingAsset or USD3 between transactions, so the allowances expose no idle
     /// balance.
     function initialize(VaultParams calldata params) external initializer {
-        LCCConfigLib.validate(params);
+        uint256 auctionStepDuration_ = LCCConfigLib.validate(params);
         _transferOwnership(params.owner);
-
-        uint256 auctionStepDuration_ = LCCConfigLib.auctionStepDuration(params);
 
         fundingAsset.forceApprove(address(usd3), type(uint256).max);
         IERC20(address(usd3)).forceApprove(address(notificationVault), type(uint256).max);
@@ -221,13 +219,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
     /// @inheritdoc ILCCVault
     function phaseEndsAt(uint256 epoch, Phase phase) external view returns (uint256) {
-        uint256 start = _epochStart(epoch);
-        LCCTypesLib.ClockConfig memory clock = _clockConfig;
-        uint256 effectiveEnd;
-        if (phase == Phase.Normal) effectiveEnd = start + clock.normalDuration;
-        else if (phase == Phase.PreCall) effectiveEnd = start + clock.normalDuration + clock.preCallDuration;
-        else if (phase == Phase.Funding) effectiveEnd = _fundingDeadline(epoch);
-        else effectiveEnd = start + clock.epochLength;
+        uint256 effectiveEnd = _phaseEnd(epoch, phase);
         return effectiveEnd + (block.timestamp - _now()); // deliberate wall-clock read
     }
 
@@ -308,7 +300,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     function setMarginOracle(address newOracle) external onlyOwner {
         if (newOracle == address(0)) revert LCCErrorsLib.ZeroAddress();
         uint256 auctionSlot = _syncState.pendingAuctionEpochPlusOne;
-        if (auctionSlot != 0 && !_pause.paused && _now() < _epochStart(auctionSlot - 1) + _clockConfig.epochLength) {
+        if (auctionSlot != 0 && !_pause.paused && _now() < _phaseEnd(auctionSlot - 1, Phase.Closed)) {
             try IOracle(_auctionConfig.marginOracle).price() returns (uint256 oldPrice) {
                 if (oldPrice != 0) revert LCCErrorsLib.InvalidPhase();
             } catch {}
@@ -927,7 +919,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
             // falls through to treasury and the shortfall fails cleanly.
             if (
                 shortfallAmount != 0 && _riskConfig.maxAuctionAwardBps != 0 && !_shutdown.active
-                    && _now() < _epochStart(epoch) + _clockConfig.epochLength
+                    && _now() < _phaseEnd(epoch, Phase.Closed)
             ) {
                 epochAuctions[epoch] = LCCAuctionLib.AuctionState({
                     shortfallAmount: shortfallAmount.toUint128(),
@@ -957,7 +949,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         if (slot == 0) return;
 
         uint256 epoch = slot - 1;
-        if (!_shutdown.active && _now() < _epochStart(epoch) + _clockConfig.epochLength) return;
+        if (!_shutdown.active && _now() < _phaseEnd(epoch, Phase.Closed)) return;
         _settleAuction(epoch);
     }
 
@@ -1441,13 +1433,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     }
 
     function _phaseAt(uint256 timestamp) internal view returns (Phase) {
-        LCCTypesLib.ClockConfig memory clock = _clockConfig;
-        uint256 startTimestamp = clock.startTimestamp;
-        uint256 elapsed = timestamp >= startTimestamp ? (timestamp - startTimestamp) % clock.epochLength : 0;
-        if (elapsed < clock.normalDuration) return Phase.Normal;
-        if (elapsed < clock.normalDuration + clock.preCallDuration) return Phase.PreCall;
-        if (elapsed < clock.normalDuration + clock.preCallDuration + clock.fundingDuration) return Phase.Funding;
-        return Phase.Closed;
+        return Phase(LCCAuctionLib.phaseAt(timestamp, _packedClockConfig()));
     }
 
     function _currentEpoch() internal view returns (uint256) {
@@ -1483,14 +1469,17 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         return frozenAt - p.pausedAccumulated;
     }
 
-    function _epochStart(uint256 epoch) internal view returns (uint256) {
-        LCCTypesLib.ClockConfig memory clock = _clockConfig;
-        return uint256(clock.startTimestamp) + epoch * uint256(clock.epochLength);
+    function _phaseEnd(uint256 epoch, Phase phase) internal view returns (uint256) {
+        return LCCAuctionLib.phaseEndsAt(epoch, uint8(phase), _packedClockConfig());
     }
 
     function _fundingDeadline(uint256 epoch) internal view returns (uint256) {
-        return
-            _epochStart(epoch) + _clockConfig.normalDuration + _clockConfig.preCallDuration
-                + _clockConfig.fundingDuration;
+        return _phaseEnd(epoch, Phase.Funding);
+    }
+
+    function _packedClockConfig() internal view returns (uint256 packedClock) {
+        assembly {
+            packedClock := sload(_clockConfig.slot)
+        }
     }
 }

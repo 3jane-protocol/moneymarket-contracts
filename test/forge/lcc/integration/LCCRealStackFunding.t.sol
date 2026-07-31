@@ -157,6 +157,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
     );
 
     string internal constant AUCTION_LIB_FQN = "src/lcc/libraries/LCCAuctionLib.sol:LCCAuctionLib";
+    string internal constant CONFIG_LIB_FQN = "src/lcc/libraries/LCCConfigLib.sol:LCCConfigLib";
 
     uint256 internal constant ORACLE_PRICE_SCALE = 1e36;
     uint256 internal constant USD3_SUPPLY_CAP = 100e6;
@@ -684,19 +685,24 @@ contract LCCRealStackFundingIntegrationTest is Setup {
     {
         string memory outDir = vm.envOr("FOUNDRY_OUT", string("out"));
         string memory auctionArtifact = string.concat(outDir, "/LCCAuctionLib.sol/LCCAuctionLib.json");
+        string memory configArtifact = string.concat(outDir, "/LCCConfigLib.sol/LCCConfigLib.json");
         string memory vaultArtifact = string.concat(outDir, "/LCCVault.sol/LCCVault.json");
 
         // Use the explicit artifact path because the LCC size profile emits a second artifact with the same FQN.
         address auctionLibrary = vm.deployCode(auctionArtifact);
+        address configLibrary = vm.deployCode(configArtifact);
 
         // The test profile artifact is via-IR-OFF and non-canonical. The same test exercises the canonical via-IR
         // release settings when it runs under the test-lcc-ir profile.
         string memory artifact = vm.readFile(vaultArtifact);
         string memory hexCode = vm.parseJsonString(artifact, ".bytecode.object");
-        string memory placeholder = string.concat("__$", _hexN(keccak256(bytes(AUCTION_LIB_FQN)), 17), "$__");
-        require(vm.contains(hexCode, placeholder), "LCC link placeholder not found");
+        string memory auctionPlaceholder = string.concat("__$", _hexN(keccak256(bytes(AUCTION_LIB_FQN)), 17), "$__");
+        string memory configPlaceholder = string.concat("__$", _hexN(keccak256(bytes(CONFIG_LIB_FQN)), 17), "$__");
+        require(vm.contains(hexCode, auctionPlaceholder), "LCCAuctionLib link placeholder not found");
+        require(vm.contains(hexCode, configPlaceholder), "LCCConfigLib link placeholder not found");
 
-        hexCode = vm.replace(hexCode, placeholder, _hexAddress(auctionLibrary));
+        hexCode = vm.replace(hexCode, auctionPlaceholder, _hexAddress(auctionLibrary));
+        hexCode = vm.replace(hexCode, configPlaceholder, _hexAddress(configLibrary));
         require(!vm.contains(hexCode, "__$"), "unlinked references remain");
 
         bytes memory initCode = abi.encodePacked(vm.parseBytes(hexCode), abi.encode(notificationVault_, treasury_));

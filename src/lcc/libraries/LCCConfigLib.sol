@@ -18,13 +18,15 @@ library LCCConfigLib {
     /// remainder can produce live indices at or above the configured count; the maximum live index is
     /// `(closedWindow - 1) / stepDuration`. Kept next to `validate`'s constraints so the formula and bounds move
     /// together.
-    function auctionStepDuration(ILCCVault.VaultParams calldata params) internal pure returns (uint256) {
+    function auctionStepDuration(ILCCVault.VaultParams calldata params) public pure returns (uint256) {
         if (params.auctionStepCount == 0) return 0;
         uint256 phaseDurations = params.normalDuration + params.preCallDuration + params.fundingDuration;
         return (params.epochLength - phaseDurations) / params.auctionStepCount;
     }
 
-    function validate(ILCCVault.VaultParams calldata params) internal pure {
+    /// @notice Validates initializer parameters and returns the derived auction step duration.
+    /// @return auctionStepDuration_ Seconds per auction price step, or zero when auctions are disabled.
+    function validate(ILCCVault.VaultParams calldata params) public pure returns (uint256 auctionStepDuration_) {
         if (params.owner == address(0) || params.marginAsset == address(0) || params.marginOracle == address(0)) {
             revert LCCErrorsLib.ZeroAddress();
         }
@@ -81,6 +83,7 @@ library LCCConfigLib {
             uint256 phaseDurations = params.normalDuration + params.preCallDuration + params.fundingDuration;
             if (phaseDurations >= params.epochLength) revert LCCErrorsLib.InvalidParams();
             if (params.auctionStepCount > params.epochLength - phaseDurations) revert LCCErrorsLib.InvalidParams();
+            auctionStepDuration_ = (params.epochLength - phaseDurations) / params.auctionStepCount;
         }
     }
 }

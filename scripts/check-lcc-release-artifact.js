@@ -8,6 +8,11 @@ const EXPECTED_NOTIFICATION_VAULT_OPTIMIZER_RUNS = 999999;
 const MAX_RUNTIME_BYTES = 24_276;
 const EIP_170_LIMIT = 24_576;
 const AUCTION_LIBRARY_SOURCE = "src/lcc/libraries/LCCAuctionLib.sol";
+const CONFIG_LIBRARY_SOURCE = "src/lcc/libraries/LCCConfigLib.sol";
+const EXPECTED_LINKED_LIBRARIES = new Map([
+  [AUCTION_LIBRARY_SOURCE, "LCCAuctionLib"],
+  [CONFIG_LIBRARY_SOURCE, "LCCConfigLib"],
+]);
 const STORAGE_LAYOUT_BASELINE = "docs/lcc-vault-storage-layout.json";
 const ABI_BASELINE = "docs/lcc-vault-abi-baseline.json";
 const NEGATIVE_FIXTURE_DIRECTORY = "scripts/fixtures/lcc-storage-layout";
@@ -63,7 +68,9 @@ function resolveArtifactByCompiler(outputDirectory, sourceName, contractName, ex
   const matchingArtifact = candidates.find((candidate) => candidate.metadata?.compiler?.version === expectedCompiler);
 
   if (!matchingArtifact) {
-    const foundVersions = [...new Set(candidates.map((candidate) => candidate.metadata?.compiler?.version ?? "unknown"))]
+    const foundVersions = [
+      ...new Set(candidates.map((candidate) => candidate.metadata?.compiler?.version ?? "unknown")),
+    ]
       .sort()
       .join(", ");
     fail(
@@ -87,13 +94,17 @@ function assertArtifactSettings(contractName, metadata, expected) {
     fail(`${contractName}: expected via IR ${expected.viaIR}, found ${settings?.viaIR}`);
   }
   if (settings?.optimizer?.enabled !== expected.optimizerEnabled) {
-    fail(`${contractName}: expected optimizer enabled ${expected.optimizerEnabled}, found ${settings?.optimizer?.enabled}`);
+    fail(
+      `${contractName}: expected optimizer enabled ${expected.optimizerEnabled}, found ${settings?.optimizer?.enabled}`,
+    );
   }
   if (settings?.optimizer?.runs !== expected.optimizerRuns) {
     fail(`${contractName}: expected ${expected.optimizerRuns} optimizer runs, found ${settings?.optimizer?.runs}`);
   }
   if (settings?.metadata?.bytecodeHash !== expected.bytecodeHash) {
-    fail(`${contractName}: expected metadata bytecode hash ${expected.bytecodeHash}, found ${settings?.metadata?.bytecodeHash}`);
+    fail(
+      `${contractName}: expected metadata bytecode hash ${expected.bytecodeHash}, found ${settings?.metadata?.bytecodeHash}`,
+    );
   }
 }
 
@@ -232,7 +243,9 @@ function canonicalAbi(abi, methodIdentifiers) {
 function firstDifference(expected, actual, location = "layout") {
   if (typeof expected !== typeof actual) return `${location}: expected ${typeof expected}, found ${typeof actual}`;
   if (expected === null || actual === null || typeof expected !== "object") {
-    return expected === actual ? undefined : `${location}: expected ${JSON.stringify(expected)}, found ${JSON.stringify(actual)}`;
+    return expected === actual
+      ? undefined
+      : `${location}: expected ${JSON.stringify(expected)}, found ${JSON.stringify(actual)}`;
   }
   if (Array.isArray(expected) !== Array.isArray(actual)) return `${location}: array/object mismatch`;
 
@@ -309,12 +322,14 @@ if (runtimeBytes > MAX_RUNTIME_BYTES) {
 
 const linkReferences = artifact.deployedBytecode?.linkReferences ?? {};
 const linkedSources = Object.keys(linkReferences);
-if (
-  linkedSources.length !== 1 ||
-  linkedSources[0] !== AUCTION_LIBRARY_SOURCE ||
-  Object.keys(linkReferences[AUCTION_LIBRARY_SOURCE]).join(",") !== "LCCAuctionLib"
-) {
-  fail(`expected LCCAuctionLib as the sole link reference, found ${linkedSources.join(", ") || "none"}`);
+const hasExpectedLinkReferences =
+  linkedSources.length === EXPECTED_LINKED_LIBRARIES.size &&
+  [...EXPECTED_LINKED_LIBRARIES].every(
+    ([source, library]) =>
+      Object.hasOwn(linkReferences, source) && Object.keys(linkReferences[source]).join(",") === library,
+  );
+if (!hasExpectedLinkReferences) {
+  fail(`expected exactly LCCAuctionLib and LCCConfigLib link references, found ${linkedSources.join(", ") || "none"}`);
 }
 
 let layoutResult;
@@ -362,6 +377,7 @@ assertArtifactSettings("NotificationVault", notificationVaultArtifact.metadata, 
 
 console.log(
   `LCCVault release artifact: ${runtimeBytes} bytes, ${EIP_170_LIMIT - runtimeBytes} bytes below EIP-170, ` +
-    `${EXPECTED_OPTIMIZER_RUNS} runs; storage layout and external ABI match reviewer-controlled baselines; ` +
+    `${EXPECTED_OPTIMIZER_RUNS} runs; LCCAuctionLib and LCCConfigLib link references present; ` +
+    `storage layout and external ABI match reviewer-controlled baselines; ` +
     `NotificationVault artifact matches the canonical compiler, Shanghai EVM, via-IR, optimizer, and metadata settings`,
 );

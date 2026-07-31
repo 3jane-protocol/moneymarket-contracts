@@ -41,7 +41,7 @@ funds calls and auction fills. The worked examples below use symbolic round numb
 | `LCCVaultFactory.sol`            | Owner-gated `BeaconProxy` deployment + provenance registry                |
 | `interfaces/ILCCVault.sol`       | External API, structs, and per-function NatSpec (the API reference)       |
 | `libraries/LCCAuctionLib.sol`    | Stateless auction pricing math; externally linked into the implementation |
-| `libraries/LCCConfigLib.sol`     | `initialize` parameter validation and derived auction step duration       |
+| `libraries/LCCConfigLib.sol`     | Externally linked validation and derived auction step duration            |
 | `libraries/LCCAccountLib.sol`    | Pure in-memory account transitions (activate, mature, default, clear)     |
 | `libraries/LCCBucketListLib.sol` | Sparse epoch-keyed bucket lists with swap-remove and 1-based index maps   |
 | `libraries/LCCTypesLib.sol`      | Packed storage structs (upgrade-frozen layout)                            |
@@ -553,7 +553,8 @@ margin, and already-matured claimable exit margin, bypassing the maturity and `m
 flowchart TD
     TL["3Jane 7-day timelock"] -->|owns| BE["UpgradeableBeacon"]
     BE -->|points at| IMPL["LCCVault implementation<br/>(immutables: notificationVault, usd3, fundingAsset, treasury)"]
-    LIB["LCCAuctionLib"] -.->|external link| IMPL
+    ALIB["LCCAuctionLib"] -.->|external link| IMPL
+    CLIB["LCCConfigLib"] -.->|external link| IMPL
     FO["factory owner"] -->|owns| FAC["LCCVaultFactory"]
     FAC -->|createVault| P1["BeaconProxy vault A"]
     FAC -->|createVault| P2["BeaconProxy vault B"]
@@ -562,9 +563,9 @@ flowchart TD
     RP["unregistered proxy"] -.->|anyone can point| BE
 ```
 
-`LCCAuctionLib` is the only externally linked library in the shared `LCCVault` implementation. The canonical Forge
+`LCCAuctionLib` and `LCCConfigLib` are the two externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-24,250 bytes, 26 bytes below the 24,276-byte release ceiling and 326 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+23,697 bytes, 579 bytes below the 24,276-byte release ceiling and 879 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls
@@ -572,7 +573,7 @@ implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fun
 calldata; per-facility params live in proxy storage. The factory registry (`isVault` / `allVaults`) records owner-vetted
 **provenance only** — the beacon is public, so anyone can point an unregistered proxy at it. Packed structs in
 `LCCTypesLib` are upgrade-frozen layout; the initial layout retains a 49-slot `__gap` after the treasury accrual slot, and new state must consume it;
-`LCCAuctionLib` must be re-linked on every
+Both `LCCAuctionLib` and `LCCConfigLib` must be re-linked on every
 implementation redeploy. `yarn build:forge:size` embeds the build-profile storage layout in the canonical artifact
 and recursively compares its complete type graph against the reviewer-controlled
 `docs/lcc-vault-storage-layout.json`; the checker never regenerates that baseline. The full upgrade checklist of
