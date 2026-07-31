@@ -92,7 +92,7 @@ contract USD3 is BaseHooksUpgradeable {
 
     mapping(address => uint256) private __deprecated_depositTimestamp;
 
-    /// @notice Receivers that bypass USD3 supply-cap headroom and first-time minimum-deposit checks.
+    /// @notice Receivers whose self-deposits bypass USD3 supply-cap headroom and first-time minimum-deposit checks.
     mapping(address => bool) public supplyCapExempt;
 
     /// @notice Conduits whose self-deposits add to the ring-fenced liquidity accumulator.
@@ -525,7 +525,7 @@ contract USD3 is BaseHooksUpgradeable {
                         HOOKS IMPLEMENTATION
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Pre-deposit hook to enforce the first-time minimum deposit
+    /// @dev Requires exempt receivers to self-deposit and enforces the first-time minimum for non-exempt receivers.
     function _preDepositHook(uint256 assets, uint256 shares, address receiver) internal override {
         if (assets == 0 && shares > 0) {
             assets = TokenizedStrategy.previewMint(shares);
@@ -536,9 +536,12 @@ contract USD3 is BaseHooksUpgradeable {
             assets = asset.balanceOf(msg.sender);
         }
 
+        bool exempt = supplyCapExempt[receiver];
+        require(!exempt || msg.sender == receiver, "!self");
+
         // Enforce minimum deposit only for first-time depositors
         uint256 currentBalance = TokenizedStrategy.balanceOf(receiver);
-        if (currentBalance == 0 && !supplyCapExempt[receiver]) {
+        if (currentBalance == 0 && !exempt) {
             require(assets >= minDeposit, "<min");
         }
     }
@@ -712,9 +715,17 @@ contract USD3 is BaseHooksUpgradeable {
 
     /**
      * @notice Update supply-cap and first-time minimum-deposit exemption status for a receiver.
+     * @dev An exempt receiver may only be deposited to by itself. Granting this flag to a router or aggregator that
+     * deposits on behalf of users makes those deposits revert. For example, exempting Helper breaks its non-hop path
+     * for every retail user because Helper deposits to the user, while its hop path keeps working because Helper
+     * deposits to itself; there is no signal at the Helper layer that only one path is broken.
+     * @dev Pair this flag operationally with `ringFenceConduit`. When both flags are set, every accepted deposit is a
+     * self-deposit and receives ring-fence credit. Revoking this exemption while leaving the conduit flag set permits
+     * third-party deposits that receive no ring-fence credit. LCC deployment grants both flags atomically; revoke them
+     * atomically as well.
      * @param _account Receiver address to update.
-     * @param _exempt True to bypass supply-cap headroom and first-time minimum-deposit checks, false to remove
-     * exemption.
+     * @param _exempt True to require self-deposits that bypass supply-cap headroom and first-time minimum-deposit
+     * checks; false to allow third-party deposits and apply the ordinary checks.
      */
     function setSupplyCapExempt(address _account, bool _exempt) external onlyManagement {
         supplyCapExempt[_account] = _exempt;
@@ -723,6 +734,10 @@ contract USD3 is BaseHooksUpgradeable {
 
     /**
      * @notice Update whether a conduit self-deposit adds to ring-fenced liquidity.
+     * @dev Pair this flag operationally with `supplyCapExempt`. When both flags are set, every accepted deposit is a
+     * self-deposit and receives ring-fence credit. Revoking the exemption while leaving this conduit flag set permits
+     * third-party deposits that receive no ring-fence credit. LCC deployment grants both flags atomically; revoke them
+     * atomically as well.
      * @param _conduit Receiver address to update.
      * @param _enabled True to accumulate self-deposits into the ring fence, false to disable accumulation.
      */
