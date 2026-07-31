@@ -10,13 +10,13 @@ contract MorphoCreditMock is MorphoCredit {
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address _protocolConfig) MorphoCredit(_protocolConfig) {}
 
-    /// @dev Override _beforeSupply to do nothing (remove usd3 restriction)
+    /// @dev Override _beforeSupply to remove the usd3 restriction while retaining lending safety checks.
     function _beforeSupply(MarketParams memory, Id id, address onBehalf, uint256, uint256, bytes calldata)
         internal
         virtual
         override
     {
-        // Do nothing - remove usd3 restriction for testing
+        _requireNewLendingAllowed(id);
     }
 
     /// @dev Override _beforeWithdraw to do nothing (remove usd3 restriction)
@@ -28,6 +28,7 @@ contract MorphoCreditMock is MorphoCredit {
     function _beforeBorrow(MarketParams memory, Id id, address onBehalf, uint256, uint256) internal virtual override {
         // Remove helper and paused restrictions for testing
         // Keep the market freeze check, repayment status check and premium accrual
+        _requireNewLendingAllowed(id);
         if (_isMarketFrozen(id)) revert ErrorsLib.MarketFrozen();
 
         (RepaymentStatus status,) = getRepaymentStatus(id, onBehalf);

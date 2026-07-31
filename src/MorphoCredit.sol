@@ -78,8 +78,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Markdown state for tracking defaulted debt value reduction
     mapping(Id => mapping(address => MarkdownState)) public markdownState;
 
-    /// @dev Storage gap for future upgrades (14 slots).
-    uint256[14] private __gap;
+    /// @inheritdoc IMorphoCredit
+    mapping(Id => bool) public marketInWindDown;
+
+    /// @dev Storage gap for future upgrades (13 slots).
+    uint256[13] private __gap;
 
     /* CONSTANTS */
 
@@ -90,6 +93,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @notice Maximum basis points (100%)
     uint256 internal constant MAX_BPS = 10000;
+
+    /// @notice Maximum supply shares, including virtual shares, per unit of supply assets.
+    uint256 internal constant SUPPLY_SHARE_PRICE_FLOOR_RATIO = 1e15;
 
     /* INITIALIZER */
 
@@ -116,6 +122,22 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc IMorphoCredit
     function setUsd3(address newUsd3) external onlyOwner {
         usd3 = newUsd3;
+    }
+
+    /// @inheritdoc IMorphoCredit
+    function clearMarketWindDown(Id id) external onlyOwner {
+        if (!marketInWindDown[id]) revert ErrorsLib.AlreadySet();
+        Market storage m = market[id];
+        if (
+            uint256(m.totalSupplyShares) + SharesMathLib.VIRTUAL_SHARES
+                > (uint256(m.totalSupplyAssets) + 1) * (SUPPLY_SHARE_PRICE_FLOOR_RATIO / 2)
+        ) {
+            revert ErrorsLib.SupplySharePriceBelowFloor();
+        }
+
+        delete marketInWindDown[id];
+
+        emit EventsLib.MarketWindDownCleared(id);
     }
 
     /* EXTERNAL FUNCTIONS - PREMIUM MANAGEMENT */
@@ -559,6 +581,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         override
     {
         if (msg.sender != usd3) revert ErrorsLib.NotUsd3();
+        _requireNewLendingAllowed(id);
         if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
     }
 
@@ -581,6 +604,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         override
     {
         if (msg.sender != helper) revert ErrorsLib.NotHelper();
+        _requireNewLendingAllowed(id);
         if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
         if (_isMarketFrozen(id)) revert ErrorsLib.MarketFrozen();
 
@@ -765,21 +789,23 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @param id Market ID
     /// @param markdownDelta Change in markdown (positive = increase, negative = decrease)
     function _updateMarketMarkdown(Id id, int256 markdownDelta) internal {
-        if (markdownDelta == 0) return;
-
-        Market memory m = market[id];
+        Market storage m = market[id];
 
         if (markdownDelta > 0) {
             // Markdown increasing (borrower deeper in default)
             uint256 increase = uint256(markdownDelta);
+            uint256 totalSupplyAssets = m.totalSupplyAssets;
+            uint256 minAssets = _minSupplyAssets(m.totalSupplyShares);
+            uint256 available = totalSupplyAssets > minAssets ? totalSupplyAssets - minAssets : 0;
 
-            // Cap at available supply to avoid underflow
-            if (increase > m.totalSupplyAssets) {
-                increase = m.totalSupplyAssets;
+            // Preserve the minimum supply share price and wind down if the markdown reaches the floor.
+            if (increase > available) {
+                increase = available;
+                marketInWindDown[id] = true;
             }
 
             // Apply the reduction to supply and record what was marked down
-            m.totalSupplyAssets = (m.totalSupplyAssets - increase).toUint128();
+            m.totalSupplyAssets = uint128(totalSupplyAssets - increase);
             m.totalMarkdownAmount = (m.totalMarkdownAmount + increase).toUint128();
         } else {
             // Markdown decreasing (borrower repaying/recovering)
@@ -794,8 +820,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             m.totalSupplyAssets = (m.totalSupplyAssets + decrease).toUint128();
             m.totalMarkdownAmount = (m.totalMarkdownAmount - decrease).toUint128();
         }
-
-        market[id] = m;
     }
 
     /// @notice Get borrower's current borrow assets
@@ -873,6 +897,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Apply settlement to storage
     function _applySettlement(Id id, address borrower, uint256 writtenOffShares, uint256 writtenOffAssets) internal {
         uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
+        Market storage m = market[id];
 
         // Clear borrower position and related state
         position[id][borrower].borrowShares = 0;
@@ -882,25 +907,52 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         delete borrowerPremium[id][borrower];
 
         // Update borrow totals
-        market[id].totalBorrowShares = (market[id].totalBorrowShares - writtenOffShares).toUint128();
-        market[id].totalBorrowAssets = (market[id].totalBorrowAssets - writtenOffAssets).toUint128();
+        m.totalBorrowShares = (m.totalBorrowShares - writtenOffShares).toUint128();
+        m.totalBorrowAssets = (m.totalBorrowAssets - writtenOffAssets).toUint128();
 
-        // Apply net supply adjustment
-        uint128 totalSupplyAssets = market[id].totalSupplyAssets;
-        int256 netAdjustment = int256(lastMarkdown) - int256(writtenOffAssets);
-        if (netAdjustment > 0) {
-            market[id].totalSupplyAssets = (totalSupplyAssets + uint256(netAdjustment)).toUint128();
-        } else if (netAdjustment < 0) {
-            uint256 loss = uint256(-netAdjustment);
+        // Apply net supply adjustment. Only the loss direction is applied: when the written-off amount exceeds the
+        // markdown already deducted, the excess is taken from supply assets. The opposite case, where the recorded
+        // markdown exceeds the amount ultimately written off, does not credit the difference back. That case needs
+        // markdown state to go stale, which requires the markdown manager to be unset after a markdown was recorded,
+        // since every repay path otherwise refreshes and re-caps it against current debt. Where it does occur the
+        // repaid value stays in the market without being attributed to supply assets, so suppliers see it as a
+        // permanent reduction rather than a recovery.
+        uint256 totalSupplyAssets = m.totalSupplyAssets;
+        if (writtenOffAssets > lastMarkdown) {
+            uint256 loss = writtenOffAssets - lastMarkdown;
             if (totalSupplyAssets < loss) revert ErrorsLib.InsufficientLiquidity();
-            market[id].totalSupplyAssets = (totalSupplyAssets - loss).toUint128();
+
+            uint256 minAssets = _minSupplyAssets(m.totalSupplyShares);
+            uint256 protectedAssets = minAssets < totalSupplyAssets ? minAssets : totalSupplyAssets;
+            uint256 remainingAssets = totalSupplyAssets - loss;
+
+            if (remainingAssets < protectedAssets) {
+                remainingAssets = protectedAssets;
+                marketInWindDown[id] = true;
+            }
+
+            m.totalSupplyAssets = uint128(remainingAssets);
         }
 
         // Update markdown total
         if (lastMarkdown > 0) {
-            uint128 totalMarkdownAmount = market[id].totalMarkdownAmount;
-            market[id].totalMarkdownAmount =
+            uint128 totalMarkdownAmount = m.totalMarkdownAmount;
+            m.totalMarkdownAmount =
                 totalMarkdownAmount > lastMarkdown ? (totalMarkdownAmount - lastMarkdown).toUint128() : 0;
         }
+    }
+
+    /// @notice Minimum assets required by the supply share-price invariant.
+    function _minSupplyAssets(uint256 totalSupplyShares) internal pure returns (uint256) {
+        return (totalSupplyShares + SharesMathLib.VIRTUAL_SHARES - 1) / SUPPLY_SHARE_PRICE_FLOOR_RATIO;
+    }
+
+    /// @notice Reverts if the market cannot accept new supply or borrowing.
+    function _requireNewLendingAllowed(Id id) internal view {
+        Market storage m = market[id];
+        if (m.totalSupplyAssets < _minSupplyAssets(m.totalSupplyShares)) {
+            revert ErrorsLib.SupplySharePriceBelowFloor();
+        }
+        if (marketInWindDown[id]) revert ErrorsLib.MarketInWindDown();
     }
 }
