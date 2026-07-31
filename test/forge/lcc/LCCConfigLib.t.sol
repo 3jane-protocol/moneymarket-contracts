@@ -139,6 +139,18 @@ contract LCCConfigLibTest is Test {
         validator.validate(params);
     }
 
+    function testValidateAcceptsExitCapBoundariesAtMinimumProtocolCap() public view {
+        ILCCVault.VaultParams memory params = _baseParams();
+        params.marginRatioBps = BPS;
+        params.protocolCommitmentCap = 1;
+        params.userCommitmentCap = 1;
+        params.exitCapBps = MIN_EXIT_CAP_BPS;
+        validator.validate(params);
+
+        params.exitCapBps = BPS;
+        validator.validate(params);
+    }
+
     function testFuzzValidateRejectsDisabledAuctionOnlyFields(ParamSeed memory seed, uint256 field) public {
         ILCCVault.VaultParams memory params = _boundParams(seed);
         params.auctionStepCount = 0;

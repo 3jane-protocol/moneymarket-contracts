@@ -33,13 +33,13 @@ contract LCCPauseMetamorphicTest is LCCBase {
 
         vm.warp(START + 1);
         vm.prank(alice);
-        unpausedRun.deposit(100e18);
+        unpausedRun.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(alice);
-        pausedRun.deposit(100e18);
+        pausedRun.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(bob);
-        unpausedRun.deposit(100e18);
+        unpausedRun.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(bob);
-        pausedRun.deposit(100e18);
+        pausedRun.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
 
         vm.warp(START + NORMAL);
         vm.prank(owner);
@@ -79,11 +79,11 @@ contract LCCPauseMetamorphicTest is LCCBase {
         shift = _maybePause(target, pausePoint, 0, START + 1, shift, duration);
         vm.warp(START + 1 + shift);
         vm.prank(alice);
-        target.deposit(100e18);
+        target.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(bob);
-        target.deposit(50e18);
+        target.deposit(50e18, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(carol);
-        target.deposit(50e18);
+        target.deposit(50e18, 1, type(uint256).max, true, type(uint256).max);
 
         shift = _maybePause(target, pausePoint, 1, START + NORMAL, shift, duration);
         vm.warp(START + NORMAL + shift);
@@ -102,7 +102,7 @@ contract LCCPauseMetamorphicTest is LCCBase {
         shift = _maybePause(target, pausePoint, 4, START + NORMAL + PRE_CALL + FUNDING + 5, shift, duration);
         vm.warp(START + NORMAL + PRE_CALL + FUNDING + 5 + shift);
         vm.prank(carol);
-        target.takeAuction(40e18);
+        target.takeAuction(40e18, 0, type(uint256).max);
 
         shift = _maybePause(target, pausePoint, 5, START + EPOCH, shift, duration);
         vm.warp(START + EPOCH + shift);
@@ -111,7 +111,7 @@ contract LCCPauseMetamorphicTest is LCCBase {
         shift = _maybePause(target, pausePoint, 6, START + EPOCH + 1, shift, duration);
         vm.warp(START + EPOCH + 1 + shift);
         vm.prank(alice);
-        target.requestExit();
+        target.requestExit(type(uint256).max, type(uint256).max);
 
         shift = _maybePause(target, pausePoint, 7, START + 2 * EPOCH, shift, duration);
         vm.warp(START + 2 * EPOCH + shift);

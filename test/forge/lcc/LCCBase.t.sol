@@ -124,6 +124,14 @@ contract LCCRevertingOracle is IOracle {
     }
 }
 
+contract LCCGasGriefingOracle is IOracle {
+    function price() external pure returns (uint256) {
+        assembly {
+            for {} 1 {} { pop(keccak256(0, 0)) }
+        }
+    }
+}
+
 contract LCCAssetOnlyVault {
     address internal immutable asset_;
 
@@ -143,6 +151,8 @@ contract LCCBase is Test {
     uint256 internal constant PRE_CALL = 20;
     uint256 internal constant FUNDING = 20;
     uint256 internal constant CAP = 10_000_000e18;
+    uint256 internal constant MARGIN_PRICE_AT_CALL_OPEN_SLOT = 30;
+    uint256 internal constant USER_COMMITMENT_CAP_AT_CALL_OPEN_SLOT = 31;
 
     address internal owner = makeAddr("owner");
     address internal treasury = makeAddr("treasury");
@@ -326,7 +336,7 @@ contract LCCBase is Test {
 
     function _deposit(address user, uint256 assets) internal returns (uint256 commitment) {
         vm.prank(user);
-        commitment = vault.deposit(assets);
+        commitment = vault.deposit(assets, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function _openCall(uint256 amount) internal {

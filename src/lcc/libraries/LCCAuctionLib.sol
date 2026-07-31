@@ -217,18 +217,31 @@ library LCCAuctionLib {
         commitment = Math.mulDiv(marginValue, BPS, marginRatioBps);
     }
 
+    /// @dev Matches the exact overflow predicate used by `Math.mulDiv` for both valuation stages.
+    function _valuationOverflows(uint256 assets, uint256 price, uint256 marginRatioBps) private pure returns (bool) {
+        (uint256 valueProductHigh,) = Math.mul512(assets, price);
+        if (ORACLE_PRICE_SCALE <= valueProductHigh) return true;
+
+        uint256 marginValue = Math.mulDiv(assets, price, ORACLE_PRICE_SCALE);
+        (uint256 commitmentProductHigh,) = Math.mul512(marginValue, BPS);
+        return marginRatioBps <= commitmentProductHigh;
+    }
+
     /// @notice Values a disposed slash surplus into a return pool and returned commitment.
     /// @dev Charges the slash fee on auction-awarded collateral (capped by the surplus), then values the remainder
-    /// at the margin oracle. Going-concern disposal reverts on a zero oracle price; wind-down disposal treats an
-    /// unreadable, zero, or valuation-overflowing price as zero so recovery can never brick, dropping the pool to
-    /// the treasury instead. The returned commitment is clamped by `headroom` and zeroed below
-    /// `minReturnCommitment`, with the pool scaled down pro-rata to any clamp. The saturating headroom above
-    /// `usedMargin` independently caps the pool before valuation, which scales its paired commitment pro-rata and
-    /// keeps packed aggregate margin in range.
+    /// at the call-open price snapshot. A missing snapshot may consult the live oracle only for an owner-triggered
+    /// recovery. Without that permission, going-concern disposal reverts and wind-down disposal drops the pool to
+    /// treasury. Wind-down also treats an unreadable, zero, or valuation-overflowing selected price as zero so
+    /// recovery can never brick. The returned commitment is clamped by `headroom` and zeroed below
+    /// `minReturnCommitment`; a zero commitment also zeroes the pool so the returned pair is always attributable.
+    /// A nonzero commitment clamp does not reduce the pool. The saturating headroom above `usedMargin`
+    /// independently caps the pool before valuation and keeps packed aggregate margin in range.
     /// @param surplus Unawarded slashed margin being disposed (marginAsset).
     /// @param auctionedMargin Collateral awarded to auction fillers, the fee basis (marginAsset).
     /// @param slashFeeBps Fee on auction-awarded collateral, in bps.
-    /// @param marginOracle The margin oracle consulted for the return-pool valuation.
+    /// @param marginPriceSnapshot Margin-oracle price frozen when the call opened.
+    /// @param marginOracle Live margin oracle used only for an authorized missing-snapshot recovery.
+    /// @param allowOracleFallback Whether the caller is authorized to recover a missing snapshot from the live oracle.
     /// @param windDown True once no future call can use returned commitment (shutdown or closed call window).
     /// @param marginRatioBps Margin ratio leveraging margin value into commitment, in bps.
     /// @param usedMargin Active plus pending margin already occupying packed totals.
@@ -240,7 +253,9 @@ library LCCAuctionLib {
         uint256 surplus,
         uint256 auctionedMargin,
         uint256 slashFeeBps,
+        uint256 marginPriceSnapshot,
         address marginOracle,
+        bool allowOracleFallback,
         bool windDown,
         uint256 marginRatioBps,
         uint256 usedMargin,
@@ -252,18 +267,21 @@ library LCCAuctionLib {
 
         // The oracle is consulted only when there is a return pool to value.
         if (returnPool != 0) {
-            uint256 price;
-            if (windDown) {
-                try IOracle(marginOracle).price() returns (uint256 p) {
-                    price = p;
-                } catch {}
-                // A price large enough to overflow the valuation is treated like a dead oracle so
-                // wind-down can never brick on disposal.
-                if (price > type(uint256).max / returnPool) price = 0;
-            } else {
-                price = IOracle(marginOracle).price();
-                if (price == 0) revert LCCErrorsLib.OraclePriceInvalid();
+            uint256 price = marginPriceSnapshot;
+            if (price == 0 && allowOracleFallback) {
+                if (windDown) {
+                    try IOracle(marginOracle).price() returns (uint256 p) {
+                        price = p;
+                    } catch {}
+                } else {
+                    price = IOracle(marginOracle).price();
+                }
             }
+
+            if (!windDown && price == 0) revert LCCErrorsLib.OraclePriceInvalid();
+            // Apply the overflow guard after selecting either the snapshot or fallback price so a pathological
+            // stored snapshot cannot break wind-down disposal.
+            if (windDown && _valuationOverflows(returnPool, price, marginRatioBps)) price = 0;
 
             if (price == 0) {
                 returnPool = 0;
@@ -271,7 +289,7 @@ library LCCAuctionLib {
                 (, uint256 rawCommitment) = valueAndCommitment(returnPool, price, marginRatioBps);
                 returnCommitment = Math.min(rawCommitment, commitmentHeadroom);
                 if (returnCommitment < minReturnCommitment) returnCommitment = 0;
-                returnPool = returnCommitment == 0 ? 0 : Math.mulDiv(returnPool, returnCommitment, rawCommitment);
+                if (returnCommitment == 0) returnPool = 0;
             }
         }
 

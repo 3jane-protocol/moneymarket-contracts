@@ -10,8 +10,10 @@ library LCCErrorsLib {
     error ZeroAddress();
     /// @notice Thrown when an action is restricted to the owner.
     error NotOwner();
-    /// @notice Thrown when a constructor or setter argument is outside its valid range.
+    /// @notice Thrown when an input parameter is outside its valid range.
     error InvalidParams();
+    /// @notice Thrown when a wall-clock transaction deadline has expired.
+    error DeadlineExpired();
     /// @notice Thrown when an action is attempted that is blocked by emergency shutdown.
     error ShutdownActive();
     /// @notice Thrown when a state-transitioning action is attempted while the vault is paused.
@@ -26,6 +28,8 @@ library LCCErrorsLib {
     error VaultTerminal();
     /// @notice Thrown when an exit request would create more tracked maturity buckets than the vault supports.
     error ExitCapacityReached();
+    /// @notice Thrown when an exit cannot be assigned within the caller's maximum accepted deferral.
+    error ExitDeferralExceeded();
     /// @notice Thrown when depositing while the account has a pending or unclaimed exit.
     error ExitInProgress();
     /// @notice Thrown when a deposit would exceed the protocol-wide or per-account commitment cap.
@@ -62,6 +66,8 @@ library LCCErrorsLib {
     error NotWithdrawable();
     /// @notice Thrown when taking an auction that is not currently live.
     error AuctionNotLive();
+    /// @notice Thrown when an auction fill awards less margin than the caller requires.
+    error InsufficientMarginAward();
     /// @notice Thrown when requesting an exit while the account still holds a pending (not-yet-active) deposit.
     error PendingDepositExists();
     /// @notice Thrown when an account cannot be fully materialized within the per-call step bound.

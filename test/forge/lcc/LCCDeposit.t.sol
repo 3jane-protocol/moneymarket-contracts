@@ -33,8 +33,8 @@ contract LCCDepositTest is LCCBase {
         assertEq(account.pendingMargin, 0);
     }
 
-    function testDepositStagesOutsideNormalAndAggregateBucketActivates() public {
-        vm.warp(START + NORMAL);
+    function testDepositStagesDuringFundingWithoutOpenCallAndAggregateBucketActivates() public {
+        vm.warp(START + NORMAL + PRE_CALL);
         uint256 commitment = _deposit(alice, 100e18);
 
         assertEq(commitment, 200e18);
@@ -58,7 +58,7 @@ contract LCCDepositTest is LCCBase {
         margin.approve(address(vault), type(uint256).max);
         vm.stopPrank();
 
-        vm.warp(START + NORMAL);
+        vm.warp(START + NORMAL + PRE_CALL);
         _deposit(alice, 100e18);
 
         vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
@@ -103,6 +103,93 @@ contract LCCDepositTest is LCCBase {
         vm.expectRevert("ORACLE_DOWN");
         _deposit(alice, 100e18);
     }
+
+    function testCommitmentBoundsRejectOutsideAndAcceptInclusiveEdges() public {
+        vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
+        vm.prank(alice);
+        vault.deposit(100e18, 200e18 + 1, type(uint256).max, true, type(uint256).max);
+
+        vm.prank(alice);
+        assertEq(vault.deposit(100e18, 200e18, type(uint256).max, true, type(uint256).max), 200e18);
+
+        vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
+        vm.prank(bob);
+        vault.deposit(100e18, 1, 200e18 - 1, true, type(uint256).max);
+
+        vm.prank(bob);
+        assertEq(vault.deposit(100e18, 1, 200e18, true, type(uint256).max), 200e18);
+    }
+
+    function testInvalidCommitmentBoundsRevert() public {
+        vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
+        vm.prank(alice);
+        vault.deposit(100e18, 0, 200e18, true, type(uint256).max);
+
+        vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
+        vm.prank(alice);
+        vault.deposit(100e18, 200e18 + 1, 200e18, true, type(uint256).max);
+    }
+
+    function testWallClockDeadlineRejectsExpiredAndAcceptsInclusiveDeadline() public {
+        vm.expectRevert(LCCErrorsLib.DeadlineExpired.selector);
+        vm.prank(alice);
+        vault.deposit(100e18, 200e18, 200e18, true, block.timestamp - 1);
+
+        vm.prank(alice);
+        assertEq(vault.deposit(100e18, 200e18, 200e18, true, block.timestamp), 200e18);
+    }
+
+    function testDepositDeadlineUsesWallClockAfterPause() public {
+        vm.prank(owner);
+        vault.pause();
+        vm.warp(block.timestamp + 100);
+        vm.prank(owner);
+        vault.unpause();
+
+        uint256 effectiveNow = _effectiveTime(vault);
+        uint256 deadline = effectiveNow + 50;
+        assertGt(deadline, effectiveNow);
+        assertLt(deadline, block.timestamp);
+
+        vm.expectRevert(LCCErrorsLib.DeadlineExpired.selector);
+        vm.prank(alice);
+        vault.deposit(100e18, 200e18, 200e18, true, deadline);
+    }
+
+    function testPendingActivationRequiresOptInAtEndOfPreCallBoundary() public {
+        vm.warp(START + NORMAL + PRE_CALL);
+
+        vm.expectRevert(LCCErrorsLib.InvalidPhase.selector);
+        vm.prank(alice);
+        vault.deposit(100e18, 200e18, 200e18, false, type(uint256).max);
+
+        vm.prank(alice);
+        assertEq(vault.deposit(100e18, 200e18, 200e18, true, type(uint256).max), 200e18);
+        assertEq(vault.getAccount(alice).pendingCommitment, 200e18);
+    }
+
+    function testDepositsAllowedDuringPreCallAndOpenedCallButBlockedDuringLiveAuction() public {
+        _deployAuctionVault();
+        _deposit(alice, 100e18);
+        _deposit(bob, 50e18);
+
+        vm.warp(START + NORMAL);
+        _deposit(carol, 25e18);
+        assertEq(vault.getAccount(carol).pendingCommitment, 50e18);
+
+        vm.prank(owner);
+        vault.openEpochCall(0, 100e18);
+        vm.warp(START + NORMAL + PRE_CALL);
+        _deposit(carol, 25e18);
+        assertEq(vault.getAccount(carol).pendingCommitment, 100e18);
+
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
+
+        vm.expectRevert(LCCErrorsLib.InvalidPhase.selector);
+        _deposit(carol, 1e18);
+    }
 }
 
 contract LCCPendingActivationOverflowPoC is LCCBase {
@@ -114,7 +201,7 @@ contract LCCPendingActivationOverflowPoC is LCCBase {
 
         uint256 pendingAmount = 1e18 + 1;
         _deposit(alice, maxPacked - 1e18);
-        vm.warp(START + NORMAL);
+        vm.warp(START + NORMAL + PRE_CALL);
 
         vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
         _deposit(alice, pendingAmount);

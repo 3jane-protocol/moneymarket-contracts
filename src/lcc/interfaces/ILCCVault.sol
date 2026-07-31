@@ -48,16 +48,17 @@ interface ILCCVault {
     /// @param preCallDuration Seconds of the PreCall phase. Bounded to uint32.
     /// @param fundingDuration Seconds of the Funding phase. Bounded to uint32.
     /// @param marginRatioBps Leverage ratio in bps: commitment = marginValue * BPS / marginRatioBps.
-    /// @param protocolCommitmentCap Vault-wide cap on active+pending commitment (fundingAsset); also the base for
-    /// per-epoch exit capacity. Bounded by type(uint128).max.
+    /// @param protocolCommitmentCap Vault-wide cap on active+pending commitment (fundingAsset). The exit-capacity
+    /// denominator is the greater of this cap and aggregate live `activeCommitment`. Bounded by type(uint128).max.
     /// @param userCommitmentCap Per-account cap on active+pending commitment (fundingAsset).
-    /// @param exitCapBps Per-epoch exit capacity as a fraction of `protocolCommitmentCap`, in bps; must satisfy
-    /// `exitCapBps * 64 >= 2 * BPS` (>= 313) and `<= BPS` so honest exit demand stays within the maturity-bucket cap.
+    /// @param exitCapBps Per-epoch exit capacity as a fraction of the exit-capacity denominator, in bps; must satisfy
+    /// `exitCapBps * 64 >= 2 * BPS` (>= 313) and `<= BPS`.
     /// @param exitDelayEpochs Minimum epochs between an exit request and its earliest maturity; at most 64.
-    /// @param minCommitmentEpochs Minimum epochs an account must be committed (counted from its latest deposit's
-    /// activation epoch) before it can request an exit; at most 64, 0 disables the gate. Composed lockup: the
-    /// earliest exit request is commitmentStartEpoch + minCommitmentEpochs and the earliest maturity adds
-    /// exitDelayEpochs. Wind-down claims (shutdown or terminal) bypass the gate.
+    /// @param minCommitmentEpochs Minimum epochs an account must be committed (counted from commitmentStartEpoch,
+    /// the later of its latest deposit activation and the epoch in which its latest nonzero return-pool re-credit,
+    /// paired or margin-only, was created) before it can request an exit; at most 64, 0 disables the gate. Composed
+    /// lockup: the earliest exit request is commitmentStartEpoch + minCommitmentEpochs and the earliest maturity
+    /// adds exitDelayEpochs. Wind-down claims (shutdown or terminal) bypass the gate.
     /// @param minDepositAssets Minimum margin deposit, in marginAsset units.
     /// @param auctionStepCount Divisor used to derive the Closed-window step duration; 0 disables the auction
     /// entirely, otherwise must be at least 2. Because the duration is floor-rounded and the live step index is
@@ -118,8 +119,9 @@ interface ILCCVault {
     /// @param fundingDuration Seconds of the Funding phase.
     /// @param marginRatioBps Leverage ratio in bps.
     /// @param exitDelayEpochs Minimum epochs between exit request and earliest maturity.
-    /// @param minCommitmentEpochs Minimum epochs since the latest deposit activation before an exit request; 0
-    /// disables the gate.
+    /// @param minCommitmentEpochs Minimum epochs since commitmentStartEpoch (the later of the latest deposit
+    /// activation and the creation epoch of the latest nonzero return-pool re-credit, paired or margin-only) before
+    /// an exit request; 0 disables the gate.
     struct EpochConfig {
         uint256 startTimestamp;
         uint256 maxEpochs;
@@ -144,9 +146,10 @@ interface ILCCVault {
     }
 
     /// @notice Mutable risk limits used by deposits, exits, and auction awards.
-    /// @param protocolCommitmentCap Vault-wide cap on active+pending commitment.
+    /// @param protocolCommitmentCap Vault-wide cap on active+pending commitment; exit capacity uses the greater of
+    /// this configured cap and aggregate live `activeCommitment`.
     /// @param userCommitmentCap Per-account cap on active+pending commitment.
-    /// @param exitCapBps Per-epoch exit capacity fraction, in bps.
+    /// @param exitCapBps Per-epoch exit capacity fraction of the configured-cap/live-utilization denominator, in bps.
     /// @param minDepositAssets Minimum margin deposit.
     /// @param maxAuctionAwardBps Oracle-valued auction award cap per fundingAsset filled, in bps.
     /// @param slashFeeBps Fee on auction-awarded slashed margin, clamped to the unawarded surplus, in bps.
@@ -209,8 +212,10 @@ interface ILCCVault {
     /// @param exitMaturityEpoch Epoch at which the requested exit matures (callable until then).
     /// @param exitClaimed True once the matured exit margin has been claimed.
     /// @param exitMatured True once the exit has matured (margin moved to `claimableExitMargin`).
-    /// @param commitmentStartEpoch Activation epoch of the account's latest deposit; the minCommitmentEpochs
-    /// exit gate counts from here. Funding of any kind never changes it.
+    /// @param commitmentStartEpoch Later of the account's latest deposit activation epoch and the epoch in which its
+    /// latest nonzero return-pool re-credit, paired or margin-only, was created, floored at that credit's call epoch
+    /// when no creation epoch is recorded; the minCommitmentEpochs exit gate counts from here. Funding never changes
+    /// it.
     struct Account {
         uint256 activeMargin;
         uint256 activeCommitment;
@@ -247,9 +252,11 @@ interface ILCCVault {
     /// @param slashDisabledByShutdown True if shutdown landed before/within this epoch's funding window, so no
     /// slash is taken.
     /// @param slashedMargin Aggregate margin slashed for this epoch (marginAsset).
-    /// @param returnPool Slashed surplus returned to defaulters after treasury fee, when backed by nonzero
-    /// settlement commitment (marginAsset).
-    /// @param returnCommitment Callable commitment created by `returnPool` at settlement (fundingAsset).
+    /// @param returnPool Slashed surplus returned to defaulters after the treasury fee and aggregate-margin packing
+    /// clamp. Retained in full when backed by nonzero settlement commitment (marginAsset).
+    /// @param returnCommitment Callable commitment paired with `returnPool`, bounded by the call-local slashed
+    /// commitment and, during going concern, current protocol-cap headroom over funded call-open exposure
+    /// (fundingAsset).
     struct EpochState {
         bool callOpened;
         uint256 commitmentDenominator;
@@ -289,19 +296,51 @@ interface ILCCVault {
         external
         view
         returns (address guardian, bool paused, uint64 pausedAt, uint64 pausedAccumulated);
-    /// @notice Deposits margin for the caller, creating a leveraged commitment.
+    /// @notice Deposits margin for the caller, creating a bounded leveraged commitment.
     /// @dev Pulls `assets` of marginAsset from the caller and credits the caller's own account (self-deposit only,
     /// since a deposit creates a callable obligation). Activates immediately during Normal (before a call opens),
-    /// otherwise stages as pending for the next epoch. Reverts under shutdown, on a pending-blocking exit, on a
-    /// zero/sub-minimum amount, on a zero oracle price, or if a cap would be exceeded.
+    /// otherwise stages as pending for the next epoch when permitted. Deposits remain available during PreCall and
+    /// while an opened call is unsettled, but are unavailable while an auction is live. Reverts under shutdown, when
+    /// activation would reach scheduled sunset, on a pending-blocking exit, on an expired wall-clock deadline, on
+    /// invalid commitment bounds, on a zero/sub-minimum amount, on a zero oracle price, or if a cap would be exceeded.
     /// @param assets Margin to deposit (marginAsset).
+    /// @param minCommitment Minimum acceptable commitment, inclusive and nonzero.
+    /// @param maxCommitment Maximum acceptable commitment, inclusive.
+    /// @param allowPendingActivation Whether the deposit may be staged for the next epoch.
+    /// @param deadline Wall-clock timestamp after which the deposit reverts.
     /// @return commitment Commitment created (fundingAsset).
-    function deposit(uint256 assets) external returns (uint256 commitment);
-    /// @notice Requests a full-account exit, assigning the earliest maturity epoch with available exit capacity.
-    /// @dev The account stays callable until maturity. Reverts if an exit is already pending, if the account holds
-    /// pending margin, or if it has no active position.
+    function deposit(
+        uint256 assets,
+        uint256 minCommitment,
+        uint256 maxCommitment,
+        bool allowPendingActivation,
+        uint256 deadline
+    ) external returns (uint256 commitment);
+    /// @notice Requests a full-account exit within caller-supplied maturity-deferral and wall-clock bounds.
+    /// @dev Capacity is at least one funding-asset unit and otherwise `exitCapBps` of the greater of the configured
+    /// protocol cap and aggregate live `activeCommitment`. The live-utilization floor is deliberately path-dependent
+    /// and ensures capacity is never below the configured-cap value at request time, but capacity can decline as
+    /// active commitment declines through amortization or slashing. Aggregate active commitment may conservatively
+    /// include unattributed return commitment, which only widens capacity. The account stays callable until maturity.
+    /// At execution, the earliest available maturity is re-evaluated from the executing `currentEpoch` plus
+    /// `exitDelayEpochs`, and `maxDeferralEpochs` bounds displacement from that maturity: 0 accepts only that maturity
+    /// and `type(uint256).max` accepts any maturity. It therefore bounds displacement within the executing epoch
+    /// rather than pinning an absolute maturity on its own. The two bounds compose: because execution cannot occur
+    /// after `deadline`, the assigned maturity never exceeds the epoch containing `deadline` plus `exitDelayEpochs`
+    /// plus `maxDeferralEpochs`. Shortening `deadline` therefore tightens the absolute guarantee as well as limiting
+    /// mempool staleness. The deferral bound is unrelated to the `maxEpochs` scheduled-sunset configuration.
+    ///
+    /// An account whose commitment exceeds the entire per-epoch capacity uses the oversized-account escape clause
+    /// only inside the `assigned < capacity` guard. It takes the first bucket with any remaining room and therefore
+    /// cannot be guaranteed the earliest bucket. Consequently `maxDeferralEpochs == 0` is systematically most likely
+    /// to revert for the largest positions, contrary to the natural intuition that they receive priority. Reverts if
+    /// the wall-clock deadline has expired, an exit is already pending, the account holds pending margin, or it has
+    /// no active position; cap-raise sequences can still reach the 128-live-bucket limit and revert
+    /// `ExitCapacityReached`.
+    /// @param maxDeferralEpochs Maximum accepted epochs past the earliest available maturity.
+    /// @param deadline Wall-clock timestamp after which the exit request reverts.
     /// @return maturityEpoch The assigned maturity epoch.
-    function requestExit() external returns (uint256 maturityEpoch);
+    function requestExit(uint256 maxDeferralEpochs, uint256 deadline) external returns (uint256 maturityEpoch);
     /// @notice Claims matured exit margin to `receiver`.
     /// @param receiver Recipient of the margin.
     /// @return assets Margin transferred (marginAsset).
@@ -319,10 +358,14 @@ interface ILCCVault {
     function sweepTreasury() external;
     /// @notice Margin accrued for treasury but still held by the vault (marginAsset).
     function pendingTreasuryMargin() external view returns (uint256);
-    /// @notice Owner update of mutable risk caps; applies to future deposits and exit assignments only.
+    /// @notice Owner update of mutable risk caps; configured caps apply to future deposits, while exit capacity is
+    /// recomputed per request from the greater of the configured cap and live active utilization. It can decline with
+    /// live utilization but never below the configured-cap value at that request.
+    /// @dev A strict protocol-cap reduction is blocked while finalized slash surplus awaits auction settlement.
+    /// Protocol-cap increases and updates to the other three parameters remain available in that window.
     /// @param newProtocolCommitmentCap New vault-wide commitment cap (fundingAsset); must be in (0, uint128.max].
     /// @param newUserCommitmentCap New per-account commitment cap (fundingAsset).
-    /// @param newExitCapBps New per-epoch exit capacity, in bps (0 < value <= BPS).
+    /// @param newExitCapBps New per-epoch exit capacity, in bps (313 <= value <= BPS).
     /// @param newMinDeposit New minimum margin deposit (marginAsset).
     function setRiskCaps(
         uint256 newProtocolCommitmentCap,
@@ -352,10 +395,11 @@ interface ILCCVault {
     function unpause() external;
     /// @notice Owner opens the current epoch's capital call during PreCall.
     /// @dev Reverts unless in PreCall of `epoch`, if a prior call is unsettled, if already opened, or if
-    /// `callAmount` exceeds the active-commitment base. Owner guidance: `callAmount` should be meaningful relative to
-    /// the active-commitment base and the account distribution. Because obligations are ceil-rounded per account
-    /// (see `obligationOf`), a dust-sized call can force every account to owe a single funding unit, and any account
-    /// that does not fund then forfeits its full margin under the all-or-nothing slash.
+    /// `callAmount` exceeds the active-commitment base. Reads and snapshots the current margin-oracle price, reverting
+    /// on zero and propagating an oracle revert. Owner guidance: `callAmount` should be meaningful relative to the
+    /// active-commitment base and the account distribution. Because obligations are ceil-rounded per account (see
+    /// `obligationOf`), a dust-sized call can force every account to owe a single funding unit, and any account that
+    /// does not fund then forfeits its full margin under the all-or-nothing slash.
     /// @param epoch Epoch to open the call for (must be current).
     /// @param callAmount Total amount to call (fundingAsset).
     function openEpochCall(uint256 epoch, uint256 callAmount) external;
@@ -389,16 +433,29 @@ interface ILCCVault {
     function fundCall(address user) external returns (uint256 obligationAmount);
     /// @notice Fills up to `maxFillAmount` of the live auction's shortfall in exchange for wrapped USD3n and a
     /// collateral kicker.
-    /// @dev Targets whichever auction is live, following Yearn-take semantics. `maxFillAmount` is the caller's only
-    /// bound; the award is the current ramped pro-rata kicker, capped by `maxAuctionAwardBps` of the fill at the
-    /// fill-time oracle price. Reverts if USD3 or the notification vault cannot accept delivery. If a fill leaves a
-    /// residual smaller than the assets required to mint one USD3 share, the remaining shortfall cannot be filled
-    /// because `maxFillAmount` is a caller ceiling and no top-up is taken; it settles through normal window-end
-    /// disposal without rolling over.
+    /// @dev Targets whichever auction is live, following Yearn-take semantics. The award is the current ramped
+    /// pro-rata kicker, capped by `maxAuctionAwardBps` of the fill at the fill-time oracle price. `minMarginAward` is
+    /// an absolute minimum applied to the award for the actual fill after `maxFillAmount` is clamped to the remaining
+    /// shortfall, not to `maxFillAmount`. A concurrent partial fill can therefore reduce both the caller's fill and
+    /// award enough to revert even when the per-unit award rate is unchanged. Callers seeking execution at a rate
+    /// rather than an absolute total should either size `maxFillAmount` below the observed remaining shortfall to
+    /// leave a contention buffer, or take through an atomic contract that reads the remaining shortfall and computes
+    /// the floor in the same transaction. An off-chain read or simulation, even in the same block, is not atomic with
+    /// inclusion. The floor is deliberately not prorated by `filledAmount / maxFillAmount`: its absolute form lets a
+    /// taker require a minimum notional that covers fixed gas costs, which a prorated floor cannot express. The
+    /// wall-clock `deadline` is checked as the first statement in the function body, after the `synced` modifier
+    /// runs; an expired deadline reverts the modifier's sync work along with the fill. Reverts if USD3 or the
+    /// notification vault cannot accept delivery. If a fill leaves a residual smaller than the assets required to
+    /// mint one USD3 share, the remaining shortfall cannot be filled because `maxFillAmount` is a caller ceiling and
+    /// no top-up is taken; it settles through normal window-end disposal without rolling over.
     /// @param maxFillAmount Maximum shortfall to fill (fundingAsset).
+    /// @param minMarginAward Minimum acceptable collateral kicker (marginAsset).
+    /// @param deadline Wall-clock timestamp after which the transaction reverts.
     /// @return filledAmount Shortfall actually filled (fundingAsset).
     /// @return marginAward Collateral kicker awarded (marginAsset).
-    function takeAuction(uint256 maxFillAmount) external returns (uint256 filledAmount, uint256 marginAward);
+    function takeAuction(uint256 maxFillAmount, uint256 minMarginAward, uint256 deadline)
+        external
+        returns (uint256 filledAmount, uint256 marginAward);
     /// @notice Owner update of the oracle-valued auction award cap.
     /// @dev Reverts above BPS, when set nonzero while auctions are disabled, or while an auction is live.
     /// @param newMaxAuctionAwardBps New award cap per fundingAsset filled, in bps.
@@ -407,13 +464,12 @@ interface ILCCVault {
     /// @param newSlashFeeBps New fee in bps.
     function setSlashFeeBps(uint256 newSlashFeeBps) external;
     /// @notice Owner update of the trusted margin oracle.
-    /// @dev Rotation is owner-trusted and reprices future auction awards and return-pool disposal for every
-    /// unsettled call, not only future calls. `openEpochCall` does not snapshot the oracle. While paused, no fills
-    /// can execute and the owner may rotate even a responsive current oracle before resuming the frozen auction.
-    /// While unpaused, the live-auction guard blocks rotation only while the current oracle still returns a nonzero
-    /// price for fills; a zero-price, reverting, or otherwise unreadable current oracle never blocks rotation. The
-    /// new oracle must return marginAsset-to-fundingAsset (USDC) prices at ORACLE_PRICE_SCALE with matching decimals;
-    /// the vault can only check that the price is nonzero.
+    /// @dev Rotation is owner-trusted and reprices subsequent deposits and auction fills, but not an opened call's
+    /// return-pool commitment. While paused, no fills can execute and the owner may rotate even a responsive current
+    /// oracle before resuming the frozen auction. While unpaused, the live-auction guard blocks rotation only while
+    /// the current oracle still returns a nonzero price for fills; a zero-price, reverting, or otherwise unreadable
+    /// current oracle never blocks rotation. The new oracle must return marginAsset-to-fundingAsset (USDC) prices at
+    /// ORACLE_PRICE_SCALE with matching decimals; the vault can only check that the price is nonzero.
     /// @param newOracle New margin oracle.
     function setMarginOracle(address newOracle) external;
     /// @notice Auction state for an epoch.
