@@ -11,6 +11,7 @@ This directory contains deeper reference docs for engineering and agent workflow
 - `docs/lcc-deferred-epochstate-repack.md`: commit-pinned decision record for the deferred LCC storage repack (NOT implemented).
 - `docs/tech-stack.md`: Toolchain, Foundry profiles, and environment requirements.
 - `docs/deployment.md`: CI workflow behavior and execution model.
+- `docs/operations-runbook.md`: Incident procedures for conditions the contracts do not handle automatically (wiping junior loss, loss report during a waUSDC pause).
 - `docs/doc-gardening.md`: Ongoing documentation maintenance checklist and guardrails.
 
 ## Primary Entry Points
