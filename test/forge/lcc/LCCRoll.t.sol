@@ -89,7 +89,7 @@ contract LCCRollTest is LCCBase {
 
         vm.warp(START + NORMAL + PRE_CALL + FUNDING + 5);
         vm.prank(alice);
-        (uint256 filled, uint256 award) = vault.takeAuction(100e18);
+        (uint256 filled, uint256 award) = vault.takeAuction(100e18, 50e18, type(uint256).max);
         assertEq(filled, 100e18);
         assertEq(award, 50e18);
 

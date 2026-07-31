@@ -72,7 +72,7 @@ contract LCCAuctionTest is LCCBase {
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
 
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(25e18);
+        (, uint256 award) = vault.takeAuction(25e18, 18.75e18, type(uint256).max);
         assertEq(award, 18.75e18);
     }
 
@@ -117,7 +117,7 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(DEADLINE + 4);
 
         vm.prank(carol);
-        (uint256 filled, uint256 award) = vault.takeAuction(10e18);
+        (uint256 filled, uint256 award) = vault.takeAuction(10e18, 0, type(uint256).max);
 
         assertEq(filled, 10e18);
         assertEq(award, 0);
@@ -131,14 +131,14 @@ contract LCCAuctionTest is LCCBase {
         // Step 1 (50% offered = 25e18): fill half the shortfall.
         vm.warp(DEADLINE + 5);
         vm.prank(carol);
-        (uint256 filled1, uint256 award1) = vault.takeAuction(25e18);
+        (uint256 filled1, uint256 award1) = vault.takeAuction(25e18, 12.5e18, type(uint256).max);
         assertEq(filled1, 25e18);
         assertEq(award1, 12.5e18);
 
         // Step 2 (75% offered = 37.5e18): clamp a too-large fill to the 25e18 remaining.
         vm.warp(DEADLINE + 10);
         vm.prank(bob);
-        (uint256 filled2, uint256 award2) = vault.takeAuction(100e18);
+        (uint256 filled2, uint256 award2) = vault.takeAuction(100e18, 18.75e18, type(uint256).max);
         assertEq(filled2, 25e18);
         assertEq(award2, 18.75e18);
 
@@ -156,7 +156,7 @@ contract LCCAuctionTest is LCCBase {
 
         vm.warp(DEADLINE + 5);
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(10e18);
+        (, uint256 award) = vault.takeAuction(10e18, 5e18, type(uint256).max);
         assertEq(award, 5e18);
 
         vm.warp(WINDOW_END);
@@ -172,7 +172,7 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(WINDOW_END + 1);
         vm.expectRevert(LCCErrorsLib.AuctionNotLive.selector);
         vm.prank(carol);
-        vault.takeAuction(1e18);
+        vault.takeAuction(1e18, 0, type(uint256).max);
     }
 
     function testFullFillEndsAuction() public {
@@ -180,13 +180,13 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(DEADLINE + 5);
 
         vm.prank(carol);
-        vault.takeAuction(50e18);
+        vault.takeAuction(50e18, 25e18, type(uint256).max);
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
 
         vm.expectRevert(LCCErrorsLib.AuctionNotLive.selector);
         vm.prank(bob);
-        vault.takeAuction(1e18);
+        vault.takeAuction(1e18, 0, type(uint256).max);
     }
 
     function testMidWindowFullFillMatchesBoundarySettlementWithNextEpochExit() public {
@@ -210,7 +210,7 @@ contract LCCAuctionTest is LCCBase {
 
         vm.warp(DEADLINE + 1);
         vm.prank(bob);
-        (, uint256 award) = vault.takeAuction(type(uint256).max);
+        (, uint256 award) = vault.takeAuction(type(uint256).max, 0, type(uint256).max);
         assertEq(award, 0);
 
         ILCCVault.EpochState memory midWindow = vault.getEpochState(0);
@@ -364,10 +364,166 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(DEADLINE + 10);
 
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(25e18);
+        (, uint256 award) = vault.takeAuction(25e18, 2.5e18, type(uint256).max);
 
         // Ramp award would be 37.5e18 * 25/50 = 18.75e18; cap = 25e18 / 10 = 2.5e18.
         assertEq(award, 2.5e18);
+    }
+
+    function testTakeRevertsWhenOracleMoveErasesQuotedAward() public {
+        _setupShortfallAuction();
+        vm.warp(DEADLINE + 5);
+
+        uint256 fill = 50e18;
+        LCCAuctionLib.AuctionState memory beforeState = vault.getAuctionState(0);
+        uint256 quotedAward = LCCAuctionLib.computeAward(
+            beforeState,
+            fill,
+            5,
+            vault.auctionConfig().auctionStepDuration,
+            vault.auctionConfig().auctionStepDecayRateBps,
+            vault.riskConfig().maxAuctionAwardBps,
+            oracle.price()
+        );
+        assertEq(quotedAward, 25e18);
+
+        oracle.setPrice(ORACLE_PRICE_SCALE * 1e18);
+
+        uint256 usdcBefore = usdc.balanceOf(carol);
+        uint256 marginBefore = margin.balanceOf(carol);
+        vm.expectRevert(LCCErrorsLib.InsufficientMarginAward.selector);
+        vm.prank(carol);
+        vault.takeAuction(fill, quotedAward, type(uint256).max);
+
+        LCCAuctionLib.AuctionState memory afterState = vault.getAuctionState(0);
+        assertEq(afterState.filledAmount, 0);
+        assertEq(afterState.marginAwarded, 0);
+        assertEq(usdc.balanceOf(carol), usdcBefore);
+        assertEq(margin.balanceOf(carol), marginBefore);
+        assertEq(notificationVault.balanceOf(carol), 0);
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
+    }
+
+    function testTakeDeadlineUsesWallClockAfterPause() public {
+        _setupShortfallAuction();
+        vm.warp(DEADLINE + 5);
+
+        vm.prank(owner);
+        vault.pause();
+        vm.warp(DEADLINE + 15);
+        vm.prank(owner);
+        vault.unpause();
+
+        // The effective auction clock is still DEADLINE + 5, but the transaction's wall-clock deadline has expired.
+        vm.expectRevert(LCCErrorsLib.DeadlineExpired.selector);
+        vm.prank(carol);
+        vault.takeAuction(10e18, 0, DEADLINE + 5);
+
+        LCCAuctionLib.AuctionState memory state = vault.getAuctionState(0);
+        assertEq(state.filledAmount, 0);
+        assertEq(state.marginAwarded, 0);
+    }
+
+    function testExpiredTakeDeadlinePrecedesShutdownGuard() public {
+        _setupShortfallAuction();
+        vm.warp(DEADLINE + 5);
+
+        vm.prank(owner);
+        vault.shutdown();
+
+        vm.expectRevert(LCCErrorsLib.DeadlineExpired.selector);
+        vm.prank(carol);
+        vault.takeAuction(10e18, 0, block.timestamp - 1);
+    }
+
+    function testExpiredTakeDeadlinePrecedesAuctionNotLiveGuard() public {
+        vm.warp(START + 1);
+
+        vm.expectRevert(LCCErrorsLib.DeadlineExpired.selector);
+        vm.prank(carol);
+        vault.takeAuction(10e18, 0, START);
+    }
+
+    function testTakeRevertsWhenAwardIsBelowMinimum() public {
+        _setupShortfallAuction();
+        vm.warp(DEADLINE + 5);
+
+        uint256 usdcBefore = usdc.balanceOf(carol);
+        vm.expectRevert(LCCErrorsLib.InsufficientMarginAward.selector);
+        vm.prank(carol);
+        vault.takeAuction(10e18, 5e18 + 1, block.timestamp);
+
+        LCCAuctionLib.AuctionState memory state = vault.getAuctionState(0);
+        assertEq(state.filledAmount, 0);
+        assertEq(state.marginAwarded, 0);
+        assertEq(usdc.balanceOf(carol), usdcBefore);
+        assertEq(notificationVault.balanceOf(carol), 0);
+    }
+
+    function testTakeSucceedsAtMinimumAwardBoundary() public {
+        _setupShortfallAuction();
+        vm.warp(DEADLINE + 5);
+
+        vm.prank(carol);
+        (uint256 filled, uint256 award) = vault.takeAuction(10e18, 5e18, block.timestamp);
+
+        assertEq(filled, 10e18);
+        assertEq(award, 5e18);
+    }
+
+    function testTakeAcceptsFavorableOracleMoveAboveQuotedAward() public {
+        _setupShortfallAuction();
+        vm.warp(DEADLINE + 5);
+
+        uint256 fill = 50e18;
+        oracle.setPrice(4 * ORACLE_PRICE_SCALE);
+        LCCAuctionLib.AuctionState memory beforeState = vault.getAuctionState(0);
+        uint256 quotedAward = LCCAuctionLib.computeAward(
+            beforeState,
+            fill,
+            5,
+            vault.auctionConfig().auctionStepDuration,
+            vault.auctionConfig().auctionStepDecayRateBps,
+            vault.riskConfig().maxAuctionAwardBps,
+            oracle.price()
+        );
+        assertEq(quotedAward, 12.5e18);
+
+        oracle.setPrice(ORACLE_PRICE_SCALE);
+
+        vm.prank(carol);
+        (uint256 filled, uint256 award) = vault.takeAuction(fill, quotedAward, type(uint256).max);
+
+        assertEq(filled, fill);
+        assertEq(award, 25e18);
+        assertGt(award, quotedAward);
+    }
+
+    function testPriorPartialFillReducesLaterFillAndAwardAtomically() public {
+        _setupShortfallAuction();
+        vm.warp(DEADLINE + 15);
+
+        vm.prank(carol);
+        (uint256 priorFill, uint256 priorAward) = vault.takeAuction(40e18, 35e18, type(uint256).max);
+        assertEq(priorFill, 40e18);
+        assertEq(priorAward, 35e18);
+
+        LCCAuctionLib.AuctionState memory priorState = vault.getAuctionState(0);
+        assertEq(priorState.shortfallAmount - priorState.filledAmount, 10e18);
+        assertEq(priorState.marginPool - priorState.marginAwarded, 15e18);
+
+        vm.expectRevert(LCCErrorsLib.InsufficientMarginAward.selector);
+        vm.prank(bob);
+        vault.takeAuction(20e18, 17.5e18, type(uint256).max);
+
+        LCCAuctionLib.AuctionState memory revertedState = vault.getAuctionState(0);
+        assertEq(revertedState.filledAmount, priorState.filledAmount);
+        assertEq(revertedState.marginAwarded, priorState.marginAwarded);
+
+        vm.prank(bob);
+        (uint256 filled, uint256 award) = vault.takeAuction(20e18, 8.75e18, type(uint256).max);
+        assertEq(filled, 10e18);
+        assertEq(award, 8.75e18);
     }
 
     function testZeroOraclePriceRevertsTake() public {
@@ -377,7 +533,7 @@ contract LCCAuctionTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
         vm.prank(carol);
-        vault.takeAuction(10e18);
+        vault.takeAuction(10e18, 0, type(uint256).max);
     }
 
     function testTakeRevertsWhenUsd3CannotAccept() public {
@@ -387,13 +543,13 @@ contract LCCAuctionTest is LCCBase {
         usd3.setDepositLimit(0);
         vm.expectRevert();
         vm.prank(carol);
-        vault.takeAuction(10e18);
+        vault.takeAuction(10e18, 0, type(uint256).max);
 
         usd3.setDepositLimit(type(uint256).max);
         usd3.setDepositHookReverts(true);
         vm.expectRevert("!allowed");
         vm.prank(carol);
-        vault.takeAuction(10e18);
+        vault.takeAuction(10e18, 0, type(uint256).max);
 
         // Nothing was filled or awarded; the pool is intact.
         LCCAuctionLib.AuctionState memory state = vault.getAuctionState(0);
@@ -409,7 +565,7 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(DEADLINE + 5);
 
         vm.prank(carol);
-        (uint256 filled,) = vault.takeAuction(1);
+        (uint256 filled,) = vault.takeAuction(1, 0, type(uint256).max);
 
         assertEq(filled, 1);
         assertEq(notificationVault.balanceOf(carol), 1);
@@ -421,12 +577,12 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(DEADLINE + 5);
 
         vm.prank(carol);
-        (uint256 filled,) = vault.takeAuction(50e18 - 1);
+        (uint256 filled,) = vault.takeAuction(50e18 - 1, 0, type(uint256).max);
         assertEq(filled, 50e18 - 1);
 
         vm.expectRevert(bytes("ZERO_SHARES"));
         vm.prank(bob);
-        vault.takeAuction(type(uint256).max);
+        vault.takeAuction(type(uint256).max, 0, type(uint256).max);
 
         LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(0);
         assertEq(auction.shortfallAmount - auction.filledAmount, 1);
@@ -467,7 +623,7 @@ contract LCCAuctionTest is LCCBase {
             50e18, liveTimestamp - deadline, config.auctionStepDuration, config.auctionStepDecayRateBps
         );
         vm.prank(carol);
-        (uint256 filled, uint256 award) = vault.takeAuction(50e18);
+        (uint256 filled, uint256 award) = vault.takeAuction(50e18, expectedAward, type(uint256).max);
 
         assertEq(filled, 50e18);
         assertEq(award, expectedAward);
@@ -491,7 +647,7 @@ contract LCCAuctionTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.ShutdownActive.selector);
         vm.prank(carol);
-        vault.takeAuction(10e18);
+        vault.takeAuction(10e18, 0, type(uint256).max);
 
         // Honored funder's remaining-margin claim is isolated from the swept inventory.
         vm.prank(alice);

@@ -279,7 +279,7 @@ contract LCCLifecycleFuzz is LCCBase {
         uint256 fill = fillMax == 1 ? 1 : bound(fillSeed / 2, 1, fillMax - 1);
 
         vm.prank(dave);
-        vault.takeAuction(fill);
+        vault.takeAuction(fill, 0, type(uint256).max);
     }
 
     function _materializeActors(address[] memory actors) internal {

@@ -254,7 +254,7 @@ contract LCCMinCommitmentTest is LCCBase {
 
         vm.warp(START + NORMAL + PRE_CALL + FUNDING + 5);
         vm.prank(carol);
-        vault.takeAuction(50e18);
+        vault.takeAuction(50e18, 0, type(uint256).max);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
 
         vault.materializeAccount(bob);

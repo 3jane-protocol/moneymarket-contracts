@@ -66,6 +66,8 @@ library LCCErrorsLib {
     error NotWithdrawable();
     /// @notice Thrown when taking an auction that is not currently live.
     error AuctionNotLive();
+    /// @notice Thrown when an auction fill awards less margin than the caller requires.
+    error InsufficientMarginAward();
     /// @notice Thrown when requesting an exit while the account still holds a pending (not-yet-active) deposit.
     error PendingDepositExists();
     /// @notice Thrown when an account cannot be fully materialized within the per-call step bound.

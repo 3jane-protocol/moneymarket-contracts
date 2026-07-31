@@ -1021,12 +1021,20 @@
     },
     {
       "name": "takeAuction",
-      "signature": "takeAuction(uint256)",
-      "selector": "0x34ad92e6",
+      "signature": "takeAuction(uint256,uint256,uint256)",
+      "selector": "0xc011a6cc",
       "stateMutability": "nonpayable",
       "inputs": [
         {
           "name": "maxFillAmount",
+          "type": "uint256"
+        },
+        {
+          "name": "minMarginAward",
+          "type": "uint256"
+        },
+        {
+          "name": "deadline",
           "type": "uint256"
         }
       ],
@@ -1744,6 +1752,11 @@
     {
       "name": "FundingTopUpExcessive",
       "signature": "FundingTopUpExcessive()",
+      "inputs": []
+    },
+    {
+      "name": "InsufficientMarginAward",
+      "signature": "InsufficientMarginAward()",
       "inputs": []
     },
     {

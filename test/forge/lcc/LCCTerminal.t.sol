@@ -158,7 +158,7 @@ contract LCCTerminalTest is LCCBase {
         address filler = makeAddr("filler");
         _mintAndApprove(filler, 0, 500e18);
         vm.prank(filler);
-        vault.takeAuction(200e18); // full fill settles + disposes pre-terminal
+        vault.takeAuction(200e18, 0, type(uint256).max); // full fill settles + disposes pre-terminal
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         ILCCVault.EpochState memory state = vault.getEpochState(0);

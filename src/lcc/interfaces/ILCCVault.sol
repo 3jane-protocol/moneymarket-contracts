@@ -432,16 +432,29 @@ interface ILCCVault {
     function fundCall(address user) external returns (uint256 obligationAmount);
     /// @notice Fills up to `maxFillAmount` of the live auction's shortfall in exchange for wrapped USD3n and a
     /// collateral kicker.
-    /// @dev Targets whichever auction is live, following Yearn-take semantics. `maxFillAmount` is the caller's only
-    /// bound; the award is the current ramped pro-rata kicker, capped by `maxAuctionAwardBps` of the fill at the
-    /// fill-time oracle price. Reverts if USD3 or the notification vault cannot accept delivery. If a fill leaves a
-    /// residual smaller than the assets required to mint one USD3 share, the remaining shortfall cannot be filled
-    /// because `maxFillAmount` is a caller ceiling and no top-up is taken; it settles through normal window-end
-    /// disposal without rolling over.
+    /// @dev Targets whichever auction is live, following Yearn-take semantics. The award is the current ramped
+    /// pro-rata kicker, capped by `maxAuctionAwardBps` of the fill at the fill-time oracle price. `minMarginAward` is
+    /// an absolute minimum applied to the award for the actual fill after `maxFillAmount` is clamped to the remaining
+    /// shortfall, not to `maxFillAmount`. A concurrent partial fill can therefore reduce both the caller's fill and
+    /// award enough to revert even when the per-unit award rate is unchanged. Callers seeking execution at a rate
+    /// rather than an absolute total should either size `maxFillAmount` below the observed remaining shortfall to
+    /// leave a contention buffer, or take through an atomic contract that reads the remaining shortfall and computes
+    /// the floor in the same transaction. An off-chain read or simulation, even in the same block, is not atomic with
+    /// inclusion. The floor is deliberately not prorated by `filledAmount / maxFillAmount`: its absolute form lets a
+    /// taker require a minimum notional that covers fixed gas costs, which a prorated floor cannot express. The
+    /// wall-clock `deadline` is checked as the first statement in the function body, after the `synced` modifier
+    /// runs; an expired deadline reverts the modifier's sync work along with the fill. Reverts if USD3 or the
+    /// notification vault cannot accept delivery. If a fill leaves a residual smaller than the assets required to
+    /// mint one USD3 share, the remaining shortfall cannot be filled because `maxFillAmount` is a caller ceiling and
+    /// no top-up is taken; it settles through normal window-end disposal without rolling over.
     /// @param maxFillAmount Maximum shortfall to fill (fundingAsset).
+    /// @param minMarginAward Minimum acceptable collateral kicker (marginAsset).
+    /// @param deadline Wall-clock timestamp after which the transaction reverts.
     /// @return filledAmount Shortfall actually filled (fundingAsset).
     /// @return marginAward Collateral kicker awarded (marginAsset).
-    function takeAuction(uint256 maxFillAmount) external returns (uint256 filledAmount, uint256 marginAward);
+    function takeAuction(uint256 maxFillAmount, uint256 minMarginAward, uint256 deadline)
+        external
+        returns (uint256 filledAmount, uint256 marginAward);
     /// @notice Owner update of the oracle-valued auction award cap.
     /// @dev Reverts above BPS, when set nonzero while auctions are disabled, or while an auction is live.
     /// @param newMaxAuctionAwardBps New award cap per fundingAsset filled, in bps.

@@ -579,14 +579,16 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
     /// @inheritdoc ILCCVault
     /// @dev If USD3 or the notification vault cannot deliver wrapped USD3n, the take reverts. The fill targets
-    /// whichever auction is live, following Yearn-take semantics: `maxFillAmount` is the caller's only bound, and the
-    /// award is the current ramped kicker.
-    function takeAuction(uint256 maxFillAmount)
+    /// whichever auction is live, following Yearn-take semantics. The execution-time award must meet the caller's
+    /// minimum. The wall-clock deadline is checked first in the function body, after `synced` runs; an expired
+    /// deadline reverts that sync work along with the fill.
+    function takeAuction(uint256 maxFillAmount, uint256 minMarginAward, uint256 deadline)
         external
         nonReentrant
         synced
         returns (uint256 filledAmount, uint256 marginAward)
     {
+        if (block.timestamp > deadline) revert LCCErrorsLib.DeadlineExpired(); // deliberate wall-clock read
         if (_shutdown.active) revert LCCErrorsLib.ShutdownActive();
         // synced settled any past-window auction, so a live slot implies the window is open.
         // Terminal needs no explicit guard: no terminal auction can be live after synced settlement.
@@ -610,6 +612,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
             _riskConfig.maxAuctionAwardBps,
             price
         );
+        if (marginAward < minMarginAward) revert LCCErrorsLib.InsufficientMarginAward();
 
         fundingAsset.safeTransferFrom(msg.sender, address(this), filledAmount);
         _deliverWrapped(msg.sender, filledAmount);

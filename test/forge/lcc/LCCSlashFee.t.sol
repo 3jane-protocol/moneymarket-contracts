@@ -16,7 +16,7 @@ contract LCCSlashFeeTest is LCCBase {
 
         vm.warp(DEADLINE + 5);
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(10e18);
+        (, uint256 award) = vault.takeAuction(10e18, 5e18, type(uint256).max);
         assertEq(award, 5e18);
 
         vm.warp(WINDOW_END);
@@ -36,7 +36,7 @@ contract LCCSlashFeeTest is LCCBase {
 
         vm.warp(DEADLINE + 10);
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(50e18);
+        (, uint256 award) = vault.takeAuction(50e18, 37.5e18, type(uint256).max);
         assertEq(award, 37.5e18);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
@@ -95,7 +95,7 @@ contract LCCSlashFeeTest is LCCBase {
 
         vm.warp(DEADLINE + 5);
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(10e18);
+        (, uint256 award) = vault.takeAuction(10e18, 5e18, type(uint256).max);
         assertEq(award, 5e18);
 
         vm.prank(owner);
@@ -137,7 +137,7 @@ contract LCCSlashFeeTest is LCCBase {
 
         vm.warp(DEADLINE + 5);
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(10e18);
+        (, uint256 award) = vault.takeAuction(10e18, 5e18, type(uint256).max);
         assertEq(award, 5e18);
 
         oracle.setPrice(0);
@@ -160,7 +160,7 @@ contract LCCSlashFeeTest is LCCBase {
 
         vm.warp(DEADLINE + 10);
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(40e18);
+        (, uint256 award) = vault.takeAuction(40e18, 30e18, type(uint256).max);
         assertEq(award, 30e18);
 
         oracle.setPrice(0);
@@ -191,7 +191,7 @@ contract LCCSlashFeeTest is LCCBase {
 
         vm.warp(DEADLINE + 5);
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(20e18);
+        (, uint256 award) = vault.takeAuction(20e18, 5e18, type(uint256).max);
         assertEq(award, 5e18);
 
         vm.warp(WINDOW_END);

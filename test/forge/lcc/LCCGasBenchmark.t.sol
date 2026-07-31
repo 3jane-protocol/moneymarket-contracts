@@ -77,7 +77,7 @@ contract LCCGasAuctionFillBenchmarkTest is LCCBase {
     function testGasAuctionFill() public {
         vm.prank(carol);
         uint256 gasBefore = gasleft();
-        vault.takeAuction(50e18);
+        vault.takeAuction(50e18, 0, type(uint256).max);
         emit log_named_uint("auction fill", gasBefore - gasleft());
     }
 }

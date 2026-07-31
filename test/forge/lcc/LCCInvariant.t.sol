@@ -80,7 +80,7 @@ contract LCCInvariantTest is LCCBase {
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
 
         vm.prank(carol);
-        vault.takeAuction(type(uint256).max);
+        vault.takeAuction(type(uint256).max, 0, type(uint256).max);
 
         ILCCVault.Totals memory totals = vault.totals();
         uint256 settledUtilization = uint256(totals.activeCommitment) + uint256(totals.pendingCommitment);
@@ -456,7 +456,7 @@ contract LCCInvariantHandler is Test {
         uint256 vaultBalanceBefore = invariantMargin.balanceOf(address(invariantVault));
         uint256 treasuryBalanceBefore = invariantMargin.balanceOf(_treasury());
         vm.prank(actor);
-        invariantVault.takeAuction(fill);
+        invariantVault.takeAuction(fill, 0, type(uint256).max);
         _recordMarginOut(vaultBalanceBefore, treasuryBalanceBefore);
     }
 
@@ -1125,7 +1125,7 @@ contract LCCCutoffStatefulInvariantTest is LCCBase {
         uint256 snapshot = vm.snapshotState();
 
         vm.prank(bob);
-        (, uint256 award) = vault.takeAuction(type(uint256).max);
+        (, uint256 award) = vault.takeAuction(type(uint256).max, 0, type(uint256).max);
         assertEq(award, 0);
         ILCCVault.EpochState memory eager = vault.getEpochState(0);
         uint256 eagerTreasury = vault.pendingTreasuryMargin();

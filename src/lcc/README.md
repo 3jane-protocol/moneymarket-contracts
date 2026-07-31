@@ -385,8 +385,10 @@ while the externally linked `LCCAuctionLib` computes and records each packed fil
 
 ### Auction pricing (Diagram D — formula + Table 2)
 
-`takeAuction` follows Yearn-take semantics: `maxFillAmount` is the caller's only bound, filling
-`min(maxFillAmount, remainingShortfall)`. The offered collateral ramps over the Closed window:
+`takeAuction` follows Yearn-take semantics, filling `min(maxFillAmount, remainingShortfall)`. Callers bound the
+execution-time kicker with `minMarginAward` and transaction inclusion with a wall-clock `deadline`; the deadline is
+checked in the function body after the `synced` modifier has run. The offered collateral ramps over the Closed
+window:
 
 Unlike call funding, auction fills never pull above `maxFillAmount`. At USD3 PPS above 1, a fill that leaves a
 residual smaller than `usd3.previewMint(1)` can make that residual unfillable because every later fill is clamped to

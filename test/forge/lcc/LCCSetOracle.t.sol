@@ -84,12 +84,12 @@ contract LCCSetOracleTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.Paused.selector);
         vm.prank(carol);
-        vault.takeAuction(25e18);
+        vault.takeAuction(25e18, 0, type(uint256).max);
 
         vm.prank(owner);
         vault.unpause();
         vm.prank(carol);
-        (uint256 filled, uint256 award) = vault.takeAuction(25e18);
+        (uint256 filled, uint256 award) = vault.takeAuction(25e18, 12.5e18, type(uint256).max);
 
         assertEq(filled, 25e18);
         assertEq(award, 12.5e18);
@@ -104,7 +104,7 @@ contract LCCSetOracleTest is LCCBase {
         oracle.setPrice(0);
         vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
         vm.prank(carol);
-        vault.takeAuction(10e18);
+        vault.takeAuction(10e18, 0, type(uint256).max);
 
         OracleMock newOracle = _oracleWithPrice(2 * ORACLE_PRICE_SCALE);
         vm.prank(owner);
@@ -112,7 +112,7 @@ contract LCCSetOracleTest is LCCBase {
 
         vm.warp(DEADLINE + 10);
         vm.prank(carol);
-        (uint256 filled, uint256 award) = vault.takeAuction(25e18);
+        (uint256 filled, uint256 award) = vault.takeAuction(25e18, 12.5e18, type(uint256).max);
 
         assertEq(filled, 25e18);
         assertEq(award, 12.5e18);
@@ -212,7 +212,7 @@ contract LCCSetOracleTest is LCCBase {
 
         vm.warp(DEADLINE + 10);
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(25e18);
+        (, uint256 award) = vault.takeAuction(25e18, 2.5e18, type(uint256).max);
         assertEq(award, 2.5e18);
 
         vm.warp(WINDOW_END);

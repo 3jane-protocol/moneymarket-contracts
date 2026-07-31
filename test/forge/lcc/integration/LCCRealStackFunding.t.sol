@@ -130,7 +130,9 @@ interface ILCCVaultLike {
     function openEpochCall(uint256 epoch, uint256 callAmount) external;
     function fundCall(bool roll) external returns (uint256 obligationAmount);
     function fundCall(address user) external returns (uint256 obligationAmount);
-    function takeAuction(uint256 maxFillAmount) external returns (uint256 filledAmount, uint256 marginAward);
+    function takeAuction(uint256 maxFillAmount, uint256 minMarginAward, uint256 deadline)
+        external
+        returns (uint256 filledAmount, uint256 marginAward);
     function finalizeEpochSlash(uint256 epoch) external;
     function materializeAccount(address user) external;
     function requestExit(uint256 maxDeferralEpochs, uint256 deadline) external returns (uint256 maturityEpoch);
@@ -283,10 +285,10 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         shimVault.finalizeEpochSlash(0);
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING + 5);
         vm.startPrank(filler);
-        (uint256 filled, uint256 award) = shimVault.takeAuction(10e6);
+        (uint256 filled, uint256 award) = shimVault.takeAuction(10e6, 6_097_560, type(uint256).max);
         assertEq(filled, 10e6);
         assertEq(award, 6_097_560);
-        (filled, award) = shimVault.takeAuction(31e6);
+        (filled, award) = shimVault.takeAuction(31e6, 18_902_439, type(uint256).max);
         assertEq(filled, 31e6);
         assertEq(award, 18_902_439);
         vm.stopPrank();
@@ -501,7 +503,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         auctionVault.finalizeEpochSlash(0);
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING + 5);
         vm.prank(filler);
-        (uint256 filled,) = auctionVault.takeAuction(type(uint256).max);
+        (uint256 filled,) = auctionVault.takeAuction(type(uint256).max, 0, type(uint256).max);
         assertEq(filled, 50e6);
         assertEq(strategy.ringFencedLiquidity(), fenceBefore, "auction take unregistered");
     }
@@ -583,7 +585,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         uint256 wrappedBefore = _wrappedWaUSDC();
 
         vm.prank(filler);
-        (uint256 filled, uint256 marginAward) = auctionVault.takeAuction(type(uint256).max);
+        (uint256 filled, uint256 marginAward) = auctionVault.takeAuction(type(uint256).max, 25e6, type(uint256).max);
 
         assertEq(filled, 50e6);
         assertEq(marginAward, 25e6);
