@@ -152,6 +152,7 @@ contract LCCBase is Test {
     uint256 internal constant FUNDING = 20;
     uint256 internal constant CAP = 10_000_000e18;
     uint256 internal constant MARGIN_PRICE_AT_CALL_OPEN_SLOT = 30;
+    uint256 internal constant USER_COMMITMENT_CAP_AT_CALL_OPEN_SLOT = 31;
 
     address internal owner = makeAddr("owner");
     address internal treasury = makeAddr("treasury");

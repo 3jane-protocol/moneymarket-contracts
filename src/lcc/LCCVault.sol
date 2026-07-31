@@ -137,6 +137,9 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// @dev Margin-oracle price frozen when each epoch call opens.
     mapping(uint256 => uint256) internal marginPriceAtCallOpen;
 
+    /// @dev Per-account commitment cap frozen when each epoch call opens.
+    mapping(uint256 => uint256) internal userCommitmentCapAtCallOpen;
+
     /// @dev Reserved storage for future versions. Pre-deployment additions are declared above this gap so the
     /// post-deployment reserve stays at its full 50 slots; only upgrades after deployment consume gap slots.
     uint256[50] private __gap;
@@ -553,7 +556,10 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         if (callAmount > _totals.activeCommitment) revert LCCErrorsLib.InvalidAmount();
 
         uint256 marginPrice = _marginOraclePrice();
+        uint256 userCommitmentCap = _riskConfig.userCommitmentCap;
+        if (userCommitmentCap == 0) revert LCCErrorsLib.InvalidParams();
         marginPriceAtCallOpen[epoch] = marginPrice;
+        userCommitmentCapAtCallOpen[epoch] = userCommitmentCap;
         state.callOpened = true;
         state.commitmentDenominator = _totals.activeCommitment;
         state.callAmount = callAmount;
@@ -1175,6 +1181,15 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
                 uint256 slashedMargin = replay.account.activeMargin;
                 uint256 slashedCommitment = replay.account.activeCommitment;
                 (uint256 marginShare, uint256 commitmentShare) = _pairedReturnPoolShare(epoch, slashedMargin);
+                // Unlike the price snapshot, a zero cap snapshot deliberately has no live-config fallback. Calls
+                // write a validated nonzero cap, while a future writer's zero safely withholds only commitment.
+                // A nonzero marginShare can be left with zero commitmentShare only when pending commitment already
+                // consumes the frozen cap. Deposits activate by their deposit epoch plus one at the latest, and
+                // replay activates pending exposure before the next `_shouldDefault`, so that evaluation restores
+                // nonzero commitment before the margin-only active credit can be defaulted again.
+                commitmentShare = Math.min(
+                    commitmentShare, userCommitmentCapAtCallOpen[epoch].saturatingSub(replay.account.pendingCommitment)
+                );
                 if (bounded) {
                     if (replay.defaults.length == 0) replay.defaults = new LCCTypesLib.DefaultRecord[](maxSteps);
                     replay.defaults[replay.defaultCount] = LCCTypesLib.DefaultRecord(
@@ -1244,7 +1259,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         if (commitmentShare == 0) return (0, 0);
 
         marginShare = state.returnPool.mulDiv(slashedMargin, aggregateSlashedMargin);
-        // Keep the tuple literal: replay's any-credit clock guard relies on both paired shares being zero here.
+        // Keep the tuple literal so this helper never returns a margin-only share when commitment rounds to zero.
+        // The caller's user-cap clamp may subsequently zero commitmentShare while preserving marginShare.
         if (marginShare == 0) return (0, 0);
     }
 

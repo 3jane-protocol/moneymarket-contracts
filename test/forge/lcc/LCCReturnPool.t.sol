@@ -5,13 +5,31 @@ import {LCCBase, LCCGasGriefingOracle, LCCRevertingOracle} from "./LCCBase.t.sol
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
+import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
 import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
 import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 
 contract LCCReturnPoolTest is LCCBase {
+    uint256 internal constant RISK_CONFIG_SLOT = 4;
+
     function setUp() public override {
         super.setUp();
+        _assertLayoutSlot("_riskConfig", RISK_CONFIG_SLOT);
         _assertLayoutSlot("marginPriceAtCallOpen", MARGIN_PRICE_AT_CALL_OPEN_SLOT);
+        _assertLayoutSlot("userCommitmentCapAtCallOpen", USER_COMMITMENT_CAP_AT_CALL_OPEN_SLOT);
+    }
+
+    function testOpenCallRejectsZeroUserCapAtSnapshotWrite() public {
+        _deposit(alice, 100e18);
+        vm.store(address(vault), bytes32(RISK_CONFIG_SLOT + 1), bytes32(0));
+
+        vm.warp(START + NORMAL);
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
+        vm.prank(owner);
+        vault.openEpochCall(0, 100e18);
+
+        assertFalse(vault.getEpochState(0).callOpened);
+        assertEq(uint256(vm.load(address(vault), _mappingSlot(0, USER_COMMITMENT_CAP_AT_CALL_OPEN_SLOT))), 0);
     }
 
     function testPendingDisposalUsesCallOpenSnapshotWhenOracleDies() public {
@@ -67,6 +85,112 @@ contract LCCReturnPoolTest is LCCBase {
         assertEq(config.userCommitmentCap, 251e18);
         assertEq(config.exitCapBps, 314);
         assertEq(config.minDepositAssets, 8e18);
+    }
+
+    function testReturnCreditUsesPartialFrozenUserCapHeadroomAndMarginRemainsClaimable() public {
+        _setupHeterogeneousReturnPool(150e18);
+        oracle.setPrice(ORACLE_PRICE_SCALE / 2);
+        assertEq(_deposit(alice, 70e18), 70e18);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.UserDefaulted(alice, 0, 50e18, 50e18);
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.ReturnPoolCredited(alice, 0, 50e18, 80e18);
+        vault.materializeAccount(alice);
+
+        ILCCVault.Account memory account = vault.getAccount(alice);
+        assertEq(account.activeMargin, 50e18);
+        assertEq(account.activeCommitment, 80e18);
+        assertEq(account.pendingMargin, 70e18);
+        assertEq(account.pendingCommitment, 70e18);
+        assertEq(account.activeCommitment + account.pendingCommitment, 150e18);
+
+        vm.warp(START + EPOCH);
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+
+        uint256 balanceBefore = margin.balanceOf(alice);
+        vm.warp(START + 2 * EPOCH);
+        vm.prank(alice);
+        assertEq(vault.claimExitedMargin(alice), 120e18);
+        assertEq(margin.balanceOf(alice) - balanceBefore, 120e18);
+    }
+
+    function testPendingCommitmentConsumesFrozenCapAndWithholdsOnlyCommitmentCredit() public {
+        _setupHeterogeneousReturnPool(150e18);
+        vm.prank(owner);
+        vault.setRiskCaps(400e18, 250e18, 2_000, 0);
+        oracle.setPrice(ORACLE_PRICE_SCALE / 2);
+        assertEq(_deposit(alice, 150e18), 150e18);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.UserDefaulted(alice, 0, 50e18, 50e18);
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.ReturnPoolCredited(alice, 0, 50e18, 0);
+        vault.materializeAccount(alice);
+
+        ILCCVault.Account memory account = vault.getAccount(alice);
+        assertEq(account.activeMargin, 50e18);
+        assertEq(account.activeCommitment, 0);
+        assertEq(account.pendingMargin, 150e18);
+        assertEq(account.pendingCommitment, 150e18, "pending exposure consumes the frozen cap");
+    }
+
+    function testFrozenUserCapMakesReturnCreditIndependentOfReplayTiming() public {
+        // This isolates the frozen-snapshot/live-config timing property; deleting the clamp leaves both branches
+        // equal, so clamp removal is instead killed by the partial-headroom, pending-consumes-cap, and
+        // two-consecutive-epochs tests.
+        _setupHeterogeneousReturnPool(150e18);
+        uint256 snapshot = vm.snapshotState();
+
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+        vault.materializeAccount(alice);
+        uint256 unchangedCapCredit = vault.getAccount(alice).activeCommitment;
+        assertEq(unchangedCapCredit, 100e18);
+
+        assertTrue(vm.revertToStateAndDelete(snapshot), "snapshot restore failed");
+
+        vm.prank(owner);
+        vault.setRiskCaps(400e18, 1, 2_000, 0);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+
+        ILCCVault.Account memory derived = vault.getAccount(alice);
+        assertEq(derived.activeCommitment, unchangedCapCredit);
+        vault.materializeAccount(alice);
+        ILCCVault.Account memory materialized = vault.getAccount(alice);
+        assertEq(keccak256(abi.encode(materialized)), keccak256(abi.encode(derived)));
+    }
+
+    function testReplayCompletesAfterTwoConsecutiveCappedDefaultEpochs() public {
+        _deployVaultWithParams(_params(300e18, 300e18));
+        _deposit(alice, 100e18);
+        vm.prank(owner);
+        vault.setRiskCaps(300e18, 100e18, 2_000, 0);
+
+        _openCall(200e18);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+        _openCallAtEpoch(1, 200e18);
+        _finishFundingAtEpoch(1);
+        vault.finalizeEpochSlash(1);
+
+        vault.materializeAccount(alice);
+
+        ILCCVault.Account memory account = vault.getAccount(alice);
+        ILCCVault.Totals memory totals = vault.totals();
+        assertEq(account.calledEpochCursor, 2);
+        assertEq(account.calledEpochCursor, vault.syncState().finalizedCallPrefix);
+        assertEq(account.activeMargin, 100e18);
+        assertEq(account.activeCommitment, 100e18);
+        assertEq(totals.activeMargin, 100e18);
+        assertEq(totals.activeCommitment, 200e18);
+        assertEq(margin.balanceOf(address(vault)), totals.activeMargin + vault.pendingTreasuryMargin());
     }
 
     function testHeadroomZeroSendsWholeSurplusToTreasury() public {
@@ -169,6 +293,9 @@ contract LCCReturnPoolTest is LCCBase {
         assertEq(_accruedTreasuryMargin(), 100e18);
         assertEq(vault.totals().activeMargin, 0);
         assertEq(vault.totals().activeCommitment, 0);
+        ILCCVault.Account memory account = vault.getAccount(alice);
+        assertEq(account.calledEpochCursor, vault.syncState().finalizedCallPrefix);
+        assertTrue(account.calledEpochCursor != 0, "zero-credit disposal was replayed");
     }
 
     function testReturnCommitmentAboveThresholdCreditsPairedShares() public {
@@ -524,6 +651,17 @@ contract LCCReturnPoolTest is LCCBase {
         _openCall(150e18);
         _fund(carol);
         oracle.setPrice(2 * ORACLE_PRICE_SCALE);
+    }
+
+    function _setupHeterogeneousReturnPool(uint256 userCap) internal {
+        _deployVaultWithParams(_params(400e18, userCap));
+
+        oracle.setPrice(ORACLE_PRICE_SCALE / 2);
+        assertEq(_deposit(alice, 50e18), 50e18);
+        oracle.setPrice(3 * ORACLE_PRICE_SCALE / 2);
+        assertEq(_deposit(bob, 50e18), 150e18);
+        oracle.setPrice(ORACLE_PRICE_SCALE);
+        _openCall(200e18);
     }
 
     function _setupSingleDefaulterCapBoundSlash(uint256 cap) internal {

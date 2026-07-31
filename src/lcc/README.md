@@ -251,18 +251,21 @@ call-local return bound. A live auction remains blocking because per-account rep
 there could not be materialized, and because it keeps the finalized-but-undisposed window free of new pending
 exposure. The auction's own collateral inventory is fixed at kick and is not the reason.
 
-Every deposit advances `commitmentStartEpoch` to at least its activation epoch. A default that receives a nonzero
-paired return-pool re-credit advances it to the later of its current value and the epoch in which that credit was
-created; zero or rounding-dropped credits leave it unchanged. These events restart the `minCommitmentEpochs` exit
-clock (§9). Funding of any kind never touches `commitmentStartEpoch`.
+Every deposit advances `commitmentStartEpoch` to at least its activation epoch. A default that receives any nonzero
+return-pool re-credit, whether paired or margin-only after the user-cap clamp, advances it to the later of its current
+value and the epoch in which that credit was created; zero or rounding-dropped credits leave it unchanged. These
+events restart the `minCommitmentEpochs` exit clock (§9). Funding of any kind never touches
+`commitmentStartEpoch`.
 
 ## 7. Capital calls and funding
 
 `openEpochCall` (PreCall only) reads a validated nonzero oracle price and stores it in
-`marginPriceAtCallOpen[epoch]`, snapshots `commitmentDenominator = activeCommitment`, records `callAmount` and
+`marginPriceAtCallOpen[epoch]`, freezes the current per-account cap in
+`userCommitmentCapAtCallOpen[epoch]`, snapshots `commitmentDenominator = activeCommitment`, records `callAmount` and
 `marginAtCallOpen`, exposes the price in `EpochCallOpened`, pushes the epoch onto `calledEpochList`, and snapshots
 exit-bucket exposure for the call. A reverting oracle propagates and a zero price reverts `OraclePriceInvalid`, so
-no legitimate call can record a missing price snapshot.
+no legitimate call can record a missing price snapshot; initialization and `setRiskCaps` likewise prevent a
+legitimate zero cap snapshot.
 
 Each account's obligation is computed **independently** and **ceil-rounded** from the call-open snapshot:
 
@@ -464,7 +467,11 @@ flowchart TD
 
 The **fee is an auction rake**: `fee = min(auctionedMargin * slashFeeBps / BPS, surplus)`. Never-auctioned disposal
 paths always pass `auctionedMargin = 0`, so `fee = 0` there. The remaining `returnPool` is valued into a
-`returnCommitment` and re-attributed to defaulters as active margin/commitment; the rest goes to treasury.
+`returnCommitment` and re-attributed to defaulters as active margin/commitment; the rest goes to treasury. On account
+replay, each defaulter's commitment share is capped at
+`saturatingSub(userCommitmentCapAtCallOpen[epoch], pendingCommitment)`, while its paired physical margin share is
+left intact. The cap snapshot makes this independent of when replay occurs. Unlike the price snapshot, a zero cap
+snapshot has no live-config fallback: it safely withholds commitment while leaving the returned margin recoverable.
 
 **Price selection and wind-down.** The conversion step normally uses the validated oracle price frozen at call open
 and does not consult the live oracle, in either going-concern or wind-down mode. This freezes only the conversion
@@ -535,9 +542,9 @@ stateDiagram-v2
 
 **Commitment gate.** `requestExit` reverts `CommitmentNotMature` while
 `currentEpoch < commitmentStartEpoch + minCommitmentEpochs`. The clock is anchored at the later of the account's
-**latest deposit activation epoch** and **the epoch in which its latest nonzero paired return-pool re-credit was
-created**. Every deposit and such re-credit advances it monotonically, zero credits leave it unchanged, and no
-funding touches it.
+**latest deposit activation epoch** and **the epoch in which its latest nonzero return-pool re-credit was created**,
+whether that credit was paired or margin-only after the user-cap clamp. Every deposit and any such nonzero credit
+advances it monotonically, zero credits leave it unchanged, and no funding touches it.
 
 **Maturity assignment.** `_assignExitMaturity` is first-fit by request time (not strict FIFO): it starts at
 `currentEpoch + exitDelayEpochs` and walks forward to the first bucket with room, where per-epoch capacity is
@@ -628,16 +635,17 @@ flowchart TD
 
 `LCCAuctionLib` and `LCCConfigLib` are the two externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-23,927 bytes, 349 bytes below the 24,276-byte release ceiling and 649 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+24,127 bytes, 149 bytes below the 24,276-byte release ceiling and 449 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls
 `_disableInitializers()`. `LCCVaultFactory` deploys per-facility `BeaconProxy` instances with atomic `initialize`
 calldata; per-facility params live in proxy storage. The factory registry (`isVault` / `allVaults`) records owner-vetted
 **provenance only** — the beacon is public, so anyone can point an unregistered proxy at it. Packed structs in
-`LCCTypesLib` are upgrade-frozen layout. The layout retains the full 50-slot `__gap` after the treasury accrual slot:
-while LCC is pre-deployment, new state such as `returnCreditEpochByCall` and `marginPriceAtCallOpen` is declared
-above the gap rather than consuming it, so the post-deployment reserve stays at 50. Once deployed, new state must
+`LCCTypesLib` are upgrade-frozen layout. The layout retains the full 50-slot `__gap` after the call-open snapshots:
+while LCC is pre-deployment, new state such as `returnCreditEpochByCall`, `marginPriceAtCallOpen`, and
+`userCommitmentCapAtCallOpen` is declared above the gap rather than consuming it, so the post-deployment reserve
+stays at 50. Once deployed, new state must
 consume gap slots. Both `LCCAuctionLib` and `LCCConfigLib` must be re-linked on every implementation redeploy. Every future
 implementation must preserve runtime exit capacity of at least one, or normalize existing configurations during the
 upgrade; the `Math.max(1, ...)` clamp in `_assignExitMaturity` is the scan-termination invariant.
@@ -659,6 +667,10 @@ record lives in
 - **Rolling pins cap utilization.** Rolled accounts never decrement active commitment, shrinking deposit headroom.
   Disposal conservatively includes their call-open commitment in `B`; a cap at or below `B` zeroes the paired
   return pool, while any positive commitment clamp preserves the full pool.
+- **Withheld commitment dilutes the next call.** The user-cap clamp can credit aggregate active commitment that is
+  not attributable to any account. A call can open against that gap, so its denominator exceeds attributable
+  commitment and the sum of per-account obligations under-delivers the call. The gap remains until the next
+  non-disabled finalized slash includes it in `slashedCommitment`.
 - **Push funding front-runs rolls.** `fundCall(address)` always amortizes and can deny a user's intended roll for
   that epoch.
 - **Slash-disable is strict-before-deadline.** Shutdown strictly before an epoch's funding deadline disables its

@@ -7,7 +7,8 @@ This repository is a contracts codebase. "Deployment" here primarily means CI ex
 ## LCC Implementation Deployment
 
 The canonical `LCCVault` deployment artifact is compiled for Cancun with official solc `0.8.35`, via IR, 150
-optimizer runs, and no metadata bytecode hash. Its measured runtime is 23,927 bytes, 349 bytes below the internal ceiling and 649 bytes below EIP-170.
+optimizer runs, and no metadata bytecode hash. Its measured runtime is 24,127 bytes, 149 bytes below the internal
+ceiling and 449 bytes below EIP-170.
 Because it uses `ReentrancyGuardTransient`, every deployment chain must support EIP-1153. Hardhat uses pinned stable
 solc-js `0.8.35` for its LCC compile/test artifact, which must not be deployed.
 

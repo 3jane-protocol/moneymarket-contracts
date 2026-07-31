@@ -203,9 +203,17 @@
     {
       "astId": 5216,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
-      "label": "__gap",
+      "label": "userCommitmentCapAtCallOpen",
       "offset": 0,
       "slot": "31",
+      "type": "t_mapping(t_uint256,t_uint256)"
+    },
+    {
+      "astId": 5221,
+      "contract": "src/lcc/LCCVault.sol:LCCVault",
+      "label": "__gap",
+      "offset": 0,
+      "slot": "32",
       "type": "t_array(t_uint256)50_storage"
     }
   ],
