@@ -165,11 +165,15 @@ contract USD3BorrowerRestrictionTest is Setup {
         // Setup borrower with active loan
         _setupBorrowerWithLoan(borrower, BORROW_AMOUNT);
 
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(borrower, true);
+        waUSDC.setReserveFrozen(true);
+
         // Verify borrower has active loan
         uint256 borrowShares = morpho.position(usd3Strategy.marketId(), borrower).borrowShares;
         assertGt(borrowShares, 0, "Borrower should have active loan");
 
-        // Check availableDepositLimit returns 0 for borrower
+        // Borrowers remain blocked even when their receiver is exempt and wrapping has no headroom.
         uint256 depositLimit = usd3Strategy.availableDepositLimit(borrower);
         assertEq(depositLimit, 0, "Deposit limit should be 0 for borrower");
 

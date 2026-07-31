@@ -239,8 +239,14 @@ contract USD3 is BaseHooksUpgradeable {
 
         // Wrap USDC to waUSDC. pendingCredit = _amount (the full loose balance) is exact for a fresh deposit
         // and conservative otherwise: any pre-existing idle inflates it, so the slack gate can only over-skip,
-        // never over-wrap. A gate-deferred pile is cleared by the ungated report-time wrap.
+        // never over-wrap. TokenizedStrategy passes the full loose balance on each deposit, so a deferred pile is
+        // retried by the next deposit and is also cleared by the ungated report-time wrap; no keeper signal is needed.
         _wrapUSDC(_amount, _amount, true);
+
+        // A paused wrapper blocks every waUSDC transfer, not just mint and burn, so supplying to Morpho would
+        // revert and take the deposit with it. Hold the funds locally instead; a later tend or report deploys
+        // them once the pause lifts. Mirrors the guard in _tend.
+        if (Pausable(address(WAUSDC)).paused()) return;
 
         uint256 maxOnCreditRatio = maxOnCredit();
         if (maxOnCreditRatio == 0) {
@@ -495,9 +501,7 @@ contract USD3 is BaseHooksUpgradeable {
     /// @param _owner Address to check limit for
     /// @return Maximum amount that can be deposited
     function availableDepositLimit(address _owner) public view override returns (uint256) {
-        uint256 maxDeposit = WAUSDC.maxDeposit(address(this));
-
-        if (Pausable(address(WAUSDC)).paused() || maxDeposit == 0) {
+        if (Pausable(address(WAUSDC)).paused()) {
             return 0;
         }
 
@@ -511,14 +515,14 @@ contract USD3 is BaseHooksUpgradeable {
             return 0;
         }
         if (supplyCapExempt[_owner] || cap == type(uint256).max) {
-            return maxDeposit;
+            return type(uint256).max;
         }
 
         uint256 currentTotalAssets = TokenizedStrategy.totalAssets();
         if (cap <= currentTotalAssets) {
             return 0;
         }
-        return Math.min(cap - currentTotalAssets, maxDeposit);
+        return cap - currentTotalAssets;
     }
 
     /*//////////////////////////////////////////////////////////////

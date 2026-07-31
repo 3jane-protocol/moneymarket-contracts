@@ -87,17 +87,14 @@ contract USD3SupplyCapTest is Setup {
     function test_supplyCap_unlimitedByDefault() public {
         // Default cap is unlimited (type(uint256).max)
         assertEq(protocolConfig.config(USD3_SUPPLY_CAP), type(uint256).max, "Default cap should be unlimited");
-        uint256 expectedLimit = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
-        assertEq(usd3Strategy.availableDepositLimit(alice), expectedLimit, "Should allow unlimited deposits");
+        assertEq(usd3Strategy.availableDepositLimit(alice), type(uint256).max, "Should allow unlimited deposits");
 
         // Can deposit large amounts
         vm.prank(whale);
         uint256 shares = strategy.deposit(10_000_000e6, whale);
         assertGt(shares, 0, "Should receive shares");
 
-        // Still unlimited (bounded only by maxDeposit)
-        uint256 expectedLimitAfter = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
-        assertEq(usd3Strategy.availableDepositLimit(alice), expectedLimitAfter, "Should still allow unlimited deposits");
+        assertEq(usd3Strategy.availableDepositLimit(alice), type(uint256).max, "Should still allow unlimited deposits");
     }
 
     function test_supplyCap_zeroCapStopsDeposits() public {
@@ -150,7 +147,7 @@ contract USD3SupplyCapTest is Setup {
         strategy.deposit(1, bob);
     }
 
-    function test_supplyCap_exemptReceiverBypassesHeadroomOnly() public {
+    function test_supplyCap_exemptReceiverBypassesSupplyCapHeadroom() public {
         _setSupplyCap(TEST_CAP);
 
         vm.prank(alice);
@@ -161,13 +158,49 @@ contract USD3SupplyCapTest is Setup {
         vm.prank(management);
         usd3Strategy.setSupplyCapExempt(bob, true);
 
-        uint256 expectedLimit = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
-        assertEq(usd3Strategy.availableDepositLimit(bob), expectedLimit, "exempt should bypass cap headroom");
+        assertEq(usd3Strategy.availableDepositLimit(bob), type(uint256).max, "exempt should bypass supply cap headroom");
 
         vm.prank(bob);
         strategy.deposit(SMALL_AMOUNT, bob);
 
         assertEq(strategy.totalAssets(), TEST_CAP + SMALL_AMOUNT, "exempt deposit may exceed cap");
+    }
+
+    function test_supplyCap_exemptReceiverDepositsWithoutWrapperHeadroomAndTendWrapsLater() public {
+        _setSupplyCap(TEST_CAP);
+
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        waUSDC.setReserveFrozen(true);
+        assertEq(waUSDC.maxDeposit(address(usd3Strategy)), 0, "wrapper deposit headroom setup failed");
+        assertEq(waUSDC.maxMint(address(usd3Strategy)), 0, "wrapper mint headroom setup failed");
+        assertEq(usd3Strategy.availableDepositLimit(bob), type(uint256).max, "wrapper headroom leaked into admission");
+
+        uint256 totalAssetsBefore = strategy.totalAssets();
+        uint256 navBefore = usd3Strategy.nav();
+
+        vm.prank(bob);
+        uint256 shares = strategy.deposit(SMALL_AMOUNT, bob);
+
+        assertGt(shares, 0, "zero wrapper headroom must not reject USD3 custody");
+        assertEq(strategy.totalAssets() - totalAssetsBefore, SMALL_AMOUNT, "tracked assets did not increase");
+        assertEq(usd3Strategy.nav() - navBefore, SMALL_AMOUNT, "NAV did not count idle USDC at face");
+        assertEq(strategy.totalAssets(), usd3Strategy.nav(), "deferring the wrap moved the withdrawal guard");
+        assertEq(underlyingAsset.balanceOf(address(strategy)), SMALL_AMOUNT, "deposit should remain idle");
+        assertEq(usd3Strategy.balanceOfWaUSDC(), 0, "zero headroom must not mint waUSDC");
+        assertEq(usd3Strategy.suppliedWaUSDC(), 0, "idle USDC must not be deployed directly");
+
+        waUSDC.setReserveFrozen(false);
+
+        vm.prank(keeper);
+        strategy.tend();
+
+        assertEq(underlyingAsset.balanceOf(address(strategy)), 0, "tend did not wrap deferred USDC");
+        assertGt(usd3Strategy.suppliedWaUSDC(), 0, "tend did not deploy wrapped USDC");
+        assertEq(strategy.totalAssets(), totalAssetsBefore + SMALL_AMOUNT, "tend changed tracked assets");
+        assertEq(usd3Strategy.nav(), navBefore + SMALL_AMOUNT, "tend changed NAV");
+        assertEq(strategy.totalAssets(), usd3Strategy.nav(), "tend moved the withdrawal guard");
     }
 
     function test_supplyCap_thirdPartyDepositToExemptReceiverReverts() public {
@@ -472,13 +505,9 @@ contract USD3SupplyCapTest is Setup {
         // Remove cap by setting sentinel value
         _setSupplyCap(type(uint256).max);
 
-        uint256 expectedLimit = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
-        assertEq(
-            usd3Strategy.availableDepositLimit(bob), expectedLimit, "Should be back to unlimited (bounded by vault)"
-        );
+        assertEq(usd3Strategy.availableDepositLimit(bob), type(uint256).max, "Should be back to unlimited admission");
 
-        uint256 depositAmount = expectedLimit > 10_000_000e6 ? 10_000_000e6 : expectedLimit;
-        if (depositAmount == 0) depositAmount = SMALL_AMOUNT;
+        uint256 depositAmount = 10_000_000e6;
 
         vm.prank(bob);
         strategy.deposit(depositAmount, bob);
