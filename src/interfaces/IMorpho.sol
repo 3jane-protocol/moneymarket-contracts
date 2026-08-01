@@ -64,9 +64,14 @@ struct RepaymentObligation {
 }
 
 /// @notice Markdown state for tracking defaulted debt value reduction
-/// @param lastCalculatedMarkdown Last calculated markdown amount
+/// @param lastCalculatedMarkdown Markdown currently applied to the market for this borrower; may be less than the
+/// requested markdown when the supply-share price floor truncated the increase
+/// @param inDefault Default-entry latch: 1 once the borrower's default entry has been processed, 0 otherwise.
+/// State written before this field existed carries 0 while in default, so a nonzero applied markdown also counts
+/// as a processed entry
 struct MarkdownState {
     uint128 lastCalculatedMarkdown;
+    uint128 inDefault;
 }
 
 struct Authorization {
@@ -432,7 +437,7 @@ interface IMorphoCredit {
     /// @notice Get markdown state for a borrower
     /// @param id Market ID
     /// @param borrower Borrower address
-    /// @return lastCalculatedMarkdown Last calculated markdown amount
+    /// @return lastCalculatedMarkdown Markdown currently applied to the market for this borrower
     function markdownState(Id id, address borrower) external view returns (uint128 lastCalculatedMarkdown);
 
     /// @notice Whether a supply-share floor truncated a market's markdown or settlement loss.

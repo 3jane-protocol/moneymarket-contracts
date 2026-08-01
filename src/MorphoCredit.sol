@@ -76,7 +76,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     mapping(Id => mapping(address => RepaymentObligation)) public repaymentObligation;
 
     /// @notice Markdown state for tracking defaulted debt value reduction
-    mapping(Id => mapping(address => MarkdownState)) public markdownState;
+    /// @dev The default-entry latch packs into the same slot; the external getter exposes only the applied markdown.
+    mapping(Id => mapping(address => MarkdownState)) internal _markdownState;
 
     /// @inheritdoc IMorphoCredit
     mapping(Id => bool) public marketInWindDown;
@@ -742,18 +743,25 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         address manager = ICreditLine(idToMarketParams[id].creditLine).mm();
         if (manager == address(0)) return; // No markdown manager set
 
-        uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
+        MarkdownState storage state = _markdownState[id][borrower];
+        uint256 lastMarkdown = state.lastCalculatedMarkdown;
         (RepaymentStatus status, uint256 statusStartTime) = getRepaymentStatus(id, borrower);
 
-        // Check if in default and emit status change events
+        // Check if in default and emit status change events. The latch keeps default entry observable when the
+        // supply-share floor truncates the whole markdown increase; state written before the latch existed is
+        // inferred from a nonzero applied markdown.
         bool isInDefault = status == RepaymentStatus.Default && statusStartTime > 0;
-        bool wasInDefault = lastMarkdown > 0;
+        bool wasInDefault = state.inDefault != 0 || lastMarkdown > 0;
 
-        if (isInDefault && !wasInDefault) {
-            IMarkdownController(manager).resetBorrowerState(borrower);
-            emit EventsLib.DefaultStarted(id, borrower, statusStartTime);
-        } else if (!isInDefault && wasInDefault) {
-            emit EventsLib.DefaultCleared(id, borrower);
+        if (isInDefault != wasInDefault) {
+            if (isInDefault) {
+                state.inDefault = 1;
+                IMarkdownController(manager).resetBorrowerState(borrower);
+                emit EventsLib.DefaultStarted(id, borrower, statusStartTime);
+            } else {
+                state.inDefault = 0;
+                emit EventsLib.DefaultCleared(id, borrower);
+            }
         }
 
         // Calculate new markdown
@@ -775,25 +783,38 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         }
 
         if (newMarkdown != lastMarkdown) {
-            // Update borrower state
-            markdownState[id][borrower].lastCalculatedMarkdown = uint128(newMarkdown);
+            // Update market totals - use a separate function to avoid stack issues.
+            // Store only what the market actually absorbed so a later decrease restores exactly
+            // what was deducted for this borrower and never consumes other borrowers' markdown.
+            uint256 appliedMarkdown = _updateMarketMarkdown(id, lastMarkdown, newMarkdown);
 
-            // Update market totals - use a separate function to avoid stack issues
-            _updateMarketMarkdown(id, int256(newMarkdown) - int256(lastMarkdown));
+            if (appliedMarkdown < newMarkdown) {
+                emit EventsLib.MarkdownTruncated(id, borrower, newMarkdown, appliedMarkdown);
+            }
+            if (appliedMarkdown != lastMarkdown) {
+                state.lastCalculatedMarkdown = uint128(appliedMarkdown);
 
-            emit EventsLib.BorrowerMarkdownUpdated(id, borrower, lastMarkdown, newMarkdown);
+                emit EventsLib.BorrowerMarkdownUpdated(id, borrower, lastMarkdown, appliedMarkdown);
+            }
         }
+    }
+
+    /// @inheritdoc IMorphoCredit
+    function markdownState(Id id, address borrower) external view returns (uint128) {
+        return _markdownState[id][borrower].lastCalculatedMarkdown;
     }
 
     /// @notice Update market totals for markdown changes
     /// @param id Market ID
-    /// @param markdownDelta Change in markdown (positive = increase, negative = decrease)
-    function _updateMarketMarkdown(Id id, int256 markdownDelta) internal {
+    /// @param lastMarkdown Markdown currently applied to the market for the borrower
+    /// @param newMarkdown Requested markdown for the borrower
+    /// @return Markdown applied to the market for the borrower after clamping
+    function _updateMarketMarkdown(Id id, uint256 lastMarkdown, uint256 newMarkdown) internal returns (uint256) {
         Market storage m = market[id];
 
-        if (markdownDelta > 0) {
+        if (newMarkdown > lastMarkdown) {
             // Markdown increasing (borrower deeper in default)
-            uint256 increase = uint256(markdownDelta);
+            uint256 increase = newMarkdown - lastMarkdown;
             uint256 totalSupplyAssets = m.totalSupplyAssets;
             uint256 minAssets = _minSupplyAssets(m.totalSupplyShares);
             uint256 available = totalSupplyAssets > minAssets ? totalSupplyAssets - minAssets : 0;
@@ -807,9 +828,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             // Apply the reduction to supply and record what was marked down
             m.totalSupplyAssets = uint128(totalSupplyAssets - increase);
             m.totalMarkdownAmount = (m.totalMarkdownAmount + increase).toUint128();
+            return lastMarkdown + increase;
         } else {
             // Markdown decreasing (borrower repaying/recovering)
-            uint256 decrease = uint256(-markdownDelta);
+            uint256 decrease = lastMarkdown - newMarkdown;
 
             // Cap at previously marked down amount to avoid creating phantom supply
             if (decrease > m.totalMarkdownAmount) {
@@ -819,6 +841,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             // Restore the supply and reduce the tracked markdown amount
             m.totalSupplyAssets = (m.totalSupplyAssets + decrease).toUint128();
             m.totalMarkdownAmount = (m.totalMarkdownAmount - decrease).toUint128();
+            return lastMarkdown - decrease;
         }
     }
 
@@ -896,13 +919,13 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @notice Apply settlement to storage
     function _applySettlement(Id id, address borrower, uint256 writtenOffShares, uint256 writtenOffAssets) internal {
-        uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
+        uint256 lastMarkdown = _markdownState[id][borrower].lastCalculatedMarkdown;
         Market storage m = market[id];
 
         // Clear borrower position and related state
         position[id][borrower].borrowShares = 0;
         position[id][borrower].collateral = 0;
-        delete markdownState[id][borrower];
+        delete _markdownState[id][borrower];
         delete repaymentObligation[id][borrower];
         delete borrowerPremium[id][borrower];
 
@@ -920,11 +943,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         uint256 totalSupplyAssets = m.totalSupplyAssets;
         if (writtenOffAssets > lastMarkdown) {
             uint256 loss = writtenOffAssets - lastMarkdown;
-            if (totalSupplyAssets < loss) revert ErrorsLib.InsufficientLiquidity();
 
             uint256 minAssets = _minSupplyAssets(m.totalSupplyShares);
             uint256 protectedAssets = minAssets < totalSupplyAssets ? minAssets : totalSupplyAssets;
-            uint256 remainingAssets = totalSupplyAssets - loss;
+            uint256 remainingAssets = totalSupplyAssets > loss ? totalSupplyAssets - loss : 0;
 
             if (remainingAssets < protectedAssets) {
                 remainingAssets = protectedAssets;
