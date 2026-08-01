@@ -251,21 +251,19 @@ call-local return bound. A live auction remains blocking because per-account rep
 there could not be materialized, and because it keeps the finalized-but-undisposed window free of new pending
 exposure. The auction's own collateral inventory is fixed at kick and is not the reason.
 
-Every deposit advances `commitmentStartEpoch` to at least its activation epoch. A default that receives any nonzero
-return-pool re-credit, whether paired or margin-only after the user-cap clamp, advances it to the later of its current
-value and the epoch in which that credit was created; zero or rounding-dropped credits leave it unchanged. These
+Every deposit advances `commitmentStartEpoch` to at least its activation epoch. A default that receives a nonzero
+return-pool re-credit advances it to the later of its current
+value and the epoch in which that credit was created; rounding-dropped credits leave it unchanged. These
 events restart the `minCommitmentEpochs` exit clock (§9). Funding of any kind never touches
 `commitmentStartEpoch`.
 
 ## 7. Capital calls and funding
 
 `openEpochCall` (PreCall only) reads a validated nonzero oracle price and stores it in
-`marginPriceAtCallOpen[epoch]`, freezes the current per-account cap in
-`userCommitmentCapAtCallOpen[epoch]`, snapshots `commitmentDenominator = activeCommitment`, records `callAmount` and
+`marginPriceAtCallOpen[epoch]`, snapshots `commitmentDenominator = activeCommitment`, records `callAmount` and
 `marginAtCallOpen`, exposes the price in `EpochCallOpened`, pushes the epoch onto `calledEpochList`, and snapshots
 exit-bucket exposure for the call. A reverting oracle propagates and a zero price reverts `OraclePriceInvalid`, so
-no legitimate call can record a missing price snapshot; initialization and `setRiskCaps` likewise prevent a
-legitimate zero cap snapshot.
+no legitimate call can record a missing price snapshot.
 
 Each account's obligation is computed **independently** and **ceil-rounded** from the call-open snapshot:
 
@@ -468,10 +466,34 @@ flowchart TD
 The **fee is an auction rake**: `fee = min(auctionedMargin * slashFeeBps / BPS, surplus)`. Never-auctioned disposal
 paths always pass `auctionedMargin = 0`, so `fee = 0` there. The remaining `returnPool` is valued into a
 `returnCommitment` and re-attributed to defaulters as active margin/commitment; the rest goes to treasury. On account
-replay, each defaulter's commitment share is capped at
-`saturatingSub(userCommitmentCapAtCallOpen[epoch], pendingCommitment)`, while its paired physical margin share is
-left intact. The cap snapshot makes this independent of when replay occurs. Unlike the price snapshot, a zero cap
-snapshot has no live-config fallback: it safely withholds commitment while leaving the returned margin recoverable.
+replay, each defaulter is credited its full floored pro-rata share of both the pool and the returned commitment.
+The per-user commitment cap deliberately does not bound this re-attribution (a knowing reopening of audit finding
+M-01). The decision record, stated precisely:
+
+- The credit approximates the call-open-price leveraged valuation of the account's returned margin, but
+  `_pairedReturnPoolShare` floors the margin and commitment shares independently, so the realised
+  commitment-per-margin ratio can exceed the pool ratio `returnCommitment / returnPool` — by less than a factor of
+  `(marginShare + 1) / marginShare`, material only when the credited margin share is a handful of base units at an
+  extreme oracle ratio. `LCCReturnPoolTest` pins a 1-wei margin share credited `750,000` commitment where the
+  call-open valuation of that wei is `500,000` (50% excess). The aggregate credit never exceeds the epoch's
+  `returnCommitment`.
+- The aggregate is capped by the commitment the slash removed (the call-local headroom clamp), so a default→return
+  cycle cannot increase `_totals.activeCommitment`; it only redistributes it among the epoch's defaulters, and
+  crediting the full share keeps global totals equal to the sum of per-account commitments up to the pair-drop
+  residual — O(1) flooring dust per epoch, except when the conversion pins at `MIN_RETURN_COMMITMENT`, where the
+  residual scales with the dropped account's margin (`LCCPairDropOrphan.t.sol`).
+- It is **not** bounded by the commitment slashed from that specific account. Price appreciation since the account's
+  deposit basis, or a lower leverage basis than its co-defaulters (the accepted M-02 dispersion), can make the credit
+  larger: `LCCReturnPoolTest` pins an account slashed for `50e18` commitment and credited `100e18`.
+- Repeated default/return cycles cannot increase aggregate exposure. The headroom clamp caps each epoch's
+  `returnCommitment` at the commitment the slash removed, so a rising call-open price pins the return at that
+  commitment — never marked up to market — while a falling price marks it down and the clamp prevents marking it
+  back up: aggregate commitment per unit of retained margin is monotone non-increasing across cycles
+  (`LCCReturnPoolTest` walks a fixed all-defaulting cohort through consecutive cycles, flat and rising, and
+  aggregate commitment never grows). An individual account exceeds its own slashed commitment only by absorbing
+  co-defaulters' pro-rata share through the margin-keyed split above, bounded per epoch by the whole defaulter
+  pool's slashed commitment; growth requires cohort composition change, not price appreciation alone. New deposits
+  remain blocked above the cap, so `userCommitmentCap` is a one-directional admission gate, not an exposure bound.
 
 **Price selection and wind-down.** The conversion step normally uses the validated oracle price frozen at call open
 and does not consult the live oracle, in either going-concern or wind-down mode. This freezes only the conversion
@@ -542,17 +564,17 @@ stateDiagram-v2
 
 **Commitment gate.** `requestExit` reverts `CommitmentNotMature` while
 `currentEpoch < commitmentStartEpoch + minCommitmentEpochs`. The clock is anchored at the later of the account's
-**latest deposit activation epoch** and **the epoch in which its latest nonzero return-pool re-credit was created**,
-whether that credit was paired or margin-only after the user-cap clamp. Every deposit and any such nonzero credit
-advances it monotonically, zero credits leave it unchanged, and no funding touches it.
+**latest deposit activation epoch** and **the epoch in which its latest nonzero return-pool re-credit was created**.
+Every deposit and any such nonzero credit advances it monotonically, rounding-dropped credits leave it unchanged,
+and no funding touches it.
 
 **Maturity assignment.** `_assignExitMaturity` is first-fit by request time (not strict FIFO): it starts at
 `currentEpoch + exitDelayEpochs` and walks forward to the first bucket with room, where per-epoch capacity is
 `max(1, max(protocolCommitmentCap, activeCommitment) * exitCapBps / BPS)`. Flooring the denominator at aggregate
 live utilization is deliberately path-dependent. Capacity is recomputed for every request, so it is never below
 the configured-cap value at that request, but it can decline as `activeCommitment` declines through amortizing
-funding or slash finalization. `activeCommitment` is the aggregate and can conservatively include unattributed
-return commitment, which only widens capacity. Funded or slashed amounts free bucket room retroactively. A request
+funding or slash finalization. `activeCommitment` is the aggregate and can include flooring-dust return commitment
+not attributable to any account, which only widens capacity. Funded or slashed amounts free bucket room retroactively. A request
 larger than the whole per-epoch capacity takes the first bucket with any remaining room.
 During a live auction, capacity uses the post-slash trough before settlement restores return commitment, so a
 non-defaulting exiter can be deferred farther than the same request just after settlement; this is a fairness and
@@ -635,16 +657,16 @@ flowchart TD
 
 `LCCAuctionLib` and `LCCConfigLib` are the two externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-24,127 bytes, 149 bytes below the 24,276-byte release ceiling and 449 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+24,021 bytes, 255 bytes below the 24,276-byte release ceiling and 555 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls
 `_disableInitializers()`. `LCCVaultFactory` deploys per-facility `BeaconProxy` instances with atomic `initialize`
 calldata; per-facility params live in proxy storage. The factory registry (`isVault` / `allVaults`) records owner-vetted
 **provenance only** — the beacon is public, so anyone can point an unregistered proxy at it. Packed structs in
-`LCCTypesLib` are upgrade-frozen layout. The layout retains the full 50-slot `__gap` after the call-open snapshots:
-while LCC is pre-deployment, new state such as `returnCreditEpochByCall`, `marginPriceAtCallOpen`, and
-`userCommitmentCapAtCallOpen` is declared above the gap rather than consuming it, so the post-deployment reserve
+`LCCTypesLib` are upgrade-frozen layout. The layout retains the full 50-slot `__gap` after the call-open price
+snapshot: while LCC is pre-deployment, new state such as `returnCreditEpochByCall` and `marginPriceAtCallOpen`
+is declared above the gap rather than consuming it, so the post-deployment reserve
 stays at 50. Once deployed, new state must
 consume gap slots. Both `LCCAuctionLib` and `LCCConfigLib` must be re-linked on every implementation redeploy. Every future
 implementation must preserve runtime exit capacity of at least one, or normalize existing configurations during the
@@ -667,10 +689,15 @@ record lives in
 - **Rolling pins cap utilization.** Rolled accounts never decrement active commitment, shrinking deposit headroom.
   Disposal conservatively includes their call-open commitment in `B`; a cap at or below `B` zeroes the paired
   return pool, while any positive commitment clamp preserves the full pool.
-- **Withheld commitment dilutes the next call.** The user-cap clamp can credit aggregate active commitment that is
-  not attributable to any account. A call can open against that gap, so its denominator exceeds attributable
-  commitment and the sum of per-account obligations under-delivers the call. The gap remains until the next
-  non-disabled finalized slash includes it in `slashedCommitment`.
+- **Return credit ignores the per-user cap (reopened M-01).** Return-pool re-attribution credits each defaulter
+  its full paired share, so an account's post-default exposure can exceed the live `userCommitmentCap`; the cap
+  gates deposit admission only. This is a deliberate owner decision: the full-share credit keeps global totals equal
+  to the sum of per-account commitments up to the pair-drop residual, removing the clamp's orphan specifically —
+  the pair-drop still produces the same class of unbacked denominator, cleared by the same later-slash sweep, and
+  it scales past flooring dust when the conversion pins at `MIN_RETURN_COMMITMENT`. The headroom clamp caps each
+  cycle's returned commitment at the commitment the slash removed, so repeated default/return cycles ratchet
+  aggregate exposure down, never up; an account exceeds its own slashed commitment only by absorbing co-defaulters'
+  margin-keyed pro-rata share (see the disposal decision record in section 8).
 - **Push funding front-runs rolls.** `fundCall(address)` always amortizes and can deny a user's intended roll for
   that epoch.
 - **Slash-disable is strict-before-deadline.** Shutdown strictly before an epoch's funding deadline disables its
@@ -697,8 +724,8 @@ record lives in
 - **Cap changes do not unwind and retain the configured-cap floor.** `setRiskCaps` lowering caps below current
   utilization does not force existing positions or assigned exit buckets to unwind. Exit capacity is recomputed per
   request from aggregate live `activeCommitment`, deliberately introducing path dependence; it can decline as active
-  commitment declines, but never below the configured-cap value at that request. Any unattributed return commitment
-  in the aggregate only widens capacity.
+  commitment declines, but never below the configured-cap value at that request. Any flooring-dust return
+  commitment in the aggregate only widens capacity.
 
 ## Related docs
 

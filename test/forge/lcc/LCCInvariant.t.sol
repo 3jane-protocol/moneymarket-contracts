@@ -103,17 +103,17 @@ contract LCCInvariantHandler is Test {
     uint256 public ghostCumDeposited;
     uint256 public ghostCumMarginOut;
     uint256 public ghostGrandfatheredOverCapExposure;
-    uint256 public ghostUserCapClampCount;
+    uint256 public ghostReturnCreditCount;
 
     modifier capWatch() {
         vm.recordLogs();
-        _ensureUserCapClampCoverage();
+        _ensureReturnCreditCoverage();
         uint256 capBefore = invariantVault.riskConfig().protocolCommitmentCap;
         bool shutdownBefore = invariantVault.shutdownState().active;
         _;
         Vm.Log[] memory logs = vm.getRecordedLogs();
         _assertDisposalsRespectHeadroom(logs, capBefore, shutdownBefore);
-        _countUserCapClamps(logs);
+        _countReturnCredits(logs);
     }
 
     constructor(
@@ -678,9 +678,9 @@ contract LCCInvariantHandler is Test {
         vm.warp(block.timestamp + _range(secondsSeed, 1, 80));
     }
 
-    function _ensureUserCapClampCoverage() internal {
+    function _ensureReturnCreditCoverage() internal {
         if (
-            ghostUserCapClampCount != 0 || invariantVault.shutdownState().active || _isTerminal(invariantVault)
+            ghostReturnCreditCount != 0 || invariantVault.shutdownState().active || _isTerminal(invariantVault)
                 || invariantVault.syncState().pendingAuctionEpochPlusOne != 0
         ) return;
 
@@ -706,8 +706,12 @@ contract LCCInvariantHandler is Test {
 
         ILCCVault.RiskConfig memory config = invariantVault.riskConfig();
         uint256 userCap = account.activeCommitment / 2;
-        // Isolate the per-user branch: protocol headroom stays deliberately ample while the snapshot user cap is
-        // below this actor's utilization, so replay must reduce the otherwise full return commitment.
+        // Protocol headroom stays deliberately ample while the live user cap sits below this actor's utilization,
+        // so the forced default's full-share return credit re-attributes commitment above the user cap (the
+        // deliberately reopened M-01 behavior) and the conservation dust bound sees a live return credit. The
+        // counter only accepts genuinely over-cap credits, and a skewed margin-to-commitment shape can leave one
+        // forced round's credit at or below the cap; that round still homogenizes every defaulter's ratio to
+        // returnCommitment/returnPool, so a retry from the homogenized state credits above the halved cap.
         vm.prank(invariantOwner);
         invariantVault.setRiskCaps(10_000_000e18, userCap, config.exitCapBps, config.minDepositAssets);
 
@@ -773,35 +777,31 @@ contract LCCInvariantHandler is Test {
         }
     }
 
-    function _countUserCapClamps(Vm.Log[] memory logs) internal {
-        address defaultedUser;
-        uint256 defaultedEpoch;
-        uint256 unclampedCommitment;
-
+    /// @dev Coverage signal for the reopened M-01 behavior: counts return credits from persisted disposals whose
+    /// account now sits above the live `userCommitmentCap`, keeping `_ensureReturnCreditCoverage` re-forcing its
+    /// scenario until an over-live-cap credit is actually observed. It is not by itself a clamp killer: the count
+    /// compares against the live cap while a reintroduced clamp would bound by the call-open snapshot, and the
+    /// handler lowers the cap on a quarter of `setRiskCaps` draws, so an organic credit taken while
+    /// `liveCap < snapshotCap` can still trip the counter under a clamped implementation. The clamp itself is
+    /// killed deterministically by LCCReturnPool.t.sol's testReturnCreditIsFullPairedShareAndCanExceedUserCap,
+    /// testPendingExposureDoesNotReduceReturnCommitmentCredit,
+    /// testReplayCompletesAndConservesAcrossTwoConsecutiveDefaultEpochs, and
+    /// testReturnedCommitmentConservedAndBacksNextCallDenominator. The epoch returnPool read filters disposals
+    /// whose state rolled back under a caught revert (recorded logs survive those); a rolled-back credit passes
+    /// the exposure check only when its account already exceeds the live cap. Full-share attribution is separately
+    /// enforced by the totals-vs-accounts commitment dust bound.
+    function _countReturnCredits(Vm.Log[] memory logs) internal {
+        uint256 userCommitmentCap = invariantVault.riskConfig().userCommitmentCap;
         for (uint256 i = 0; i < logs.length; ++i) {
             Vm.Log memory entry = logs[i];
-            if (entry.emitter != address(invariantVault) || entry.topics.length != 3) continue;
-
-            if (entry.topics[0] == LCCEventsLib.UserDefaulted.selector) {
-                defaultedUser = address(uint160(uint256(entry.topics[1])));
-                defaultedEpoch = uint256(entry.topics[2]);
-                (uint256 slashedMargin,) = abi.decode(entry.data, (uint256, uint256));
-                ILCCVault.EpochState memory state = invariantVault.getEpochState(defaultedEpoch);
-                unclampedCommitment = state.slashedMargin == 0
-                    ? 0
-                    : Math.mulDiv(state.returnCommitment, slashedMargin, state.slashedMargin);
-                continue;
-            }
-
             if (
-                entry.topics[0] != LCCEventsLib.ReturnPoolCredited.selector
-                    || address(uint160(uint256(entry.topics[1]))) != defaultedUser
-                    || uint256(entry.topics[2]) != defaultedEpoch
+                entry.emitter != address(invariantVault) || entry.topics.length != 3
+                    || entry.topics[0] != LCCEventsLib.ReturnPoolCredited.selector
             ) continue;
-
-            (, uint256 creditedCommitment) = abi.decode(entry.data, (uint256, uint256));
-            if (creditedCommitment < unclampedCommitment) ++ghostUserCapClampCount;
-            unclampedCommitment = 0;
+            if (invariantVault.getEpochState(uint256(entry.topics[2])).returnPool == 0) continue;
+            ILCCVault.Account memory account = invariantVault.getAccount(address(uint160(uint256(entry.topics[1]))));
+            if (account.activeCommitment + account.pendingCommitment <= userCommitmentCap) continue;
+            ++ghostReturnCreditCount;
         }
     }
 
@@ -954,30 +954,40 @@ contract LCCStatefulInvariantTest is LCCBase {
 
         uint256[] memory called = vault.calledEpochs();
         // Single pass over the called epochs: asserts treasury + per-epoch conservation and returns the return-pool
-        // margin dust accounting.
-        (uint256 returnPoolEpochs, uint256 marginRatioSum) =
+        // dust accounting for both sides of the paired share.
+        (uint256 returnPoolEpochs, uint256 marginRatioSum, uint256 commitmentRatioSum) =
             _assertTreasuryAndEpochConservation(called, initialTreasuryMargin);
 
         ILCCVault.Totals memory totals = vault.totals();
         uint256 n = invariantActors.length;
         // Margin dust bound: return-pool re-attribution floors each defaulter's paired share (up to one unit per
         // defaulter per return-pool epoch) and, when the leveraged commitment share floors to zero at low price, the
-        // paired-drop orphans up to returnPool/returnCommitment of that account's margin (LCCVault.sol:1110-1114).
-        // Actor count times those ratios, with no amount-scale term, so a real margin over-count cannot hide under it.
+        // paired-drop orphans up to returnPool/returnCommitment of that account's margin (_pairedReturnPoolShare).
+        // Actor count times those ratios. The ratio terms are regime-dependent: when returnCommitment pins at
+        // MIN_RETURN_COMMITMENT while the pool stays large, ceil(returnPool/returnCommitment) carries an
+        // amount-scale factor, so the bound is loose (and carries little information) in that regime and is tight
+        // only away from it.
         uint256 marginDustBound = n * (returnPoolEpochs + marginRatioSum);
         assertLe(activeMargin, totals.activeMargin);
         assertLe(uint256(totals.activeMargin) - activeMargin, marginDustBound);
-        // Commitment: only the account-over-attribution direction is bounded (accounts can never back more than
-        // totals). The reverse gap (totals > sum(accounts)) is a benign orphan with NO tight bound. Unit-scale
-        // return-share flooring is a pre-existing source, but the dominant source is the user-cap clamp: totals
-        // receive the epoch's full returnCommitment while account replay can withhold up to all of it. The gap is
-        // included in the next call's commitmentDenominator and therefore in its slashedCommitment, so the next
-        // finalized slash removes it (LCCVault.sol:936-942). It does not clear when shutdown disables that slash,
-        // because the disabled path returns before computing or removing slashedCommitment (LCCVault.sol:929-932).
-        // The gap moves no margin, and the return path is unit-covered by LCCReturnPool/LCCSlashFee. Any commitment
-        // error that moves value is still caught by the exact solvency assertEq, tight margin bound, treasury
-        // reconciliation, and ghost-flow ledger.
+        // Commitment dust bound. Per return-pool epoch j, replay loses at most one flooring unit per defaulter and,
+        // when a defaulter's margin share floors to zero, pair-drops a commitment share below
+        // ceil(returnCommitment_j / returnPool_j): the n * (returnPoolEpochs + commitmentRatioSum) term. The second
+        // term covers the pair-drop orphan cross term (LCCPairDropOrphan.t.sol): margin orphaned by an earlier
+        // epoch's pair-drop — bounded by marginDustBound, since slashing re-absorbs prior margin orphans and each
+        // disposal re-orphans at most a returnPool_j/slashedMargin_j <= 1 fraction of them — is slashed into a later
+        // epoch j's pool and converted at that epoch's ratio, attributing up to
+        // orphan * returnCommitment_j / slashedMargin_j <= marginDustBound * ceil(returnCommitment_j / returnPool_j)
+        // commitment to no account (returnPool_j <= slashedMargin_j). This residual is attribution, not solvency:
+        // the orphaned margin stays in the vault balance (exact solvency assertEq below), and value-moving errors
+        // are separately caught by the treasury reconciliation and ghost-flow ledger. Away from the
+        // MIN_RETURN_COMMITMENT-pinned regime both terms scale only with per-epoch state ratios, so a reintroduced
+        // per-user cap clamp on the credit — whose orphan is a raw slice of a live account's commitment —
+        // overshoots the bound there; in the pinned regime the bound itself carries an amount-scale factor, and
+        // the clamp is killed by the deterministic LCCReturnPool tests instead.
+        uint256 commitmentDustBound = n * (returnPoolEpochs + commitmentRatioSum) + marginDustBound * commitmentRatioSum;
         assertLe(activeCommitment, totals.activeCommitment);
+        assertLe(uint256(totals.activeCommitment) - activeCommitment, commitmentDustBound);
         assertEq(pendingMargin, totals.pendingMargin);
         assertEq(pendingCommitment, totals.pendingCommitment);
 
@@ -1138,7 +1148,7 @@ contract LCCStatefulInvariantTest is LCCBase {
             vault.shutdown();
         }
         _drainRemainingMargin();
-        assertGt(handler.ghostUserCapClampCount(), 0, "user-cap clamp branch was not exercised");
+        assertGt(handler.ghostReturnCreditCount(), 0, "return-credit path was not exercised");
     }
 
     function _drainRemainingMargin() internal {
@@ -1340,7 +1350,7 @@ contract LCCTerminalStatefulInvariantTest is LCCStatefulInvariantTest {
         }
 
         _drainRemainingMargin();
-        assertGt(handler.ghostUserCapClampCount(), 0, "user-cap clamp branch was not exercised");
+        assertGt(handler.ghostReturnCreditCount(), 0, "return-credit path was not exercised");
     }
 }
 

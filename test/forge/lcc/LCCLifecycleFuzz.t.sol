@@ -290,13 +290,19 @@ contract LCCLifecycleFuzz is LCCBase {
 
     function _assertConservation(address[] memory actors, uint256 initialTreasuryMargin) internal view {
         MarginSums memory sums = _marginSums(actors);
-        (uint256 returnPoolEpochs, uint256 marginRatioSum) =
+        (uint256 returnPoolEpochs, uint256 marginRatioSum, uint256 commitmentRatioSum) =
             _assertTreasuryAndEpochConservation(vault.calledEpochs(), initialTreasuryMargin);
         ILCCVault.Totals memory totals = vault.totals();
         uint256 marginDustBound = actors.length * (returnPoolEpochs + marginRatioSum);
+        // Same two-term form as invariant_DerivedActiveBalancesMatchGlobalTotals: per-epoch flooring/pair-drop
+        // plus the pair-drop orphan cross term (LCCPairDropOrphan.t.sol) in which earlier orphaned margin, itself
+        // bounded by marginDustBound, converts at a later epoch's returnCommitment/returnPool ratio.
+        uint256 commitmentDustBound =
+            actors.length * (returnPoolEpochs + commitmentRatioSum) + marginDustBound * commitmentRatioSum;
         assertLe(sums.activeMargin, totals.activeMargin);
         assertLe(uint256(totals.activeMargin) - sums.activeMargin, marginDustBound);
         assertLe(sums.activeCommitment, totals.activeCommitment);
+        assertLe(uint256(totals.activeCommitment) - sums.activeCommitment, commitmentDustBound);
         assertEq(sums.pendingMargin, totals.pendingMargin);
         assertEq(sums.pendingCommitment, totals.pendingCommitment);
 

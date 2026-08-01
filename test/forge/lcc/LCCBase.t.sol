@@ -152,7 +152,6 @@ contract LCCBase is Test {
     uint256 internal constant FUNDING = 20;
     uint256 internal constant CAP = 10_000_000e18;
     uint256 internal constant MARGIN_PRICE_AT_CALL_OPEN_SLOT = 30;
-    uint256 internal constant USER_COMMITMENT_CAP_AT_CALL_OPEN_SLOT = 31;
 
     address internal owner = makeAddr("owner");
     address internal treasury = makeAddr("treasury");
@@ -402,7 +401,7 @@ contract LCCBase is Test {
     function _assertTreasuryAndEpochConservation(uint256[] memory called, uint256 initialTreasuryMargin)
         internal
         view
-        returns (uint256 returnPoolEpochs, uint256 marginRatioSum)
+        returns (uint256 returnPoolEpochs, uint256 marginRatioSum, uint256 commitmentRatioSum)
     {
         uint256 expectedTreasury;
         uint256 liveAuctionSlot = vault.syncState().pendingAuctionEpochPlusOne;
@@ -414,6 +413,7 @@ contract LCCBase is Test {
             if (state.returnPool != 0) {
                 ++returnPoolEpochs;
                 marginRatioSum += Math.ceilDiv(state.returnPool, state.returnCommitment);
+                commitmentRatioSum += Math.ceilDiv(state.returnCommitment, state.returnPool);
             }
             if (!state.slashFinalized || state.slashDisabledByShutdown || liveAuctionSlot == epoch + 1) continue;
 

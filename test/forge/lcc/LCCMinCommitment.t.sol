@@ -23,7 +23,6 @@ contract LCCMinCommitmentTest is LCCBase {
         _assertLayoutSlot("calledEpochList", CALLED_EPOCH_LIST_SLOT);
         _assertLayoutSlot("returnCreditEpochByCall", RETURN_CREDIT_EPOCH_SLOT);
         _assertLayoutSlot("marginPriceAtCallOpen", MARGIN_PRICE_AT_CALL_OPEN_SLOT);
-        _assertLayoutSlot("userCommitmentCapAtCallOpen", USER_COMMITMENT_CAP_AT_CALL_OPEN_SLOT);
     }
 
     function testMinZeroExitsSameEpoch() public {
@@ -646,7 +645,6 @@ contract LCCMinCommitmentTest is LCCBase {
         vm.store(address(vault), bytes32(stateSlot + 9), bytes32(aggregateSlashedMargin));
         vm.store(address(vault), bytes32(stateSlot + 10), bytes32(returnPool));
         vm.store(address(vault), bytes32(stateSlot + 11), bytes32(returnCommitment));
-        vm.store(address(vault), _mappingSlot(epoch, USER_COMMITMENT_CAP_AT_CALL_OPEN_SLOT), bytes32(CAP));
 
         uint256 syncState = uint256(vm.load(address(vault), bytes32(SYNC_STATE_SLOT)));
         syncState = (syncState & ~(UINT64_MASK << 64)) | ((length + 1) << 64);
