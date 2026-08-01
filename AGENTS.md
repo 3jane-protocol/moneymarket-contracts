@@ -136,6 +136,20 @@ Targeted local command for LCC changes:
 
 - `yarn run test:forge --match-path 'test/forge/lcc/**/*.t.sol' -vvv`
 
+## Operational Preconditions Committed to Auditors
+
+These are commitments made on the record in the Guardian Audits review, where a finding was accepted as residual risk *because* the precondition holds. They are enforced by owner discipline, not by code. Breaking one makes the corresponding code fix a prerequisite, not an option.
+
+**M-02 — LCC return-pool allocation under leverage dispersion.** The return pool is allocated to defaulters by slashed margin while the shortfall consuming it is commitment-driven, so an over-committed defaulter under-pays and the discrepancy lands on a lower-leverage co-defaulter. Accepted without a code fix, conditional on all of:
+
+- Registered facilities use approved non-rebasing USD-denominated yield-bearing stables only. Admitting volatile margin assets requires the code fix first. This is a listing checklist item — `LCCConfigLib` validation accepts any nonzero asset, so nothing in code enforces it.
+- Facilities carry a bounded tenor, or justify their dispersion budget without one. A perpetual facility (`maxEpochs = 0`) permits multi-year leverage divergence.
+- A per-stake loss budget is evaluated at listing against the pair (max leverage dispersion `r`, max slash-loss fraction `λ`), using the general form `λx(r−1)/(1 + x(r−1))` where `x` is the high-leverage cohort's margin fraction. Do not use the symmetric `λ(r−1)/(r+1)`; it is the `x = ½` case and understates the worst case. Note `λ` worst-cases to 1 while `maxAuctionAwardBps` is 10000, since the pool can be fully consumed.
+- Revalidation is **change-triggered, not one-time**: any use of `setRiskCaps` or `setMaxAuctionAwardBps` requires re-running the budget before execution, because both are mutable post-listing and a lowered `userCommitmentCap` interacts with the M-01 clamp to create dispersion unrelated to yield drift. The 24h params timelock makes this enforceable in practice.
+- A named owner signs the budget off at listing and at each revalidation.
+
+**M-04 — MorphoCredit fee recipient versus the USD3 ring fence.** USD3 subtracts the ring fence from withdrawal capacity while MorphoCredit grants the fee recipient an independent exception. Accepted without a code fix solely because the MorphoCredit fee is zero and **will not be enabled**. `setFee` is owner-gated; enabling it makes this finding live and it must then be remediated on its merits. Verify the fee is still zero before treating this finding as closed.
+
 ## Architecture Notes
 
 - Primary contract: `src/Morpho.sol`.
