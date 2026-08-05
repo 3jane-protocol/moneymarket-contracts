@@ -1,0 +1,36 @@
+{
+  "contractName": "NotificationVault",
+  "expected": {
+    "compiler": "0.8.35+commit.47b9dedd",
+    "evmVersion": "shanghai",
+    "viaIR": true,
+    "optimizerEnabled": true,
+    "optimizerRuns": 999999,
+    "bytecodeHash": "none"
+  },
+  "candidates": [
+    {
+      "file": "NotificationVault.0.8.35.json",
+      "metadata": {
+        "compiler": {
+          "version": "0.8.35+commit.47b9dedd"
+        },
+        "settings": {
+          "evmVersion": "shanghai",
+          "optimizer": {
+            "enabled": true,
+            "runs": 999999
+          },
+          "metadata": {
+            "bytecodeHash": "none"
+          }
+        }
+      }
+    }
+  ],
+  "expectedErrorFragments": [
+    "could not resolve canonical NotificationVault artifact",
+    "NotificationVault.0.8.35.json",
+    "viaIR=undefined"
+  ]
+}

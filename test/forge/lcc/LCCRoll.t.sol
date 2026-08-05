@@ -88,23 +88,24 @@ contract LCCRollTest is LCCBase {
         assertEq(auction.marginPool, 100e18);
 
         vm.warp(START + NORMAL + PRE_CALL + FUNDING + 5);
+        uint256 expectedAward = _referenceAward(100e18, 0, 100e18, 100e18, 5, 5, 5_000, 1_000, 10_000, oracle.price());
         vm.prank(alice);
-        (uint256 filled, uint256 award) = vault.takeAuction(100e18, 50e18, type(uint256).max);
+        (uint256 filled, uint256 award) = vault.takeAuction(100e18, expectedAward, type(uint256).max);
         assertEq(filled, 100e18);
-        assertEq(award, 50e18);
+        assertEq(award, expectedAward);
 
         state = vault.getEpochState(0);
-        // fee = min(awarded 50e18 x 10%, surplus 50e18) = 5e18.
-        assertEq(state.returnPool, 45e18);
-        assertEq(state.returnCommitment, 90e18);
-        assertEq(_accruedTreasuryMargin(), 5e18);
+        SettlementReference memory settlement = _referenceSettlement(100e18, award, 100e18, 100e18, 5_000, 1_000, true);
+        assertEq(state.returnPool, settlement.baseReturn);
+        assertEq(state.returnCommitment, 2 * settlement.baseReturn);
+        assertEq(_accruedTreasuryMargin(), settlement.fee);
 
         vm.expectEmit(true, true, false, true, address(vault));
         emit LCCEventsLib.UserDefaulted(carol, 0, 100e18, 200e18);
         vault.materializeAccount(carol);
         ILCCVault.Account memory carolAccount = vault.getAccount(carol);
-        assertEq(carolAccount.activeMargin, 45e18);
-        assertEq(carolAccount.activeCommitment, 90e18);
+        assertEq(carolAccount.activeMargin, settlement.baseReturn);
+        assertEq(carolAccount.activeCommitment, 2 * settlement.baseReturn);
     }
 
     function testLiveExiterCannotRollButCanAmortizeAndClaimedExiterCanRollAfterRedeposit() public {

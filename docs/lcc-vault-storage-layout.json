@@ -185,19 +185,11 @@
       "type": "t_uint256"
     },
     {
-      "astId": 5206,
-      "contract": "src/lcc/LCCVault.sol:LCCVault",
-      "label": "returnCreditEpochByCall",
-      "offset": 0,
-      "slot": "29",
-      "type": "t_mapping(t_uint256,t_uint256)"
-    },
-    {
       "astId": 5211,
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "marginPriceAtCallOpen",
       "offset": 0,
-      "slot": "30",
+      "slot": "29",
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
@@ -205,7 +197,7 @@
       "contract": "src/lcc/LCCVault.sol:LCCVault",
       "label": "__gap",
       "offset": 0,
-      "slot": "31",
+      "slot": "30",
       "type": "t_array(t_uint256)50_storage"
     }
   ],
