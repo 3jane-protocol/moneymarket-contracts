@@ -162,6 +162,23 @@ contract LCCGasSynchronizationBenchmarkTest is LCCBase {
     }
 }
 
+/// @dev Measures a synced admin call that reads factory ownership once at entry and again at bit-16 disposal.
+contract LCCGasFactoryAuthoritySettlementBenchmarkTest is LCCBase {
+    function setUp() public override {
+        super.setUp();
+        _deposit(alice, 100e18);
+        _openCall(100e18);
+        _finishFunding();
+    }
+
+    function testGasFactoryAuthorityDuringSettlement() public {
+        vm.prank(owner);
+        uint256 gasBefore = gasleft();
+        vault.setRiskCaps(CAP, CAP, 2_000, 0);
+        emit log_named_uint("factory authority during settlement", gasBefore - gasleft());
+    }
+}
+
 contract LCCGasMaterializeChangedBenchmarkTest is LCCBase {
     function setUp() public override {
         super.setUp();

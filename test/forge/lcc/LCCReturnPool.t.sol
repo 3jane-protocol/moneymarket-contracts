@@ -10,7 +10,7 @@ import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
 import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 
 contract LCCReturnPoolTest is LCCBase {
-    uint256 internal constant RISK_CONFIG_SLOT = 4;
+    uint256 internal constant RISK_CONFIG_SLOT = 3;
 
     function setUp() public override {
         super.setUp();
@@ -575,6 +575,7 @@ contract LCCReturnPoolTest is LCCBase {
         vm.store(address(vault), _mappingSlot(0, MARGIN_PRICE_AT_CALL_OPEN_SLOT), bytes32(0));
 
         vm.warp(START + EPOCH);
+        vm.prank(stranger);
         vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
         vault.materializeAccount(alice);
 

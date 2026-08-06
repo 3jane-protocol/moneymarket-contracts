@@ -14,7 +14,6 @@
   "minCommitmentEpochs": 1,
   "minDepositAssets": 0,
   "normalDuration": 345600,
-  "owner": "0x0000000000000000000000000000000000000000",
   "preCallDuration": 86400,
   "protocolCommitmentCap": 10000000000000,
   "slashFeeBps": 1000,

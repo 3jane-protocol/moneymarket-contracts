@@ -8,8 +8,6 @@ pragma solidity >=0.8.22 <0.9.0;
 library LCCErrorsLib {
     /// @notice Thrown when a required address argument is the zero address.
     error ZeroAddress();
-    /// @notice Thrown when an action is restricted to the owner.
-    error NotOwner();
     /// @notice Thrown when an input parameter is outside its valid range.
     error InvalidParams();
     /// @notice Thrown when a wall-clock transaction deadline has expired.
@@ -24,6 +22,12 @@ library LCCErrorsLib {
     error NotPaused();
     /// @notice Thrown when a caller is not authorized for the action.
     error Unauthorized();
+    /// @notice Thrown when a deposit authorization caller is not a factory-registered vault.
+    error NotVault();
+    /// @notice Thrown when whitelist enforcement rejects a depositor.
+    error NotWhitelistedDepositor();
+    /// @notice Thrown when a depositor still has exposure in another family vault.
+    error RegisteredElsewhere(address vault);
     /// @notice Thrown when a new call, deposit, or exit request is attempted after scheduled sunset.
     error VaultTerminal();
     /// @notice Thrown when an exit request would create more tracked maturity buckets than the vault supports.

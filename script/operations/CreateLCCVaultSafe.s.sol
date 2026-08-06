@@ -55,7 +55,6 @@ contract CreateLCCVaultSafe is Script, SafeHelper, LCCWiringCheck {
         (ILCCVault.VaultParams memory params, string memory facilityId) = _parseDeploymentConfig(jsonPath);
 
         require(bytes(facilityId).length != 0, "Facility ID not set");
-        require(params.owner != address(0), "Vault owner not set");
         require(params.marginAsset != address(0), "Margin asset not set");
         require(params.marginOracle != address(0), "Margin oracle not set");
         require(params.startTimestamp > block.timestamp, "Vault start timestamp must be in the future");
@@ -149,7 +148,6 @@ contract CreateLCCVaultSafe is Script, SafeHelper, LCCWiringCheck {
     {
         string memory json = vm.readFile(jsonPath);
         facilityId = vm.parseJsonString(json, ".facilityId");
-        params.owner = vm.parseJsonAddress(json, ".owner");
         params.marginAsset = vm.parseJsonAddress(json, ".marginAsset");
         params.marginOracle = vm.parseJsonAddress(json, ".marginOracle");
         params.startTimestamp = vm.parseJsonUint(json, ".startTimestamp");

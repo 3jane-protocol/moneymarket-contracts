@@ -119,6 +119,15 @@ library LCCEventsLib {
     /// @param marginAssets Margin transferred (marginAsset).
     event RemainingMarginClaimed(address indexed user, address indexed receiver, uint256 marginAssets);
 
+    /// @notice Emitted when an authorized bouncer removes some or all of a user's callable commitment.
+    /// @param caller Authorized bouncer that initiated the removal.
+    /// @param user Account whose commitment was removed.
+    /// @param marginReturned Margin transferred back to the user (marginAsset).
+    /// @param commitmentRemoved Commitment removed from the account (fundingAsset).
+    event CommitmentBounced(
+        address indexed caller, address indexed user, uint256 marginReturned, uint256 commitmentRemoved
+    );
+
     /// @notice Emitted when the owner updates mutable risk caps.
     /// @param protocolCommitmentCap New vault-wide commitment cap (fundingAsset).
     /// @param userCommitmentCap New per-account commitment cap (fundingAsset).
@@ -140,11 +149,6 @@ library LCCEventsLib {
     /// @notice Emitted when the owner unpauses the vault.
     /// @param by Account that unpaused the vault.
     event Unpaused(address indexed by);
-
-    /// @notice Emitted when the owner updates the pause guardian.
-    /// @param oldGuardian Previous guardian.
-    /// @param newGuardian New guardian.
-    event GuardianUpdated(address indexed oldGuardian, address indexed newGuardian);
 
     /// @notice Emitted when an epoch's funding shortfall opens a Dutch auction.
     /// @param epoch Epoch whose shortfall is auctioned.

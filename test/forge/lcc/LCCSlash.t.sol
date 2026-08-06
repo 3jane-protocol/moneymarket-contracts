@@ -72,6 +72,7 @@ contract LCCSlashTest is LCCBase {
         assertEq(vault.getEpochState(0).returnPool, 100e18);
 
         ILCCVault.VaultParams memory params = _termParams(1);
+        factory.setOneVaultPolicyEnabled(false);
         vm.warp(START);
         oracle.setPrice(ORACLE_PRICE_SCALE);
         _deployVaultWithParams(params);

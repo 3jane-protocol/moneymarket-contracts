@@ -10,9 +10,12 @@ import {ERC4626} from "../../../lib/openzeppelin/contracts/token/ERC20/extension
 import {IERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
+import {LCCVaultFactory} from "../../../src/lcc/LCCVaultFactory.sol";
 import {LCCEventsLib} from "../../../src/lcc/libraries/LCCEventsLib.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
+import {ILCCVaultFactory} from "../../../src/lcc/interfaces/ILCCVaultFactory.sol";
 import {LCCAuctionLib} from "../../../src/lcc/libraries/LCCAuctionLib.sol";
+import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ORACLE_PRICE_SCALE, BPS} from "../../../src/libraries/ConstantsLib.sol";
 import {IOracle} from "../../../src/interfaces/IOracle.sol";
@@ -106,7 +109,7 @@ contract LCCMockUSD3 is ERC4626 {
 contract LCCMockNotificationVault is ERC4626 {
     bool internal depositHookReverts;
 
-    constructor(IERC20 asset_) ERC20("Mock Notification USD3", "mnUSD3") ERC4626(asset_) {}
+    constructor(IERC20 asset_) ERC20("Mock Notification USD3", "mnUSD3l") ERC4626(asset_) {}
 
     function setDepositHookReverts(bool reverts) external {
         depositHookReverts = reverts;
@@ -144,20 +147,24 @@ contract LCCAssetOnlyVault {
     }
 }
 
-contract LCCBase is Test {
+contract LCCBase is Test, ILCCVaultFactory {
     uint256 internal constant START = 1_000;
     uint256 internal constant EPOCH = 100;
     uint256 internal constant NORMAL = 40;
     uint256 internal constant PRE_CALL = 20;
     uint256 internal constant FUNDING = 20;
     uint256 internal constant CAP = 10_000_000e18;
-    uint256 internal constant MARGIN_PRICE_AT_CALL_OPEN_SLOT = 29;
+    uint256 internal constant MARGIN_PRICE_AT_CALL_OPEN_SLOT = 28;
 
-    address internal owner = makeAddr("owner");
+    address internal owner = address(this);
     address internal treasury = makeAddr("treasury");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
     address internal carol = makeAddr("carol");
+    address internal lister = makeAddr("lister");
+    address internal bouncer = makeAddr("bouncer");
+    address internal guardian = makeAddr("guardian");
+    address internal stranger = makeAddr("stranger");
 
     LCCMockToken internal margin;
     LCCMockToken internal usdc;
@@ -166,7 +173,9 @@ contract LCCBase is Test {
     OracleMock internal oracle;
     LCCVault internal vaultImplementation;
     UpgradeableBeacon internal beacon;
+    LCCVaultFactory internal factory;
     LCCVault internal vault;
+    uint256 internal nextVaultSalt;
 
     struct MarginSums {
         uint256 activeMargin;
@@ -196,6 +205,23 @@ contract LCCBase is Test {
         oracle.setPrice(ORACLE_PRICE_SCALE);
         vaultImplementation = new LCCVault(address(notificationVault), treasury);
         beacon = new UpgradeableBeacon(address(vaultImplementation), owner);
+        factory = new LCCVaultFactory(owner, address(beacon));
+        factory.grantRole(factory.LISTER_ROLE(), owner);
+        factory.grantRole(factory.LISTER_ROLE(), lister);
+        factory.grantRole(factory.BOUNCER_ROLE(), bouncer);
+        factory.grantRole(factory.GUARDIAN_ROLE(), guardian);
+
+        address[] memory whitelisted = new address[](9);
+        whitelisted[0] = owner;
+        whitelisted[1] = alice;
+        whitelisted[2] = bob;
+        whitelisted[3] = carol;
+        whitelisted[4] = lister;
+        whitelisted[5] = bouncer;
+        whitelisted[6] = guardian;
+        whitelisted[7] = stranger;
+        whitelisted[8] = treasury;
+        factory.setDepositorsWhitelisted(whitelisted, true);
 
         vault = _newVault(_params(address(oracle), CAP, CAP, 2_000));
 
@@ -214,7 +240,6 @@ contract LCCBase is Test {
         returns (ILCCVault.VaultParams memory)
     {
         return ILCCVault.VaultParams({
-            owner: owner,
             marginAsset: address(margin),
             marginOracle: oracle_,
             startTimestamp: START,
@@ -263,7 +288,26 @@ contract LCCBase is Test {
     }
 
     function _newVault(ILCCVault.VaultParams memory params) internal returns (LCCVault) {
+        return LCCVault(factory.createVault(params, bytes32(++nextVaultSalt)));
+    }
+
+    /// @dev Direct proxy helper whose captured factory is this test contract's minimal ILCCVaultFactory mock.
+    function _newVaultWithMockFactory(ILCCVault.VaultParams memory params) internal returns (LCCVault) {
         return LCCVault(address(new BeaconProxy(address(beacon), abi.encodeCall(ILCCVault.initialize, (params)))));
+    }
+
+    function authorizeDeposit(address, bool) external override {}
+
+    function isOwner(address account) external view override returns (bool) {
+        return account == owner;
+    }
+
+    function isGuardian(address account) external view override returns (bool) {
+        return account == guardian;
+    }
+
+    function requireBouncer(address account) external view override {
+        if (account != bouncer) revert LCCErrorsLib.Unauthorized();
     }
 
     /// @dev Asserts a hardcoded storage-slot constant against the reviewer-controlled layout baseline, so slot
@@ -321,6 +365,11 @@ contract LCCBase is Test {
     }
 
     function _mintAndApprove(LCCVault target, address user, uint256 marginAmount, uint256 usdcAmount) internal {
+        if (!factory.isWhitelistedDepositor(user)) {
+            address[] memory depositor = new address[](1);
+            depositor[0] = user;
+            factory.setDepositorsWhitelisted(depositor, true);
+        }
         margin.mint(user, marginAmount);
         usdc.mint(user, usdcAmount);
 
@@ -339,7 +388,7 @@ contract LCCBase is Test {
     }
 
     function _effectiveTime(LCCVault target) internal view returns (uint256) {
-        (, bool paused, uint64 pausedAt, uint64 pausedAccumulated) = target.pauseState();
+        (bool paused, uint64 pausedAt, uint64 pausedAccumulated) = target.pauseState();
         return (paused ? pausedAt : block.timestamp) - pausedAccumulated;
     }
 

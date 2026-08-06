@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.22;
 
-import {Ownable} from "../../../lib/openzeppelin/contracts/access/Ownable.sol";
 import {LCCBase} from "./LCCBase.t.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
@@ -10,16 +9,10 @@ import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
 
 contract LCCPauseTest is LCCBase {
-    address internal guardian = makeAddr("guardian");
-    address internal stranger = makeAddr("stranger");
-
     function testGuardianOwnerAndUnauthorizedPause() public {
-        vm.prank(owner);
-        vault.setGuardian(guardian);
-
         vm.prank(guardian);
         vault.pause();
-        (, bool paused,,) = vault.pauseState();
+        (bool paused,,) = vault.pauseState();
         assertTrue(paused);
 
         vm.prank(owner);
@@ -50,8 +43,6 @@ contract LCCPauseTest is LCCBase {
     function testPausedEntryPointsRevertAndLiveFunctionsSucceed() public {
         _deposit(alice, 100e18);
 
-        vm.prank(owner);
-        vault.setGuardian(guardian);
         vm.prank(guardian);
         vault.pause();
 
@@ -84,16 +75,18 @@ contract LCCPauseTest is LCCBase {
         vault.claimRemainingMargin(alice);
 
         vm.expectRevert(LCCErrorsLib.Paused.selector);
+        vm.prank(bouncer);
+        vault.bounceCommitment(alice, 1);
+
+        vm.expectRevert(LCCErrorsLib.Paused.selector);
         vm.prank(alice);
         vault.materializeAccount(alice);
 
         vm.expectRevert(LCCErrorsLib.Paused.selector);
         vault.finalizeEpochSlash(0);
 
-        vm.prank(owner);
-        vault.setGuardian(address(0));
-        (address storedGuardian, bool paused,,) = vault.pauseState();
-        assertEq(storedGuardian, address(0));
+        factory.revokeRole(factory.GUARDIAN_ROLE(), guardian);
+        (bool paused,,) = vault.pauseState();
         assertTrue(paused);
 
         OracleMock newOracle = new OracleMock();
@@ -108,23 +101,21 @@ contract LCCPauseTest is LCCBase {
     }
 
     function testUnpauseIsOwnerOnlyWithNoTimeBound() public {
-        vm.prank(owner);
-        vault.setGuardian(guardian);
         vm.prank(guardian);
         vault.pause();
-        (,, uint64 pausedAt,) = vault.pauseState();
+        (, uint64 pausedAt,) = vault.pauseState();
 
         vm.warp(uint256(pausedAt) + 365 days);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
+        vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
         vm.prank(stranger);
         vault.unpause();
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, guardian));
+        vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
         vm.prank(guardian);
         vault.unpause();
 
         vm.prank(owner);
         vault.unpause();
-        (, bool paused,, uint64 accumulated) = vault.pauseState();
+        (bool paused,, uint64 accumulated) = vault.pauseState();
         assertFalse(paused);
         assertEq(accumulated, 365 days);
     }
@@ -173,7 +164,7 @@ contract LCCPauseTest is LCCBase {
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         ILCCVault.ShutdownState memory shutdownState = vault.shutdownState();
-        (, bool paused,, uint64 accumulated) = vault.pauseState();
+        (bool paused,, uint64 accumulated) = vault.pauseState();
         assertFalse(paused);
         assertEq(accumulated, 1 days);
         assertEq(_effectiveTime(vault), START + NORMAL + PRE_CALL + 10);
@@ -204,7 +195,7 @@ contract LCCPauseTest is LCCBase {
         vm.prank(owner);
         vault.unpause();
 
-        (,,, uint64 accumulated) = vault.pauseState();
+        (,, uint64 accumulated) = vault.pauseState();
         assertEq(accumulated, 30);
         assertEq(_effectiveTime(vault), START + 15);
     }
@@ -224,7 +215,7 @@ contract LCCPauseTest is LCCBase {
         vm.prank(owner);
         vault.shutdown();
 
-        (, bool paused,, uint64 accumulated) = vault.pauseState();
+        (bool paused,, uint64 accumulated) = vault.pauseState();
         assertFalse(paused);
         assertEq(accumulated, duration);
         assertEq(_effectiveTime(vault), pauseAt);
@@ -244,8 +235,6 @@ contract LCCPauseTest is LCCBase {
     function testPauseAfterShutdownBlocksClaimsUntilOwnerUnpauses() public {
         _deposit(alice, 100e18);
         vm.prank(owner);
-        vault.setGuardian(guardian);
-        vm.prank(owner);
         vault.shutdown();
 
         vm.prank(guardian);
@@ -260,35 +249,35 @@ contract LCCPauseTest is LCCBase {
         assertEq(vault.claimRemainingMargin(alice), 100e18);
     }
 
-    function testRenounceOwnershipAlwaysReverts() public {
+    function testRenounceFactoryOwnershipAlwaysReverts() public {
+        bytes32 ownerRole = factory.OWNER_ROLE();
         vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
-        vm.prank(owner);
-        vault.renounceOwnership();
-        assertEq(vault.owner(), owner);
+        factory.renounceRole(ownerRole, owner);
+        assertEq(factory.owner(), owner);
 
         vm.prank(owner);
         vault.pause();
         vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
-        vm.prank(owner);
-        vault.renounceOwnership();
-        assertEq(vault.owner(), owner);
+        factory.renounceRole(ownerRole, owner);
+        assertEq(factory.owner(), owner);
     }
 
     function testTransferOwnershipWhilePausedLetsNewOwnerRecover() public {
         address newOwner = makeAddr("newOwner");
         vm.prank(owner);
         vault.pause();
-        vm.prank(owner);
-        vault.transferOwnership(newOwner);
+        factory.transferOwnership(newOwner);
+        vm.prank(newOwner);
+        factory.acceptOwnership();
 
-        assertEq(vault.owner(), newOwner);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, owner));
+        assertEq(factory.owner(), newOwner);
+        vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
         vm.prank(owner);
         vault.unpause();
 
         vm.prank(newOwner);
         vault.unpause();
-        (, bool paused,,) = vault.pauseState();
+        (bool paused,,) = vault.pauseState();
         assertFalse(paused);
     }
 }

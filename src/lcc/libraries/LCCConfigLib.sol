@@ -27,7 +27,7 @@ library LCCConfigLib {
     /// @notice Validates initializer parameters and returns the derived auction step duration.
     /// @return auctionStepDuration_ Seconds per auction price step, or zero when auctions are disabled.
     function validate(ILCCVault.VaultParams calldata params) public pure returns (uint256 auctionStepDuration_) {
-        if (params.owner == address(0) || params.marginAsset == address(0) || params.marginOracle == address(0)) {
+        if (params.marginAsset == address(0) || params.marginOracle == address(0)) {
             revert LCCErrorsLib.ZeroAddress();
         }
         // Width bounds for the packed per-vault config. auctionStepCount and the derived auctionStepDuration are

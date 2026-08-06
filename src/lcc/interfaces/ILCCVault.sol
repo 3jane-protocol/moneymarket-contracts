@@ -10,7 +10,7 @@ import {LCCAuctionLib} from "../libraries/LCCAuctionLib.sol";
 /// ERC-4626, no transferable shares). Depositors post one ERC20 `marginAsset` as a performance bond; the vault
 /// values it through a trusted Morpho-style oracle and leverages it by `marginRatioBps` into a commitment
 /// denominated in `fundingAsset`. The owner opens at most one capital call per epoch; called users fund their
-/// pro-rata obligation all-or-nothing (the funding is delivered as wrapped USD3n) and get the backing margin
+/// pro-rata obligation all-or-nothing (the funding is delivered as wrapped USD3l) and get the backing margin
 /// released proportionally. Unfunded obligations are slashed after the funding deadline, and the resulting
 /// shortfall is offered through an epoch-shortfall Dutch auction.
 /// @dev Unit convention: amount-like accounting values outside the margin family are denominated in `fundingAsset`
@@ -28,6 +28,15 @@ import {LCCAuctionLib} from "../libraries/LCCAuctionLib.sol";
 /// Factory registry membership records owner-vetted provenance, not exclusive deployability: non-factory proxies can
 /// point at the public beacon and remain unregistered.
 interface ILCCVault {
+    /// @notice Thrown when whitelist enforcement rejects a depositor.
+    error NotWhitelistedDepositor();
+    /// @notice Thrown when a depositor still has exposure in another family vault.
+    error RegisteredElsewhere(address vault);
+    /// @notice Thrown when an exit request would create more tracked maturity buckets than the vault supports.
+    error ExitCapacityReached();
+    /// @notice Thrown when an exit cannot be assigned within the caller's maximum accepted deferral.
+    error ExitDeferralExceeded();
+
     /// @notice Timestamp-derived lifecycle phase within an epoch.
     /// @dev `Normal`: deposits activate immediately (until a call opens). `PreCall`: the owner may open the epoch
     /// call. `Funding`: called users fund their obligations. `Closed`: funding deadline passed; slashing and the
@@ -40,7 +49,6 @@ interface ILCCVault {
     }
 
     /// @notice Facility configuration consumed by the initializer.
-    /// @param owner Vault owner: opens calls, tunes risk caps, and can trigger emergency shutdown.
     /// @param marginAsset ERC20 posted as the performance bond. Must be standard (no fee-on-transfer / rebasing).
     /// @param marginOracle Trusted oracle returning the margin-to-fundingAsset price scaled by ORACLE_PRICE_SCALE.
     /// @param startTimestamp Epoch-zero start; the epoch clock is derived from this. Bounded to uint64.
@@ -70,7 +78,6 @@ interface ILCCVault {
     /// @param maxAuctionAwardBps Oracle-valued collateral award cap per fundingAsset filled, in bps; 0 disables.
     /// @param slashFeeBps Fee on auction-awarded slashed margin, clamped to the unawarded surplus, in bps.
     struct VaultParams {
-        address owner;
         address marginAsset;
         address marginOracle;
         uint256 startTimestamp;
@@ -290,14 +297,16 @@ interface ILCCVault {
     /// @return The wall-clock phase-end timestamp.
     function phaseEndsAt(uint256 epoch, Phase phase) external view returns (uint256);
     /// @notice Current pause circuit-breaker state.
-    /// @return guardian Account that may pause the vault, or zero when disabled.
     /// @return paused Whether synced state-transitioning entrypoints are paused.
     /// @return pausedAt Wall-clock timestamp at which the current pause began, or the previous pause began if unpaused.
     /// @return pausedAccumulated Total wall-clock seconds subtracted from lifecycle time by completed pauses.
-    function pauseState()
-        external
-        view
-        returns (address guardian, bool paused, uint64 pausedAt, uint64 pausedAccumulated);
+    function pauseState() external view returns (bool paused, uint64 pausedAt, uint64 pausedAccumulated);
+    /// @notice Reports whether an account is permanently clear of exposure for family-registry migration.
+    /// @dev Replay is intentionally bounded. An incomplete replay conservatively reports not closed so a mandatory
+    /// deposit authorization path cannot become unbounded; anyone may materialize the account in batches first.
+    /// @param user Account whose stored and replayable exposure is inspected.
+    /// @return True only when bounded replay completes and leaves no active, pending, exiting, or claimable exposure.
+    function isAccountClosed(address user) external view returns (bool);
     /// @notice Deposits margin for the caller, creating a bounded leveraged commitment.
     /// @dev Pulls `assets` of marginAsset from the caller and credits the caller's own account (self-deposit only,
     /// since a deposit creates a callable obligation). Activates immediately during Normal (before a call opens),
@@ -354,6 +363,21 @@ interface ILCCVault {
     /// @param receiver Recipient of the margin.
     /// @return assets Margin transferred (marginAsset).
     function claimRemainingMargin(address receiver) external returns (uint256 assets);
+    /// @notice Removes part or all of a user's callable commitment and returns the paired margin to that user.
+    /// @dev Callable only by a factory bouncer and unavailable while slash settlement is outstanding. Removes exactly
+    /// the requested nominal active commitment pro rata, rounded down in the user's favor. A bouncer waits one epoch
+    /// for a pending deposit to fold into active state; users whose exit is in progress are left to that exit. Partial
+    /// removal cannot leave active margin below `minDepositAssets`. Removing the entire active commitment from an
+    /// account with no pending, claimable, or exit state leaves zero exposure, and its family registry entry clears
+    /// lazily when the user next deposits elsewhere. Margin is always pushed directly to `user`; a blacklisted holder
+    /// of a blacklistable margin asset therefore cannot be bounced because the transfer reverts, and the operational
+    /// fallback is to pause or shut down the facility. The function remains available after shutdown and scheduled
+    /// terminal sunset. A lagging account may first need permissionless `materializeAccount` calls to complete bounded
+    /// replay.
+    /// @param user Account whose commitment is removed and that receives returned margin.
+    /// @param commitment Nominal active commitment to remove.
+    /// @return marginReturned Margin transferred to `user` (marginAsset).
+    function bounceCommitment(address user, uint256 commitment) external returns (uint256 marginReturned);
     /// @notice Transfers all accrued treasury margin to the treasury.
     /// @dev Permissionless, unsynced, and available while paused or shut down. The accrued ledger is zeroed before the
     /// transfer and restored by transaction rollback if the margin token rejects the treasury recipient.
@@ -380,15 +404,11 @@ interface ILCCVault {
     /// pause-adjusted timestamp so in-flight funding windows keep their slash-disable semantics. A later pause
     /// remains available as a circuit breaker for the wind-down claim path.
     function shutdown() external;
-    /// @notice Updates the pause guardian.
-    /// @dev Only the owner may update the guardian. The zero address disables guardian pausing.
-    /// @param newGuardian New guardian address, or zero to disable the guardian.
-    function setGuardian(address newGuardian) external;
     /// @notice Pauses synced state-transitioning entrypoints and freezes the derived lifecycle clock.
     /// @dev Callable by the owner or guardian. Pause does not run global sync, so it remains available even if a
     /// sync path is blocked. While paused, every `synced` entrypoint reverts before state progression: deposits,
     /// exits, funding, auctions, slash finalization, account materialization, and owner risk/auction setters. The
-    /// live functions are shutdown, setMarginOracle, pause/unpause/setGuardian, ownership transfer, and views. Pause
+    /// live functions are shutdown, setMarginOracle, pause/unpause, factory role management, and views. Pause
     /// remains callable after shutdown so a faulty wind-down claim path can be stopped.
     function pause() external;
     /// @notice Owner unpauses the vault and resumes every epoch window exactly where it froze.
@@ -409,12 +429,12 @@ interface ILCCVault {
     /// @dev The Funding phase is the timing guard. A delayed transaction landing in another epoch's Funding phase
     /// would need to cross epoch end, Normal, and PreCall first. With `roll = false`, funding amortizes the position
     /// by releasing proportional margin and reducing callable commitment. With `roll = true`, funding pays the
-    /// obligation and delivers wrapped USD3n while retaining the caller's full margin and full callable commitment;
+    /// obligation and delivers wrapped USD3l while retaining the caller's full margin and full callable commitment;
     /// that exposure re-arms each epoch, the caller's pro-rata share of successive calls grows as amortizers decay,
     /// and lifetime funding obligations are unbounded while rolling. A live exiter cannot roll and reverts with
     /// `ExitInProgress`; a live exiter may still fund with `roll = false`. Delivery always mints at least one USD3
     /// share: when the obligation itself would round to zero shares, the payer supplies at most 1,000 extra
-    /// funding-asset base units and the beneficiary receives the full resulting USD3n amount. Settlement accounting
+    /// funding-asset base units and the beneficiary receives the full resulting USD3l amount. Settlement accounting
     /// remains based on `obligationAmount`. Payers should approve `obligationOf(epoch, user) + 1_000` base units, or
     /// compute `max(obligationOf(epoch, user), usd3.previewMint(1))` client-side. Reverts `FundingTopUpExcessive`
     /// above that bound and `FundingDeliveryImpossible` when USD3 reports zero assets with nonzero supply. Either
@@ -424,16 +444,16 @@ interface ILCCVault {
     /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
     function fundCall(bool roll) external returns (uint256 obligationAmount);
     /// @notice Funds `user`'s current-epoch obligation with funding supplied by the caller (push-based).
-    /// @dev The caller pays; released margin, wrapped USD3n delivery, and funded status accrue to `user`. The
+    /// @dev The caller pays; released margin, wrapped USD3l delivery, and funded status accrue to `user`. The
     /// Funding phase is the timing guard, as on {fundCall}. Push funding always amortizes because the payer must not
     /// control whether the user's margin remains locked and callable. A push fund can front-run and deny the user's
     /// intended roll for that epoch: the payer donates the obligation plus any bounded delivery top-up, the user
-    /// receives wrapped USD3n and released margin, and the user can restore commitment by re-depositing the released
+    /// receives wrapped USD3l and released margin, and the user can restore commitment by re-depositing the released
     /// margin. The delivery guarantees and degenerate-USD3 incident procedure are the same as {fundCall(bool)}.
     /// @param user Account whose obligation is funded.
     /// @return obligationAmount Per-account obligation paid (fundingAsset), the ceil-rounded pro-rata share.
     function fundCall(address user) external returns (uint256 obligationAmount);
-    /// @notice Fills up to `maxFillAmount` of the live auction's shortfall in exchange for wrapped USD3n and a
+    /// @notice Fills up to `maxFillAmount` of the live auction's shortfall in exchange for wrapped USD3l and a
     /// collateral kicker.
     /// @dev Targets whichever auction is live, following Yearn-take semantics. The award is the current ramped
     /// pro-rata kicker, capped by `maxAuctionAwardBps` of the fill at the fill-time oracle price. `minMarginAward` is

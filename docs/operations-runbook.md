@@ -40,7 +40,7 @@ Do not think of this as a race against a distant recovery event. Ordinary intere
 
 ## LCC Closed-window delivery or oracle outage
 
-**Trigger.** An LCC shortfall auction is in its `Closed` phase and either the margin oracle or the USD3/USD3n delivery path is unavailable long enough that fills cannot execute.
+**Trigger.** An LCC shortfall auction is in its `Closed` phase and either the margin oracle or the USD3/USD3l delivery path is unavailable long enough that fills cannot execute.
 
 **Why intervention matters.** Completed settlement cannot distinguish “nobody bid” from “nobody could bid.” If an auction-eligible epoch reaches its effective Closed end with zero fills, the whole gross slash pool accrues to treasury. Wall-clock delay alone does not justify different settlement economics.
 
@@ -68,6 +68,56 @@ also changes `protocolCommitmentCap`. That reverts the entire timelocked transac
 `userCommitmentCap`, `exitCapBps`, and `minDeposit` changes, even if no slot existed when it was queued. The risk is
 bounded by the pending auction's Closed window. If the other three parameters must change while a slot is live,
 re-pass the current protocol cap unchanged.
+
+## LCC depositor bounce
+
+**Trigger.** A family `BOUNCER_ROLE` operator must remove some or all of a depositor's active commitment.
+
+1. If the account can be more than 64 finalized calls behind, call `materializeAccount(user)` permissionlessly until
+   bounded replay is complete. A bounce never bypasses replay.
+2. Check `pauseState`. A paused vault makes every `synced` entrypoint revert, including `bounceCommitment`; the owner
+   must unpause before the bouncer acts.
+3. Check the current account. A pending deposit makes the bounce revert `PendingDepositExists`; wait for its next-epoch
+   activation and retry. Any exit in progress, including matured-but-unclaimed exit margin, makes the bounce revert
+   `ExitInProgress`; let the exit mature and have the user call `claimExitedMargin` instead.
+4. Check `pendingAuctionEpochPlusOne` and the current call. A live auction or an opened, unfinalized current call makes
+   the bounce revert `InvalidPhase`; settle or finalize that call first.
+5. Submit `bounceCommitment(user, commitment)`. The amount is nominal active commitment, and the returned margin is
+   the pro-rata floor. Removing the entire active commitment closes only an otherwise plain active account; it is not
+   a full-closeout sentinel and does not absorb pending or exit state.
+
+The return transfer goes directly to the depositor. If a blacklistable margin token refuses transfers to that
+holder, the whole bounce reverts. There is no escrow override: pause the facility while the incident is assessed,
+and use the established shutdown/wind-down process if governance decides the facility cannot safely continue.
+Shutdown does not make the blocked transfer succeed, but it prevents new exposure and enables the ordinary claims
+that remain transferable.
+
+## LCC family registry migration
+
+The registry moves lazily; no administrator deregisters users. To migrate from vault A to vault B, first reach a
+permanently closed account in A, then deposit into B. B's successful deposit calls the factory last, and the factory
+automatically re-points `vaultOf[user]` from A to B. A matured exiter is still open until the user calls
+`claimExitedMargin`, even when the claim amount is zero. Shutdown users likewise call `claimRemainingMargin`; an
+otherwise plain account whose entire active commitment was bounced is already eligible to re-point.
+
+If A has more than 64 finalized calls beyond the user's stored cursor, the first B deposit is conservatively denied.
+Call `materializeAccount(user)` on A permissionlessly, in batches if needed, then retry B. A live auction can also
+keep the closure replay incomplete until settlement.
+
+Disabling `oneVaultPolicyEnabled` is prospective-only: deposits may create multiple open positions and the outermost
+successful deposit remains the warm `vaultOf` pointer. Before re-enabling, inventory all such users, reconcile every
+multi-vault user offchain to one open position, and verify that no family vault is paused or shut with an unclaimable
+position. Admission checks only the vault named by the warm pointer: if A remains open while B is recorded, closing
+and reopening B after re-enablement does not discover A. Re-enabling does not close existing positions, and the latest
+warm pointer can top-up-block a healthy older position until the recorded vault closes.
+
+## LCC factory ownership rotation
+
+A two-step factory ownership transfer re-keys every family vault, including exceptional settlement recovery. Do not
+start or accept a rotation while any vault has a pending auction slot with a missing call-open price snapshot. Both
+steps of recovery — installing a healthy margin oracle and sending the owner-triggered `synced` disposal — must stay
+under one owner throughout the incident. Confirm every family vault's pending slot and snapshot state before
+proposing the new owner.
 
 ## Related
 

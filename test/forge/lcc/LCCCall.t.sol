@@ -41,7 +41,8 @@ contract LCCCallTest is LCCBase {
         vault.openEpochCall(0, 100e18);
 
         vm.warp(START + NORMAL);
-        vm.expectRevert();
+        vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
+        vm.prank(stranger);
         vault.openEpochCall(0, 100e18);
     }
 
