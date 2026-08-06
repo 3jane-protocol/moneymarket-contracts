@@ -110,7 +110,7 @@ contract LCCRegistryTest is LCCBase {
 
     function testOwnerRoleCannotBeRenounced() public {
         bytes32 ownerRole = factory.OWNER_ROLE();
-        vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
+        vm.expectRevert(LCCErrorsLib.CannotRenounceOwnerRole.selector);
         factory.renounceRole(ownerRole, owner);
         assertEq(factory.getRoleMemberCount(ownerRole), 1);
         assertEq(factory.owner(), owner);
@@ -349,7 +349,9 @@ contract LCCRegistryTest is LCCBase {
         // the full admission gauntlet. The named-vault check passes because the pointer still names otherVault, then
         // the module denial proves the original disable -> A+B -> enable -> close B -> redeposit B exploit no longer
         // reaches the top-up fast return.
-        vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(LCCErrorsLib.AdmissionsModuleRejected.selector, alice, address(otherVault))
+        );
         vm.prank(alice);
         otherVault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
         assertTrue(otherVault.isAccountClosed(alice));
@@ -536,10 +538,9 @@ contract LCCRegistryTest is LCCBase {
         LCCAdmissionsModuleMock module = new LCCAdmissionsModuleMock();
         factory.setAdmissionsModule(address(module));
         assertEq(factory.admissionsModule(), address(module));
-        assertEq(factory.admissionsModuleVersion(), 1);
 
         module.setAllowed(false);
-        vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
+        vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.AdmissionsModuleRejected.selector, alice, address(vault)));
         vm.prank(alice);
         vault.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
         assertEq(vault.getAccount(alice).activeMargin, 0);
@@ -562,7 +563,7 @@ contract LCCRegistryTest is LCCBase {
         assertTrue(vault.isAccountClosed(alice));
 
         module.setAllowed(false);
-        vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
+        vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.AdmissionsModuleRejected.selector, alice, address(vault)));
         vm.prank(alice);
         vault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
     }
@@ -570,7 +571,6 @@ contract LCCRegistryTest is LCCBase {
     function testAdmissionsModuleSwapContainsRevertingAndMalformedCandidates() public {
         LCCAdmissionsModuleMock module = new LCCAdmissionsModuleMock();
         factory.setAdmissionsModule(address(module));
-        assertEq(factory.admissionsModuleVersion(), 1);
 
         LCCAdmissionsModuleMock revertingModule = new LCCAdmissionsModuleMock();
         revertingModule.setReverting(true);
@@ -582,7 +582,6 @@ contract LCCRegistryTest is LCCBase {
         factory.setAdmissionsModule(address(malformedModule));
 
         assertEq(factory.admissionsModule(), address(module));
-        assertEq(factory.admissionsModuleVersion(), 1);
     }
 
     function testAdmissionsModuleSwapContainsReentrantCandidate() public {
@@ -592,7 +591,6 @@ contract LCCRegistryTest is LCCBase {
         factory.setAdmissionsModule(address(reentrantModule));
 
         assertEq(factory.admissionsModule(), address(reentrantModule));
-        assertEq(factory.admissionsModuleVersion(), 2);
         assertTrue(factory.whitelistEnabled());
         assertTrue(factory.oneVaultPolicyEnabled());
 

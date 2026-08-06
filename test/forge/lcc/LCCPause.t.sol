@@ -251,13 +251,13 @@ contract LCCPauseTest is LCCBase {
 
     function testRenounceFactoryOwnershipAlwaysReverts() public {
         bytes32 ownerRole = factory.OWNER_ROLE();
-        vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
+        vm.expectRevert(LCCErrorsLib.CannotRenounceOwnerRole.selector);
         factory.renounceRole(ownerRole, owner);
         assertEq(factory.owner(), owner);
 
         vm.prank(owner);
         vault.pause();
-        vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
+        vm.expectRevert(LCCErrorsLib.CannotRenounceOwnerRole.selector);
         factory.renounceRole(ownerRole, owner);
         assertEq(factory.owner(), owner);
     }

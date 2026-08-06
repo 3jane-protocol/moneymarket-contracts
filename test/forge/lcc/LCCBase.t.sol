@@ -306,8 +306,8 @@ contract LCCBase is Test, ILCCVaultFactory {
         return account == guardian;
     }
 
-    function requireBouncer(address account) external view override {
-        if (account != bouncer) revert LCCErrorsLib.Unauthorized();
+    function isBouncer(address account) external view override returns (bool) {
+        return account == bouncer;
     }
 
     /// @dev Asserts a hardcoded storage-slot constant against the reviewer-controlled layout baseline, so slot

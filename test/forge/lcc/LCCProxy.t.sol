@@ -132,7 +132,7 @@ contract LCCProxyTest is LCCBase {
         assertEq(second.assetConfig().treasury, treasury);
     }
 
-    function testEmptyInitShellRejectsEoaInitializer() public {
+    function testEoaInitializedShellFailsClosedOnFirstDeposit() public {
         LCCVault shell = LCCVault(address(new BeaconProxy(address(beacon), "")));
 
         vm.expectRevert(stdError.divisionError);
@@ -142,12 +142,16 @@ contract LCCProxyTest is LCCBase {
         shell.materializeAccount(alice);
 
         ILCCVault.VaultParams memory params = _params(CAP, CAP);
-        vm.expectRevert(LCCErrorsLib.NotVault.selector);
         vm.prank(alice);
         shell.initialize(params);
+        assertEq(shell.currentEpoch(), 0);
 
-        vm.expectRevert(stdError.divisionError);
-        shell.currentEpoch();
+        _mintAndApprove(shell, alice, 1e18, 0);
+        vm.expectRevert();
+        vm.prank(alice);
+        shell.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
+        assertTrue(shell.isAccountClosed(alice));
+        assertEq(factory.vaultOf(alice), address(0));
     }
 
     function testWidthBoundsAtLimitPass() public {

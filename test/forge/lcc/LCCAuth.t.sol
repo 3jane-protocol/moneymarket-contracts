@@ -42,7 +42,9 @@ contract LCCLyingCapturedFactory is LCCCapturedFactoryDeployer {
         return true;
     }
 
-    function requireBouncer(address) external pure {}
+    function isBouncer(address) external pure returns (bool) {
+        return true;
+    }
 }
 
 contract LCCAuthTest is LCCBase {
@@ -173,6 +175,13 @@ contract LCCAuthTest is LCCBase {
 
         vm.expectRevert();
         target.setRiskCaps(CAP, CAP, 2_000, 0);
+
+        _mintAndApprove(target, alice, 10e18, 0);
+        vm.prank(alice);
+        uint256 commitment = target.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+
+        vm.expectRevert();
+        target.bounceCommitment(alice, commitment);
     }
 
     function _assertFormerOwnerEntrypointDenied(bytes memory callData) internal {

@@ -1564,27 +1564,40 @@ contract LCCMinCommitmentStatefulInvariantTest is LCCTerminalStatefulInvariantTe
 }
 
 contract LCCRegistryInvariantHandler is Test {
+    struct AdmissionPreState {
+        bool policyOn;
+        address slot;
+        bool slotOpen;
+        bool targetOpen;
+        bool modelAdmits;
+    }
+
     LCCVaultFactory internal immutable invariantFactory;
     LCCVault internal immutable firstVault;
     LCCVault internal immutable secondVault;
+    LCCVault internal immutable thirdVault;
     address internal immutable invariantOwner;
     address internal immutable invariantBouncer;
     address[] internal actors;
 
+    // Deposit-state ghosts are causal: successful transitions use only observations captured before the deposit and
+    // modelAdmits. No post-deposit vaultOf or other post-state value may flow into slotVault or grandfathered.
     mapping(address => mapping(address => bool)) public ghostDepositedInto;
-    mapping(address => mapping(address => bool)) public grandfatheredPosition;
-    bool public prospectiveOpenCountNeverIncreased = true;
-    uint256 public r1NonVacuousActorEvaluations;
+    mapping(address => address) public slotVault;
+    mapping(address => mapping(address => bool)) public grandfathered;
+    bool public admissionOracleHealthy = true;
+    uint256 public openOutsideSlotActorEvaluations;
 
-    modifier recordR1Coverage() {
+    modifier recordSetCoverage() {
         _;
-        _recordR1Coverage();
+        _recordSetCoverage();
     }
 
     constructor(
         LCCVaultFactory factory_,
         LCCVault firstVault_,
         LCCVault secondVault_,
+        LCCVault thirdVault_,
         address owner_,
         address bouncer_,
         address[] memory actors_
@@ -1592,65 +1605,86 @@ contract LCCRegistryInvariantHandler is Test {
         invariantFactory = factory_;
         firstVault = firstVault_;
         secondVault = secondVault_;
+        thirdVault = thirdVault_;
         invariantOwner = owner_;
         invariantBouncer = bouncer_;
         actors = actors_;
 
         for (uint256 i = 0; i < actors_.length; ++i) {
             ghostDepositedInto[actors_[i]][address(firstVault_)] = true;
+            slotVault[actors_[i]] = address(firstVault_);
         }
     }
 
-    function depositFirst(uint256 actorSeed, uint256 amountSeed) external recordR1Coverage {
-        _deposit(firstVault, actorSeed, amountSeed);
+    function depositFirst(uint256 actorSeed, uint256 amountSeed) external recordSetCoverage {
+        _deposit(firstVault, actorSeed, amountSeed, false);
     }
 
-    function depositSecond(uint256 actorSeed, uint256 amountSeed) external recordR1Coverage {
-        _deposit(secondVault, actorSeed, amountSeed);
+    function depositSecond(uint256 actorSeed, uint256 amountSeed) external recordSetCoverage {
+        _deposit(secondVault, actorSeed, amountSeed, false);
     }
 
-    function closeFirst(uint256 actorSeed) external recordR1Coverage {
+    function depositThird(uint256 actorSeed, uint256 amountSeed) external recordSetCoverage {
+        _deposit(thirdVault, actorSeed, amountSeed, false);
+    }
+
+    function closeFirst(uint256 actorSeed) external recordSetCoverage {
         _close(firstVault, actorSeed);
     }
 
-    function closeSecond(uint256 actorSeed) external recordR1Coverage {
+    function closeSecond(uint256 actorSeed) external recordSetCoverage {
         _close(secondVault, actorSeed);
     }
 
-    function toggleWhitelist() external recordR1Coverage {
+    function closeThird(uint256 actorSeed) external recordSetCoverage {
+        _close(thirdVault, actorSeed);
+    }
+
+    function toggleWhitelist() external recordSetCoverage {
         bool enabled = invariantFactory.whitelistEnabled();
         vm.prank(invariantOwner);
         invariantFactory.setWhitelistEnabled(!enabled);
     }
 
-    function toggleOneVaultPolicy() external recordR1Coverage {
+    function toggleOneVaultPolicy() external recordSetCoverage {
         bool enabled = invariantFactory.oneVaultPolicyEnabled();
         vm.prank(invariantOwner);
         invariantFactory.setOneVaultPolicyEnabled(!enabled);
     }
 
-    /// @dev Negative-control helper, deliberately excluded from the invariant selector set. The temporary policy-off
-    /// write is only a test mechanism for reaching the state a broken policy-on admission would create; omitting the
-    /// causal ghost makes the second open position unauthorized from R1's perspective.
+    /// @dev Raw negative-control helpers are deliberately excluded from the selector set and bypass the causal state
+    /// machine. They model a wrongful policy-on admission by briefly disabling production enforcement, then restore it.
     function simulateUnauthorizedPolicyOnSecondPosition(uint256 actorSeed, uint256 amountSeed) external {
-        address actor = actors[actorSeed % actors.length];
-        require(invariantFactory.oneVaultPolicyEnabled(), "POLICY_ALREADY_OFF");
-
-        vm.prank(invariantOwner);
-        invariantFactory.setOneVaultPolicyEnabled(false);
-        vm.prank(actor);
-        secondVault.deposit(bound(amountSeed, 1, 10e18), 1, type(uint256).max, true, type(uint256).max);
-        ghostDepositedInto[actor][address(secondVault)] = true;
-        vm.prank(invariantOwner);
-        invariantFactory.setOneVaultPolicyEnabled(true);
+        _simulateUnauthorizedRaw(secondVault, actorSeed, amountSeed);
     }
 
-    function _deposit(LCCVault target, uint256 actorSeed, uint256 amountSeed) internal {
+    function simulateUnauthorizedPolicyOnThirdPosition(uint256 actorSeed, uint256 amountSeed) external {
+        _simulateUnauthorizedRaw(thirdVault, actorSeed, amountSeed);
+    }
+
+    function simulateUnauthorizedPolicyOnFirstPosition(uint256 actorSeed, uint256 amountSeed) external {
+        _simulateUnauthorizedRaw(firstVault, actorSeed, amountSeed);
+    }
+
+    /// @dev This negative control routes the simulated defect through the deposit state machine. Its pre-state sees
+    /// policy-on, while only the production call is temporarily allowed through, so modelAdmits can latch the defect.
+    function simulateUnauthorizedPolicyOnSecondPositionThroughHandler(uint256 actorSeed, uint256 amountSeed)
+        external
+        recordSetCoverage
+    {
+        _deposit(secondVault, actorSeed, amountSeed, true);
+    }
+
+    function _deposit(LCCVault target, uint256 actorSeed, uint256 amountSeed, bool simulateUnauthorized) internal {
         address actor = actors[actorSeed % actors.length];
-        uint256 openBefore = _openVaultCount(actor);
-        bool policyOn = invariantFactory.oneVaultPolicyEnabled();
-        bool hadDisplacedOpenPosition = _hasDisplacedOpenPosition(actor);
+        AdmissionPreState memory pre = _snapshotAdmission(actor, target);
         uint256 amount = bound(amountSeed, 1, 10e18);
+
+        if (simulateUnauthorized) {
+            require(pre.policyOn && !pre.modelAdmits, "NOT_UNAUTHORIZED_PRESTATE");
+            vm.prank(invariantOwner);
+            invariantFactory.setOneVaultPolicyEnabled(false);
+        }
 
         bool succeeded;
         vm.prank(actor);
@@ -1664,19 +1698,49 @@ contract LCCRegistryInvariantHandler is Test {
             ) fail();
         }
 
+        if (simulateUnauthorized) {
+            vm.prank(invariantOwner);
+            invariantFactory.setOneVaultPolicyEnabled(true);
+        }
+
         if (succeeded) {
             ghostDepositedInto[actor][address(target)] = true;
-            if (!policyOn) _recordGrandfatheredPositions(actor);
+            _recordSuccessfulDeposit(actor, address(target), pre);
+        }
+    }
+
+    function _snapshotAdmission(address actor, LCCVault target) internal view returns (AdmissionPreState memory pre) {
+        pre.policyOn = invariantFactory.oneVaultPolicyEnabled();
+        address preNamed = invariantFactory.vaultOf(actor);
+        bool preNamedOpen = preNamed != address(0) && hasOpenExposure(preNamed, actor);
+        pre.slot = slotVault[actor];
+        pre.slotOpen = pre.slot != address(0) && hasOpenExposure(pre.slot, actor);
+        pre.targetOpen = hasOpenExposure(address(target), actor);
+        pre.modelAdmits = preNamed == address(0) || preNamed == address(target) || !preNamedOpen;
+    }
+
+    function _recordSuccessfulDeposit(address actor, address target, AdmissionPreState memory pre) internal {
+        if (!pre.policyOn) {
+            if (pre.slotOpen && pre.slot != target) grandfathered[actor][pre.slot] = true;
+            grandfathered[actor][target] = false;
+            slotVault[actor] = target;
+            return;
         }
 
-        _clearClosedGrandfatheredPositions(actor);
-
-        // Deposits are the only handler action that can increase open positions. Opening the first position from zero
-        // is valid. An actor with a displaced open position in the pre-state is excluded because the named-vault-only
-        // check deliberately cannot discover that exposure. Once displaced exposure closes, the exclusion clears.
-        if (policyOn && openBefore != 0 && _openVaultCount(actor) > openBefore && !hadDisplacedOpenPosition) {
-            prospectiveOpenCountNeverIncreased = false;
+        if (!pre.modelAdmits) {
+            admissionOracleHealthy = false;
+            return;
         }
+
+        if (pre.slot == address(0) || !pre.slotOpen || (pre.slot == target && pre.targetOpen)) {
+            grandfathered[actor][target] = false;
+            slotVault[actor] = target;
+            return;
+        }
+
+        // Defensive: a policy-on admission may not displace a different live causal slot, even if the named pointer
+        // somehow makes the production mirror admit. Do not heal the causal ghosts from post-state.
+        admissionOracleHealthy = false;
     }
 
     function _close(LCCVault target, uint256 actorSeed) internal {
@@ -1686,78 +1750,62 @@ contract LCCRegistryInvariantHandler is Test {
             vm.prank(invariantBouncer);
             target.bounceCommitment(actor, account.activeCommitment);
         }
-        _clearClosedGrandfatheredPositions(actor);
-    }
-
-    function _openVaultCount(address actor) internal view returns (uint256 count) {
-        if (!firstVault.isAccountClosed(actor)) ++count;
-        if (!secondVault.isAccountClosed(actor)) ++count;
-    }
-
-    function hasDisplacedOpenPosition(address actor) external view returns (bool) {
-        return _hasDisplacedOpenPosition(actor);
-    }
-
-    function countGrandfatheredOpen(address actor) external view returns (uint256 count) {
-        return _countGrandfatheredOpen(actor);
-    }
-
-    function _countGrandfatheredOpen(address actor) internal view returns (uint256 count) {
-        address[] memory familyVaults = invariantFactory.allVaults();
-        for (uint256 i = 0; i < familyVaults.length; ++i) {
-            if (grandfatheredPosition[actor][familyVaults[i]] && !ILCCVault(familyVaults[i]).isAccountClosed(actor)) {
-                ++count;
-            }
+        if (!hasOpenExposure(address(target), actor)) {
+            grandfathered[actor][address(target)] = false;
+            if (slotVault[actor] == address(target)) slotVault[actor] = address(0);
         }
     }
 
-    function _hasDisplacedOpenPosition(address actor) internal view returns (bool) {
-        address named = invariantFactory.vaultOf(actor);
-        address[] memory familyVaults = invariantFactory.allVaults();
-        for (uint256 i = 0; i < familyVaults.length; ++i) {
-            if (familyVaults[i] != named && !ILCCVault(familyVaults[i]).isAccountClosed(actor)) return true;
-        }
-        return false;
+    function _simulateUnauthorizedRaw(LCCVault target, uint256 actorSeed, uint256 amountSeed) internal {
+        address actor = actors[actorSeed % actors.length];
+        require(invariantFactory.oneVaultPolicyEnabled(), "POLICY_ALREADY_OFF");
+
+        vm.prank(invariantOwner);
+        invariantFactory.setOneVaultPolicyEnabled(false);
+        vm.prank(actor);
+        target.deposit(bound(amountSeed, 1, 10e18), 1, type(uint256).max, true, type(uint256).max);
+        // This history ghost supports R3 only; the causal admission state machine intentionally does not observe the
+        // call.
+        ghostDepositedInto[actor][address(target)] = true;
+        vm.prank(invariantOwner);
+        invariantFactory.setOneVaultPolicyEnabled(true);
     }
 
-    function _recordGrandfatheredPositions(address actor) internal {
-        address named = invariantFactory.vaultOf(actor);
+    function _recordSetCoverage() internal {
         address[] memory familyVaults = invariantFactory.allVaults();
-        for (uint256 i = 0; i < familyVaults.length; ++i) {
-            address familyVault = familyVaults[i];
-            if (familyVault != named && !ILCCVault(familyVault).isAccountClosed(actor)) {
-                grandfatheredPosition[actor][familyVault] = true;
-            }
-        }
-    }
-
-    function _clearClosedGrandfatheredPositions(address actor) internal {
-        address[] memory familyVaults = invariantFactory.allVaults();
-        for (uint256 i = 0; i < familyVaults.length; ++i) {
-            address familyVault = familyVaults[i];
-            if (grandfatheredPosition[actor][familyVault] && ILCCVault(familyVault).isAccountClosed(actor)) {
-                grandfatheredPosition[actor][familyVault] = false;
-            }
-        }
-    }
-
-    function _recordR1Coverage() internal {
         for (uint256 i = 0; i < actors.length; ++i) {
-            if (_openVaultCount(actors[i]) - _countGrandfatheredOpen(actors[i]) != 0) {
-                ++r1NonVacuousActorEvaluations;
+            address actor = actors[i];
+            address slot = slotVault[actor];
+            for (uint256 j = 0; j < familyVaults.length; ++j) {
+                address familyVault = familyVaults[j];
+                if (familyVault != slot && hasOpenExposure(familyVault, actor)) {
+                    ++openOutsideSlotActorEvaluations;
+                    break;
+                }
             }
         }
+    }
+
+    /// @dev Independent test oracle for the production closure predicate. Keep this field-wise instead of calling
+    /// `isAccountClosed`: registry invariants must detect omissions or loosenings in that production boolean.
+    function hasOpenExposure(address target, address actor) public view returns (bool) {
+        ILCCVault.Account memory account = ILCCVault(target).getAccount(actor);
+        return account.activeMargin != 0 || account.activeCommitment != 0 || account.pendingMargin != 0
+            || account.pendingCommitment != 0 || account.claimableExitMargin != 0
+            || (account.exitRequested && !account.exitClaimed);
     }
 }
 
 abstract contract LCCRegistryInvariantBase is LCCBase {
     LCCRegistryInvariantHandler internal registryHandler;
     LCCVault internal secondRegistryVault;
+    LCCVault internal thirdRegistryVault;
     address[] internal registryActors;
 
     function setUp() public virtual override {
         super.setUp();
         secondRegistryVault = _newVault(_params(CAP, CAP));
+        thirdRegistryVault = _newVault(_params(CAP, CAP));
 
         registryActors.push(alice);
         registryActors.push(bob);
@@ -1771,6 +1819,7 @@ abstract contract LCCRegistryInvariantBase is LCCBase {
         for (uint256 i = 0; i < registryActors.length; ++i) {
             address actor = registryActors[i];
             _mintAndApprove(secondRegistryVault, actor, 0, 0);
+            _mintAndApprove(thirdRegistryVault, actor, 0, 0);
             vm.prank(actor);
             vault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
         }
@@ -1779,16 +1828,19 @@ abstract contract LCCRegistryInvariantBase is LCCBase {
         dewhitelisted[0] = registryActors[registryActors.length - 1];
         factory.setDepositorsWhitelisted(dewhitelisted, false);
 
-        registryHandler =
-            new LCCRegistryInvariantHandler(factory, vault, secondRegistryVault, owner, bouncer, registryActors);
-        bytes4[] memory selectors = new bytes4[](_includeToggleHandlers() ? 6 : 4);
+        registryHandler = new LCCRegistryInvariantHandler(
+            factory, vault, secondRegistryVault, thirdRegistryVault, owner, bouncer, registryActors
+        );
+        bytes4[] memory selectors = new bytes4[](_includeToggleHandlers() ? 8 : 6);
         selectors[0] = LCCRegistryInvariantHandler.depositFirst.selector;
         selectors[1] = LCCRegistryInvariantHandler.depositSecond.selector;
-        selectors[2] = LCCRegistryInvariantHandler.closeFirst.selector;
-        selectors[3] = LCCRegistryInvariantHandler.closeSecond.selector;
+        selectors[2] = LCCRegistryInvariantHandler.depositThird.selector;
+        selectors[3] = LCCRegistryInvariantHandler.closeFirst.selector;
+        selectors[4] = LCCRegistryInvariantHandler.closeSecond.selector;
+        selectors[5] = LCCRegistryInvariantHandler.closeThird.selector;
         if (_includeToggleHandlers()) {
-            selectors[4] = LCCRegistryInvariantHandler.toggleWhitelist.selector;
-            selectors[5] = LCCRegistryInvariantHandler.toggleOneVaultPolicy.selector;
+            selectors[6] = LCCRegistryInvariantHandler.toggleWhitelist.selector;
+            selectors[7] = LCCRegistryInvariantHandler.toggleOneVaultPolicy.selector;
         }
         targetContract(address(registryHandler));
         targetSelector(FuzzSelector({addr: address(registryHandler), selectors: selectors}));
@@ -1796,16 +1848,25 @@ abstract contract LCCRegistryInvariantBase is LCCBase {
 
     function _includeToggleHandlers() internal pure virtual returns (bool);
 
-    function invariant_R1_NonGrandfatheredActorsHaveAtMostOneOpenFamilyVault() public view {
+    function invariant_OpenPositionsAreCoveredByCausalSlotOrGrandfatheredSet() public view {
         for (uint256 i = 0; i < registryActors.length; ++i) {
             address actor = registryActors[i];
-            uint256 unflaggedOpen = _familyOpenVaultCount(actor) - registryHandler.countGrandfatheredOpen(actor);
-            assertLe(unflaggedOpen, 1);
+            address slot = registryHandler.slotVault(actor);
+            // Documents the transition invariant S ∉ G. Every ghost writer maintains it unconditionally; the
+            // load-bearing reachable-state check is the open-position containment below.
+            assertTrue(slot == address(0) || !registryHandler.grandfathered(actor, slot));
+            address[] memory familyVaults = factory.allVaults();
+            for (uint256 j = 0; j < familyVaults.length; ++j) {
+                address familyVault = familyVaults[j];
+                if (registryHandler.hasOpenExposure(familyVault, actor)) {
+                    assertTrue(familyVault == slot || registryHandler.grandfathered(actor, familyVault));
+                }
+            }
         }
     }
 
-    function invariant_R2_PolicyOnNeverIncreasesANonGrandfatheredActorsOpenVaultCount() public view {
-        assertTrue(registryHandler.prospectiveOpenCountNeverIncreased());
+    function invariant_AdmissionOracleLatchRemainsHealthy() public view {
+        assertTrue(registryHandler.admissionOracleHealthy());
     }
 
     function invariant_R3_WarmRegistryAlwaysPointsToAGhostDepositedVault() public view {
@@ -1819,25 +1880,44 @@ abstract contract LCCRegistryInvariantBase is LCCBase {
     function _familyOpenVaultCount(address actor) internal view returns (uint256 count) {
         address[] memory familyVaults = factory.allVaults();
         for (uint256 i = 0; i < familyVaults.length; ++i) {
-            if (!LCCVault(familyVaults[i]).isAccountClosed(actor)) ++count;
+            if (registryHandler.hasOpenExposure(familyVaults[i], actor)) ++count;
         }
     }
 
     function _actorsWithGrandfatheredOpenPositions() internal view returns (uint256 count) {
+        address[] memory familyVaults = factory.allVaults();
         for (uint256 i = 0; i < registryActors.length; ++i) {
-            if (registryHandler.countGrandfatheredOpen(registryActors[i]) != 0) ++count;
+            address actor = registryActors[i];
+            for (uint256 j = 0; j < familyVaults.length; ++j) {
+                address familyVault = familyVaults[j];
+                if (
+                    registryHandler.grandfathered(actor, familyVault)
+                        && registryHandler.hasOpenExposure(familyVault, actor)
+                ) {
+                    ++count;
+                    break;
+                }
+            }
         }
     }
 
-    function assertR1WithoutGrandfatheredExclusion() external view {
+    function assertOpenSubsetOfSlotOnly() external view {
         for (uint256 i = 0; i < registryActors.length; ++i) {
-            assertLe(_familyOpenVaultCount(registryActors[i]), 1);
+            address actor = registryActors[i];
+            address slot = registryHandler.slotVault(actor);
+            address[] memory familyVaults = factory.allVaults();
+            for (uint256 j = 0; j < familyVaults.length; ++j) {
+                if (registryHandler.hasOpenExposure(familyVaults[j], actor)) assertEq(familyVaults[j], slot);
+            }
         }
     }
 
     function afterInvariant() public {
         emit log_named_uint("actors with grandfathered open positions", _actorsWithGrandfatheredOpenPositions());
-        emit log_named_uint("non-vacuous R1 actor evaluations", registryHandler.r1NonVacuousActorEvaluations());
+        emit log_named_uint(
+            "actor evaluations with an open vault outside the causal slot",
+            registryHandler.openOutsideSlotActorEvaluations()
+        );
     }
 }
 
@@ -1846,84 +1926,95 @@ contract LCCRegistryStatefulInvariantTest is LCCRegistryInvariantBase {
         return true;
     }
 
-    function testClosingDisplacedVaultRestoresInvariantCoverage() public {
+    function testControl1RawTwoVaultBugFailsContainmentButNotLatch() public {
         address actor = registryActors[0];
-
-        registryHandler.toggleOneVaultPolicy();
-        registryHandler.depositSecond(0, 1e18);
-        assertTrue(registryHandler.grandfatheredPosition(actor, address(vault)), "displaced position was not recorded");
-        assertEq(registryHandler.countGrandfatheredOpen(actor), 1);
-
-        registryHandler.closeFirst(0);
-        assertTrue(vault.isAccountClosed(actor), "displaced vault did not close");
-        assertFalse(secondRegistryVault.isAccountClosed(actor), "named vault unexpectedly closed");
-        assertFalse(registryHandler.grandfatheredPosition(actor, address(vault)), "closed position retained ghost");
-        assertEq(registryHandler.countGrandfatheredOpen(actor), 0);
-    }
-
-    function testPolicyOffSameVaultTopUpDoesNotGrandfatherLaterOneToTwoAttempt() public {
-        address actor = registryActors[0];
-
-        registryHandler.toggleOneVaultPolicy();
-        registryHandler.depositFirst(0, 1e18);
-        assertFalse(registryHandler.grandfatheredPosition(actor, address(vault)));
-        assertFalse(registryHandler.grandfatheredPosition(actor, address(secondRegistryVault)));
-
-        registryHandler.toggleOneVaultPolicy();
-        registryHandler.closeFirst(0);
-        assertTrue(vault.isAccountClosed(actor), "first vault did not close");
-
-        registryHandler.depositFirst(0, 1e18);
-        registryHandler.depositSecond(0, 1e18);
-
-        assertEq(_familyOpenVaultCount(actor), 1, "policy-on one-to-two attempt succeeded");
-        assertTrue(secondRegistryVault.isAccountClosed(actor), "second vault retained exposure");
-        assertTrue(registryHandler.prospectiveOpenCountNeverIncreased(), "R2 ghost recorded an increase");
-    }
-
-    function testClosingSecondVaultClearsItsPositionGhost() public {
-        address actor = registryActors[0];
-
-        registryHandler.toggleOneVaultPolicy();
-        registryHandler.depositSecond(0, 1e18);
-        registryHandler.closeFirst(0);
-        registryHandler.depositFirst(0, 1e18);
-
-        assertTrue(registryHandler.grandfatheredPosition(actor, address(secondRegistryVault)));
-        registryHandler.closeSecond(0);
-        assertTrue(secondRegistryVault.isAccountClosed(actor));
-        assertFalse(registryHandler.grandfatheredPosition(actor, address(secondRegistryVault)));
-    }
-
-    function testR1FailsForSimulatedUnauthorizedPolicyOnSecondPosition() public {
-        address actor = registryActors[0];
-        uint256 snapshot = vm.snapshotState();
 
         registryHandler.simulateUnauthorizedPolicyOnSecondPosition(0, 1e18);
 
-        assertTrue(factory.oneVaultPolicyEnabled());
         assertEq(_familyOpenVaultCount(actor), 2);
-        assertEq(registryHandler.countGrandfatheredOpen(actor), 0);
         vm.expectRevert();
-        this.invariant_R1_NonGrandfatheredActorsHaveAtMostOneOpenFamilyVault();
-
-        assertTrue(vm.revertToStateAndDelete(snapshot), "unauthorized-position snapshot restore failed");
-        assertEq(_familyOpenVaultCount(actor), 1);
-        this.invariant_R1_NonGrandfatheredActorsHaveAtMostOneOpenFamilyVault();
+        this.invariant_OpenPositionsAreCoveredByCausalSlotOrGrandfatheredSet();
+        this.invariant_AdmissionOracleLatchRemainsHealthy();
     }
 
-    function testGrandfatheredExclusionIsLoadBearing() public {
+    function testControl2SaturationThenThirdVaultBugDefeatsOldArithmeticButFailsSetContainment() public {
+        address actor = registryActors[0];
+
+        registryHandler.toggleOneVaultPolicy();
+        registryHandler.depositSecond(0, 1e18);
+        registryHandler.depositFirst(0, 1e18);
+        registryHandler.toggleOneVaultPolicy();
+        registryHandler.simulateUnauthorizedPolicyOnThirdPosition(0, 1e18);
+
+        uint256 familyOpen = _familyOpenVaultCount(actor);
+        assertEq(familyOpen, 3);
+        assertLe(familyOpen - 2, 1, "round-5 count subtraction would have rejected the bug");
+        assertEq(registryHandler.slotVault(actor), address(vault));
+        assertTrue(registryHandler.grandfathered(actor, address(secondRegistryVault)));
+        assertFalse(registryHandler.grandfathered(actor, address(vault)));
+        vm.expectRevert();
+        this.invariant_OpenPositionsAreCoveredByCausalSlotOrGrandfatheredSet();
+        this.invariant_AdmissionOracleLatchRemainsHealthy();
+    }
+
+    function testControl3PointerCyclingDoesNotLeaveClosedVaultCovered() public {
+        address actor = registryActors[0];
+
+        registryHandler.toggleOneVaultPolicy();
+        registryHandler.depositSecond(0, 1e18);
+        registryHandler.depositFirst(0, 1e18);
+        registryHandler.depositThird(0, 1e18);
+        registryHandler.closeFirst(0);
+        assertFalse(registryHandler.hasOpenExposure(address(vault), actor));
+        assertFalse(registryHandler.grandfathered(actor, address(vault)));
+        assertTrue(registryHandler.slotVault(actor) != address(vault));
+
+        registryHandler.toggleOneVaultPolicy();
+        registryHandler.simulateUnauthorizedPolicyOnFirstPosition(0, 1e18);
+        vm.expectRevert();
+        this.invariant_OpenPositionsAreCoveredByCausalSlotOrGrandfatheredSet();
+        this.invariant_AdmissionOracleLatchRemainsHealthy();
+    }
+
+    function testControl4HandlerObservedUnauthorizedAdmissionFailsContainmentAndLatch() public {
+        registryHandler.simulateUnauthorizedPolicyOnSecondPositionThroughHandler(0, 1e18);
+
+        vm.expectRevert();
+        this.invariant_OpenPositionsAreCoveredByCausalSlotOrGrandfatheredSet();
+        vm.expectRevert();
+        this.invariant_AdmissionOracleLatchRemainsHealthy();
+    }
+
+    function testControl5GrandfatheredSetIsLoadBearing() public {
         address actor = registryActors[0];
 
         registryHandler.toggleOneVaultPolicy();
         registryHandler.depositSecond(0, 1e18);
 
         assertEq(_familyOpenVaultCount(actor), 2);
-        assertEq(registryHandler.countGrandfatheredOpen(actor), 1);
-        this.invariant_R1_NonGrandfatheredActorsHaveAtMostOneOpenFamilyVault();
+        assertTrue(registryHandler.grandfathered(actor, address(vault)));
+        this.invariant_OpenPositionsAreCoveredByCausalSlotOrGrandfatheredSet();
+        this.invariant_AdmissionOracleLatchRemainsHealthy();
 
         vm.expectRevert();
-        this.assertR1WithoutGrandfatheredExclusion();
+        this.assertOpenSubsetOfSlotOnly();
+    }
+
+    function testControl6ClosedCausalSlotAllowsNewPolicyOnSlotAlongsideGrandfatheredPosition() public {
+        address actor = registryActors[0];
+
+        registryHandler.toggleOneVaultPolicy();
+        registryHandler.depositSecond(0, 1e18);
+        registryHandler.toggleOneVaultPolicy();
+        registryHandler.closeSecond(0);
+        assertEq(registryHandler.slotVault(actor), address(0));
+        assertTrue(registryHandler.grandfathered(actor, address(vault)));
+
+        registryHandler.depositThird(0, 1e18);
+        assertEq(registryHandler.slotVault(actor), address(thirdRegistryVault));
+        assertEq(_familyOpenVaultCount(actor), 2);
+        this.invariant_OpenPositionsAreCoveredByCausalSlotOrGrandfatheredSet();
+        this.invariant_AdmissionOracleLatchRemainsHealthy();
     }
 }
 

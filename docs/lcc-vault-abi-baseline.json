@@ -1778,11 +1778,6 @@
       "inputs": []
     },
     {
-      "name": "NotVault",
-      "signature": "NotVault()",
-      "inputs": []
-    },
-    {
       "name": "NotWhitelistedDepositor",
       "signature": "NotWhitelistedDepositor()",
       "inputs": []

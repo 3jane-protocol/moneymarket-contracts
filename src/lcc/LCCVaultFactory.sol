@@ -47,7 +47,7 @@ contract LCCVaultFactory is AccessControlEnumerable {
     /// @notice Emitted when the one-vault-policy kill switch changes.
     event OneVaultPolicyEnabledUpdated(bool enabled);
     /// @notice Emitted when an admissions module is replaced.
-    event AdmissionsModuleUpdated(address indexed previousModule, address indexed newModule, uint256 version);
+    event AdmissionsModuleUpdated(address indexed previousModule, address indexed newModule);
     /// @notice Emitted when a user's warm vault registration changes.
     event VaultRegistrationUpdated(address indexed user, address indexed vault);
 
@@ -56,10 +56,9 @@ contract LCCVaultFactory is AccessControlEnumerable {
     /// @notice Proposed owner that must call {acceptOwnership}.
     address public pendingOwner;
     /// @notice Optional narrow admission-decision module; zero disables module checks.
+    /// @dev Vaults capture this non-upgradeable factory once and must never gain a factory setter, so a swappable
+    /// module is the only post-deployment path to change admission policy without redeploying the family.
     address public admissionsModule;
-    /// @notice Monotone module configuration version included in update events.
-    uint256 public admissionsModuleVersion;
-
     /// @notice Whether the global depositor whitelist is enforced.
     bool public whitelistEnabled = true;
     /// @notice Whether deposits are prospectively limited to one open family vault.
@@ -113,7 +112,7 @@ contract LCCVaultFactory is AccessControlEnumerable {
 
     /// @notice Blocks renouncing OWNER_ROLE to preserve family-wide emergency authority.
     function renounceRole(bytes32 role, address callerConfirmation) public override(AccessControl, IAccessControl) {
-        if (role == OWNER_ROLE) revert LCCErrorsLib.Unauthorized();
+        if (role == OWNER_ROLE) revert LCCErrorsLib.CannotRenounceOwnerRole();
         super.renounceRole(role, callerConfirmation);
     }
 
@@ -136,8 +135,8 @@ contract LCCVaultFactory is AccessControlEnumerable {
     }
 
     /// @dev See the authority-view rule above.
-    function requireBouncer(address account) external view {
-        if (!hasRole(BOUNCER_ROLE, account)) revert LCCErrorsLib.Unauthorized();
+    function isBouncer(address account) external view returns (bool) {
+        return hasRole(BOUNCER_ROLE, account);
     }
 
     /// @notice Batch-updates the global depositor whitelist.
@@ -172,13 +171,15 @@ contract LCCVaultFactory is AccessControlEnumerable {
 
         address previousModule = admissionsModule;
         admissionsModule = newModule;
-        uint256 version = ++admissionsModuleVersion;
-        emit AdmissionsModuleUpdated(previousModule, newModule, version);
+        emit AdmissionsModuleUpdated(previousModule, newModule);
     }
 
     /// @notice Authorizes and records a completed vault deposit.
     /// @dev While one-vault enforcement is disabled, `vaultOf` remains a warm last-deposit pointer but makes no
     /// exclusivity claim. Re-enabling the policy is prospective and does not close positions opened while disabled.
+    /// The admissions module gates only new opens and reopens, not same-vault top-ups where `hadOpenExposure` is true.
+    /// A `RegisteredElsewhere` caused by incomplete bounded replay has the permissionless remedy `materializeAccount`
+    /// on the named vault.
     function authorizeDeposit(address user, bool hadOpenExposure) external {
         if (!isVault[msg.sender]) revert LCCErrorsLib.NotVault();
         if (whitelistEnabled && !isWhitelistedDepositor[user]) revert LCCErrorsLib.NotWhitelistedDepositor();
@@ -194,7 +195,7 @@ contract LCCVaultFactory is AccessControlEnumerable {
 
         address module = admissionsModule;
         if (module != address(0) && !ILCCAdmissionsModule(module).canDeposit(user, msg.sender)) {
-            revert LCCErrorsLib.Unauthorized();
+            revert LCCErrorsLib.AdmissionsModuleRejected(user, msg.sender);
         }
 
         // Under deposit reentrancy, last-write-wins means the OUTERMOST frame wins. With the policy off, nothing

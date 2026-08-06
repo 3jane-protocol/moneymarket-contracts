@@ -108,7 +108,7 @@ Integrators should verify a candidate vault through `factory.isVault(vault)`, wh
 There is deliberately no `factory()` getter within the tight vault runtime budget, and slot 29 is upgrade-layout
 documentation rather than an integration API.
 The owner administers `LISTER_ROLE`, `BOUNCER_ROLE`, and `GUARDIAN_ROLE`. Vaults read authority only through the
-factory-local `isOwner`, `isGuardian`, and `requireBouncer` views; those functions never consult an admissions
+factory-local `isOwner`, `isGuardian`, and `isBouncer` views; those functions never consult an admissions
 module or another external contract. A family ownership rotation therefore changes authority and exceptional
 settlement recovery for every vault at once.
 
@@ -122,17 +122,16 @@ independently disable whitelist or one-vault enforcement. While the one-vault po
 remains warm but no exclusivity invariant is claimed; under nested deposits, the outermost successful frame writes
 last. Re-enabling is prospective and does not close or repair positions opened during the disabled interval.
 
-The named-vault check has a deliberate owner-accepted residual in that prospective rule. A user who opened positions
-in A and then B while the policy was off has `vaultOf` pointing at B even while A remains open. If the policy is
-re-enabled, the user closes B, and then reopens B, the named-vault check sees B as closed and does not discover the
-displaced open position in A; the user again has two open positions while the policy is enabled. This is bounded to
-users grandfathered by a policy-off window and is unreachable when the user's entire deposit history occurred under
-an enabled policy. It is accepted as the same class as the prospective-only carve-out in preference to an unbounded
-per-deposit scan that calls bounded replay on every family vault. Before re-enabling, reconcile all multi-vault users
-offchain and verify no family vault is paused or shut with unclaimable positions, because the latest recorded vault
-controls the named check and future top-ups. Registry migration never needs an admin clear: close in A, then the next
-successful deposit in B re-points automatically. Matured exiters must claim before the closure predicate can free
-their slot.
+There are two deliberate owner-accepted registry residuals. First, disabling the one-vault rule permits multiple open
+positions and re-enabling is prospective only. Second, a user who opened positions in A and then B while the policy
+was off has `vaultOf` pointing at B even while A remains open. If the policy is re-enabled, the user closes B, and
+then reopens B, the named-vault check sees B as closed and does not discover the displaced position in A. Both are
+bounded to users grandfathered by a policy-off window and are unreachable when the user's entire deposit history
+occurred under an enabled policy. They are accepted in preference to an unbounded per-deposit scan that calls bounded
+replay on every family vault. Before re-enabling, reconcile all multi-vault users offchain and verify no family vault
+is paused or shut with unclaimable positions, because the latest recorded vault controls the named check and future
+top-ups. Registry migration never needs an admin clear: close in A, then the next successful deposit in B re-points
+automatically. Matured exiters must claim before the closure predicate can free their slot.
 
 ### Configuration parameters
 
@@ -789,7 +788,7 @@ flowchart TD
 
 `LCCAuctionLib`, `LCCConfigLib`, and `LCCExitLib` are the three externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-24,144 bytes, 132 bytes below the 24,276-byte release ceiling and 432 bytes below EIP-170. The active-only monolith
+24,152 bytes, 124 bytes below the 24,276-byte release ceiling and 424 bytes below EIP-170. The active-only monolith
 measured 24,703 bytes, so the exit library remains required. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
@@ -797,20 +796,27 @@ implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fun
 `_disableInitializers()`. `LCCVaultFactory` deploys per-facility `BeaconProxy` instances with atomic `initialize`
 calldata; per-facility params live in proxy storage. The proxy captures the deploying factory exactly once, and the
 factory registers the proxy after construction. The beacon remains public, but an unregistered proxy cannot pass the
-factory's deposit gate; EOA initialization is rejected. Packed structs in `LCCTypesLib` are upgrade-frozen layout.
+factory's deposit gate; an EOA-initialized shell captures that codeless authority and fails closed on its first deposit.
+Packed structs in `LCCTypesLib` are upgrade-frozen layout.
 The v2 fresh-family layout starts at `_clockConfig` slot 0, stores `factory` at slot 29, and retains a 49-slot
 `__gap` beginning at slot 30. Once deployed, new state must consume gap slots, `factory` must never gain a setter,
 and `isAccountClosed` semantics are upgrade-frozen. Integrators verify vault provenance through
 `factory.isVault(vault)` rather than a vault-side getter or raw storage inspection.
 `LCCExitLib` anchors at `exitBucketByMaturity` and derives the next four exit-storage roots; their adjacency is
 upgrade-frozen even though the library has no storage of its own. All three linked libraries must be re-linked on
-every implementation redeploy, and the implementation constructor rejects a codeless `LCCExitLib` link. Every future
+every implementation redeploy; deployment tooling must verify that each linked address contains the approved runtime
+bytecode before implementation deployment or a beacon upgrade. This is the third owner-accepted residual: there is
+no onchain code-size guard because it would catch only codeless links while wrong-but-code-bearing libraries still
+pass and require the same procedural bytecode check. On an upgrade with existing exit state, a codeless `LCCExitLib`
+silently no-ops the void call-open snapshot and slash-reduction hooks while aggregate totals still fall; maturity can
+then double-decrement the buckets and brick sync. The sole returning call currently keeps a fresh codeless-linked
+vault from populating those lists, but that ordering property is not library authentication. Every future
 implementation must preserve runtime exit capacity of at least one, or normalize existing configurations during the
 upgrade; the `Math.max(1, ...)` clamp in `LCCExitLib.assignExitMaturity` is the scan-termination invariant.
 `yarn build:forge:size` embeds the build-profile storage layout in the canonical artifact and recursively compares
 its complete type graph against the reviewer-controlled
-`docs/lcc-vault-storage-layout.json`; the checker never regenerates that baseline. The full upgrade checklist of
-record lives in
+`docs/lcc-vault-storage-layout.json`; the checker never regenerates that baseline. The full upgrade checklist of record
+lives in
 [`docs/architecture.md`](../../docs/architecture.md).
 
 ## 12. Known sharp edges / reviewer invariants
