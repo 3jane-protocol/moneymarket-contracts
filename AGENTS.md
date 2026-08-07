@@ -78,7 +78,7 @@ GitHub Actions in `.github/workflows/`:
 - `formatting.yml`: lint/format checks
 - `hardhat.yml`: hardhat test job
 - `halmos.yml`: symbolic checks
-- `certora.yml`: currently disabled by trigger comments
+- `certora.yml`: disabled; `workflow_dispatch` trigger only
 
 ### Seeds and reproducibility
 
