@@ -375,6 +375,7 @@ contract LCCVault is ILCCVault, Initializable, ReentrancyGuardTransient {
     /// ORACLE_PRICE_SCALE, including any token decimal conversion.
     function deposit(
         uint256 assets,
+        address onBehalfOf,
         uint256 minCommitment,
         uint256 maxCommitment,
         bool allowPendingActivation,
@@ -396,7 +397,7 @@ contract LCCVault is ILCCVault, Initializable, ReentrancyGuardTransient {
             uint256(_totals.activeMargin).saturatingAdd(_totals.pendingMargin).saturatingAdd(assets) > type(uint128).max
         ) revert LCCErrorsLib.CapExceeded();
 
-        Account memory account = _replayForUpdate(msg.sender);
+        Account memory account = _replayForUpdate(onBehalfOf);
         // Replay has completed before this snapshot, so zero exposure means this deposit changes this vault from
         // closed to open. The factory needs that pre-credit fact to distinguish a top-up from a policy-gated reopen.
         bool hadOpenExposure = !account.isZeroExposure();
@@ -428,12 +429,14 @@ contract LCCVault is ILCCVault, Initializable, ReentrancyGuardTransient {
         // staged deposit's activation epoch.
         account.commitmentStartEpoch =
             Math.max(account.commitmentStartEpoch, Math.max(activationEpoch, account.pendingActivationEpoch));
-        _storeAccount(msg.sender, account);
+        _storeAccount(onBehalfOf, account);
 
-        emit LCCEventsLib.DepositCheckpointed(msg.sender, assets, marginValue, commitment, activationEpoch, immediate);
+        emit LCCEventsLib.DepositCheckpointed(
+            onBehalfOf, msg.sender, assets, marginValue, commitment, activationEpoch, immediate
+        );
         // Registration-last means a reentrant inner deposit registers first. The outer frame's own authorization
         // then rejects the cross-vault position and reverts that outer deposit wholesale.
-        ILCCVaultFactory(factory).authorizeDeposit(msg.sender, hadOpenExposure);
+        ILCCVaultFactory(factory).authorizeDeposit(msg.sender, onBehalfOf, hadOpenExposure);
     }
 
     /// @inheritdoc ILCCVault

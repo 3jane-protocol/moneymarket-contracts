@@ -209,7 +209,7 @@ contract LCCBounceTest is LCCBase {
         vault.bounceCommitment(alice, commitment);
 
         vm.prank(alice);
-        otherVault.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertEq(factory.vaultOf(alice), address(otherVault));
         assertEq(otherVault.getAccount(alice).activeMargin, 10e18);
     }

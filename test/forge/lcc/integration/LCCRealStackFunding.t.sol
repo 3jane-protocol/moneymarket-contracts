@@ -120,6 +120,7 @@ interface ILCCVaultLike {
     function initialize(VaultParams calldata params) external;
     function deposit(
         uint256 assets,
+        address onBehalfOf,
         uint256 minCommitment,
         uint256 maxCommitment,
         bool allowPendingActivation,
@@ -873,7 +874,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
 
     function _deposit(ILCCVaultLike target, address actor, uint256 amount) internal returns (uint256 commitment) {
         vm.prank(actor);
-        commitment = target.deposit(amount, 1, type(uint256).max, true, type(uint256).max);
+        commitment = target.deposit(amount, actor, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function _openCall(ILCCVaultLike target, uint256 amount) internal {

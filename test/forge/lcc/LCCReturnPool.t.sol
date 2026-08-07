@@ -234,7 +234,7 @@ contract LCCReturnPoolTest is LCCBase {
         address dana = makeAddr("dana");
         _mintAndApprove(dana, 1, 0);
         vm.prank(dana);
-        uint256 freshCommitment = vault.deposit(1, 1, type(uint256).max, true, type(uint256).max);
+        uint256 freshCommitment = vault.deposit(1, dana, 1, type(uint256).max, true, type(uint256).max);
         assertEq(freshCommitment, 500_000);
         assertEq(aliceAccount.activeCommitment - freshCommitment, 250_000, "50% excess over a fresh deposit");
         assertGt(

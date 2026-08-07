@@ -22,6 +22,8 @@ library LCCErrorsLib {
     error NotPaused();
     /// @notice Thrown when a caller is not authorized for the action.
     error Unauthorized();
+    /// @notice Thrown when a third-party deposit payer lacks the factory deposit-operator role.
+    error UnauthorizedDepositOperator(address payer);
     /// @notice Thrown when the optional admissions module rejects a deposit.
     error AdmissionsModuleRejected(address user, address vault);
     /// @notice Thrown when the sole factory owner attempts to renounce its role.

@@ -340,7 +340,7 @@ contract LCCFactoryTest is LCCBase {
         margin.mint(depositor, assets);
         vm.startPrank(depositor);
         margin.approve(address(target), assets);
-        target.deposit(assets, 1, type(uint256).max, true, type(uint256).max);
+        target.deposit(assets, depositor, 1, type(uint256).max, true, type(uint256).max);
         vm.stopPrank();
     }
 

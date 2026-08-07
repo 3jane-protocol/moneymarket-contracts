@@ -151,6 +151,7 @@ contract LCCInvariantHandler is Test {
         invariantOwner = owner_;
         invariantTreasury = vault_.assetConfig().treasury;
         actors = actors_;
+        margin_.approve(address(vault_), type(uint256).max);
         ghostCumDeposited = margin_.balanceOf(address(vault_)) + margin_.balanceOf(invariantTreasury);
     }
 
@@ -185,11 +186,33 @@ contract LCCInvariantHandler is Test {
         if (account.exitRequested && !account.exitClaimed) return;
 
         vm.prank(actor);
-        try invariantVault.deposit(amount, 1, type(uint256).max, true, type(uint256).max) returns (uint256) {
+        try invariantVault.deposit(amount, actor, 1, type(uint256).max, true, type(uint256).max) returns (uint256) {
             // marginAsset enters the vault only via deposit; count the exact amount pulled in. Slash disposal may
             // accrue pending treasury margin in the same transaction, which remains in the vault until swept.
             ghostCumDeposited += amount;
         } catch (bytes memory reason) {
+            if (!_expectedDepositError(reason)) fail();
+        }
+    }
+
+    function delegatedDeposit(uint256 beneficiarySeed, uint256 amountSeed) external capWatch {
+        if (invariantVault.shutdownState().active) return;
+        if (_isTerminal(invariantVault)) return;
+        _sync();
+
+        address beneficiary = actors[_index(beneficiarySeed)];
+        uint256 amount = _range(amountSeed, 1, 10e18);
+        ILCCVault.Account memory account = invariantVault.getAccount(beneficiary);
+        if (account.exitRequested && !account.exitClaimed) return;
+
+        try invariantVault.deposit(amount, beneficiary, 1, type(uint256).max, true, type(uint256).max) returns (
+            uint256
+        ) {
+            // The handler is the role-gated payer, but all credited state and account-sum causality belongs to the
+            // tracked beneficiary. Count margin only after the delegated deposit succeeds.
+            ghostCumDeposited += amount;
+        } catch (bytes memory reason) {
+            // UnauthorizedDepositOperator is intentionally absent: this handler is always granted the role.
             if (!_expectedDepositError(reason)) fail();
         }
     }
@@ -391,7 +414,7 @@ contract LCCInvariantHandler is Test {
             if (invariantVault.currentPhase() != ILCCVault.Phase.Normal) return;
             if (invariantVault.getEpochState(invariantVault.currentEpoch()).callOpened) return;
             vm.prank(actor);
-            try invariantVault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max) returns (uint256) {
+            try invariantVault.deposit(1e18, actor, 1, type(uint256).max, true, type(uint256).max) returns (uint256) {
                 ghostCumDeposited += 1e18;
             } catch {
                 return;
@@ -771,7 +794,7 @@ contract LCCInvariantHandler is Test {
         if (account.activeCommitment <= 1) {
             uint256 depositAmount = 10e18;
             vm.prank(actor);
-            invariantVault.deposit(depositAmount, 1, type(uint256).max, true, type(uint256).max);
+            invariantVault.deposit(depositAmount, actor, 1, type(uint256).max, true, type(uint256).max);
             ghostCumDeposited += depositAmount;
             account = invariantVault.getAccount(actor);
         }
@@ -915,7 +938,7 @@ contract LCCInvariantHandler is Test {
 
     function _expectDepositRevert(address actor, uint256 amount, bytes4 selector) internal {
         vm.prank(actor);
-        try invariantVault.deposit(amount, 1, type(uint256).max, true, type(uint256).max) {
+        try invariantVault.deposit(amount, actor, 1, type(uint256).max, true, type(uint256).max) {
             fail();
         } catch (bytes memory reason) {
             assertEq(_revertSelector(reason), selector);
@@ -1055,6 +1078,8 @@ contract LCCStatefulInvariantTest is LCCBase {
         initialTreasuryMargin = margin.balanceOf(treasury);
         handler = new LCCInvariantHandler(vault, margin, usd3, oracle, owner, invariantActors);
         factory.grantRole(factory.BOUNCER_ROLE(), address(handler));
+        factory.grantRole(factory.DEPOSIT_OPERATOR_ROLE(), address(handler));
+        margin.mint(address(handler), 1_000_000e18);
         targetContract(address(handler));
     }
 
@@ -1564,6 +1589,10 @@ contract LCCMinCommitmentStatefulInvariantTest is LCCTerminalStatefulInvariantTe
 }
 
 contract LCCRegistryInvariantHandler is Test {
+    uint256 internal constant PAYER_MODE_SELF = 0;
+    uint256 internal constant PAYER_MODE_AUTHORIZED = 1;
+    uint256 internal constant PAYER_MODE_UNAUTHORIZED = 2;
+
     struct AdmissionPreState {
         bool policyOn;
         address slot;
@@ -1609,6 +1638,11 @@ contract LCCRegistryInvariantHandler is Test {
         invariantOwner = owner_;
         invariantBouncer = bouncer_;
         actors = actors_;
+
+        LCCMockToken marginToken = LCCMockToken(firstVault_.assetConfig().marginAsset);
+        marginToken.approve(address(firstVault_), type(uint256).max);
+        marginToken.approve(address(secondVault_), type(uint256).max);
+        marginToken.approve(address(thirdVault_), type(uint256).max);
 
         for (uint256 i = 0; i < actors_.length; ++i) {
             ghostDepositedInto[actors_[i]][address(firstVault_)] = true;
@@ -1676,8 +1710,14 @@ contract LCCRegistryInvariantHandler is Test {
     }
 
     function _deposit(LCCVault target, uint256 actorSeed, uint256 amountSeed, bool simulateUnauthorized) internal {
-        address actor = actors[actorSeed % actors.length];
-        AdmissionPreState memory pre = _snapshotAdmission(actor, target);
+        uint256 beneficiaryIndex = actorSeed % actors.length;
+        address beneficiary = actors[beneficiaryIndex];
+        uint256 payerMode = simulateUnauthorized ? PAYER_MODE_SELF : (actorSeed / actors.length) % 3;
+        address payer = beneficiary;
+        if (payerMode == PAYER_MODE_AUTHORIZED) payer = address(this);
+        if (payerMode == PAYER_MODE_UNAUTHORIZED) payer = actors[(beneficiaryIndex + 1) % actors.length];
+
+        AdmissionPreState memory pre = _snapshotAdmission(beneficiary, target);
         uint256 amount = bound(amountSeed, 1, 10e18);
 
         if (simulateUnauthorized) {
@@ -1687,15 +1727,25 @@ contract LCCRegistryInvariantHandler is Test {
         }
 
         bool succeeded;
-        vm.prank(actor);
-        try target.deposit(amount, 1, type(uint256).max, true, type(uint256).max) returns (uint256) {
+        vm.prank(payer);
+        try target.deposit(amount, beneficiary, 1, type(uint256).max, true, type(uint256).max) returns (uint256) {
             succeeded = true;
         } catch (bytes memory reason) {
             bytes4 selector = _revertSelector(reason);
-            if (
+            if (payerMode == PAYER_MODE_UNAUTHORIZED) {
+                // The factory's payer-role gate runs before the whitelist and one-vault checks, so an unauthorized
+                // payer that reaches the factory must revert with UnauthorizedDepositOperator; a later admission
+                // error means the gate ran too late. Vault-side reverts before the factory call stay acceptable.
+                if (
+                    selector == LCCErrorsLib.RegisteredElsewhere.selector
+                        || selector == LCCErrorsLib.NotWhitelistedDepositor.selector
+                ) admissionOracleHealthy = false;
+            } else if (
                 selector != LCCErrorsLib.RegisteredElsewhere.selector
                     && selector != LCCErrorsLib.NotWhitelistedDepositor.selector
-            ) fail();
+            ) {
+                fail();
+            }
         }
 
         if (simulateUnauthorized) {
@@ -1704,8 +1754,13 @@ contract LCCRegistryInvariantHandler is Test {
         }
 
         if (succeeded) {
-            ghostDepositedInto[actor][address(target)] = true;
-            _recordSuccessfulDeposit(actor, address(target), pre);
+            if (payerMode == PAYER_MODE_UNAUTHORIZED) {
+                admissionOracleHealthy = false;
+                return;
+            }
+            // Every causal ghost is keyed on the credited beneficiary, never the payer.
+            ghostDepositedInto[beneficiary][address(target)] = true;
+            _recordSuccessfulDeposit(beneficiary, address(target), pre);
         }
     }
 
@@ -1763,7 +1818,7 @@ contract LCCRegistryInvariantHandler is Test {
         vm.prank(invariantOwner);
         invariantFactory.setOneVaultPolicyEnabled(false);
         vm.prank(actor);
-        target.deposit(bound(amountSeed, 1, 10e18), 1, type(uint256).max, true, type(uint256).max);
+        target.deposit(bound(amountSeed, 1, 10e18), actor, 1, type(uint256).max, true, type(uint256).max);
         // This history ghost supports R3 only; the causal admission state machine intentionally does not observe the
         // call.
         ghostDepositedInto[actor][address(target)] = true;
@@ -1821,7 +1876,7 @@ abstract contract LCCRegistryInvariantBase is LCCBase {
             _mintAndApprove(secondRegistryVault, actor, 0, 0);
             _mintAndApprove(thirdRegistryVault, actor, 0, 0);
             vm.prank(actor);
-            vault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
+            vault.deposit(1e18, actor, 1, type(uint256).max, true, type(uint256).max);
         }
 
         address[] memory dewhitelisted = new address[](1);
@@ -1831,6 +1886,8 @@ abstract contract LCCRegistryInvariantBase is LCCBase {
         registryHandler = new LCCRegistryInvariantHandler(
             factory, vault, secondRegistryVault, thirdRegistryVault, owner, bouncer, registryActors
         );
+        factory.grantRole(factory.DEPOSIT_OPERATOR_ROLE(), address(registryHandler));
+        margin.mint(address(registryHandler), 1_000_000e18);
         bytes4[] memory selectors = new bytes4[](_includeToggleHandlers() ? 8 : 6);
         selectors[0] = LCCRegistryInvariantHandler.depositFirst.selector;
         selectors[1] = LCCRegistryInvariantHandler.depositSecond.selector;

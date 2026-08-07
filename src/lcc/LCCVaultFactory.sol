@@ -33,6 +33,8 @@ contract LCCVaultFactory is AccessControlEnumerable {
     bytes32 public constant BOUNCER_ROLE = keccak256("BOUNCER_ROLE");
     /// @notice Role identifier for accounts allowed to pause family vaults.
     bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
+    /// @notice Role identifier for accounts allowed to fund deposits credited to another beneficiary.
+    bytes32 public constant DEPOSIT_OPERATOR_ROLE = keccak256("DEPOSIT_OPERATOR_ROLE");
 
     /// @notice Emitted when a vault is deployed through this factory.
     event VaultCreated(address indexed vault);
@@ -89,6 +91,7 @@ contract LCCVaultFactory is AccessControlEnumerable {
         _setRoleAdmin(LISTER_ROLE, OWNER_ROLE);
         _setRoleAdmin(BOUNCER_ROLE, OWNER_ROLE);
         _setRoleAdmin(GUARDIAN_ROLE, OWNER_ROLE);
+        _setRoleAdmin(DEPOSIT_OPERATOR_ROLE, OWNER_ROLE);
     }
 
     /// @notice Starts a two-step family ownership transfer, replacing any prior pending owner.
@@ -139,6 +142,12 @@ contract LCCVaultFactory is AccessControlEnumerable {
         return hasRole(BOUNCER_ROLE, account);
     }
 
+    /// @dev See the authority-view rule above. This view is integrator-facing; deposit enforcement occurs inside
+    /// authorizeDeposit and no vault settlement or emergency path depends on this view.
+    function isDepositOperator(address account) external view returns (bool) {
+        return hasRole(DEPOSIT_OPERATOR_ROLE, account);
+    }
+
     /// @notice Batch-updates the global depositor whitelist.
     function setDepositorsWhitelisted(address[] calldata depositors, bool allowed) external onlyRole(LISTER_ROLE) {
         for (uint256 i = 0; i < depositors.length; ++i) {
@@ -178,31 +187,40 @@ contract LCCVaultFactory is AccessControlEnumerable {
     /// @dev While one-vault enforcement is disabled, `vaultOf` remains a warm last-deposit pointer but makes no
     /// exclusivity claim. Re-enabling the policy is prospective and does not close positions opened while disabled.
     /// The admissions module gates only new opens and reopens, not same-vault top-ups where `hadOpenExposure` is true.
+    /// The payer-role gate runs before every other admission check, including the same-vault top-up short-circuit, so
+    /// a roleless payer can never top-up an open account. That short-circuit means same-vault top-ups, self- or
+    /// operator-funded, bypass the admissions module while the payer-role and whitelist checks still run.
     /// A `RegisteredElsewhere` caused by incomplete bounded replay has the permissionless remedy `materializeAccount`
     /// on the named vault.
-    function authorizeDeposit(address user, bool hadOpenExposure) external {
+    function authorizeDeposit(address payer, address beneficiary, bool hadOpenExposure) external {
         if (!isVault[msg.sender]) revert LCCErrorsLib.NotVault();
-        if (whitelistEnabled && !isWhitelistedDepositor[user]) revert LCCErrorsLib.NotWhitelistedDepositor();
+        if (beneficiary == address(0)) revert LCCErrorsLib.ZeroAddress();
+        if (payer != beneficiary && !hasRole(DEPOSIT_OPERATOR_ROLE, payer)) {
+            revert LCCErrorsLib.UnauthorizedDepositOperator(payer);
+        }
+        if (whitelistEnabled && !isWhitelistedDepositor[beneficiary]) {
+            revert LCCErrorsLib.NotWhitelistedDepositor();
+        }
 
-        address currentVault = vaultOf[user];
+        address currentVault = vaultOf[beneficiary];
         if (currentVault == msg.sender && hadOpenExposure) return;
         if (
             oneVaultPolicyEnabled && currentVault != address(0) && currentVault != msg.sender
-                && !ILCCVault(currentVault).isAccountClosed(user)
+                && !ILCCVault(currentVault).isAccountClosed(beneficiary)
         ) {
             revert LCCErrorsLib.RegisteredElsewhere(currentVault);
         }
 
         address module = admissionsModule;
-        if (module != address(0) && !ILCCAdmissionsModule(module).canDeposit(user, msg.sender)) {
-            revert LCCErrorsLib.AdmissionsModuleRejected(user, msg.sender);
+        if (module != address(0) && !ILCCAdmissionsModule(module).canDeposit(beneficiary, msg.sender)) {
+            revert LCCErrorsLib.AdmissionsModuleRejected(beneficiary, msg.sender);
         }
 
         // Under deposit reentrancy, last-write-wins means the OUTERMOST frame wins. With the policy off, nothing
         // reverts a nested double-deposit; this is acceptable because no exclusivity invariant is claimed while off.
         // This warm write is deliberately unconditional with respect to oneVaultPolicyEnabled.
-        vaultOf[user] = msg.sender;
-        emit VaultRegistrationUpdated(user, msg.sender);
+        vaultOf[beneficiary] = msg.sender;
+        emit VaultRegistrationUpdated(beneficiary, msg.sender);
     }
 
     /// @notice Deploys a new vault using the default salt and records it in the factory registry.

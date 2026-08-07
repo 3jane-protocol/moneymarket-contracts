@@ -7,8 +7,8 @@ This repository is a contracts codebase. "Deployment" here primarily means CI ex
 ## LCC Implementation Deployment
 
 The canonical `LCCVault` deployment artifact is compiled for Cancun with official solc `0.8.35`, via IR, 150
-optimizer runs, and no metadata bytecode hash. Its measured runtime is 24,152 bytes, 124 bytes below the internal
-ceiling and 424 bytes below EIP-170. The active-only bounce and family-authority monolith measured 24,703 bytes,
+optimizer runs, and no metadata bytecode hash. Its measured runtime is 24,102 bytes, 174 bytes below the internal
+ceiling and 474 bytes below EIP-170. The active-only bounce and family-authority monolith measured 24,703 bytes,
 127 bytes over EIP-170, so exit-exposure reconciliation and maturity assignment remain extracted into `LCCExitLib`
 at 150 runs.
 Because it uses `ReentrancyGuardTransient`, every deployment chain must support EIP-1153. Hardhat uses pinned stable
@@ -53,11 +53,15 @@ uses three words for six `uint128` amounts and keeps its explicit fourth-word `l
 storage and does not change the vault layout or ABI. Auction state uses two words for four `uint128` counters;
 `getAuctionState` remains wire-compatible, and the linked `LCCAuctionLib` records packed fill updates.
 
-The release checker currently pins only the `LCCVault` external ABI, not `LCCVaultFactory`. This pre-deployment delta
-intentionally changes the factory ABI: `requireBouncer` becomes boolean `isBouncer`, the
-`admissionsModuleVersion` getter is removed, and `AdmissionsModuleUpdated` loses its third argument (changing
-`topic0`). There is no deployed compatibility impact. After factory deployment, any further ABI or event-signature
-change must be treated as an explicit release decision rather than assumed to be covered by the vault ABI gate.
+The release checker currently pins only the `LCCVault` external ABI, not `LCCVaultFactory`. The approved
+pre-deployment factory delta includes the prior `requireBouncer` to boolean `isBouncer` change, removal of
+`admissionsModuleVersion`, and two-argument `AdmissionsModuleUpdated`, plus this release's
+`DEPOSIT_OPERATOR_ROLE()` and `isDepositOperator(address)` views, three-argument
+`authorizeDeposit(address payer,address beneficiary,bool hadOpenExposure)`, and
+`UnauthorizedDepositOperator(address payer)` error. The vault ABI baseline intentionally changes only the `deposit`
+selector/input list and the `DepositCheckpointed` payer field/topic; its storage-layout baseline remains unchanged.
+There is no deployed compatibility impact. After factory deployment, any further ABI or event-signature change must
+be treated as an explicit release decision rather than assumed to be covered by the vault ABI gate.
 
 ## GitHub Actions Workflows
 

@@ -307,14 +307,18 @@ interface ILCCVault {
     /// @param user Account whose stored and replayable exposure is inspected.
     /// @return True only when bounded replay completes and leaves no active, pending, exiting, or claimable exposure.
     function isAccountClosed(address user) external view returns (bool);
-    /// @notice Deposits margin for the caller, creating a bounded leveraged commitment.
-    /// @dev Pulls `assets` of marginAsset from the caller and credits the caller's own account (self-deposit only,
-    /// since a deposit creates a callable obligation). Activates immediately during Normal (before a call opens),
-    /// otherwise stages as pending for the next epoch when permitted. Deposits remain available during PreCall and
-    /// while an opened call is unsettled, but are unavailable while an auction is live. Reverts under shutdown, when
-    /// activation would reach scheduled sunset, on a pending-blocking exit, on an expired wall-clock deadline, on
-    /// invalid commitment bounds, on a zero/sub-minimum amount, on a zero oracle price, or if a cap would be exceeded.
+    /// @notice Deposits caller-funded margin for a beneficiary, creating a bounded leveraged commitment.
+    /// @dev Pulls `assets` of marginAsset from the caller and irrevocably credits `onBehalfOf`. Self-deposits require
+    /// no deposit-operator role; a distinct payer must hold the factory's DEPOSIT_OPERATOR_ROLE. The final factory
+    /// authorization is deliberately fail-late and atomic, so a rejection unwinds the token pull and all state. A
+    /// successful deposit can extend the beneficiary's commitment lockup and consume their cap. It activates
+    /// immediately during Normal (before a call opens), otherwise stages as pending for the next epoch when permitted.
+    /// Deposits remain available during PreCall and while an opened call is unsettled, but are unavailable while an
+    /// auction is live. Reverts under shutdown, when activation would reach scheduled sunset, on a pending-blocking
+    /// exit, on an expired wall-clock deadline, on invalid commitment bounds, on a zero/sub-minimum amount, on a zero
+    /// beneficiary, on a zero oracle price, or if a cap would be exceeded.
     /// @param assets Margin to deposit (marginAsset).
+    /// @param onBehalfOf Beneficiary whose margin and commitment account is credited.
     /// @param minCommitment Minimum acceptable commitment, inclusive and nonzero.
     /// @param maxCommitment Maximum acceptable commitment, inclusive.
     /// @param allowPendingActivation Whether the deposit may be staged for the next epoch.
@@ -322,6 +326,7 @@ interface ILCCVault {
     /// @return commitment Commitment created (fundingAsset).
     function deposit(
         uint256 assets,
+        address onBehalfOf,
         uint256 minCommitment,
         uint256 maxCommitment,
         bool allowPendingActivation,

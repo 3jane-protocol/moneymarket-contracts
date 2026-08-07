@@ -111,9 +111,9 @@ contract LCCProxyTest is LCCBase {
         _approveVault(second, alice);
 
         vm.prank(alice);
-        first.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        first.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(alice);
-        second.deposit(20e18, 1, type(uint256).max, true, type(uint256).max);
+        second.deposit(20e18, alice, 1, type(uint256).max, true, type(uint256).max);
 
         oracle.setPrice(4_999e18);
         vm.warp(START + NORMAL);
@@ -149,7 +149,7 @@ contract LCCProxyTest is LCCBase {
         _mintAndApprove(shell, alice, 1e18, 0);
         vm.expectRevert();
         vm.prank(alice);
-        shell.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
+        shell.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertTrue(shell.isAccountClosed(alice));
         assertEq(factory.vaultOf(alice), address(0));
     }

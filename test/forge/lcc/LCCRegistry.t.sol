@@ -49,7 +49,7 @@ contract LCCReentrantAdmissionsModule is ILCCAdmissionsModule {
         // The nested admission attempt must be contained by the factory's isVault gate. The outer decision remains
         // usable, proving a hostile module cannot turn its STATICCALL into a registry write or recursive admission.
         (bool reentered,) =
-            address(targetFactory).staticcall(abi.encodeCall(targetFactory.authorizeDeposit, (user, false)));
+            address(targetFactory).staticcall(abi.encodeCall(targetFactory.authorizeDeposit, (user, user, false)));
         return !reentered;
     }
 }
@@ -62,6 +62,18 @@ contract LCCStateMutatingAdmissionsModule {
         // a positive control for the runtime STATICCALL boundary enforced by ILCCAdmissionsModule.canDeposit's view.
         if (user != vault) ++writes;
         return true;
+    }
+}
+
+contract LCCBeneficiaryAdmissionsModule is ILCCAdmissionsModule {
+    address internal immutable allowedBeneficiary;
+
+    constructor(address allowedBeneficiary_) {
+        allowedBeneficiary = allowedBeneficiary_;
+    }
+
+    function canDeposit(address beneficiary, address) external view returns (bool) {
+        return beneficiary == allowedBeneficiary;
     }
 }
 
@@ -84,12 +96,52 @@ contract LCCRegistryDepositReentryProbe is ILCCMarginTransferHook {
 
     function depositIntoOuter(uint256 assets) external returns (uint256 commitment) {
         token.arm(address(this));
-        return outerVault.deposit(assets, 1, type(uint256).max, true, type(uint256).max);
+        return outerVault.deposit(assets, address(this), 1, type(uint256).max, true, type(uint256).max);
     }
 
     function onMarginTransfer() external {
         require(msg.sender == address(token), "ONLY_TOKEN");
-        innerCommitment = innerVault.deposit(innerAssets, 1, type(uint256).max, true, type(uint256).max);
+        innerCommitment = innerVault.deposit(innerAssets, address(this), 1, type(uint256).max, true, type(uint256).max);
+    }
+}
+
+contract LCCDelegatedRegistryDepositReentryProbe is ILCCMarginTransferHook {
+    LCCReentrantMarginToken internal immutable token;
+    LCCVault internal immutable innerVault;
+    LCCVault internal immutable outerVault;
+    address internal immutable innerBeneficiary;
+    address internal immutable outerBeneficiary;
+    uint256 internal immutable innerAssets;
+
+    uint256 public innerCommitment;
+
+    constructor(
+        LCCReentrantMarginToken token_,
+        LCCVault innerVault_,
+        LCCVault outerVault_,
+        address innerBeneficiary_,
+        address outerBeneficiary_,
+        uint256 innerAssets_
+    ) {
+        token = token_;
+        innerVault = innerVault_;
+        outerVault = outerVault_;
+        innerBeneficiary = innerBeneficiary_;
+        outerBeneficiary = outerBeneficiary_;
+        innerAssets = innerAssets_;
+        token_.approve(address(innerVault_), type(uint256).max);
+        token_.approve(address(outerVault_), type(uint256).max);
+    }
+
+    function depositIntoOuter(uint256 assets) external returns (uint256 commitment) {
+        token.arm(address(this));
+        return outerVault.deposit(assets, outerBeneficiary, 1, type(uint256).max, true, type(uint256).max);
+    }
+
+    function onMarginTransfer() external {
+        require(msg.sender == address(token), "ONLY_TOKEN");
+        innerCommitment =
+            innerVault.deposit(innerAssets, innerBeneficiary, 1, type(uint256).max, true, type(uint256).max);
     }
 }
 
@@ -106,6 +158,7 @@ contract LCCRegistryTest is LCCBase {
         assertEq(factory.getRoleAdmin(factory.LISTER_ROLE()), ownerRole);
         assertEq(factory.getRoleAdmin(factory.BOUNCER_ROLE()), ownerRole);
         assertEq(factory.getRoleAdmin(factory.GUARDIAN_ROLE()), ownerRole);
+        assertEq(factory.getRoleAdmin(factory.DEPOSIT_OPERATOR_ROLE()), ownerRole);
     }
 
     function testOwnerRoleCannotBeRenounced() public {
@@ -143,6 +196,41 @@ contract LCCRegistryTest is LCCBase {
         assertEq(factory.getRoleMemberCount(factory.OWNER_ROLE()), 1);
         assertFalse(factory.isOwner(owner));
         assertTrue(factory.isOwner(newOwner));
+    }
+
+    function testOwnershipRotationMovesDepositOperatorAdministration() public {
+        address newOwner = makeAddr("newOwner");
+        factory.transferOwnership(newOwner);
+        vm.prank(newOwner);
+        factory.acceptOwnership();
+
+        bytes32 operatorRole = factory.DEPOSIT_OPERATOR_ROLE();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, owner, factory.OWNER_ROLE()
+            )
+        );
+        factory.grantRole(operatorRole, unlisted);
+
+        vm.prank(newOwner);
+        factory.grantRole(operatorRole, unlisted);
+        assertTrue(factory.isDepositOperator(unlisted));
+    }
+
+    function testIsDepositOperatorTracksGrantRevokeAndRenounce() public {
+        bytes32 operatorRole = factory.DEPOSIT_OPERATOR_ROLE();
+        assertFalse(factory.isDepositOperator(unlisted));
+
+        factory.grantRole(operatorRole, unlisted);
+        assertTrue(factory.isDepositOperator(unlisted));
+
+        factory.revokeRole(operatorRole, unlisted);
+        assertFalse(factory.isDepositOperator(unlisted));
+
+        factory.grantRole(operatorRole, unlisted);
+        vm.prank(unlisted);
+        factory.renounceRole(operatorRole, unlisted);
+        assertFalse(factory.isDepositOperator(unlisted));
     }
 
     function testPendingOwnerMayBeOverwrittenAndWrongAddressCannotAccept() public {
@@ -195,7 +283,7 @@ contract LCCRegistryTest is LCCBase {
 
     function testAuthorizeDepositRejectsNonVaultCaller() public {
         vm.expectRevert(LCCErrorsLib.NotVault.selector);
-        factory.authorizeDeposit(alice, false);
+        factory.authorizeDeposit(alice, alice, false);
     }
 
     function testWhitelistEnabledRejectsAndDisabledAllowsUnlistedDepositor() public {
@@ -206,13 +294,98 @@ contract LCCRegistryTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.NotWhitelistedDepositor.selector);
         vm.prank(unlisted);
-        target.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        target.deposit(10e18, unlisted, 1, type(uint256).max, true, type(uint256).max);
         assertEq(target.getAccount(unlisted).activeMargin, 0);
 
         factory.setWhitelistEnabled(false);
         vm.prank(unlisted);
-        target.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        target.deposit(10e18, unlisted, 1, type(uint256).max, true, type(uint256).max);
         assertEq(factory.vaultOf(unlisted), address(target));
+    }
+
+    function testUnwhitelistedOperatorCanFundWhitelistedBeneficiary() public {
+        assertFalse(factory.isWhitelistedDepositor(depositOperator));
+        _mintAndApproveMarginPayer(address(vault), depositOperator, 10e18);
+
+        _depositFor(depositOperator, alice, 10e18);
+
+        assertEq(vault.getAccount(alice).activeMargin, 10e18);
+        assertEq(factory.vaultOf(alice), address(vault));
+    }
+
+    function testWhitelistedOperatorCannotFundUnwhitelistedBeneficiary() public {
+        factory.grantRole(factory.DEPOSIT_OPERATOR_ROLE(), stranger);
+        _mintAndApproveMarginPayer(address(vault), stranger, 10e18);
+        assertTrue(factory.isWhitelistedDepositor(stranger));
+        assertFalse(factory.isWhitelistedDepositor(unlisted));
+
+        vm.expectRevert(LCCErrorsLib.NotWhitelistedDepositor.selector);
+        vm.prank(stranger);
+        vault.deposit(10e18, unlisted, 1, type(uint256).max, true, type(uint256).max);
+
+        assertEq(vault.getAccount(unlisted).activeMargin, 0);
+    }
+
+    function testUnauthorizedPayerRevertsOnRoleGateBeforeWhitelistCheck() public {
+        assertTrue(factory.whitelistEnabled());
+        assertFalse(factory.isDepositOperator(stranger));
+        assertFalse(factory.isWhitelistedDepositor(unlisted));
+        _mintAndApproveMarginPayer(address(vault), stranger, 10e18);
+
+        vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.UnauthorizedDepositOperator.selector, stranger));
+        vm.prank(stranger);
+        vault.deposit(10e18, unlisted, 1, type(uint256).max, true, type(uint256).max);
+
+        assertEq(vault.getAccount(unlisted).activeMargin, 0);
+    }
+
+    function testUnauthorizedPayerRevertsOnRoleGateBeforeOneVaultPolicyCheck() public {
+        LCCVault otherVault = _newVault(_params(CAP, CAP));
+        _deposit(alice, 10e18);
+        assertTrue(factory.oneVaultPolicyEnabled());
+        assertFalse(factory.isDepositOperator(stranger));
+        _mintAndApproveMarginPayer(address(otherVault), stranger, 10e18);
+
+        vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.UnauthorizedDepositOperator.selector, stranger));
+        vm.prank(stranger);
+        otherVault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
+
+        assertEq(otherVault.getAccount(alice).activeMargin, 0);
+        assertEq(factory.vaultOf(alice), address(vault));
+    }
+
+    function testDelegatedOneVaultPolicyKeysOnBeneficiaryNotPayer() public {
+        LCCVault otherVault = _newVault(_params(CAP, CAP));
+        _mintAndApproveMarginPayer(address(otherVault), depositOperator, 10e18);
+        _deposit(alice, 10e18);
+
+        vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.RegisteredElsewhere.selector, address(vault)));
+        vm.prank(depositOperator);
+        otherVault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
+
+        assertEq(otherVault.getAccount(alice).activeMargin, 0);
+        assertEq(factory.vaultOf(depositOperator), address(0));
+    }
+
+    function testAdmissionsModuleReceivesDelegatedBeneficiaryNotPayer() public {
+        LCCBeneficiaryAdmissionsModule module = new LCCBeneficiaryAdmissionsModule(alice);
+        factory.setAdmissionsModule(address(module));
+        _mintAndApproveMarginPayer(address(vault), depositOperator, 10e18);
+
+        _depositFor(depositOperator, alice, 10e18);
+
+        assertEq(vault.getAccount(alice).activeMargin, 10e18);
+    }
+
+    function testRegisteredTopUpStillRequiresDepositOperatorRole() public {
+        _deposit(alice, 10e18);
+        _mintAndApproveMarginPayer(address(vault), stranger, 1e18);
+
+        vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.UnauthorizedDepositOperator.selector, stranger));
+        vm.prank(stranger);
+        vault.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
+
+        assertEq(vault.getAccount(alice).activeMargin, 10e18);
     }
 
     function testListerRoleControlsBatchWhitelist() public {
@@ -247,7 +420,7 @@ contract LCCRegistryTest is LCCBase {
 
         vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.RegisteredElsewhere.selector, address(vault)));
         vm.prank(alice);
-        otherVault.deposit(5e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(5e18, alice, 1, type(uint256).max, true, type(uint256).max);
 
         assertEq(otherVault.getAccount(alice).activeMargin, 0);
         assertEq(factory.vaultOf(alice), address(vault));
@@ -260,7 +433,7 @@ contract LCCRegistryTest is LCCBase {
 
         factory.setOneVaultPolicyEnabled(false);
         vm.prank(alice);
-        otherVault.deposit(5e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(5e18, alice, 1, type(uint256).max, true, type(uint256).max);
 
         assertEq(vault.getAccount(alice).activeMargin, 10e18);
         assertEq(otherVault.getAccount(alice).activeMargin, 5e18);
@@ -269,7 +442,7 @@ contract LCCRegistryTest is LCCBase {
         factory.setOneVaultPolicyEnabled(true);
         vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.RegisteredElsewhere.selector, address(otherVault)));
         vm.prank(alice);
-        vault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
+        vault.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function testClosingDisplacedVaultRestoresOneVaultPolicyConstraint() public {
@@ -284,7 +457,7 @@ contract LCCRegistryTest is LCCBase {
         factory.setOneVaultPolicyEnabled(true);
         vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.RegisteredElsewhere.selector, address(otherVault)));
         vm.prank(alice);
-        vault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
+        vault.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function testClosingBothVaultsRemovesExemptionAndRestoresFullConstraint() public {
@@ -299,12 +472,12 @@ contract LCCRegistryTest is LCCBase {
 
         factory.setOneVaultPolicyEnabled(true);
         vm.prank(alice);
-        vault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
+        vault.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertEq(factory.vaultOf(alice), address(vault));
 
         vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.RegisteredElsewhere.selector, address(vault)));
         vm.prank(alice);
-        otherVault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function testRetainedDisplacedPositionPreservesDocumentedPolicyExemption() public {
@@ -318,7 +491,7 @@ contract LCCRegistryTest is LCCBase {
         assertEq(factory.vaultOf(alice), address(otherVault));
 
         vm.prank(alice);
-        otherVault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
 
         assertFalse(vault.isAccountClosed(alice));
         assertFalse(otherVault.isAccountClosed(alice));
@@ -332,7 +505,7 @@ contract LCCRegistryTest is LCCBase {
         factory.setOneVaultPolicyEnabled(false);
         _deposit(alice, 10e18);
         vm.prank(alice);
-        uint256 otherCommitment = otherVault.deposit(5e18, 1, type(uint256).max, true, type(uint256).max);
+        uint256 otherCommitment = otherVault.deposit(5e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertEq(factory.vaultOf(alice), address(otherVault));
 
         factory.setOneVaultPolicyEnabled(true);
@@ -353,7 +526,7 @@ contract LCCRegistryTest is LCCBase {
             abi.encodeWithSelector(LCCErrorsLib.AdmissionsModuleRejected.selector, alice, address(otherVault))
         );
         vm.prank(alice);
-        otherVault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertTrue(otherVault.isAccountClosed(alice));
     }
 
@@ -364,7 +537,7 @@ contract LCCRegistryTest is LCCBase {
         factory.setOneVaultPolicyEnabled(false);
         _deposit(alice, 10e18);
         vm.prank(alice);
-        uint256 otherCommitment = otherVault.deposit(5e18, 1, type(uint256).max, true, type(uint256).max);
+        uint256 otherCommitment = otherVault.deposit(5e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertEq(factory.vaultOf(alice), address(otherVault));
 
         factory.setOneVaultPolicyEnabled(true);
@@ -376,7 +549,7 @@ contract LCCRegistryTest is LCCBase {
         // Deliberate owner-accepted residual documented in src/lcc/README.md and docs/architecture.md: admission
         // checks only the warm named vault, not the unbounded family list, so the displaced vault position is unseen.
         vm.prank(alice);
-        otherVault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
 
         assertFalse(vault.isAccountClosed(alice));
         assertFalse(otherVault.isAccountClosed(alice));
@@ -429,6 +602,61 @@ contract LCCRegistryTest is LCCBase {
         assertEq(token.balanceOf(address(probe)), 0);
     }
 
+    function testDelegatedTwoVaultCallbackSameBeneficiaryPolicyOnRevertsWholesale() public {
+        (
+            LCCReentrantMarginToken token,
+            LCCVault innerVault,
+            LCCVault outerVault,
+            LCCDelegatedRegistryDepositReentryProbe probe
+        ) = _newDelegatedReentrantRegistryFixture(alice, alice);
+
+        vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.RegisteredElsewhere.selector, address(innerVault)));
+        probe.depositIntoOuter(10e18);
+
+        assertEq(innerVault.getAccount(alice).activeMargin, 0);
+        assertEq(outerVault.getAccount(alice).activeMargin, 0);
+        assertEq(factory.vaultOf(alice), address(0));
+        assertEq(token.balanceOf(address(probe)), 20e18);
+    }
+
+    function testDelegatedTwoVaultCallbackSameBeneficiaryPolicyOffCompletesBoth() public {
+        (
+            LCCReentrantMarginToken token,
+            LCCVault innerVault,
+            LCCVault outerVault,
+            LCCDelegatedRegistryDepositReentryProbe probe
+        ) = _newDelegatedReentrantRegistryFixture(alice, alice);
+        factory.setOneVaultPolicyEnabled(false);
+
+        uint256 outerCommitment = probe.depositIntoOuter(10e18);
+
+        assertEq(innerVault.getAccount(alice).activeMargin, 10e18);
+        assertEq(innerVault.getAccount(alice).activeCommitment, probe.innerCommitment());
+        assertEq(outerVault.getAccount(alice).activeMargin, 10e18);
+        assertEq(outerVault.getAccount(alice).activeCommitment, outerCommitment);
+        assertEq(factory.vaultOf(alice), address(outerVault));
+        assertEq(token.balanceOf(address(probe)), 0);
+    }
+
+    function testDelegatedTwoVaultCallbackDistinctBeneficiariesPolicyOnCompletes() public {
+        (
+            LCCReentrantMarginToken token,
+            LCCVault innerVault,
+            LCCVault outerVault,
+            LCCDelegatedRegistryDepositReentryProbe probe
+        ) = _newDelegatedReentrantRegistryFixture(bob, alice);
+
+        uint256 outerCommitment = probe.depositIntoOuter(10e18);
+
+        assertEq(innerVault.getAccount(bob).activeMargin, 10e18);
+        assertEq(innerVault.getAccount(bob).activeCommitment, probe.innerCommitment());
+        assertEq(outerVault.getAccount(alice).activeMargin, 10e18);
+        assertEq(outerVault.getAccount(alice).activeCommitment, outerCommitment);
+        assertEq(factory.vaultOf(bob), address(innerVault));
+        assertEq(factory.vaultOf(alice), address(outerVault));
+        assertEq(token.balanceOf(address(probe)), 0);
+    }
+
     function testLazyRepointAfterFullSlashToZero() public {
         LCCVault otherVault = _newVault(_params(CAP, CAP));
         _mintAndApprove(otherVault, alice, 0, 0);
@@ -441,7 +669,7 @@ contract LCCRegistryTest is LCCBase {
 
         assertTrue(vault.isAccountClosed(alice));
         vm.prank(alice);
-        otherVault.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertEq(factory.vaultOf(alice), address(otherVault));
         assertEq(otherVault.getAccount(alice).pendingMargin, 10e18);
     }
@@ -461,7 +689,7 @@ contract LCCRegistryTest is LCCBase {
         assertTrue(vault.isAccountClosed(alice));
 
         vm.prank(alice);
-        otherVault.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertEq(factory.vaultOf(alice), address(otherVault));
     }
 
@@ -476,7 +704,7 @@ contract LCCRegistryTest is LCCBase {
         assertTrue(vault.isAccountClosed(alice));
 
         vm.prank(alice);
-        otherVault.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertEq(factory.vaultOf(alice), address(otherVault));
     }
 
@@ -490,7 +718,7 @@ contract LCCRegistryTest is LCCBase {
         assertTrue(vault.isAccountClosed(alice));
 
         vm.prank(alice);
-        otherVault.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertEq(factory.vaultOf(alice), address(otherVault));
     }
 
@@ -507,7 +735,7 @@ contract LCCRegistryTest is LCCBase {
         assertFalse(vault.isAccountClosed(alice));
         vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.RegisteredElsewhere.selector, address(vault)));
         vm.prank(alice);
-        otherVault.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertEq(factory.vaultOf(alice), address(vault));
     }
 
@@ -520,12 +748,12 @@ contract LCCRegistryTest is LCCBase {
         assertFalse(vault.isAccountClosed(alice));
         vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.RegisteredElsewhere.selector, address(vault)));
         vm.prank(alice);
-        otherVault.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
 
         vault.materializeAccount(alice);
         assertTrue(vault.isAccountClosed(alice));
         vm.prank(alice);
-        otherVault.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        otherVault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertEq(factory.vaultOf(alice), address(otherVault));
     }
 
@@ -542,7 +770,7 @@ contract LCCRegistryTest is LCCBase {
         module.setAllowed(false);
         vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.AdmissionsModuleRejected.selector, alice, address(vault)));
         vm.prank(alice);
-        vault.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        vault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertEq(vault.getAccount(alice).activeMargin, 0);
         assertEq(factory.vaultOf(alice), address(0));
 
@@ -565,7 +793,7 @@ contract LCCRegistryTest is LCCBase {
         module.setAllowed(false);
         vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.AdmissionsModuleRejected.selector, alice, address(vault)));
         vm.prank(alice);
-        vault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
+        vault.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function testAdmissionsModuleSwapContainsRevertingAndMalformedCandidates() public {
@@ -606,7 +834,7 @@ contract LCCRegistryTest is LCCBase {
 
         vm.expectRevert();
         vm.prank(alice);
-        vault.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        vault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertEq(stateMutatingModule.writes(), 0);
         assertEq(vault.getAccount(alice).activeMargin, 0);
         assertEq(factory.vaultOf(alice), address(0));
@@ -638,6 +866,26 @@ contract LCCRegistryTest is LCCBase {
         token.mint(address(probe), 20e18);
     }
 
+    function _newDelegatedReentrantRegistryFixture(address innerBeneficiary, address outerBeneficiary)
+        internal
+        returns (
+            LCCReentrantMarginToken token,
+            LCCVault innerVault,
+            LCCVault outerVault,
+            LCCDelegatedRegistryDepositReentryProbe probe
+        )
+    {
+        token = new LCCReentrantMarginToken();
+        margin = token;
+        innerVault = _newVault(_params(CAP, CAP));
+        outerVault = _newVault(_params(CAP, CAP));
+        probe = new LCCDelegatedRegistryDepositReentryProbe(
+            token, innerVault, outerVault, innerBeneficiary, outerBeneficiary, 10e18
+        );
+        factory.grantRole(factory.DEPOSIT_OPERATOR_ROLE(), address(probe));
+        token.mint(address(probe), 20e18);
+    }
+
     function _openPolicyOffPair()
         internal
         returns (LCCVault otherVault, uint256 firstCommitment, uint256 secondCommitment)
@@ -648,7 +896,7 @@ contract LCCRegistryTest is LCCBase {
 
         factory.setOneVaultPolicyEnabled(false);
         vm.prank(alice);
-        secondCommitment = otherVault.deposit(5e18, 1, type(uint256).max, true, type(uint256).max);
+        secondCommitment = otherVault.deposit(5e18, alice, 1, type(uint256).max, true, type(uint256).max);
 
         assertFalse(vault.isAccountClosed(alice));
         assertFalse(otherVault.isAccountClosed(alice));

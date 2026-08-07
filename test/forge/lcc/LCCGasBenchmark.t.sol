@@ -8,7 +8,7 @@ contract LCCGasDepositBenchmarkTest is LCCBase {
     function testGasDeposit() public {
         vm.prank(alice);
         uint256 gasBefore = gasleft();
-        vault.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
+        vault.deposit(100e18, alice, 1, type(uint256).max, true, type(uint256).max);
         emit log_named_uint("deposit", gasBefore - gasleft());
     }
 }

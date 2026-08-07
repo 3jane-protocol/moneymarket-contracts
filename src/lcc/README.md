@@ -82,6 +82,10 @@ over the shared `LCCBase` harness.
 - **Bouncer** — `BOUNCER_ROLE` account that may reduce active commitment and return its paired active margin. Bounce
   is a trusted instant-exit valve that bypasses `exitDelayEpochs`, `exitCapBps` bucket capacity, and
   `minCommitmentEpochs`.
+- **Deposit operator** — `DEPOSIT_OPERATOR_ROLE` payer allowed to fund margin irrevocably credited to another
+  beneficiary. Grant only to a consent-verifying adapter or a closed facility operator with a documented consent
+  channel, never to a generic arbitrary-calldata router; the role holder can otherwise refresh beneficiary lockups,
+  consume cap headroom, and stage pending deposits that block exits and bounce remediation.
 - **Admissions module** — optional narrow view-only decision hook for first deposits and closed-account reopens. It
   cannot write factory registry or role state, and it does not re-check top-ups in the currently registered open vault.
 - **Margin oracle** — fully trusted. Returns a fresh `marginAsset`-to-`fundingAsset` price scaled by
@@ -107,12 +111,17 @@ be accepted without changing role membership.
 Integrators should verify a candidate vault through `factory.isVault(vault)`, which is the exact provenance check.
 There is deliberately no `factory()` getter within the tight vault runtime budget, and slot 29 is upgrade-layout
 documentation rather than an integration API.
-The owner administers `LISTER_ROLE`, `BOUNCER_ROLE`, and `GUARDIAN_ROLE`. Vaults read authority only through the
-factory-local `isOwner`, `isGuardian`, and `isBouncer` views; those functions never consult an admissions
-module or another external contract. A family ownership rotation therefore changes authority and exceptional
-settlement recovery for every vault at once.
+The owner administers `LISTER_ROLE`, `BOUNCER_ROLE`, `GUARDIAN_ROLE`, and `DEPOSIT_OPERATOR_ROLE`. Vaults read
+emergency and settlement authority only through the factory-local `isOwner`, `isGuardian`, and `isBouncer` views;
+those functions never consult an admissions module or another external contract. The factory also exposes the same
+local, constant-time `isDepositOperator` role view for integrators, while production enforcement occurs inside
+`authorizeDeposit` and no settlement path reads it. A family ownership rotation therefore changes authority and
+exceptional settlement recovery for every vault at once.
 
-Deposits are whitelisted and prospectively limited to one open family vault by default. The factory records the last
+Deposits are whitelisted and prospectively limited to one open family vault by default. Every beneficiary passes the
+same whitelist, one-vault, and admissions checks. A self-deposit needs no operator role; when payer and beneficiary
+differ, the payer must hold `DEPOSIT_OPERATOR_ROLE`, and that role check precedes the same-vault top-up short-circuit.
+The payer is deliberately not checked against the depositor whitelist. The factory records the beneficiary's last
 authorized vault in `vaultOf`; a deposit elsewhere can lazily repoint only after bounded replay completes and reports
 zero exposure. Admission checks only the vault currently named by `vaultOf`; it never scans the unbounded family list.
 An incomplete replay of that named vault is conservatively open, and a matured exit remains open until
@@ -285,11 +294,13 @@ resolved.
 
 ## 6. Deposits and commitment
 
-`deposit` pulls `assets` of `marginAsset` from the caller (self-deposit only — a deposit creates a callable
-obligation), reads the oracle, and derives `commitment = marginValue * BPS / marginRatioBps`. The caller supplies
-inclusive nonzero `minCommitment` / `maxCommitment` bounds, an `allowPendingActivation` opt-in, and a wall-clock
-`deadline`. Both caps are checked against active+pending totals: `protocolCommitmentCap` vault-wide and
-`userCommitmentCap` per account (`CapExceeded`).
+`deposit` pulls `assets` of `marginAsset` from the caller and irrevocably credits the `onBehalfOf` beneficiary, then
+reads the oracle and derives `commitment = marginValue * BPS / marginRatioBps`. Self-deposits pass the caller as the
+beneficiary and need no operator role; a distinct payer must hold the factory's `DEPOSIT_OPERATOR_ROLE`. The caller
+supplies inclusive nonzero `minCommitment` / `maxCommitment` bounds, an `allowPendingActivation` opt-in, and a
+wall-clock `deadline`. Both caps are checked against active+pending totals: `protocolCommitmentCap` vault-wide and
+`userCommitmentCap` on the beneficiary account (`CapExceeded`). Factory authorization runs last, so a rejection is
+fail-late but atomically unwinds the margin pull, account writes, and event.
 
 Activation follows `_depositActivation`: **immediate** (credited to `activeMargin` / `activeCommitment` now) only
 when the phase is `Normal` and no call has opened for the current epoch; otherwise **pending** for epoch `e+1`,
@@ -788,7 +799,7 @@ flowchart TD
 
 `LCCAuctionLib`, `LCCConfigLib`, and `LCCExitLib` are the three externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-24,152 bytes, 124 bytes below the 24,276-byte release ceiling and 424 bytes below EIP-170. The active-only monolith
+24,102 bytes, 174 bytes below the 24,276-byte release ceiling and 474 bytes below EIP-170. The active-only monolith
 measured 24,703 bytes, so the exit library remains required. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the

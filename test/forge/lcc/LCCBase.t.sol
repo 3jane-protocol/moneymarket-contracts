@@ -8,6 +8,7 @@ import {UpgradeableBeacon} from "../../../lib/openzeppelin/contracts/proxy/beaco
 import {ERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC4626} from "../../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {IERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {LCCVaultFactory} from "../../../src/lcc/LCCVaultFactory.sol";
@@ -147,6 +148,30 @@ contract LCCAssetOnlyVault {
     }
 }
 
+contract LCCDepositRouterMock {
+    using SafeERC20 for IERC20;
+
+    IERC20 internal immutable marginAsset;
+
+    constructor(IERC20 marginAsset_) {
+        marginAsset = marginAsset_;
+    }
+
+    function depositFor(
+        LCCVault target,
+        address beneficiary,
+        uint256 assets,
+        uint256 minCommitment,
+        uint256 maxCommitment,
+        bool allowPendingActivation,
+        uint256 deadline
+    ) external returns (uint256 commitment) {
+        marginAsset.safeTransferFrom(msg.sender, address(this), assets);
+        marginAsset.forceApprove(address(target), assets);
+        return target.deposit(assets, beneficiary, minCommitment, maxCommitment, allowPendingActivation, deadline);
+    }
+}
+
 contract LCCBase is Test, ILCCVaultFactory {
     uint256 internal constant START = 1_000;
     uint256 internal constant EPOCH = 100;
@@ -164,6 +189,7 @@ contract LCCBase is Test, ILCCVaultFactory {
     address internal lister = makeAddr("lister");
     address internal bouncer = makeAddr("bouncer");
     address internal guardian = makeAddr("guardian");
+    address internal depositOperator = makeAddr("depositOperator");
     address internal stranger = makeAddr("stranger");
 
     LCCMockToken internal margin;
@@ -210,6 +236,7 @@ contract LCCBase is Test, ILCCVaultFactory {
         factory.grantRole(factory.LISTER_ROLE(), lister);
         factory.grantRole(factory.BOUNCER_ROLE(), bouncer);
         factory.grantRole(factory.GUARDIAN_ROLE(), guardian);
+        factory.grantRole(factory.DEPOSIT_OPERATOR_ROLE(), depositOperator);
 
         address[] memory whitelisted = new address[](9);
         whitelisted[0] = owner;
@@ -296,7 +323,7 @@ contract LCCBase is Test, ILCCVaultFactory {
         return LCCVault(address(new BeaconProxy(address(beacon), abi.encodeCall(ILCCVault.initialize, (params)))));
     }
 
-    function authorizeDeposit(address, bool) external override {}
+    function authorizeDeposit(address, address, bool) external override {}
 
     function isOwner(address account) external view override returns (bool) {
         return account == owner;
@@ -379,6 +406,12 @@ contract LCCBase is Test, ILCCVaultFactory {
         vm.stopPrank();
     }
 
+    function _mintAndApproveMarginPayer(address target, address payer, uint256 assets) internal {
+        margin.mint(payer, assets);
+        vm.prank(payer);
+        margin.approve(target, type(uint256).max);
+    }
+
     function _seedUsd3(uint256 assets, uint256 profit) internal {
         usdc.mint(address(this), assets);
         usdc.approve(address(usd3), assets);
@@ -394,7 +427,12 @@ contract LCCBase is Test, ILCCVaultFactory {
 
     function _deposit(address user, uint256 assets) internal returns (uint256 commitment) {
         vm.prank(user);
-        commitment = vault.deposit(assets, 1, type(uint256).max, true, type(uint256).max);
+        commitment = vault.deposit(assets, user, 1, type(uint256).max, true, type(uint256).max);
+    }
+
+    function _depositFor(address payer, address beneficiary, uint256 assets) internal returns (uint256 commitment) {
+        vm.prank(payer);
+        commitment = vault.deposit(assets, beneficiary, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function _openCall(uint256 amount) internal {

@@ -25,7 +25,7 @@ and a pending deposit folds within one epoch. The bouncer therefore waits for pe
 users to their exit.
 
 The active-only experiment still measured 24,703 bytes without `LCCExitLib`, 127 bytes over EIP-170, so the library
-remains in the shipping topology. With the library and current remediations, the shipping vault measures 24,152 bytes.
+remains in the shipping topology. With the library and current remediations, the shipping vault measures 24,102 bytes.
 
 ## Reopening
 

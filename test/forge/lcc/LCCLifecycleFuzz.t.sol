@@ -106,7 +106,7 @@ contract LCCLifecycleFuzz is LCCBase {
         for (uint256 i = 0; i < actors.length; ++i) {
             uint256 assets = _depositAmount(params, price, uint256(deposits[i]), actors.length);
             vm.prank(actors[i]);
-            vault.deposit(assets, 1, type(uint256).max, true, type(uint256).max);
+            vault.deposit(assets, actors[i], 1, type(uint256).max, true, type(uint256).max);
         }
 
         vm.warp(vault.phaseEndsAt(0, ILCCVault.Phase.Normal));
@@ -236,7 +236,7 @@ contract LCCLifecycleFuzz is LCCBase {
         uint256 belowMin = bound(amountSeed, 1, params.minDepositAssets - 1);
         vm.expectRevert(LCCErrorsLib.InvalidAmount.selector);
         vm.prank(dave);
-        vault.deposit(belowMin, 1, type(uint256).max, true, type(uint256).max);
+        vault.deposit(belowMin, dave, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function _requestAndMatureExitIfPossible(address actor, ILCCVault.VaultParams memory params)

@@ -8,6 +8,7 @@ pragma solidity >=0.8.22 <0.9.0;
 library LCCEventsLib {
     /// @notice Emitted when a deposit is checkpointed (immediately active or staged as pending).
     /// @param user Account credited with the deposit.
+    /// @param payer Account supplying the deposited margin.
     /// @param marginAssets Margin deposited (marginAsset).
     /// @param marginValue Oracle value of the deposited margin (fundingAsset).
     /// @param commitment Commitment created by the deposit (fundingAsset).
@@ -15,6 +16,7 @@ library LCCEventsLib {
     /// @param immediate True if activated in the current epoch, false if staged as pending.
     event DepositCheckpointed(
         address indexed user,
+        address indexed payer,
         uint256 marginAssets,
         uint256 marginValue,
         uint256 commitment,

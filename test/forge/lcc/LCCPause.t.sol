@@ -48,7 +48,7 @@ contract LCCPauseTest is LCCBase {
 
         vm.expectRevert(LCCErrorsLib.Paused.selector);
         vm.prank(alice);
-        vault.deposit(1e18, 1, type(uint256).max, true, type(uint256).max);
+        vault.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
 
         vm.expectRevert(LCCErrorsLib.Paused.selector);
         vm.prank(owner);

@@ -183,13 +183,17 @@
     },
     {
       "name": "deposit",
-      "signature": "deposit(uint256,uint256,uint256,bool,uint256)",
-      "selector": "0xcf69f63a",
+      "signature": "deposit(uint256,address,uint256,uint256,bool,uint256)",
+      "selector": "0x064f240a",
       "stateMutability": "nonpayable",
       "inputs": [
         {
           "name": "assets",
           "type": "uint256"
+        },
+        {
+          "name": "onBehalfOf",
+          "type": "address"
         },
         {
           "name": "minCommitment",
@@ -1232,11 +1236,16 @@
     },
     {
       "name": "DepositCheckpointed",
-      "signature": "DepositCheckpointed(address,uint256,uint256,uint256,uint256,bool)",
+      "signature": "DepositCheckpointed(address,address,uint256,uint256,uint256,uint256,bool)",
       "anonymous": false,
       "inputs": [
         {
           "name": "user",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "payer",
           "type": "address",
           "indexed": true
         },

@@ -32,7 +32,7 @@ contract LCCMalformedCapturedFactory is LCCCapturedFactoryDeployer {
 }
 
 contract LCCLyingCapturedFactory is LCCCapturedFactoryDeployer {
-    function authorizeDeposit(address, bool) external {}
+    function authorizeDeposit(address, address, bool) external {}
 
     function isOwner(address) external pure returns (bool) {
         return true;
@@ -150,7 +150,7 @@ contract LCCAuthTest is LCCBase {
 
         _mintAndApprove(target, alice, 10e18, 0);
         vm.prank(alice);
-        uint256 commitment = target.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        uint256 commitment = target.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(stranger);
         assertEq(target.bounceCommitment(alice, commitment), 10e18);
     }
@@ -165,7 +165,7 @@ contract LCCAuthTest is LCCBase {
         _mintAndApprove(target, alice, 10e18, 0);
         vm.expectRevert("HOSTILE_FACTORY");
         vm.prank(alice);
-        target.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        target.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
         assertEq(target.getAccount(alice).activeMargin, 0);
     }
 
@@ -178,7 +178,7 @@ contract LCCAuthTest is LCCBase {
 
         _mintAndApprove(target, alice, 10e18, 0);
         vm.prank(alice);
-        uint256 commitment = target.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        uint256 commitment = target.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
 
         vm.expectRevert();
         target.bounceCommitment(alice, commitment);
