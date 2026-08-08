@@ -13,14 +13,18 @@ import {LCCErrorsLib} from "./LCCErrorsLib.sol";
 /// @custom:contact support@3jane.xyz
 /// @notice Pricing math and packed fill accounting for the LCC epoch-shortfall auction.
 /// @dev The auction sells the right to fill an epoch's funding-asset shortfall (wrapped into USD3 for the buyer)
-/// together with a collateral kicker from the slashed margin pool. The protocol's retained share of the pool decays by
-/// `stepDecayRateBps` every `stepDuration` seconds, so the offered kicker ramps from zero toward the full pool.
+/// together with a collateral kicker from the slashed margin pool. The protocol's retained share of the award reserve
+/// decays by `stepDecayRateBps` every `stepDuration` seconds, so the offered kicker ramps from zero toward the maximum
+/// award that leaves the configured treasury take reserved.
 /// The externally linked fill path accepts the caller's auction storage slot and records checked packed counters in
 /// the same delegatecall that computes the award.
 library LCCAuctionLib {
     using SafeCast for uint256;
 
     uint256 internal constant RAY = 1e27;
+    /// @dev One whole USDC in 6-decimal funding base units. Settlement treats smaller returned commitments as
+    /// unattributable dust; using a non-6-decimal funding asset requires revalidating this threshold.
+    uint256 internal constant MIN_RETURN_COMMITMENT = 1e6;
 
     /// @notice State of an epoch's shortfall auction.
     /// @param shortfallAmount Total shortfall to be filled (fundingAsset).
@@ -72,48 +76,51 @@ library LCCAuctionLib {
     }
 
     /// @notice Collateral offered to fillers at `elapsed` seconds into the auction window.
-    /// @dev offered = pool * (1 - (1 - stepDecayRateBps/BPS)^(elapsed/stepDuration)): zero before the first step
-    /// completes, monotonically nondecreasing in elapsed, never exceeds `marginPool`.
-    /// @param marginPool Total slashed margin backing the auction (marginAsset).
+    /// @dev offered = target * (1 - (1 - stepDecayRateBps/BPS)^(elapsed/stepDuration)): zero before the first step
+    /// completes, monotonically nondecreasing in elapsed, never exceeds `rampTarget`.
+    /// @param rampTarget Maximum collateral approached by the decay ramp (marginAsset).
     /// @param elapsed Seconds since the auction window opened.
     /// @param stepDuration Seconds per price step.
     /// @param stepDecayRateBps Per-step decay of the protocol's retained share, in bps.
     /// @return The collateral currently offered (marginAsset).
-    function offeredPool(uint256 marginPool, uint256 elapsed, uint256 stepDuration, uint256 stepDecayRateBps)
+    function offeredPool(uint256 rampTarget, uint256 elapsed, uint256 stepDuration, uint256 stepDecayRateBps)
         public
         pure
         returns (uint256)
     {
-        if (marginPool == 0) return 0;
+        if (rampTarget == 0) return 0;
 
         uint256 steps = elapsed / stepDuration;
         if (steps == 0) return 0;
 
         uint256 rayMultiplier = RAY - stepDecayRateBps * 1e23;
         uint256 retained = rpow(rayMultiplier, steps, RAY);
-        return marginPool - Math.mulDiv(marginPool, retained, RAY);
+        return rampTarget - Math.mulDiv(rampTarget, retained, RAY);
     }
 
     /// @notice Collateral award for filling `fillAmount` of the shortfall while `offered` is on the table.
     /// @dev Pro-rata of the current offer against the ORIGINAL shortfall, capped by the fill-time oracle value and
-    /// the unawarded pool. Conservation: each award <= marginPool * fill / shortfall, so total awards never exceed
-    /// the pool because total fills never exceed the shortfall; the pool clamp is belt-and-suspenders.
+    /// the unawarded reserve. Conservation: each award <= maxCumulativeAward * fill / shortfall, so total awards never
+    /// exceed the reserve because total fills never exceed the shortfall; the reserve clamp is belt-and-suspenders.
     /// @param state The auction state.
     /// @param fillAmount Amount of the shortfall being filled (fundingAsset).
     /// @param offered Collateral currently offered (marginAsset), from `offeredPool`.
     /// @param oracleCapMargin Oracle-valued award cap for this fill (marginAsset).
+    /// @param maxCumulativeAward Reserved upper bound on all auction awards (marginAsset).
     /// @return award Collateral awarded for this fill (marginAsset).
-    function fillAward(AuctionState memory state, uint256 fillAmount, uint256 offered, uint256 oracleCapMargin)
-        public
-        pure
-        returns (uint256 award)
-    {
+    function fillAward(
+        AuctionState memory state,
+        uint256 fillAmount,
+        uint256 offered,
+        uint256 oracleCapMargin,
+        uint256 maxCumulativeAward
+    ) public pure returns (uint256 award) {
         if (state.shortfallAmount == 0) return 0;
 
         award = Math.mulDiv(offered, fillAmount, state.shortfallAmount);
         if (award > oracleCapMargin) award = oracleCapMargin;
 
-        uint256 remainingPool = state.marginPool - state.marginAwarded;
+        uint256 remainingPool = maxCumulativeAward - state.marginAwarded;
         if (award > remainingPool) award = remainingPool;
     }
 
@@ -124,6 +131,7 @@ library LCCAuctionLib {
     /// @param elapsed Seconds since the auction window opened.
     /// @param stepDuration Seconds per price step.
     /// @param stepDecayRateBps Per-step decay of the protocol's retained share, in bps.
+    /// @param slashFeeBps Fee charged on the settlement take basis, in bps.
     /// @param maxAwardBps Award cap per fundingAsset filled, in bps.
     /// @param price Margin-to-fundingAsset oracle price, scaled by ORACLE_PRICE_SCALE.
     /// @return Collateral awarded for this fill (marginAsset).
@@ -133,12 +141,30 @@ library LCCAuctionLib {
         uint256 elapsed,
         uint256 stepDuration,
         uint256 stepDecayRateBps,
+        uint256 slashFeeBps,
         uint256 maxAwardBps,
         uint256 price
     ) public pure returns (uint256) {
+        if (state.shortfallAmount == 0) return 0;
+
         uint256 oracleCapMargin = Math.mulDiv(Math.mulDiv(fillAmount, maxAwardBps, BPS), ORACLE_PRICE_SCALE, price);
-        uint256 offered = offeredPool(state.marginPool, elapsed, stepDuration, stepDecayRateBps);
-        return fillAward(state, fillAmount, offered, oracleCapMargin);
+        uint256 maxCumulativeAward = Math.mulDiv(state.marginPool, BPS, BPS + slashFeeBps);
+        uint256 offered = offeredPool(maxCumulativeAward, elapsed, stepDuration, stepDecayRateBps);
+        uint256 award = fillAward(state, fillAmount, offered, oracleCapMargin, maxCumulativeAward);
+        return Math.min(award, _remainingEligibleAward(state, fillAmount, slashFeeBps));
+    }
+
+    /// @dev Completed settlement floors the gross pool's filled share before reserving its fee. Mirror that ordering
+    /// cumulatively so awards cannot exceed the filled share's post-reserve capacity, including at base-unit dust.
+    function _remainingEligibleAward(AuctionState memory state, uint256 fillAmount, uint256 slashFeeBps)
+        private
+        pure
+        returns (uint256)
+    {
+        uint256 eligiblePool =
+            Math.mulDiv(state.marginPool, uint256(state.filledAmount) + fillAmount, state.shortfallAmount);
+        uint256 eligibleAward = Math.mulDiv(eligiblePool, BPS, BPS + slashFeeBps);
+        return Math.saturatingSub(eligibleAward, state.marginAwarded);
     }
 
     /// @notice Computes an auction award and records the fill against packed auction storage.
@@ -150,6 +176,7 @@ library LCCAuctionLib {
     /// @param elapsed Seconds since the auction window opened.
     /// @param stepDuration Seconds per price step.
     /// @param stepDecayRateBps Per-step decay of the protocol's retained share, in bps.
+    /// @param slashFeeBps Fee charged on the settlement take basis, in bps.
     /// @param maxAwardBps Award cap per fundingAsset filled, in bps.
     /// @param price Margin-to-fundingAsset oracle price, scaled by ORACLE_PRICE_SCALE.
     /// @return award Collateral awarded for this fill (marginAsset).
@@ -159,10 +186,13 @@ library LCCAuctionLib {
         uint256 elapsed,
         uint256 stepDuration,
         uint256 stepDecayRateBps,
+        uint256 slashFeeBps,
         uint256 maxAwardBps,
         uint256 price
     ) public returns (uint256 award) {
-        award = computeAward(state, fillAmount, elapsed, stepDuration, stepDecayRateBps, maxAwardBps, price);
+        award = computeAward(
+            state, fillAmount, elapsed, stepDuration, stepDecayRateBps, slashFeeBps, maxAwardBps, price
+        );
         state.filledAmount = (uint256(state.filledAmount) + fillAmount).toUint128();
         state.marginAwarded = (uint256(state.marginAwarded) + award).toUint128();
     }
@@ -227,49 +257,81 @@ library LCCAuctionLib {
         return marginRatioBps <= commitmentProductHigh;
     }
 
+    /// @dev Return pool for a disposed epoch's unawarded surplus. Non-eligible and shutdown-truncated epochs
+    /// return every unawarded unit without a take. Eligible epochs receive completed-auction treatment: the
+    /// unfilled share of the gross pool (surplus plus awards) goes to treasury and the slash fee comes out of the
+    /// filled remainder.
+    function _settlementReturnPool(AuctionState storage auction, uint256 surplus, uint256 settlementConfig)
+        private
+        view
+        returns (uint256 disposalPool)
+    {
+        // Eligibility is an explicit flag, not inferred from the record: an untouched but eligible epoch has a
+        // zero auction record (zero fills) and must dispose as zero, not as a full no-take return.
+        if (settlementConfig & (1 << 32) == 0) return surplus;
+        if (auction.shortfallAmount == 0) return 0;
+
+        uint256 stepDecayRateBps = settlementConfig & type(uint16).max;
+        uint256 slashFeeBps = (settlementConfig >> 16) & type(uint16).max;
+        uint256 auctionedMargin = auction.marginAwarded;
+        uint256 feeBasis = auctionedMargin;
+        uint256 grossPool = surplus + auctionedMargin;
+        uint256 maxCumulativeAward = Math.mulDiv(grossPool, BPS, BPS + slashFeeBps);
+        // The fee basis is the greater of cumulative awards and the fills' pro-rata share of the first-step offer.
+        // `offered1` reconstructs that offer from `stepDecayRateBps`, repricing the curve the fills actually paid
+        // against; the reconstruction is sound only because `auctionStepDecayRateBps` has no setter.
+        uint256 offered1 = maxCumulativeAward - Math.mulDiv(maxCumulativeAward, BPS - stepDecayRateBps, BPS);
+        feeBasis = Math.max(feeBasis, Math.mulDiv(offered1, auction.filledAmount, auction.shortfallAmount));
+        disposalPool = Math.mulDiv(grossPool, auction.filledAmount, auction.shortfallAmount) - auctionedMargin;
+
+        // The surplus clamp is unreachable on valid fill state (the reserved ramp keeps awards within post-fee
+        // capacity); it bounds the fee independently of the ramp so a future award-ramp change cannot take more
+        // than the surplus being disposed.
+        uint256 fee = Math.min(Math.mulDiv(feeBasis, slashFeeBps, BPS), surplus);
+        disposalPool -= fee;
+    }
+
     /// @notice Values a disposed slash surplus into a return pool and returned commitment.
-    /// @dev Charges the slash fee on auction-awarded collateral (capped by the surplus), then values the remainder
-    /// at the call-open price snapshot. A missing snapshot may consult the live oracle only for an owner-triggered
-    /// recovery. Without that permission, going-concern disposal reverts and wind-down disposal drops the pool to
-    /// treasury. Wind-down also treats an unreadable, zero, or valuation-overflowing selected price as zero so
-    /// recovery can never brick. The returned commitment is clamped by `headroom` and zeroed below
-    /// `minReturnCommitment`; a zero commitment also zeroes the pool so the returned pair is always attributable.
-    /// A nonzero commitment clamp does not reduce the pool. The saturating headroom above `usedMargin`
-    /// independently caps the pool before valuation and keeps packed aggregate margin in range.
+    /// @dev Pool: derived by `_settlementReturnPool` (eligibility and fee treatment documented there), then capped
+    /// by the uint128 headroom over the low half of `packedHeadroom` so packed aggregate margin stays in range.
+    /// Price: the call-open snapshot. A missing snapshot consults the live oracle only when the fallback permission
+    /// bit is set; with the price-failure tolerance bit set (shutdown/terminal), an unreadable or zero price drops
+    /// the pool to treasury instead of reverting, so recovery can never brick. Valuation overflow at the selected
+    /// price is treated as oracle corruption and likewise drops the pool (guard rationale in the body).
+    /// Commitment: derived from the pool at the selected price, clamped to the headroom high half, and zeroed below
+    /// `MIN_RETURN_COMMITMENT`. A zero commitment also zeroes the pool, so the returned pair is always attributable
+    /// to an account; a nonzero clamp never reduces the pool.
+    /// @param auction Recorded auction state; a zero shortfall means no auction record was opened.
     /// @param surplus Unawarded slashed margin being disposed (marginAsset).
-    /// @param auctionedMargin Collateral awarded to auction fillers, the fee basis (marginAsset).
-    /// @param slashFeeBps Fee on auction-awarded collateral, in bps.
+    /// @param settlementConfig Packed step decay (bits 0..15), slash fee (bits 16..31), and auction-eligibility flag
+    /// (bit 32). An eligible disposal always receives completed-auction treatment.
     /// @param marginPriceSnapshot Margin-oracle price frozen when the call opened.
     /// @param marginOracle Live margin oracle used only for an authorized missing-snapshot recovery.
-    /// @param allowOracleFallback Whether the caller is authorized to recover a missing snapshot from the live oracle.
-    /// @param windDown True once no future call can use returned commitment (shutdown or closed call window).
-    /// @param marginRatioBps Margin ratio leveraging margin value into commitment, in bps.
-    /// @param usedMargin Active plus pending margin already occupying packed totals.
-    /// @param commitmentHeadroom Maximum commitment that may be returned.
-    /// @param minReturnCommitment Minimum commitment worth attributing; smaller results are zeroed.
+    /// @param valuationConfig Packed margin ratio (bits 0..15), oracle-fallback permission (bit 16), and live
+    /// price-failure tolerance flag (bit 17).
+    /// @param packedHeadroom Active-plus-pending margin in bits 0..127 and return-commitment headroom in bits 128..255.
     /// @return returnPool Margin re-attributed to defaulters (marginAsset).
     /// @return returnCommitment Commitment re-attributed to defaulters (fundingAsset).
     function disposeValuation(
+        AuctionState storage auction,
         uint256 surplus,
-        uint256 auctionedMargin,
-        uint256 slashFeeBps,
+        uint256 settlementConfig,
         uint256 marginPriceSnapshot,
         address marginOracle,
-        bool allowOracleFallback,
-        bool windDown,
-        uint256 marginRatioBps,
-        uint256 usedMargin,
-        uint256 commitmentHeadroom,
-        uint256 minReturnCommitment
+        uint256 valuationConfig,
+        uint256 packedHeadroom
     ) public view returns (uint256 returnPool, uint256 returnCommitment) {
-        uint256 fee = Math.min(Math.mulDiv(auctionedMargin, slashFeeBps, BPS), surplus);
-        returnPool = Math.min(surplus - fee, Math.saturatingSub(type(uint128).max, usedMargin));
+        returnPool = Math.min(
+            _settlementReturnPool(auction, surplus, settlementConfig),
+            Math.saturatingSub(type(uint128).max, packedHeadroom & type(uint128).max)
+        );
 
         // The oracle is consulted only when there is a return pool to value.
         if (returnPool != 0) {
             uint256 price = marginPriceSnapshot;
-            if (price == 0 && allowOracleFallback) {
-                if (windDown) {
+            bool toleratePriceFailure = valuationConfig & (1 << 17) != 0;
+            if (price == 0 && valuationConfig & (1 << 16) != 0) {
+                if (toleratePriceFailure) {
                     try IOracle(marginOracle).price() returns (uint256 p) {
                         price = p;
                     } catch {}
@@ -278,17 +340,23 @@ library LCCAuctionLib {
                 }
             }
 
-            if (!windDown && price == 0) revert LCCErrorsLib.OraclePriceInvalid();
-            // Apply the overflow guard after selecting either the snapshot or fallback price so a pathological
-            // stored snapshot cannot break wind-down disposal.
-            if (windDown && _valuationOverflows(returnPool, price, marginRatioBps)) price = 0;
+            if (!toleratePriceFailure && price == 0) revert LCCErrorsLib.OraclePriceInvalid();
+            // Oracle-corruption guard. It must run after snapshot/fallback selection and before valuation: call
+            // opening validated only `price != 0` and never proved the price could value `marginAtCallOpen`, so
+            // this is the only check that the selected price can value this pool. For an honest oracle it is
+            // unreachable — a full-uint128 pool overflows only near price 3.4e70 at the minimum margin ratio,
+            // ~34 orders of magnitude above an ORACLE_PRICE_SCALE-scaled price — which is why it reads as dead
+            // code but is not. On corrupt state, zeroing the price trades a permanent settlement brick for
+            // confiscation of the pool via the `price == 0` sweep below.
+            uint256 marginRatioBps = valuationConfig & type(uint16).max;
+            if (_valuationOverflows(returnPool, price, marginRatioBps)) price = 0;
 
             if (price == 0) {
                 returnPool = 0;
             } else {
                 (, uint256 rawCommitment) = valueAndCommitment(returnPool, price, marginRatioBps);
-                returnCommitment = Math.min(rawCommitment, commitmentHeadroom);
-                if (returnCommitment < minReturnCommitment) returnCommitment = 0;
+                returnCommitment = Math.min(rawCommitment, packedHeadroom >> 128);
+                if (returnCommitment < MIN_RETURN_COMMITMENT) returnCommitment = 0;
                 if (returnCommitment == 0) returnPool = 0;
             }
         }

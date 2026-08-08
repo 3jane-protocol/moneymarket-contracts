@@ -10,6 +10,7 @@ import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 contract LCCAuctionLibTest is Test {
     uint256 internal constant RAY = 1e27;
     uint256 internal constant BPS = 10_000;
+    LCCAuctionLib.AuctionState internal disposalAuction;
 
     function _rpowReference(uint256 x, uint256 n, uint256 base) internal pure returns (uint256 z) {
         z = base;
@@ -103,7 +104,7 @@ contract LCCAuctionLibTest is Test {
             uint256 elapsed = bound(uint256(keccak256(abi.encode(seed, i, "time"))), 0, 5_000);
             uint256 offered = LCCAuctionLib.offeredPool(pool, elapsed, 60, 500);
 
-            uint256 award = LCCAuctionLib.fillAward(state, fill, offered, type(uint256).max);
+            uint256 award = LCCAuctionLib.fillAward(state, fill, offered, type(uint256).max, pool);
 
             state.filledAmount += uint128(fill);
             state.marginAwarded += uint128(award);
@@ -114,20 +115,70 @@ contract LCCAuctionLibTest is Test {
         assertEq(state.marginAwarded, totalAward);
     }
 
+    function testFuzzApplyFillSequenceKeepsSettlementNonnegative(
+        uint128 shortfallSeed,
+        uint128 pool,
+        uint16 slashFeeSeed,
+        uint16 decaySeed,
+        uint16 maxAwardSeed,
+        uint32 stepDurationSeed,
+        uint128 priceSeed,
+        uint256 sequenceSeed
+    ) public {
+        uint128 shortfall = uint128(bound(uint256(shortfallSeed), 1, type(uint128).max));
+        uint256 slashFeeBps = bound(uint256(slashFeeSeed), 0, BPS);
+        uint256 stepDecayRateBps = bound(uint256(decaySeed), 1, BPS);
+        uint256 maxAwardBps = bound(uint256(maxAwardSeed), 0, BPS);
+        uint256 stepDuration = bound(uint256(stepDurationSeed), 1, type(uint32).max);
+        uint256 price = bound(uint256(priceSeed), 1, type(uint128).max);
+
+        disposalAuction = LCCAuctionLib.AuctionState({
+            shortfallAmount: shortfall, filledAmount: 0, marginPool: pool, marginAwarded: 0
+        });
+
+        for (uint256 i = 0; i < 8; ++i) {
+            uint256 remaining = uint256(shortfall) - disposalAuction.filledAmount;
+            if (remaining == 0) break;
+
+            uint256 fill = bound(uint256(keccak256(abi.encode(sequenceSeed, i, "fill"))), 1, remaining);
+            uint256 elapsed = bound(uint256(keccak256(abi.encode(sequenceSeed, i, "time"))), 0, 8 * stepDuration);
+            LCCAuctionLib.applyFill(
+                disposalAuction, fill, elapsed, stepDuration, stepDecayRateBps, slashFeeBps, maxAwardBps, price
+            );
+            _assertSettlementNonnegative(disposalAuction, stepDecayRateBps, slashFeeBps);
+        }
+    }
+
+    function _assertSettlementNonnegative(
+        LCCAuctionLib.AuctionState memory state,
+        uint256 stepDecayRateBps,
+        uint256 slashFeeBps
+    ) internal pure {
+        uint256 eligiblePool = Math.mulDiv(state.marginPool, state.filledAmount, state.shortfallAmount);
+        uint256 maxCumulativeAward = Math.mulDiv(state.marginPool, BPS, BPS + slashFeeBps);
+        uint256 offered1 = maxCumulativeAward - Math.mulDiv(maxCumulativeAward, BPS - stepDecayRateBps, BPS);
+        uint256 feeBasis =
+            Math.max(state.marginAwarded, Math.mulDiv(offered1, state.filledAmount, state.shortfallAmount));
+        uint256 surplus = uint256(state.marginPool) - state.marginAwarded;
+        uint256 fee = Math.min(Math.mulDiv(feeBasis, slashFeeBps, BPS), surplus);
+
+        assertGe(eligiblePool, uint256(state.marginAwarded) + fee);
+    }
+
     function testFillAwardCaps() public pure {
         LCCAuctionLib.AuctionState memory state =
             LCCAuctionLib.AuctionState({shortfallAmount: 100e18, filledAmount: 0, marginPool: 50e18, marginAwarded: 0});
 
         // Pro-rata: half the shortfall at full offer takes half the pool.
-        assertEq(LCCAuctionLib.fillAward(state, 50e18, 50e18, type(uint256).max), 25e18);
+        assertEq(LCCAuctionLib.fillAward(state, 50e18, 50e18, type(uint256).max, 50e18), 25e18);
         // Oracle cap binds.
-        assertEq(LCCAuctionLib.fillAward(state, 50e18, 50e18, 1e18), 1e18);
+        assertEq(LCCAuctionLib.fillAward(state, 50e18, 50e18, 1e18, 50e18), 1e18);
         // Remaining-pool clamp binds.
         state.marginAwarded = 49e18;
-        assertEq(LCCAuctionLib.fillAward(state, 100e18, 50e18, type(uint256).max), 1e18);
+        assertEq(LCCAuctionLib.fillAward(state, 100e18, 50e18, type(uint256).max, 50e18), 1e18);
         // Zero shortfall short-circuits.
         state.shortfallAmount = 0;
-        assertEq(LCCAuctionLib.fillAward(state, 1e18, 50e18, type(uint256).max), 0);
+        assertEq(LCCAuctionLib.fillAward(state, 1e18, 50e18, type(uint256).max, 50e18), 0);
     }
 
     function testFuzzComputeAwardRespectsOracleCap(
@@ -154,10 +205,26 @@ contract LCCAuctionLibTest is Test {
         });
 
         uint256 award =
-            LCCAuctionLib.computeAward(state, fillAmount, elapsed, stepDuration, decayBps, maxAwardBps, price);
+            LCCAuctionLib.computeAward(state, fillAmount, elapsed, stepDuration, decayBps, 0, maxAwardBps, price);
         uint256 oracleCap = Math.mulDiv(Math.mulDiv(fillAmount, maxAwardBps, BPS), ORACLE_PRICE_SCALE, price);
 
         assertLe(award, oracleCap);
+    }
+
+    function testComputeAwardReservesFeeAfterEligiblePoolFloor() public pure {
+        LCCAuctionLib.AuctionState memory state =
+            LCCAuctionLib.AuctionState({shortfallAmount: 2, filledAmount: 0, marginPool: 3, marginAwarded: 0});
+
+        // The global reserve is 2, but the first fill's gross eligible pool is only 1. Reserving the fee after that
+        // floor leaves no award capacity, preventing completed settlement from underflowing E - A - fee.
+        assertEq(LCCAuctionLib.computeAward(state, 1, 1, 1, BPS, 1, BPS, ORACLE_PRICE_SCALE), 0);
+    }
+
+    function testComputeAwardZeroShortfallReturnsZero() public pure {
+        LCCAuctionLib.AuctionState memory state =
+            LCCAuctionLib.AuctionState({shortfallAmount: 0, filledAmount: 0, marginPool: 3, marginAwarded: 0});
+
+        assertEq(LCCAuctionLib.computeAward(state, 1, 1, 0, BPS, BPS, BPS, 0), 0);
     }
 
     function testFuzzValueAndCommitmentMatchesFormula(uint128 assets, uint128 price, uint16 marginRatioSeed)
@@ -177,17 +244,13 @@ contract LCCAuctionLibTest is Test {
         oracle.setPrice(ORACLE_PRICE_SCALE);
 
         (uint256 returnPool, uint256 returnCommitment) = LCCAuctionLib.disposeValuation(
+            disposalAuction,
             100e18,
-            0,
             0,
             ORACLE_PRICE_SCALE,
             address(oracle),
-            false,
-            false,
             5_000,
-            uint256(type(uint128).max) - 25e18,
-            type(uint256).max,
-            1
+            uint256(type(uint128).max) - 25e18 | (uint256(type(uint128).max) << 128)
         );
 
         assertEq(returnPool, 25e18);
@@ -199,10 +262,47 @@ contract LCCAuctionLibTest is Test {
         oracle.setPrice(ORACLE_PRICE_SCALE);
 
         (uint256 returnPool, uint256 returnCommitment) = LCCAuctionLib.disposeValuation(
-            100e18, 0, 0, ORACLE_PRICE_SCALE, address(oracle), false, false, 5_000, 0, 50e18, 1
+            disposalAuction, 100e18, 0, ORACLE_PRICE_SCALE, address(oracle), 5_000, 50e18 << 128
         );
 
         assertEq(returnPool, 100e18);
         assertEq(returnCommitment, 50e18);
+    }
+
+    function testDisposeValuationOverflowGuardIsIndependentOfPriceFailureTolerance() public {
+        OracleMock oracle = new OracleMock();
+        oracle.setPrice(ORACLE_PRICE_SCALE);
+        uint256 returnAssets = uint256(type(uint128).max) / 2;
+
+        (uint256 returnPool, uint256 returnCommitment) = LCCAuctionLib.disposeValuation(
+            disposalAuction,
+            returnAssets,
+            0,
+            type(uint256).max,
+            address(oracle),
+            5_000,
+            uint256(type(uint128).max) << 128
+        );
+
+        assertEq(returnPool, 0);
+        assertEq(returnCommitment, 0);
+    }
+
+    function testDisposeValuationIgnoresExtensionBitsWhenAuctionEligibilityIsUnset() public {
+        OracleMock oracle = new OracleMock();
+        oracle.setPrice(ORACLE_PRICE_SCALE);
+
+        (uint256 returnPool, uint256 returnCommitment) = LCCAuctionLib.disposeValuation(
+            disposalAuction,
+            100e18,
+            1 << 33,
+            ORACLE_PRICE_SCALE,
+            address(oracle),
+            5_000,
+            uint256(type(uint128).max) << 128
+        );
+
+        assertEq(returnPool, 100e18);
+        assertEq(returnCommitment, 200e18);
     }
 }

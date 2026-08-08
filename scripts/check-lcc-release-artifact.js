@@ -1,5 +1,6 @@
 const { execFileSync } = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const EXPECTED_COMPILER = "0.8.35+commit.47b9dedd";
@@ -16,16 +17,39 @@ const EXPECTED_LINKED_LIBRARIES = new Map([
 const STORAGE_LAYOUT_BASELINE = "docs/lcc-vault-storage-layout.json";
 const ABI_BASELINE = "docs/lcc-vault-abi-baseline.json";
 const NEGATIVE_FIXTURE_DIRECTORY = "scripts/fixtures/lcc-storage-layout";
+const ARTIFACT_RESOLUTION_FIXTURE_DIRECTORY = "scripts/fixtures/lcc-artifact-resolution";
 const EXPECTED_NEGATIVE_FIXTURES = [
   "base-storage-insertion.json",
   "gap-shrinkage.json",
   "packed-member-reorder.json",
   "width-change.json",
 ];
+const EXPECTED_ARTIFACT_RESOLUTION_FIXTURES = [
+  "ambiguous-matches.json",
+  "canonical-tiebreak.json",
+  "noncanonical-via-ir.json",
+];
+const LCC_VAULT_SETTINGS = {
+  compiler: EXPECTED_COMPILER,
+  evmVersion: "cancun",
+  viaIR: true,
+  optimizerEnabled: true,
+  optimizerRuns: EXPECTED_OPTIMIZER_RUNS,
+  bytecodeHash: "none",
+};
+const NOTIFICATION_VAULT_SETTINGS = {
+  compiler: EXPECTED_COMPILER,
+  evmVersion: "shanghai",
+  viaIR: true,
+  optimizerEnabled: true,
+  optimizerRuns: EXPECTED_NOTIFICATION_VAULT_OPTIMIZER_RUNS,
+  bytecodeHash: "none",
+};
+
+class ReleaseArtifactCheckError extends Error {}
 
 function fail(message) {
-  console.error(`LCC release artifact check failed: ${message}`);
-  process.exit(1);
+  throw new ReleaseArtifactCheckError(message);
 }
 
 function forge(args) {
@@ -56,56 +80,91 @@ function readJson(relativePath) {
   }
 }
 
-function resolveArtifactByCompiler(outputDirectory, sourceName, contractName, expectedCompiler) {
+function artifactSettingsDifferences(metadata, expected) {
+  const settings = metadata?.settings;
+  const differences = [];
+  if (metadata?.compiler?.version !== expected.compiler) {
+    differences.push(`solc expected ${expected.compiler}, found ${metadata?.compiler?.version}`);
+  }
+  if (settings?.evmVersion !== expected.evmVersion) {
+    differences.push(`EVM expected ${expected.evmVersion}, found ${settings?.evmVersion}`);
+  }
+  if (settings?.viaIR !== expected.viaIR) {
+    differences.push(`viaIR expected ${expected.viaIR}, found ${settings?.viaIR}`);
+  }
+  if (settings?.optimizer?.enabled !== expected.optimizerEnabled) {
+    differences.push(`optimizer enabled expected ${expected.optimizerEnabled}, found ${settings?.optimizer?.enabled}`);
+  }
+  if (settings?.optimizer?.runs !== expected.optimizerRuns) {
+    differences.push(`optimizer runs expected ${expected.optimizerRuns}, found ${settings?.optimizer?.runs}`);
+  }
+  const expectedMetadata = JSON.stringify({ bytecodeHash: expected.bytecodeHash });
+  const foundMetadata = JSON.stringify(settings?.metadata);
+  if (foundMetadata !== expectedMetadata) {
+    differences.push(`metadata expected ${expectedMetadata}, found ${foundMetadata ?? "undefined"}`);
+  }
+  return differences;
+}
+
+function artifactSettingsSummary(metadata) {
+  const settings = metadata?.settings;
+  return (
+    `solc=${metadata?.compiler?.version}, EVM=${settings?.evmVersion}, viaIR=${settings?.viaIR}, ` +
+    `optimizer.enabled=${settings?.optimizer?.enabled}, optimizer.runs=${settings?.optimizer?.runs}, ` +
+    `metadata=${JSON.stringify(settings?.metadata) ?? "undefined"}`
+  );
+}
+
+function selectCanonicalArtifact(candidates, contractName, expected) {
+  const matchingCandidates = candidates.filter(
+    (candidate) => artifactSettingsDifferences(candidate.artifact.metadata, expected).length === 0,
+  );
+  if (matchingCandidates.length === 1) return matchingCandidates[0];
+  if (matchingCandidates.length > 1) {
+    const canonicalFilename = `${contractName}.json`;
+    const canonicalCandidates = matchingCandidates.filter((candidate) => candidate.file === canonicalFilename);
+    if (canonicalCandidates.length === 1) return canonicalCandidates[0];
+  }
+
+  const found = candidates
+    .map((candidate) => `${candidate.file} (${artifactSettingsSummary(candidate.artifact.metadata)})`)
+    .join("; ");
+  const reason = matchingCandidates.length === 0 ? "could not resolve" : "resolved more than one";
+  throw new Error(
+    `${reason} canonical ${contractName} artifact; expected ${artifactSettingsSummary({
+      compiler: { version: expected.compiler },
+      settings: {
+        evmVersion: expected.evmVersion,
+        viaIR: expected.viaIR,
+        optimizer: { enabled: expected.optimizerEnabled, runs: expected.optimizerRuns },
+        metadata: { bytecodeHash: expected.bytecodeHash },
+      },
+    })}; found ${found || "none"}`,
+  );
+}
+
+function resolveArtifactBySettings(outputDirectory, sourceName, contractName, expected) {
   const artifactDirectory = path.join(outputDirectory, sourceName);
   const candidates = fs.existsSync(artifactDirectory)
     ? fs
         .readdirSync(artifactDirectory)
         .filter((file) => file.endsWith(".json"))
         .sort()
-        .map((file) => readJson(path.join(artifactDirectory, file)))
+        .map((file) => ({ file, artifact: readJson(path.join(artifactDirectory, file)) }))
     : [];
-  const matchingArtifact = candidates.find((candidate) => candidate.metadata?.compiler?.version === expectedCompiler);
-
-  if (!matchingArtifact) {
-    const foundVersions = [
-      ...new Set(candidates.map((candidate) => candidate.metadata?.compiler?.version ?? "unknown")),
-    ]
-      .sort()
-      .join(", ");
-    fail(
-      `missing ${contractName} artifact compiled with solc ${expectedCompiler} in ${artifactDirectory}; ` +
-        `found versions: ${foundVersions || "none"}; run yarn build:forge first`,
-    );
+  try {
+    const selected = selectCanonicalArtifact(candidates, contractName, expected);
+    return { ...selected, artifactPath: path.join(artifactDirectory, selected.file) };
+  } catch (error) {
+    const message = `${error.message}; artifact directory ${artifactDirectory}; run yarn build:forge first`;
+    fail(message);
+    throw new ReleaseArtifactCheckError(message);
   }
-
-  return matchingArtifact;
 }
 
 function assertArtifactSettings(contractName, metadata, expected) {
-  const settings = metadata?.settings;
-  if (metadata?.compiler?.version !== expected.compiler) {
-    fail(`${contractName}: expected solc ${expected.compiler}, found ${metadata?.compiler?.version}`);
-  }
-  if (settings?.evmVersion !== expected.evmVersion) {
-    fail(`${contractName}: expected ${expected.evmVersion} EVM, found ${settings?.evmVersion}`);
-  }
-  if (settings?.viaIR !== expected.viaIR) {
-    fail(`${contractName}: expected via IR ${expected.viaIR}, found ${settings?.viaIR}`);
-  }
-  if (settings?.optimizer?.enabled !== expected.optimizerEnabled) {
-    fail(
-      `${contractName}: expected optimizer enabled ${expected.optimizerEnabled}, found ${settings?.optimizer?.enabled}`,
-    );
-  }
-  if (settings?.optimizer?.runs !== expected.optimizerRuns) {
-    fail(`${contractName}: expected ${expected.optimizerRuns} optimizer runs, found ${settings?.optimizer?.runs}`);
-  }
-  if (settings?.metadata?.bytecodeHash !== expected.bytecodeHash) {
-    fail(
-      `${contractName}: expected metadata bytecode hash ${expected.bytecodeHash}, found ${settings?.metadata?.bytecodeHash}`,
-    );
-  }
+  const differences = artifactSettingsDifferences(metadata, expected);
+  if (differences.length !== 0) fail(`${contractName}: ${differences.join("; ")}`);
 }
 
 function canonicalType(typeId, types, ancestry = new Set()) {
@@ -295,89 +354,164 @@ function verifyNegativeFixtures() {
   }
 }
 
-const outputDirectory = forgeOutputDirectory();
-const artifactPath = path.join(outputDirectory, "LCCVault.sol", "LCCVault.json");
-if (!fs.existsSync(artifactPath)) fail(`missing ${artifactPath}; run yarn build:forge first`);
+function verifyArtifactResolutionNegativeFixtures() {
+  const directory = path.resolve(process.cwd(), ARTIFACT_RESOLUTION_FIXTURE_DIRECTORY);
+  if (!fs.existsSync(directory)) fail(`missing ${directory}`);
+  const fixtureFiles = new Set(fs.readdirSync(directory).filter((file) => file.endsWith(".json")));
+  const missingFixtures = EXPECTED_ARTIFACT_RESOLUTION_FIXTURES.filter((file) => !fixtureFiles.has(file));
+  if (missingFixtures.length !== 0)
+    fail(`missing artifact-resolution negative fixtures: ${missingFixtures.join(", ")}`);
 
-const artifact = readJson(artifactPath);
-const metadata = artifact.metadata;
-const bytecode = artifact.deployedBytecode?.object;
+  for (const fixtureFile of EXPECTED_ARTIFACT_RESOLUTION_FIXTURES) {
+    const fixture = readJson(path.join(ARTIFACT_RESOLUTION_FIXTURE_DIRECTORY, fixtureFile));
+    if (
+      typeof fixture?.contractName !== "string" ||
+      typeof fixture?.expected !== "object" ||
+      !Array.isArray(fixture?.candidates) ||
+      (fixture?.expectedFile === undefined && !Array.isArray(fixture?.expectedErrorFragments)) ||
+      (fixture?.expectedFile !== undefined && typeof fixture.expectedFile !== "string")
+    ) {
+      fail(`artifact-resolution negative fixture ${fixtureFile} is malformed`);
+    }
 
-assertArtifactSettings("LCCVault", metadata, {
-  compiler: EXPECTED_COMPILER,
-  evmVersion: "cancun",
-  viaIR: true,
-  optimizerEnabled: true,
-  optimizerRuns: EXPECTED_OPTIMIZER_RUNS,
-  bytecodeHash: "none",
-});
-if (typeof bytecode !== "string" || !bytecode.startsWith("0x") || bytecode.length % 2 !== 0) {
-  fail("deployed bytecode is malformed");
+    const fixtureOutputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "lcc-artifact-resolution-"));
+    const sourceName = `${fixture.contractName}.sol`;
+    const artifactDirectory = path.join(fixtureOutputDirectory, sourceName);
+    fs.mkdirSync(artifactDirectory);
+    for (const candidate of fixture.candidates) {
+      if (typeof candidate?.file !== "string" || typeof candidate?.metadata !== "object") {
+        fail(`artifact-resolution negative fixture ${fixtureFile} has a malformed candidate`);
+      }
+      fs.writeFileSync(
+        path.join(artifactDirectory, candidate.file),
+        `${JSON.stringify({ metadata: candidate.metadata }, null, 2)}\n`,
+      );
+    }
+
+    let resolved;
+    let resolutionError;
+    try {
+      resolved = resolveArtifactBySettings(
+        fixtureOutputDirectory,
+        sourceName,
+        fixture.contractName,
+        fixture.expected,
+      );
+    } catch (error) {
+      resolutionError = error.message;
+    } finally {
+      fs.rmSync(fixtureOutputDirectory, { recursive: true, force: true });
+    }
+
+    if (fixture.expectedFile !== undefined) {
+      if (resolutionError !== undefined) {
+        fail(`artifact-resolution fixture ${fixtureFile} unexpectedly failed: ${resolutionError}`);
+      }
+      if (resolved.file !== fixture.expectedFile) {
+        fail(
+          `artifact-resolution fixture ${fixtureFile} selected ${resolved.file}, expected ${fixture.expectedFile}`,
+        );
+      }
+    } else {
+      if (resolutionError === undefined) fail(`artifact-resolution negative fixture ${fixtureFile} was not rejected`);
+      const missingFragments = fixture.expectedErrorFragments.filter((fragment) => !resolutionError.includes(fragment));
+      if (missingFragments.length !== 0) {
+        fail(
+          `artifact-resolution negative fixture ${fixtureFile} error omitted: ${missingFragments.join(", ")}; ` +
+            `found ${resolutionError}`,
+        );
+      }
+    }
+  }
 }
 
-const runtimeBytes = (bytecode.length - 2) / 2;
-if (runtimeBytes > MAX_RUNTIME_BYTES) {
-  fail(`runtime is ${runtimeBytes} bytes; maximum is ${MAX_RUNTIME_BYTES}`);
-}
-
-const linkReferences = artifact.deployedBytecode?.linkReferences ?? {};
-const linkedSources = Object.keys(linkReferences);
-const hasExpectedLinkReferences =
-  linkedSources.length === EXPECTED_LINKED_LIBRARIES.size &&
-  [...EXPECTED_LINKED_LIBRARIES].every(
-    ([source, library]) =>
-      Object.hasOwn(linkReferences, source) && Object.keys(linkReferences[source]).join(",") === library,
+function main() {
+  const outputDirectory = forgeOutputDirectory();
+  const lccVaultResolution = resolveArtifactBySettings(
+    outputDirectory,
+    "LCCVault.sol",
+    "LCCVault",
+    LCC_VAULT_SETTINGS,
   );
-if (!hasExpectedLinkReferences) {
-  fail(`expected exactly LCCAuctionLib and LCCConfigLib link references, found ${linkedSources.join(", ") || "none"}`);
-}
+  const artifactPath = lccVaultResolution.artifactPath;
+  const artifact = lccVaultResolution.artifact;
+  const metadata = artifact.metadata;
+  const bytecode = artifact.deployedBytecode?.object;
 
-let layoutResult;
-try {
-  layoutResult = layoutDifference(readJson(STORAGE_LAYOUT_BASELINE), artifact.storageLayout);
-} catch (error) {
-  fail(`could not compare the artifact storage layout: ${error.message}`);
-}
-if (layoutResult.difference) {
-  fail(`storage layout differs from reviewer-controlled baseline: ${layoutResult.difference}`);
-}
-verifyNegativeFixtures();
+  assertArtifactSettings("LCCVault", metadata, LCC_VAULT_SETTINGS);
+  if (typeof bytecode !== "string" || !bytecode.startsWith("0x") || bytecode.length % 2 !== 0) {
+    fail("deployed bytecode is malformed");
+  }
 
-let canonicalArtifactAbi;
-let abiDifference;
-try {
-  canonicalArtifactAbi = canonicalAbi(artifact.abi, artifact.methodIdentifiers);
-  abiDifference = firstDifference(readJson(ABI_BASELINE), canonicalArtifactAbi, "abi");
-} catch (error) {
-  fail(`could not compare the artifact external ABI: ${error.message}`);
-}
-if (abiDifference) {
-  fail(
-    `external ABI differs from reviewer-controlled baseline:\n` +
-      `--- ${ABI_BASELINE}\n` +
-      `+++ ${path.relative(process.cwd(), artifactPath)}\n` +
-      `@@ ${abiDifference} @@`,
+  const runtimeBytes = (bytecode.length - 2) / 2;
+  if (runtimeBytes > MAX_RUNTIME_BYTES) {
+    fail(`runtime is ${runtimeBytes} bytes; maximum is ${MAX_RUNTIME_BYTES}`);
+  }
+
+  const linkReferences = artifact.deployedBytecode?.linkReferences ?? {};
+  const linkedSources = Object.keys(linkReferences);
+  const hasExpectedLinkReferences =
+    linkedSources.length === EXPECTED_LINKED_LIBRARIES.size &&
+    [...EXPECTED_LINKED_LIBRARIES].every(
+      ([source, library]) =>
+        Object.hasOwn(linkReferences, source) && Object.keys(linkReferences[source]).join(",") === library,
+    );
+  if (!hasExpectedLinkReferences) {
+    fail(`expected exactly LCCAuctionLib and LCCConfigLib link references, found ${linkedSources.join(", ") || "none"}`);
+  }
+
+  let layoutResult;
+  try {
+    layoutResult = layoutDifference(readJson(STORAGE_LAYOUT_BASELINE), artifact.storageLayout);
+  } catch (error) {
+    fail(`could not compare the artifact storage layout: ${error.message}`);
+  }
+  if (layoutResult.difference) {
+    fail(`storage layout differs from reviewer-controlled baseline: ${layoutResult.difference}`);
+  }
+  verifyNegativeFixtures();
+  verifyArtifactResolutionNegativeFixtures();
+
+  let canonicalArtifactAbi;
+  let abiDifference;
+  try {
+    canonicalArtifactAbi = canonicalAbi(artifact.abi, artifact.methodIdentifiers);
+    abiDifference = firstDifference(readJson(ABI_BASELINE), canonicalArtifactAbi, "abi");
+  } catch (error) {
+    fail(`could not compare the artifact external ABI: ${error.message}`);
+  }
+  if (abiDifference) {
+    fail(
+      `external ABI differs from reviewer-controlled baseline:\n` +
+        `--- ${ABI_BASELINE}\n` +
+        `+++ ${path.relative(process.cwd(), artifactPath)}\n` +
+        `@@ ${abiDifference} @@`,
+    );
+  }
+
+  const notificationVaultResolution = resolveArtifactBySettings(
+    outputDirectory,
+    "NotificationVault.sol",
+    "NotificationVault",
+    NOTIFICATION_VAULT_SETTINGS,
+  );
+  assertArtifactSettings(
+    "NotificationVault",
+    notificationVaultResolution.artifact.metadata,
+    NOTIFICATION_VAULT_SETTINGS,
+  );
+
+  console.log(
+    `LCCVault release artifact: ${runtimeBytes} bytes, ${EIP_170_LIMIT - runtimeBytes} bytes below EIP-170, ` +
+      `${EXPECTED_OPTIMIZER_RUNS} runs; LCCAuctionLib and LCCConfigLib link references present; ` +
+      `storage layout and external ABI match reviewer-controlled baselines; ` +
+      `LCCVault and NotificationVault artifacts match their canonical compiler, EVM, via-IR, optimizer, and metadata settings`,
   );
 }
 
-const notificationVaultArtifact = resolveArtifactByCompiler(
-  outputDirectory,
-  "NotificationVault.sol",
-  "NotificationVault",
-  EXPECTED_COMPILER,
-);
-assertArtifactSettings("NotificationVault", notificationVaultArtifact.metadata, {
-  compiler: EXPECTED_COMPILER,
-  evmVersion: "shanghai",
-  viaIR: true,
-  optimizerEnabled: true,
-  optimizerRuns: EXPECTED_NOTIFICATION_VAULT_OPTIMIZER_RUNS,
-  bytecodeHash: "none",
-});
-
-console.log(
-  `LCCVault release artifact: ${runtimeBytes} bytes, ${EIP_170_LIMIT - runtimeBytes} bytes below EIP-170, ` +
-    `${EXPECTED_OPTIMIZER_RUNS} runs; LCCAuctionLib and LCCConfigLib link references present; ` +
-    `storage layout and external ABI match reviewer-controlled baselines; ` +
-    `NotificationVault artifact matches the canonical compiler, Shanghai EVM, via-IR, optimizer, and metadata settings`,
-);
+try {
+  main();
+} catch (error) {
+  console.error(`LCC release artifact check failed: ${error.message}`);
+  process.exit(1);
+}

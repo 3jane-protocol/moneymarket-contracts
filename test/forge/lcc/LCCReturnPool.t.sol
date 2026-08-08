@@ -18,7 +18,7 @@ contract LCCReturnPoolTest is LCCBase {
         _assertLayoutSlot("marginPriceAtCallOpen", MARGIN_PRICE_AT_CALL_OPEN_SLOT);
     }
 
-    function testPendingDisposalUsesCallOpenSnapshotWhenOracleDies() public {
+    function testPendingUnfilledAuctionDivertsPoolWithoutConsultingDeadOracle() public {
         _deployAuctionVault();
         _deposit(alice, 100e18);
         oracle.setPrice(ORACLE_PRICE_SCALE);
@@ -35,12 +35,12 @@ contract LCCReturnPoolTest is LCCBase {
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(_accruedTreasuryMargin(), 0);
-        assertEq(state.returnPool, 100e18);
-        assertEq(state.returnCommitment, 200e18);
+        assertEq(_accruedTreasuryMargin(), 100e18);
+        assertEq(state.returnPool, 0);
+        assertEq(state.returnCommitment, 0);
     }
 
-    function testRiskCapSetterOnlyBlocksProtocolCapReductionDuringLiveAuction() public {
+    function testRiskCapSetterBlocksProtocolCapChangesDuringLiveAuction() public {
         ILCCVault.VaultParams memory params = _auctionParams();
         params.protocolCommitmentCap = 300e18;
         params.userCommitmentCap = 300e18;
@@ -64,13 +64,14 @@ contract LCCReturnPoolTest is LCCBase {
         assertEq(config.exitCapBps, 313);
         assertEq(config.minDepositAssets, 7e18);
 
+        vm.expectRevert(LCCErrorsLib.InvalidPhase.selector);
         vm.prank(owner);
         vault.setRiskCaps(301e18, 251e18, 314, 8e18);
         config = vault.riskConfig();
-        assertEq(config.protocolCommitmentCap, 301e18);
-        assertEq(config.userCommitmentCap, 251e18);
-        assertEq(config.exitCapBps, 314);
-        assertEq(config.minDepositAssets, 8e18);
+        assertEq(config.protocolCommitmentCap, 300e18);
+        assertEq(config.userCommitmentCap, 250e18);
+        assertEq(config.exitCapBps, 313);
+        assertEq(config.minDepositAssets, 7e18);
     }
 
     /// @dev Pins the deliberately reopened M-01 behavior: the return credit is the full paired share, so an
@@ -460,27 +461,31 @@ contract LCCReturnPoolTest is LCCBase {
         _openCall(100e18);
         _finishFunding();
         vault.finalizeEpochSlash(0);
+        vm.prank(carol);
+        vault.takeAuction(50e18, 0, type(uint256).max);
+
+        SettlementReference memory settlement = _referenceSettlement(100e18, 0, 50e18, 100e18, 5_000, 1_000, true);
 
         uint256 snapshot = vm.snapshotState();
 
         oracle.setPrice(0);
         vm.warp(START + EPOCH);
         vault.materializeAccount(alice);
-        _assertFullSnapshotReturnPool();
+        _assertSnapshotReturnPool(settlement.baseReturn);
 
         assertTrue(vm.revertToState(snapshot), "zero-price branch restore failed");
         LCCRevertingOracle revertingOracle = new LCCRevertingOracle();
         vm.etch(address(oracle), address(revertingOracle).code);
         vm.warp(START + EPOCH);
         vault.materializeAccount(alice);
-        _assertFullSnapshotReturnPool();
+        _assertSnapshotReturnPool(settlement.baseReturn);
 
         assertTrue(vm.revertToState(snapshot), "reverting branch restore failed");
         LCCGasGriefingOracle gasGriefingOracle = new LCCGasGriefingOracle();
         vm.etch(address(oracle), address(gasGriefingOracle).code);
         vm.warp(START + EPOCH);
         vault.materializeAccount{gas: 3_000_000}(alice);
-        _assertFullSnapshotReturnPool();
+        _assertSnapshotReturnPool(settlement.baseReturn);
 
         assertTrue(vm.revertToStateAndDelete(snapshot), "gas-griefing branch restore failed");
     }
@@ -500,6 +505,7 @@ contract LCCReturnPoolTest is LCCBase {
     function testWindDownRetainsComputableValuationAboveOldRawProductThreshold() public {
         ILCCVault.VaultParams memory params = _auctionParams();
         params.maxEpochs = 1;
+        params.slashFeeBps = 0;
         _deployVaultWithParams(params);
 
         _deposit(alice, 100e18);
@@ -516,8 +522,11 @@ contract LCCReturnPoolTest is LCCBase {
         _finishFunding();
         vault.finalizeEpochSlash(0);
 
-        vm.warp(START + EPOCH);
-        vault.materializeAccount(alice);
+        vm.warp(START + NORMAL + PRE_CALL + FUNDING + 4);
+        vm.prank(carol);
+        (uint256 filled, uint256 award) = vault.takeAuction(100e18, 0, type(uint256).max);
+        assertEq(filled, 100e18);
+        assertEq(award, 0);
 
         _assertFullSnapshotReturnPool();
     }
@@ -526,6 +535,7 @@ contract LCCReturnPoolTest is LCCBase {
         ILCCVault.VaultParams memory params = _auctionParams();
         params.maxEpochs = 1;
         params.marginRatioBps = 1;
+        params.maxAuctionAwardBps = 0;
         _deployVaultWithParams(params);
 
         uint256 marginAssets = 2 * ORACLE_PRICE_SCALE;
@@ -560,6 +570,8 @@ contract LCCReturnPoolTest is LCCBase {
         _openCall(100e18);
         _finishFunding();
         vault.finalizeEpochSlash(0);
+        vm.prank(carol);
+        vault.takeAuction(50e18, 0, type(uint256).max);
         vm.store(address(vault), _mappingSlot(0, MARGIN_PRICE_AT_CALL_OPEN_SLOT), bytes32(0));
 
         vm.warp(START + EPOCH);
@@ -569,7 +581,8 @@ contract LCCReturnPoolTest is LCCBase {
         vm.prank(owner);
         vault.finalizeEpochSlash(0);
 
-        _assertFullSnapshotReturnPool();
+        SettlementReference memory settlement = _referenceSettlement(100e18, 0, 50e18, 100e18, 5_000, 1_000, true);
+        _assertSnapshotReturnPool(settlement.baseReturn);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
@@ -587,6 +600,27 @@ contract LCCReturnPoolTest is LCCBase {
         vm.etch(address(oracle), address(revertingOracle).code);
 
         vm.warp(START + EPOCH);
+        vault.materializeAccount(alice);
+
+        _assertSweptReturnPool();
+    }
+
+    function testOlderEpochMissingSnapshotIsToleratedAfterTerminal() public {
+        ILCCVault.VaultParams memory params = _auctionParams();
+        params.maxEpochs = 2;
+        _deployVaultWithParams(params);
+
+        _deposit(alice, 100e18);
+        _openCall(100e18);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+        vm.prank(carol);
+        vault.takeAuction(50e18, 0, type(uint256).max);
+        vm.store(address(vault), _mappingSlot(0, MARGIN_PRICE_AT_CALL_OPEN_SLOT), bytes32(0));
+        LCCRevertingOracle revertingOracle = new LCCRevertingOracle();
+        vm.etch(address(oracle), address(revertingOracle).code);
+
+        vm.warp(START + 2 * EPOCH);
         vault.materializeAccount(alice);
 
         _assertSweptReturnPool();
@@ -719,6 +753,7 @@ contract LCCReturnPoolTest is LCCBase {
         ILCCVault.VaultParams memory params = _auctionParams();
         params.protocolCommitmentCap = maxPacked;
         params.userCommitmentCap = maxPacked;
+        params.slashFeeBps = 0;
         _deployVaultWithParams(params);
 
         uint256 bobCommitment = maxPacked - 40e18 - 1;
@@ -739,6 +774,8 @@ contract LCCReturnPoolTest is LCCBase {
         uint256 usedBeforeDisposal = vault.totals().activeCommitment;
         uint256 packingHeadroom = maxPacked - usedBeforeDisposal;
         assertEq(packingHeadroom, 30e18 + 1);
+        vm.prank(alice);
+        vault.takeAuction(type(uint256).max, 0, type(uint256).max);
         oracle.setPrice(4 * ORACLE_PRICE_SCALE);
         vm.warp(START + EPOCH);
         vault.materializeAccount(alice);
@@ -758,6 +795,7 @@ contract LCCReturnPoolTest is LCCBase {
         ILCCVault.VaultParams memory params = _auctionParams();
         params.protocolCommitmentCap = 300e18;
         params.userCommitmentCap = 300e18;
+        params.slashFeeBps = 0;
         _deployVaultWithParams(params);
 
         _deposit(alice, 50e18);
@@ -771,6 +809,8 @@ contract LCCReturnPoolTest is LCCBase {
         vault.setRiskCaps(200e18, 300e18, 2_000, 0);
         _finishFunding();
         vault.finalizeEpochSlash(0);
+        vm.prank(carol);
+        vault.takeAuction(type(uint256).max, 0, type(uint256).max);
         vm.warp(START + EPOCH);
         vault.materializeAccount(alice);
 
@@ -793,6 +833,8 @@ contract LCCReturnPoolTest is LCCBase {
         vault.setRiskCaps(200e18, 300e18, 2_000, 0);
         _finishFunding();
         vault.finalizeEpochSlash(0);
+        vm.prank(carol);
+        vault.takeAuction(type(uint256).max, 0, type(uint256).max);
         vm.warp(START + EPOCH);
         vault.materializeAccount(alice);
 
@@ -835,6 +877,7 @@ contract LCCReturnPoolTest is LCCBase {
     function _setupSingleDefaulterCapBoundSlash(uint256 cap) internal {
         ILCCVault.VaultParams memory params = _auctionParams();
         params.protocolCommitmentCap = 200e18;
+        params.slashFeeBps = 0;
         _deployVaultWithParams(params);
 
         _deposit(alice, 50e18);
@@ -846,6 +889,8 @@ contract LCCReturnPoolTest is LCCBase {
         vault.setRiskCaps(cap, 200e18, 2_000, 0);
         _finishFunding();
         vault.finalizeEpochSlash(0);
+        vm.prank(carol);
+        vault.takeAuction(type(uint256).max, 0, type(uint256).max);
 
         vm.warp(START + EPOCH);
     }
@@ -855,6 +900,7 @@ contract LCCReturnPoolTest is LCCBase {
     function _setupCapBoundSlash(uint256 cap) internal {
         ILCCVault.VaultParams memory params = _auctionParams();
         params.protocolCommitmentCap = 200e18;
+        params.slashFeeBps = 0;
         _deployVaultWithParams(params);
 
         _deposit(alice, 49e18);
@@ -867,6 +913,8 @@ contract LCCReturnPoolTest is LCCBase {
         vault.setRiskCaps(cap, 200e18, 2_000, 0);
         _finishFunding();
         vault.finalizeEpochSlash(0);
+        vm.prank(carol);
+        vault.takeAuction(type(uint256).max, 0, type(uint256).max);
 
         vm.warp(START + EPOCH);
     }
@@ -892,6 +940,13 @@ contract LCCReturnPoolTest is LCCBase {
         assertEq(state.returnPool, 100e18);
         assertEq(state.returnCommitment, 200e18);
         assertEq(_accruedTreasuryMargin(), 0);
+    }
+
+    function _assertSnapshotReturnPool(uint256 expectedPool) internal view {
+        ILCCVault.EpochState memory state = vault.getEpochState(0);
+        assertEq(state.returnPool, expectedPool);
+        assertEq(state.returnCommitment, 2 * expectedPool);
+        assertEq(_accruedTreasuryMargin(), 100e18 - expectedPool);
     }
 
     function _assertSweptReturnPool() internal view {

@@ -15,6 +15,7 @@ import {
     TransparentUpgradeableProxy
 } from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "../../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 
 // ABI-load-bearing mirror of ILCCVault.VaultParams. Keep the field order and types identical.
@@ -168,6 +169,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
     string internal constant CONFIG_LIB_FQN = "src/lcc/libraries/LCCConfigLib.sol:LCCConfigLib";
 
     uint256 internal constant ORACLE_PRICE_SCALE = 1e36;
+    uint256 internal constant BPS = 10_000;
     uint256 internal constant USD3_SUPPLY_CAP = 100e6;
     uint256 internal constant FACILITY_CAP = 10_000_000e6;
     uint256 internal constant ACTOR_BALANCE = 1_000_000e6;
@@ -284,13 +286,16 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING);
         shimVault.finalizeEpochSlash(0);
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING + 5);
+        VaultParams memory auctionParams = _auctionParams();
+        uint256 firstAward = _referenceStepOneAward(50e6, 0, 0, 10e6, 41e6, auctionParams);
         vm.startPrank(filler);
-        (uint256 filled, uint256 award) = shimVault.takeAuction(10e6, 6_097_560, type(uint256).max);
+        (uint256 filled, uint256 award) = shimVault.takeAuction(10e6, firstAward, type(uint256).max);
         assertEq(filled, 10e6);
-        assertEq(award, 6_097_560);
-        (filled, award) = shimVault.takeAuction(31e6, 18_902_439, type(uint256).max);
+        assertEq(award, firstAward);
+        uint256 secondAward = _referenceStepOneAward(50e6, award, filled, 31e6, 41e6, auctionParams);
+        (filled, award) = shimVault.takeAuction(31e6, secondAward, type(uint256).max);
         assertEq(filled, 31e6);
-        assertEq(award, 18_902_439);
+        assertEq(award, secondAward);
         vm.stopPrank();
 
         // Once the call and auction are settled, a Closed-phase deposit can safely remain pending for epoch 1,
@@ -333,8 +338,8 @@ contract LCCRealStackFundingIntegrationTest is Setup {
                 slashFinalized: true,
                 slashDisabledByShutdown: false,
                 slashedMargin: 50e6,
-                returnPool: 22_500_002,
-                returnCommitment: 45_000_004
+                returnPool: 25_000_001,
+                returnCommitment: 50_000_002
             })
         );
         _assertAuctionStateEq(
@@ -343,7 +348,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
                 shortfallAmount: uint128(41e6),
                 filledAmount: uint128(41e6),
                 marginPool: uint128(50e6),
-                marginAwarded: uint128(24_999_999)
+                marginAwarded: uint128(firstAward + secondAward)
             })
         );
 
@@ -502,6 +507,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING);
         auctionVault.finalizeEpochSlash(0);
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING + 5);
+
         vm.prank(filler);
         (uint256 filled,) = auctionVault.takeAuction(type(uint256).max, 0, type(uint256).max);
         assertEq(filled, 50e6);
@@ -578,6 +584,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING);
         auctionVault.finalizeEpochSlash(0);
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING + 5);
+        uint256 expectedAward = _referenceStepOneAward(50e6, 0, 0, 50e6, 50e6, _auctionParams());
 
         uint256 payerBefore = underlyingAsset.balanceOf(filler);
         uint256 notificationBefore = IERC20(address(notificationVault)).balanceOf(filler);
@@ -585,19 +592,20 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         uint256 wrappedBefore = _wrappedWaUSDC();
 
         vm.prank(filler);
-        (uint256 filled, uint256 marginAward) = auctionVault.takeAuction(type(uint256).max, 25e6, type(uint256).max);
+        (uint256 filled, uint256 marginAward) =
+            auctionVault.takeAuction(type(uint256).max, expectedAward, type(uint256).max);
 
         assertEq(filled, 50e6);
-        assertEq(marginAward, 25e6);
+        assertEq(marginAward, expectedAward);
         assertEq(payerBefore - underlyingAsset.balanceOf(filler), 50e6);
         assertEq(IERC20(address(notificationVault)).balanceOf(filler) - notificationBefore, 50e6);
-        assertEq(margin.balanceOf(filler) - marginBefore, 25e6);
+        assertEq(margin.balanceOf(filler) - marginBefore, expectedAward);
         assertEq(_wrappedWaUSDC() - wrappedBefore, 50e6);
 
         AuctionState memory auction = auctionVault.getAuctionState(0);
         assertEq(auction.shortfallAmount, 50e6);
         assertEq(auction.filledAmount, 50e6);
-        assertEq(auction.marginAwarded, 25e6);
+        assertEq(auction.marginAwarded, expectedAward);
     }
 
     function testSupplyCapExemptionIsLoadBearing() public {
@@ -773,6 +781,30 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         params.auctionStepDecayRateBps = 5_000;
         params.maxAuctionAwardBps = 10_000;
         params.slashFeeBps = 1_000;
+    }
+
+    /// @dev Independent step-one award model: reserve, ramp, oracle cap, global reserve clamp, then the cumulative
+    /// gross-eligible-pool clamp used to keep completed settlement non-negative at base-unit precision.
+    function _referenceStepOneAward(
+        uint256 grossPool,
+        uint256 alreadyAwarded,
+        uint256 alreadyFilled,
+        uint256 fill,
+        uint256 shortfall,
+        VaultParams memory params
+    ) internal pure returns (uint256 award) {
+        uint256 maxAward = Math.mulDiv(grossPool, BPS, BPS + params.slashFeeBps);
+        uint256 offered1 = maxAward - Math.mulDiv(maxAward, BPS - params.auctionStepDecayRateBps, BPS);
+        award = Math.mulDiv(offered1, fill, shortfall);
+        uint256 oracleCap = Math.mulDiv(fill, params.maxAuctionAwardBps, BPS);
+        if (award > oracleCap) award = oracleCap;
+        uint256 remainingAward = maxAward - alreadyAwarded;
+        if (award > remainingAward) award = remainingAward;
+
+        uint256 eligiblePool = Math.mulDiv(grossPool, alreadyFilled + fill, shortfall);
+        uint256 eligibleAward = Math.mulDiv(eligiblePool, BPS, BPS + params.slashFeeBps);
+        uint256 remainingEligible = eligibleAward > alreadyAwarded ? eligibleAward - alreadyAwarded : 0;
+        if (award > remainingEligible) award = remainingEligible;
     }
 
     function _driftTripwireParams() internal view returns (VaultParams memory params) {

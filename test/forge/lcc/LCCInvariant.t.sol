@@ -85,7 +85,11 @@ contract LCCInvariantTest is LCCBase {
         ILCCVault.Totals memory totals = vault.totals();
         uint256 settledUtilization = uint256(totals.activeCommitment) + uint256(totals.pendingCommitment);
         uint256 settledOverCapExposure = Math.saturatingSub(settledUtilization, protocolCap);
-        assertEq(settledOverCapExposure, safelyMeasuredGhost);
+        LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(0);
+        SettlementReference memory settlement = _referenceSettlement(
+            auction.marginPool, 0, auction.shortfallAmount, auction.shortfallAmount, 5_000, 1_000, true
+        );
+        assertEq(settledOverCapExposure, safelyMeasuredGhost - 2 * settlement.fee);
         assertLe(settledOverCapExposure, replayHandler.ghostGrandfatheredOverCapExposure());
     }
 }
@@ -106,13 +110,15 @@ contract LCCInvariantHandler is Test {
     uint256 public ghostReturnCreditCount;
 
     modifier capWatch() {
+        ILCCVault.RiskConfig memory configBefore = invariantVault.riskConfig();
+        uint256 capBefore = configBefore.protocolCommitmentCap;
+        uint256 awardCapBefore = configBefore.maxAuctionAwardBps;
+        bool shutdownBefore = invariantVault.shutdownState().active;
         vm.recordLogs();
         _ensureReturnCreditCoverage();
-        uint256 capBefore = invariantVault.riskConfig().protocolCommitmentCap;
-        bool shutdownBefore = invariantVault.shutdownState().active;
         _;
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        _assertDisposalsRespectHeadroom(logs, capBefore, shutdownBefore);
+        _assertDisposalsRespectHeadroom(logs, capBefore, awardCapBefore, shutdownBefore);
         _countReturnCredits(logs);
     }
 
@@ -549,7 +555,7 @@ contract LCCInvariantHandler is Test {
         uint256 maxCap = 10_000_000e18;
         (bool capAvailable, uint256 protocolCap) = _fuzzedProtocolCap(protocolSeed, currentUtilization, maxCap);
         if (!capAvailable) return;
-        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0 && protocolCap < currentProtocolCap) return;
+        if (invariantVault.syncState().pendingAuctionEpochPlusOne != 0 && protocolCap != currentProtocolCap) return;
 
         uint256 userCap = _fuzzedUserCap(userCapSeed, maxCap, currentUtilization);
         uint256 exitCapBps = _range(exitCapSeed, 313, 5_000);
@@ -558,8 +564,7 @@ contract LCCInvariantHandler is Test {
         try invariantVault.setRiskCaps(protocolCap, userCap, exitCapBps, 0) {
             // The invariant body already declines readings during live auctions, so mirror that discipline here and
             // check after the call because its sync can kick one. The ghost is the last safely measured conservative
-            // bound, not necessarily the exact exposure after the latest live-auction cap write. A long run of such
-            // writes can leave it stale until the next auction-free write; the assertion remains meaningful but weaker.
+            // bound; protocol-cap changes are frozen once a live auction exists.
             if (invariantVault.syncState().pendingAuctionEpochPlusOne == 0) {
                 totals = invariantVault.totals();
                 uint256 utilizationAfter = uint256(totals.activeCommitment) + uint256(totals.pendingCommitment);
@@ -629,7 +634,7 @@ contract LCCInvariantHandler is Test {
         ILCCVault.Totals memory totals = invariantVault.totals();
         if (totals.activeMargin + totals.pendingMargin == 0) return;
 
-        // Every called epoch in this harness has a validated snapshot, so shutdown's wind-down disposal is live-oracle
+        // Every called epoch in this harness has a validated snapshot, so shutdown disposal is live-oracle
         // independent. ShutdownActive is guarded above; call directly and let any unexpected revert fail the run.
         vm.prank(invariantOwner);
         invariantVault.shutdown();
@@ -714,6 +719,8 @@ contract LCCInvariantHandler is Test {
         // returnCommitment/returnPool, so a retry from the homogenized state credits above the halved cap.
         vm.prank(invariantOwner);
         invariantVault.setRiskCaps(10_000_000e18, userCap, config.exitCapBps, config.minDepositAssets);
+        vm.prank(invariantOwner);
+        invariantVault.setMaxAuctionAwardBps(0);
 
         vm.warp(invariantVault.phaseEndsAt(epoch, ILCCVault.Phase.Normal));
         vm.prank(invariantOwner);
@@ -722,6 +729,8 @@ contract LCCInvariantHandler is Test {
         vm.warp(invariantVault.phaseEndsAt(epoch, ILCCVault.Phase.Closed));
         invariantVault.finalizeEpochSlash(epoch);
         invariantVault.materializeAccount(actor);
+        vm.prank(invariantOwner);
+        invariantVault.setMaxAuctionAwardBps(config.maxAuctionAwardBps);
     }
 
     function _index(uint256 seed) internal view returns (uint256) {
@@ -754,27 +763,58 @@ contract LCCInvariantHandler is Test {
         found = !invariantVault.getEpochState(epoch).slashFinalized;
     }
 
-    function _assertDisposalsRespectHeadroom(Vm.Log[] memory logs, uint256 capBefore, bool shutdownBefore) internal {
-        bool windDown = shutdownBefore || _callWindowClosed(invariantVault);
+    function _assertDisposalsRespectHeadroom(
+        Vm.Log[] memory logs,
+        uint256 capBefore,
+        uint256 awardCapBefore,
+        bool shutdownBefore
+    ) internal {
+        uint256 protocolCap = capBefore;
+        uint256 awardCap = awardCapBefore;
+        bool shutdownActive = shutdownBefore;
+        uint256 maxEpochs = invariantVault.epochConfig().maxEpochs;
 
         for (uint256 i = 0; i < logs.length; ++i) {
             Vm.Log memory entry = logs[i];
             if (entry.emitter != address(invariantVault) || entry.topics.length == 0) continue;
 
+            if (entry.topics[0] == LCCEventsLib.RiskCapUpdated.selector) {
+                (protocolCap,,,) = abi.decode(entry.data, (uint256, uint256, uint256, uint256));
+                continue;
+            }
+            if (entry.topics[0] == LCCEventsLib.AuctionAwardCapUpdated.selector) {
+                awardCap = abi.decode(entry.data, (uint256));
+                continue;
+            }
             if (entry.topics[0] == LCCEventsLib.EmergencyShutdown.selector) {
-                windDown = true;
+                shutdownActive = true;
                 continue;
             }
             if (entry.topics.length != 2 || entry.topics[0] != LCCEventsLib.SlashSurplusDisposed.selector) continue;
 
-            uint256 epoch = uint256(entry.topics[1]);
-            (,, uint256 returnCommitment) = abi.decode(entry.data, (uint256, uint256, uint256));
-            ILCCVault.EpochState memory state = invariantVault.getEpochState(epoch);
-            uint256 funded = state.fundedAmount + state.fundedUsersRemainingCommitment;
-            uint256 slashed = state.commitmentDenominator - funded;
-            uint256 headroom = windDown ? slashed : Math.min(slashed, Math.saturatingSub(capBefore, funded));
-            if (returnCommitment > headroom) fail();
+            _assertDisposalRespectsHeadroom(entry, protocolCap, awardCap, shutdownActive, maxEpochs);
         }
+    }
+
+    function _assertDisposalRespectsHeadroom(
+        Vm.Log memory entry,
+        uint256 protocolCap,
+        uint256 awardCap,
+        bool shutdownActive,
+        uint256 maxEpochs
+    ) internal {
+        uint256 epoch = uint256(entry.topics[1]);
+        (,, uint256 returnCommitment) = abi.decode(entry.data, (uint256, uint256, uint256));
+        ILCCVault.EpochState memory state = invariantVault.getEpochState(epoch);
+        uint256 funded = state.fundedAmount + state.fundedUsersRemainingCommitment;
+        uint256 slashed = state.commitmentDenominator - funded;
+        ILCCVault.ShutdownState memory shutdownState = invariantVault.shutdownState();
+        bool auctionEligible = state.callAmount > state.fundedAmount && awardCap != 0
+            && (!shutdownActive || shutdownState.timestamp >= invariantVault.phaseEndsAt(epoch, ILCCVault.Phase.Closed));
+        uint256 headroom = (maxEpochs != 0 && epoch >= maxEpochs - 1) || !auctionEligible
+            ? slashed
+            : Math.min(slashed, Math.saturatingSub(protocolCap, funded));
+        if (returnCommitment > headroom) fail();
     }
 
     /// @dev Coverage signal for the reopened M-01 behavior: counts return credits from persisted disposals whose
@@ -1069,11 +1109,9 @@ contract LCCStatefulInvariantTest is LCCBase {
 
             uint256 closedWindow =
                 vault.phaseEndsAt(epoch, ILCCVault.Phase.Closed) - vault.phaseEndsAt(epoch, ILCCVault.Phase.Funding);
+            uint256 maxAward = Math.mulDiv(auction.marginPool, BPS, BPS + vault.riskConfig().slashFeeBps);
             uint256 maxOffered = LCCAuctionLib.offeredPool(
-                auction.marginPool,
-                closedWindow - 1,
-                auctionConfig.auctionStepDuration,
-                auctionConfig.auctionStepDecayRateBps
+                maxAward, closedWindow - 1, auctionConfig.auctionStepDuration, auctionConfig.auctionStepDecayRateBps
             );
             assertLe(auction.marginAwarded, maxOffered);
         }
@@ -1102,7 +1140,17 @@ contract LCCStatefulInvariantTest is LCCBase {
         for (uint256 i = 0; i < called.length; ++i) {
             LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(called[i]);
             assertLe(auction.filledAmount, auction.shortfallAmount);
-            assertLe(auction.marginAwarded, auction.marginPool);
+            if (auction.shortfallAmount == 0) {
+                assertEq(auction.marginAwarded, 0);
+                continue;
+            }
+
+            uint256 slashFeeBps = vault.riskConfig().slashFeeBps;
+            uint256 maxAward = Math.mulDiv(auction.marginPool, BPS, BPS + slashFeeBps);
+            uint256 eligiblePool = Math.mulDiv(auction.marginPool, auction.filledAmount, auction.shortfallAmount);
+            uint256 eligibleAward = Math.mulDiv(eligiblePool, BPS, BPS + slashFeeBps);
+            assertLe(auction.marginAwarded, maxAward);
+            assertLe(auction.marginAwarded, eligibleAward);
         }
     }
 
@@ -1187,8 +1235,8 @@ contract LCCCutoffNoOpHandler {
     }
 }
 
-/// @dev Disposes the same called epoch after moving the live oracle to opposite sides of the return-commitment dust
-/// boundary. Both branches must produce the absolute result implied by the call-open snapshot.
+/// @dev Disposes the same shutdown-truncated auction after moving the live oracle to opposite sides of the
+/// return-commitment dust boundary. Both branches must produce the absolute result implied by the call-open snapshot.
 contract LCCOracleSnapshotTest is LCCBase {
     function setUp() public override {
         super.setUp();
@@ -1199,37 +1247,45 @@ contract LCCOracleSnapshotTest is LCCBase {
         _openCall(100e18);
         _finishFunding();
         vault.finalizeEpochSlash(0);
+        vm.prank(carol);
+        vault.takeAuction(50e18, 0, type(uint256).max);
     }
 
     function testCalledEpochDisposalUsesCallOpenPriceAcrossPostOpenLivePrices() public {
         uint256 snapshot = vm.snapshotState();
+        LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(0);
+        SettlementReference memory settlement = _referenceSettlement(
+            auction.marginPool, 0, auction.filledAmount, auction.shortfallAmount, 5_000, 1_000, false
+        );
+        uint256 expectedCommitment =
+            Math.mulDiv(Math.mulDiv(settlement.baseReturn, 5_556e18, ORACLE_PRICE_SCALE), BPS, 5_000);
 
         oracle.setPrice(4_999e18);
-        vm.warp(vault.phaseEndsAt(0, ILCCVault.Phase.Closed));
-        vault.materializeAccount(bob);
+        vm.prank(owner);
+        vault.shutdown();
         ILCCVault.EpochState memory lowLivePrice = vault.getEpochState(0);
         uint256 lowLivePriceTreasury = vault.pendingTreasuryMargin();
-        assertEq(lowLivePrice.returnPool, 100e18);
-        assertEq(lowLivePrice.returnCommitment, 1_111_200);
-        assertEq(lowLivePriceTreasury, 0);
+        assertEq(lowLivePrice.returnPool, settlement.baseReturn);
+        assertEq(lowLivePrice.returnCommitment, expectedCommitment);
+        assertEq(lowLivePriceTreasury, settlement.fee);
 
         assertTrue(vm.revertToState(snapshot), "low-price branch restore failed");
         oracle.setPrice(ORACLE_PRICE_SCALE);
-        vm.warp(vault.phaseEndsAt(0, ILCCVault.Phase.Closed));
-        vault.materializeAccount(bob);
+        vm.prank(owner);
+        vault.shutdown();
         ILCCVault.EpochState memory highLivePrice = vault.getEpochState(0);
 
-        assertEq(highLivePrice.returnPool, 100e18);
-        assertEq(highLivePrice.returnCommitment, 1_111_200);
-        assertEq(vault.pendingTreasuryMargin(), 0);
+        assertEq(highLivePrice.returnPool, settlement.baseReturn);
+        assertEq(highLivePrice.returnCommitment, expectedCommitment);
+        assertEq(vault.pendingTreasuryMargin(), settlement.fee);
         assertTrue(vm.revertToStateAndDelete(snapshot), "high-price branch restore failed");
     }
 }
 
-/// @dev Falsifiability fixture for the disposal cutoff. Both branches start from the same live auction at the first
-/// zero-award step. One settles eagerly by filling the shortfall; the other advances to the next epoch and lets the
-/// real sync/fold path settle it. These paths have identical economics, so their disposal outputs must match. This
-/// compares observed state transitions and never reads an exit bucket or reconstructs the production cutoff.
+/// @dev Falsifiability fixture for settlement classification. Both branches start from the same live auction at the
+/// first zero-award step. One fully fills and therefore returns the filled pool less the fee floor; the other reaches
+/// the natural end unfilled and diverts the gross pool. This compares observed state transitions and never reads an
+/// exit bucket or reconstructs the production cutoff.
 contract LCCCutoffStatefulInvariantTest is LCCBase {
     LCCCutoffNoOpHandler internal cutoffHandler;
 
@@ -1256,7 +1312,7 @@ contract LCCCutoffStatefulInvariantTest is LCCBase {
         targetContract(address(cutoffHandler));
     }
 
-    function invariant_CutoffSettlementPathsMatch() public {
+    function invariant_CutoffSettlementPathsDivergeByFilledEligibility() public {
         uint256 snapshot = vm.snapshotState();
 
         vm.prank(bob);
@@ -1264,21 +1320,20 @@ contract LCCCutoffStatefulInvariantTest is LCCBase {
         assertEq(award, 0);
         ILCCVault.EpochState memory eager = vault.getEpochState(0);
         uint256 eagerTreasury = vault.pendingTreasuryMargin();
+        SettlementReference memory expected = _referenceSettlement(50e18, 0, 50e18, 50e18, 5_000, 1_000, true);
+        assertEq(eager.returnPool, expected.baseReturn);
+        assertEq(eagerTreasury, expected.fee);
 
         assertTrue(vm.revertToState(snapshot), "eager snapshot restore failed");
         vm.warp(vault.phaseEndsAt(0, ILCCVault.Phase.Closed));
         vault.materializeAccount(bob);
         ILCCVault.EpochState memory postFold = vault.getEpochState(0);
 
-        assertEq(eager.returnPool, postFold.returnPool, "return pool differs across equivalent settlement paths");
-        assertEq(
-            eager.returnCommitment,
-            postFold.returnCommitment,
-            "return commitment differs across equivalent settlement paths"
-        );
-        assertEq(
-            eagerTreasury, vault.pendingTreasuryMargin(), "treasury accrual differs across equivalent settlement paths"
-        );
+        assertEq(postFold.returnPool, 0);
+        assertEq(postFold.returnCommitment, 0);
+        assertEq(vault.pendingTreasuryMargin(), 50e18);
+        assertGt(eager.returnPool, postFold.returnPool);
+        assertLt(eagerTreasury, vault.pendingTreasuryMargin());
 
         ILCCVault.Totals memory totals = vault.totals();
         assertLe(
@@ -1286,6 +1341,59 @@ contract LCCCutoffStatefulInvariantTest is LCCBase {
             vault.riskConfig().protocolCommitmentCap
         );
         assertTrue(vm.revertToStateAndDelete(snapshot), "post-fold snapshot restore failed");
+    }
+}
+
+/// @dev Settlement economics at equal fill must depend on the auction opportunity frozen from the funding deadline,
+/// not on whether a caller happened to materialize the auction record during the Closed window.
+contract LCCTouchOrderStatefulInvariantTest is LCCBase {
+    LCCCutoffNoOpHandler internal touchOrderHandler;
+
+    function setUp() public override {
+        super.setUp();
+        _deployAuctionVault();
+
+        _deposit(alice, 100e18);
+        _deposit(bob, 50e18);
+        _openCall(150e18);
+        _fund(alice);
+
+        touchOrderHandler = new LCCCutoffNoOpHandler();
+        targetContract(address(touchOrderHandler));
+    }
+
+    function invariant_EqualFillSettlementIsTouchOrderIndependent() public {
+        uint256 snapshot = vm.snapshotState();
+        uint256 closedEnd = vault.phaseEndsAt(0, ILCCVault.Phase.Closed);
+
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+        vm.warp(closedEnd);
+        vault.materializeAccount(bob);
+        ILCCVault.EpochState memory kickedEarly = vault.getEpochState(0);
+        uint256 kickedEarlyTreasury = vault.pendingTreasuryMargin();
+        assertEq(kickedEarly.returnPool, 0);
+        assertEq(kickedEarly.returnCommitment, 0);
+        assertEq(kickedEarlyTreasury, 50e18);
+
+        assertTrue(vm.revertToState(snapshot), "early-kick snapshot restore failed");
+        vm.warp(closedEnd + 1);
+        vault.finalizeEpochSlash(0);
+        ILCCVault.EpochState memory untouchedLate = vault.getEpochState(0);
+        assertEq(untouchedLate.returnPool, kickedEarly.returnPool);
+        assertEq(untouchedLate.returnCommitment, kickedEarly.returnCommitment);
+        assertEq(vault.pendingTreasuryMargin(), kickedEarlyTreasury);
+
+        assertTrue(vm.revertToState(snapshot), "late-finalization snapshot restore failed");
+        vm.warp(closedEnd + 1);
+        vm.prank(owner);
+        vault.shutdown();
+        ILCCVault.EpochState memory shutdownFinalized = vault.getEpochState(0);
+        assertEq(shutdownFinalized.returnPool, kickedEarly.returnPool);
+        assertEq(shutdownFinalized.returnCommitment, kickedEarly.returnCommitment);
+        assertEq(vault.pendingTreasuryMargin(), kickedEarlyTreasury);
+
+        assertTrue(vm.revertToStateAndDelete(snapshot), "shutdown snapshot restore failed");
     }
 }
 

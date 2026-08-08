@@ -151,7 +151,7 @@ contract LCCBase is Test {
     uint256 internal constant PRE_CALL = 20;
     uint256 internal constant FUNDING = 20;
     uint256 internal constant CAP = 10_000_000e18;
-    uint256 internal constant MARGIN_PRICE_AT_CALL_OPEN_SLOT = 30;
+    uint256 internal constant MARGIN_PRICE_AT_CALL_OPEN_SLOT = 29;
 
     address internal owner = makeAddr("owner");
     address internal treasury = makeAddr("treasury");
@@ -174,6 +174,16 @@ contract LCCBase is Test {
         uint256 pendingMargin;
         uint256 pendingCommitment;
         uint256 claimableMargin;
+    }
+
+    struct SettlementReference {
+        uint256 maxAward;
+        uint256 offered1;
+        uint256 eligiblePool;
+        uint256 unfilledPool;
+        uint256 feeBasis;
+        uint256 fee;
+        uint256 baseReturn;
     }
 
     function setUp() public virtual {
@@ -439,6 +449,55 @@ contract LCCBase is Test {
 
     function _accruedTreasuryMargin() internal view returns (uint256) {
         return margin.balanceOf(treasury) + vault.pendingTreasuryMargin();
+    }
+
+    /// @dev Independent auction reference sequence used whenever a pinned award moves: reserve first, ramp from the
+    /// reserve, then apply the oracle cap and cumulative reserve clamp in production order. This helper intentionally
+    /// omits production's final `_remainingEligibleAward` clamp because it does not receive cumulative filled state;
+    /// callers use non-binding cases, and `minMarginAward` makes any drift fail loudly. Dust-floor clamp behavior is
+    /// covered directly in LCCAuctionLibTest.
+    function _referenceAward(
+        uint256 grossPool,
+        uint256 alreadyAwarded,
+        uint256 fill,
+        uint256 shortfall,
+        uint256 elapsed,
+        uint256 stepDuration,
+        uint256 decayBps,
+        uint256 feeBps,
+        uint256 maxAwardBps,
+        uint256 price
+    ) internal pure returns (uint256 award) {
+        uint256 maxAward = Math.mulDiv(grossPool, BPS, BPS + feeBps);
+        uint256 offered = LCCAuctionLib.offeredPool(maxAward, elapsed, stepDuration, decayBps);
+        award = Math.mulDiv(offered, fill, shortfall);
+        uint256 oracleCap = Math.mulDiv(Math.mulDiv(fill, maxAwardBps, BPS), ORACLE_PRICE_SCALE, price);
+        if (award > oracleCap) award = oracleCap;
+        uint256 remainingAward = maxAward - alreadyAwarded;
+        if (award > remainingAward) award = remainingAward;
+    }
+
+    function _referenceSettlement(
+        uint256 grossPool,
+        uint256 awarded,
+        uint256 filled,
+        uint256 shortfall,
+        uint256 decayBps,
+        uint256 feeBps,
+        bool completed
+    ) internal pure returns (SettlementReference memory expected) {
+        if (!completed) {
+            expected.baseReturn = grossPool - awarded;
+            return expected;
+        }
+
+        expected.maxAward = Math.mulDiv(grossPool, BPS, BPS + feeBps);
+        expected.offered1 = expected.maxAward - Math.mulDiv(expected.maxAward, BPS - decayBps, BPS);
+        expected.feeBasis = Math.max(awarded, Math.mulDiv(expected.offered1, filled, shortfall));
+        expected.fee = Math.min(Math.mulDiv(expected.feeBasis, feeBps, BPS), grossPool - awarded);
+        expected.eligiblePool = Math.mulDiv(grossPool, filled, shortfall);
+        expected.unfilledPool = grossPool - expected.eligiblePool;
+        expected.baseReturn = expected.eligiblePool - awarded - expected.fee;
     }
 
     /// @dev Upper bound on the margin the return-pool re-attribution can leave orphaned in the global totals: one

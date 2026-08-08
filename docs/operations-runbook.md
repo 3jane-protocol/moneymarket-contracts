@@ -38,6 +38,37 @@ Do not think of this as a race against a distant recovery event. Ordinary intere
 
 **Residual.** This is a race: an approved borrower can act between unpause and the manual tend. The window is why this is a runbook entry rather than a code guarantee, and closing it properly needs the pending-synchronization flag described in finding L-11.
 
+## LCC Closed-window delivery or oracle outage
+
+**Trigger.** An LCC shortfall auction is in its `Closed` phase and either the margin oracle or the USD3/USD3n delivery path is unavailable long enough that fills cannot execute.
+
+**Why intervention matters.** Completed settlement cannot distinguish “nobody bid” from “nobody could bid.” If an auction-eligible epoch reaches its effective Closed end with zero fills, the whole gross slash pool accrues to treasury. Wall-clock delay alone does not justify different settlement economics.
+
+**Mitigation.** Before the effective Closed end, the guardian or owner calls `pause()`. Pausing freezes the vault's effective time, including the auction clock, so it preserves the remaining Closed window instead of burning it while the dependency is unavailable. Restore or rotate the margin oracle as applicable, restore USD3 and notification-vault delivery, verify the fill path off-chain, then have the owner call `unpause()`. The auction resumes with the same effective time remaining. Do not unpause until fillers can execute, and do not assume a later lazy settlement can infer that the outage prevented bids.
+
+**If recovery is not possible.** Escalate to the owner for the facility's shutdown decision while effective time remains frozen. Shutdown is an economic wind-down action, not an automatic substitute for completing the auction, and should follow the facility's incident authority and loss-allocation process.
+
+**Before submitting shutdown.** Settle every pending auction first whenever its normal settlement path is available.
+Before its Closed end, `shutdown()` remains a live discriminator for surplus disposal: a partially filled auction
+settled immediately before shutdown receives completed-auction treatment, while the same auction first settled by
+`shutdown()` is shutdown-truncated and can allocate the remainder differently. At or after the Closed end, shutdown
+uses the same fee and protocol-cap allocation terms as a permissionless touch; only exceptional price-failure
+tolerance follows the live shutdown state. Operators should still confirm `pendingAuctionEpochPlusOne == 0` before
+submission whenever the normal path is available.
+
+**Missing call-open price snapshot.** Treat a zero snapshot as corruption or an upgrade-writer incident. If the live
+margin oracle is healthy, the owner may recover the pool by sending a `synced` call, including `shutdown()`. If both
+the snapshot and live oracle are dead, call `setMarginOracle` first with a responsive nonzero oracle and only then
+send an owner-side `synced` call. `shutdown()` alone is non-bricking in that state, but it is not recovery: price
+failure is tolerated by sending the otherwise returnable pool to treasury, and the disposal cannot be replayed.
+
+**Before submitting `setRiskCaps`.** Settle pending auctions first. `setRiskCaps` is `synced`, so it can finalize a
+newly eligible default, create the auction slot, and then revert on its own pending-auction guard when the transaction
+also changes `protocolCommitmentCap`. That reverts the entire timelocked transaction, including unrelated
+`userCommitmentCap`, `exitCapBps`, and `minDeposit` changes, even if no slot existed when it was queued. The risk is
+bounded by the pending auction's Closed window. If the other three parameters must change while a slot is live,
+re-pass the current protocol cap unchanged.
+
 ## Related
 
 - `docs/architecture.md` — USD3/sUSD3 subordination and tend/report flows.

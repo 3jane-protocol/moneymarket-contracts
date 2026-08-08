@@ -39,8 +39,6 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     uint256 internal constant MAX_EXIT_MATURITY_BUCKETS = 2 * LCCConfigLib.MAX_EXIT_DELAY_EPOCHS;
     /// @notice Maximum extra fundingAsset pulled to ensure a dust obligation mints at least one USD3 share.
     uint256 internal constant MAX_FUNDING_TOP_UP = 1_000;
-    /// @notice Minimum returned funding commitment retained for attribution, assuming 6-decimal USDC funding units.
-    uint256 internal constant MIN_RETURN_COMMITMENT = 1e6;
 
     /* STORAGE */
 
@@ -74,12 +72,9 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     LCCTypesLib.AuctionConfigStorage internal _auctionConfig;
 
     /// @dev Mutable risk configuration. Per-epoch exit capacity is `exitCapBps` of the greater of the configured
-    /// protocol cap and live active commitment, clamped to at least one funding-asset unit. The live-utilization
-    /// floor deliberately makes assignment path-dependent and ensures capacity never falls below the configured-cap
-    /// value at request time. Capacity is recomputed per request and can decline as active commitment declines.
-    /// `activeCommitment` is aggregate and may conservatively include unattributed return commitment, which only
-    /// widens capacity. `maxAuctionAwardBps` is the runtime auction-kicker off-switch. `slashFeeBps` is charged on
-    /// auction-awarded slashed margin and capped by the unawarded surplus.
+    /// protocol cap and live active commitment; derivation and assignment semantics live at `_assignExitMaturity`.
+    /// `maxAuctionAwardBps` is the runtime auction-kicker off-switch. `slashFeeBps` is charged on auction-awarded
+    /// slashed margin and capped by the unawarded surplus.
     RiskConfig internal _riskConfig;
 
     /// @dev Packed aggregate totals. Commitment totals are cap-bounded by `protocolCommitmentCap <=
@@ -93,7 +88,9 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
     /// @dev Packed emergency shutdown state.
     ShutdownState internal _shutdown;
-    /// @dev Per-epoch auction state, exposed via getAuctionState.
+    /// @dev Per-epoch auction state, exposed via getAuctionState. A zero shortfall sentinel means no auction record
+    /// was opened; settlement classification is derived separately from eligibility facts frozen from the funding
+    /// deadline.
     mapping(uint256 => LCCAuctionLib.AuctionState) internal epochAuctions;
 
     /// @dev Packed positions keyed by account.
@@ -131,14 +128,10 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     /// @inheritdoc ILCCVault
     uint256 public pendingTreasuryMargin;
 
-    /// @dev Epoch in which each call's nonzero return pool was created.
-    mapping(uint256 => uint256) internal returnCreditEpochByCall;
-
     /// @dev Margin-oracle price frozen when each epoch call opens.
     mapping(uint256 => uint256) internal marginPriceAtCallOpen;
 
-    /// @dev Reserved storage for future versions. Pre-deployment additions are declared above this gap so the
-    /// post-deployment reserve stays at its full 50 slots; only upgrades after deployment consume gap slots.
+    /// @dev Reserved storage for future versions; post-deployment upgrades append state by consuming gap slots.
     uint256[50] private __gap;
 
     /* CONSTRUCTOR / INITIALIZER */
@@ -253,8 +246,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
     /// @inheritdoc ILCCVault
     /// @dev Lowering caps below current utilization does not force existing positions or assigned exit buckets to
-    /// unwind. Capacity is recomputed per request from live utilization, so it cannot be worse than the configured-cap
-    /// formula at that request, but it can decline as active commitment declines through amortization or slashing.
+    /// unwind; new exit capacity is recomputed per request (see `_assignExitMaturity`).
     function setRiskCaps(
         uint256 newProtocolCommitmentCap,
         uint256 newUserCommitmentCap,
@@ -267,8 +259,12 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         if (newUserCommitmentCap == 0 || newExitCapBps < LCCConfigLib.MIN_EXIT_CAP_BPS || newExitCapBps > BPS) {
             revert LCCErrorsLib.InvalidParams();
         }
-        // Surplus disposal may be deferred past slash finalization only through the auction slot.
-        if (newProtocolCommitmentCap < _riskConfig.protocolCommitmentCap && _syncState.pendingAuctionEpochPlusOne != 0) revert LCCErrorsLib.InvalidPhase();
+        // Surplus disposal may be deferred past slash finalization only through the auction slot. Freeze the live
+        // protocol cap across that window because either direction can change the settlement headroom.
+        if (newProtocolCommitmentCap != _riskConfig.protocolCommitmentCap && _syncState.pendingAuctionEpochPlusOne != 0)
+        {
+            revert LCCErrorsLib.InvalidPhase();
+        }
 
         _riskConfig.protocolCommitmentCap = newProtocolCommitmentCap;
         _riskConfig.userCommitmentCap = newUserCommitmentCap;
@@ -303,11 +299,11 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     }
 
     /// @inheritdoc ILCCVault
-    /// @dev Rotation is owner-trusted and reprices subsequent deposits and auction fill awards, but does not reprice
-    /// conversion of an opened call's remaining return pool. The live-auction guard blocks rotation only while
-    /// unpaused and the current oracle still returns a nonzero price for fills. While paused no fills can execute, so
-    /// the owner may rotate even a responsive but compromised oracle before resuming the frozen auction. A
-    /// zero-price, reverting, or otherwise unreadable current oracle never blocks rotation. The new oracle must return
+    /// @dev Rotation is owner-trusted and reprices subsequent deposits and auction fill awards, but not an opened
+    /// call's return-pool conversion, which reads the nonzero price snapshotted at call open; that snapshot is what
+    /// lets this setter skip `synced`. The live-auction guard blocks rotation only while unpaused and the current
+    /// oracle still returns a nonzero price for fills; while paused no fills can execute, so rotation proceeds, as it
+    /// does when the current oracle is zero-priced or unreadable. The new oracle must return
     /// marginAsset-to-fundingAsset (USDC) prices at ORACLE_PRICE_SCALE with matching decimals; the vault can only
     /// check that the price is nonzero.
     function setMarginOracle(address newOracle) external onlyOwner {
@@ -609,6 +605,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
             _now() - _fundingDeadline(epoch),
             _auctionConfig.auctionStepDuration,
             _auctionConfig.auctionStepDecayRateBps,
+            _riskConfig.slashFeeBps,
             _riskConfig.maxAuctionAwardBps,
             price
         );
@@ -939,8 +936,9 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
         if (slashedMargin != 0) {
             uint256 shortfallAmount = state.callAmount > state.fundedAmount ? state.callAmount - state.fundedAmount : 0;
+            LCCAuctionLib.AuctionState storage auction = epochAuctions[epoch];
             // Kick an auction only while its timestamp-derived window is still open; a late lazy finalization
-            // falls through to treasury and the shortfall fails cleanly.
+            // still receives completed-auction economics without creating an auction record.
             if (
                 shortfallAmount != 0 && _riskConfig.maxAuctionAwardBps != 0 && !_shutdown.active
                     && _now() < _phaseEnd(epoch, Phase.Closed)
@@ -954,10 +952,10 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
                 _syncState.pendingAuctionEpochPlusOne = (epoch + 1).toUint64();
                 emit LCCEventsLib.AuctionKicked(epoch, shortfallAmount, slashedMargin);
             } else {
-                // No auction was kicked for this epoch, so its recorded award is zero. Reading it from storage
-                // rather than passing a literal keeps the optimizer from specializing a second copy of the
-                // disposal body for the constant-zero argument (~600 bytes of runtime code).
-                _disposeSlashSurplus(epoch, slashedMargin, epochAuctions[epoch].marginAwarded);
+                // No auction was kicked; the empty storage record keys completed zero-fill treatment when the epoch
+                // was eligible. Passing this storage reference (not a constant) matches the shape of the
+                // _settleAuction feeder and keeps the optimizer from specializing a second copy of the disposal body.
+                _disposeSlashSurplus(epoch, slashedMargin, auction);
             }
         }
 
@@ -978,13 +976,13 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     }
 
     function _settleAuction(uint256 epoch) internal {
-        LCCAuctionLib.AuctionState storage state = epochAuctions[epoch];
+        LCCAuctionLib.AuctionState storage auction = epochAuctions[epoch];
         _syncState.pendingAuctionEpochPlusOne = 0;
 
-        uint256 remainder = state.marginPool - state.marginAwarded;
-        _disposeSlashSurplus(epoch, remainder, state.marginAwarded);
+        uint256 remainder = auction.marginPool - auction.marginAwarded;
+        _disposeSlashSurplus(epoch, remainder, auction);
 
-        emit LCCEventsLib.AuctionSettled(epoch, state.filledAmount, state.marginAwarded);
+        emit LCCEventsLib.AuctionSettled(epoch, auction.filledAmount, auction.marginAwarded);
     }
 
     /// @dev Values `assets` of margin at `price` (scaled by ORACLE_PRICE_SCALE) and leverages the value into a
@@ -1002,66 +1000,82 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         if (price == 0) revert LCCErrorsLib.OraclePriceInvalid();
     }
 
-    /// @dev Charges the slash fee on auction-awarded collateral and caps it by the unawarded surplus being disposed.
-    /// Any surplus not consumed by the fee is valued from the call-open price snapshot. A missing snapshot is an
-    /// invalid storage state: going-concern disposal is recoverable from the live oracle only when owner-triggered,
-    /// while wind-down remains tolerant of a missing, reverting, zero, or overflow-risk selected price.
-    /// A positive commitment clamp preserves the full post-fee pool; zero or dust commitment headroom zeroes its
-    /// paired pool and diverts the surplus to treasury.
-    function _disposeSlashSurplus(uint256 epoch, uint256 surplus, uint256 auctionedMargin) internal {
+    /// @dev Routes an epoch's unawarded slashed margin at settlement. Auction-eligible epochs divert the gross pool's
+    /// unfilled share and reserved take to treasury, even when no auction record was opened; non-eligible and
+    /// shutdown-truncated epochs return their unawarded pool without a take. The return pool is valued from the
+    /// call-open price snapshot; recovery from a missing snapshot is owner-gated in going concern and non-bricking in
+    /// shutdown or terminal state. Valuation overflow is a live oracle-corruption sweep of the selected price (call
+    /// opening validates only that the price is nonzero), ordered after snapshot/fallback selection; the guard and
+    /// its derivation live at `LCCAuctionLib.disposeValuation`. A positive commitment clamp preserves the full
+    /// post-fee pool; zero or dust commitment headroom zeroes its paired pool and diverts the surplus to treasury.
+    function _disposeSlashSurplus(uint256 epoch, uint256 surplus, LCCAuctionLib.AuctionState storage auction) internal {
         if (surplus == 0) return;
 
         EpochState storage state = epochs[epoch];
-        uint256 marginPriceSnapshot = marginPriceAtCallOpen[epoch];
-
-        // Wind-down disposal skips the going-concern missing-snapshot revert and protocol-cap clamp so recoverable
-        // margin is never bricked or diverted to treasury once no future call can ever use the returned
-        // commitment. That property is a function of the current clock, not the disposed epoch: it holds once
-        // the last epoch's call-opening window has passed (`_callWindowClosed`), which covers both an early
-        // settlement in the last epoch's own Closed phase and a lazy finalization of any older epoch disposed
-        // for the first time in that late window (or at/after terminal).
-        bool windDown = _shutdown.active || _callWindowClosed();
-        uint256 packingHeadroom;
+        uint256 returnPool;
+        uint256 returnCommitment;
         {
-            uint256 usedCommitment = uint256(_totals.activeCommitment) + uint256(_totals.pendingCommitment);
-            packingHeadroom = uint256(type(uint128).max).saturatingSub(usedCommitment);
+            // Opposite freezing rules: the wind-down cap exemption is anchored to the disposed epoch's facts, while
+            // price-failure tolerance follows live shutdown/terminal state so late claims cannot be bricked.
+            uint256 maxEpochs = _clockConfig.maxEpochs;
+            bool shutdownTruncated = _shutdown.active && _shutdown.timestamp < _phaseEnd(epoch, Phase.Closed);
+            bool windDown = shutdownTruncated || (maxEpochs != 0 && epoch >= maxEpochs - 1);
+            uint256 settlementConfig = uint256(_auctionConfig.auctionStepDecayRateBps)
+                | ((uint256(_riskConfig.slashFeeBps) & type(uint16).max) << 16);
+            // A nonzero award cap implies a nonzero auctionStepCount (initializer and setter validation), so
+            // eligibility needs no separate step-count check.
+            bool auctionEligible =
+                state.callAmount > state.fundedAmount && _riskConfig.maxAuctionAwardBps != 0 && !shutdownTruncated;
+            if (auctionEligible) settlementConfig |= 1 << 32;
+            uint256 headroom;
+            {
+                uint256 usedCommitment = uint256(_totals.activeCommitment) + uint256(_totals.pendingCommitment);
+                uint256 packingHeadroom = uint256(type(uint128).max).saturatingSub(usedCommitment);
+                uint256 fundedCallOpenCommitment = state.fundedAmount + state.fundedUsersRemainingCommitment;
+                uint256 slashedCommitment = state.commitmentDenominator - fundedCallOpenCommitment;
+                // The call-local bound is frozen against unrelated deposits. The protocol-cap clamp applies only
+                // outside wind-down, where returned commitment can back a future call.
+                headroom = Math.min(slashedCommitment, packingHeadroom);
+                if (!windDown && auctionEligible) {
+                    headroom =
+                        Math.min(headroom, _riskConfig.protocolCommitmentCap.saturatingSub(fundedCallOpenCommitment));
+                }
+            }
+            uint256 valuationConfig = uint256(_assetConfig.marginRatioBps);
+            if (msg.sender == owner()) valuationConfig |= 1 << 16;
+            if (_shutdown.active || _terminal()) valuationConfig |= 1 << 17;
+            // The aggregate deposit bound above `deposit`'s account replay guarantees that the low half fits uint128.
+            uint256 packedHeadroom =
+                (uint256(_totals.activeMargin) + uint256(_totals.pendingMargin)) | (headroom << 128);
+            (returnPool, returnCommitment) =
+                _valueDisposedSlash(epoch, auction, surplus, settlementConfig, valuationConfig, packedHeadroom);
         }
-        uint256 usedMargin = uint256(_totals.activeMargin) + uint256(_totals.pendingMargin);
-        uint256 fundedCallOpenCommitment = state.fundedAmount + state.fundedUsersRemainingCommitment;
-        uint256 slashedCommitment = state.commitmentDenominator - fundedCallOpenCommitment;
-        // The call-local bound is frozen against unrelated deposits. During wind-down no future call can use the
-        // returned commitment, so the current protocol cap is intentionally omitted.
-        uint256 headroom = Math.min(slashedCommitment, packingHeadroom);
-        if (!windDown) {
-            headroom = Math.min(
-                Math.min(slashedCommitment, _riskConfig.protocolCommitmentCap.saturatingSub(fundedCallOpenCommitment)),
-                packingHeadroom
-            );
-        }
-
-        (uint256 returnPool, uint256 returnCommitment) = LCCAuctionLib.disposeValuation(
-            surplus,
-            auctionedMargin,
-            _riskConfig.slashFeeBps,
-            marginPriceSnapshot,
-            _auctionConfig.marginOracle,
-            msg.sender == owner(),
-            windDown,
-            _assetConfig.marginRatioBps,
-            usedMargin,
-            headroom,
-            MIN_RETURN_COMMITMENT
-        );
 
         state.returnPool = returnPool;
         state.returnCommitment = returnCommitment;
-        if (returnPool != 0) {
-            returnCreditEpochByCall[epoch] = _currentEpoch();
-            _increaseGlobalActive(returnPool, returnCommitment);
-        }
+        if (returnPool != 0) _increaseGlobalActive(returnPool, returnCommitment);
         uint256 toTreasury = surplus - returnPool;
         pendingTreasuryMargin += toTreasury;
         emit LCCEventsLib.SlashSurplusDisposed(epoch, toTreasury, returnPool, returnCommitment);
+    }
+
+    function _valueDisposedSlash(
+        uint256 epoch,
+        LCCAuctionLib.AuctionState storage auction,
+        uint256 surplus,
+        uint256 settlementConfig,
+        uint256 valuationConfig,
+        uint256 packedHeadroom
+    ) internal view returns (uint256 returnPool, uint256 returnCommitment) {
+        return LCCAuctionLib.disposeValuation(
+            auction,
+            surplus,
+            settlementConfig,
+            marginPriceAtCallOpen[epoch],
+            _auctionConfig.marginOracle,
+            valuationConfig,
+            packedHeadroom
+        );
     }
 
     /* ACCOUNT REPLAY INTERNALS */
@@ -1185,8 +1199,9 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
                     }
                 }
                 if ((marginShare | commitmentShare) != 0) {
-                    replay.account.commitmentStartEpoch =
-                        Math.max(replay.account.commitmentStartEpoch, Math.max(epoch, returnCreditEpochByCall[epoch]));
+                    // The credit can first back a new call in the epoch after the disposed call. Anchoring there
+                    // starts a fresh minimum period without letting permissionless disposal delay extend it.
+                    replay.account.commitmentStartEpoch = Math.max(replay.account.commitmentStartEpoch, epoch + 1);
                 }
                 replay.account.defaultAccount();
                 replay.account.activeMargin += marginShare;
@@ -1244,7 +1259,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         if (commitmentShare == 0) return (0, 0);
 
         marginShare = state.returnPool.mulDiv(slashedMargin, aggregateSlashedMargin);
-        // Keep the tuple literal so this helper never returns a margin-only share when commitment rounds to zero.
+        // The explicit tuple keeps shares paired: a zero margin share must also zero the commitment share.
         if (marginShare == 0) return (0, 0);
     }
 
@@ -1420,8 +1435,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     }
 
     /// @dev Assignment is first-fit by request time, not strict FIFO. Capacity is recomputed from live active
-    /// commitment for every request, ensuring it is never below the configured-cap value at that request while
-    /// deliberately making later assignments path-dependent. It can decline as active commitment declines through
+    /// commitment for every request, so it is never below the configured-cap value at that request but is
+    /// path-dependent across requests. It can decline as active commitment declines through
     /// amortization or slashing. Aggregate active commitment may conservatively include unattributed return
     /// commitment, which only widens capacity. Funded or slashed amounts can free bucket room retroactively, and a
     /// request larger than the whole per-epoch capacity takes the first bucket with any remaining room. Cap-raise
@@ -1481,11 +1496,10 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         return _now() >= _fundingDeadline(epoch);
     }
 
-    /// @dev Each account's obligation is computed independently from the call-open snapshot and rounded up, so the
-    /// sum across accounts can exceed `callAmount` by up to ~(number of funding accounts - 1) units. Ceil is
-    /// intentional: it keeps each funding account's pro-rata obligation from rounding below its fair share. It does
-    /// not guarantee the pool collects `callAmount` in full — accounts that default still under-collect, and that
-    /// shortfall is covered by the slash/auction path, not by this rounding.
+    /// @dev Each account's obligation is computed independently from the call-open snapshot, rounded up so no
+    /// pro-rata obligation rounds below its fair share; the sum across accounts can exceed `callAmount` by up to
+    /// ~(number of funding accounts - 1) units. Accounts that default still under-collect, and that shortfall is
+    /// covered by the slash/auction path, not by this rounding.
     function _obligation(EpochState storage state, uint256 activeCommitment) internal view returns (uint256) {
         if (activeCommitment == 0 || state.commitmentDenominator == 0) return 0;
         return activeCommitment.mulDiv(state.callAmount, state.commitmentDenominator, Math.Rounding.Ceil);
@@ -1505,21 +1519,6 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     function _terminal() internal view returns (bool) {
         uint256 maxEpochs = _clockConfig.maxEpochs;
         return maxEpochs != 0 && _currentEpoch() >= maxEpochs;
-    }
-
-    /// @dev True once no call can ever open again: calls open only in a PreCall phase, so once the last callable
-    /// epoch's PreCall window (`maxEpochs - 1`) has elapsed nothing can open a call. Perpetual vaults (`maxEpochs ==
-    /// 0`) never close. Past this point a returned slash commitment can never back a future call, so surplus disposal
-    /// drops the going-concern missing-snapshot revert and protocol-cap clamp. Monotonic and strictly before the
-    /// terminal boundary, so this also covers every disposal that runs once terminal.
-    function _callWindowClosed() internal view returns (bool) {
-        uint256 maxEpochs = _clockConfig.maxEpochs;
-        if (maxEpochs == 0) return false;
-        uint256 current = _currentEpoch();
-        // No call can open past the last callable epoch's PreCall window: either terminal, or in epoch
-        // `maxEpochs - 1` with its PreCall phase already elapsed (calls open only during PreCall). Expressed via
-        // the epoch clock, which is bounded by effective time, so an unbounded `maxEpochs` cannot overflow.
-        return current >= maxEpochs || (current == maxEpochs - 1 && _phaseAt(_now()) >= Phase.Funding);
     }
 
     function _now() internal view returns (uint256) {
