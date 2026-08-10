@@ -64,6 +64,47 @@ contract WaUSDCWrapValuePreservationTest is Setup {
         }
     }
 
+    function test_depositWrapProceedsWhenInterestSlackCoversCostDespiteIdleBalance() public {
+        wrapper.setRate(REALISTIC_RATE);
+        setMaxOnCredit(0);
+        _depositExactShares(5_000_000_000);
+
+        vm.prank(keeper);
+        tokenized.report();
+
+        // Pre-existing idle balance I, accounted at face by a report while the wrapper is paused.
+        uint256 idleUSDC = 100;
+        deal(address(asset), address(usd3), asset.balanceOf(address(usd3)) + idleUSDC);
+        wrapper.setPaused(true);
+        vm.prank(keeper);
+        tokenized.report();
+        wrapper.setPaused(false);
+        assertEq(asset.balanceOf(address(usd3)), idleUSDC, "paused report must leave the idle pile in place");
+        assertEq(tokenized.totalAssets(), usd3.nav(), "paused report must account the idle pile");
+
+        // Unreported interest slack s with 1 < s <= I: bump the rate without reporting.
+        wrapper.setRate(REALISTIC_RATE + 1e18);
+        uint256 slack = usd3.nav() - tokenized.totalAssets();
+        assertGt(slack, 1, "interest slack must cover more than the wrap cost");
+        assertLe(slack, idleUSDC, "slack must not exceed the idle balance, or the old gate also wraps");
+
+        // The wrap of the full loose balance must land on the lossy branch: cost - gain == 1.
+        uint256 depositAmount = 250_000e6;
+        uint256 aggregate = usd3.suppliedWaUSDC() + usd3.balanceOfWaUSDC();
+        uint256 shares = wrapper.previewDeposit(depositAmount + idleUSDC);
+        uint256 cost = wrapper.previewMint(shares);
+        uint256 gain = wrapper.convertToAssets(aggregate + shares) - wrapper.convertToAssets(aggregate);
+        assertEq(cost, gain + 1, "setup must exercise the slack branch");
+
+        uint256 localBefore = wrapper.balanceOf(address(usd3));
+        _deposit(depositAmount);
+
+        assertEq(wrapper.balanceOf(address(usd3)), localBefore + shares, "slack-covered deposit wrap must proceed");
+        assertEq(wrapper.previewDeposit(asset.balanceOf(address(usd3))), 0, "wrap must leave only sub-share dust");
+        assertLe(tokenized.totalAssets(), usd3.nav() + 2, "wrap must preserve accounting slack");
+        assertGt(usd3.availableWithdrawLimit(alice), 0, "wrap must not freeze withdrawals");
+    }
+
     function testFuzz_realisticRateDepositsPreserveSlackAndReportClearsPile(
         uint256 rayRate,
         uint256[8] memory depositAmounts
@@ -364,7 +405,11 @@ contract WaUSDCWrapValuePreservationTest is Setup {
         assertLt(expectedNav, reportedAssetsBefore, "loss setup failed");
 
         (bool shouldTendBeforePause,) = usd3.tendTrigger();
-        assertTrue(shouldTendBeforePause, "deploy imbalance should trigger tend before pause");
+        if (overTarget) {
+            assertTrue(shouldTendBeforePause, "pending loss should still signal a required recall");
+        } else {
+            assertFalse(shouldTendBeforePause, "pending loss should suppress a supply-only tend signal");
+        }
 
         wrapper.setPaused(true);
         (bool shouldTendWhilePaused,) = usd3.tendTrigger();

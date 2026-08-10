@@ -111,6 +111,7 @@ contract USD3 is BaseHooksUpgradeable {
     event RingFenceReleased(uint256 assets, uint256 newTotal);
     event MinDepositUpdated(uint256 newMinDeposit);
     event TrancheShareSynced(uint256 trancheShare);
+    event RebalanceDeferred(uint256 waUSDCAmount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -175,6 +176,12 @@ contract USD3 is BaseHooksUpgradeable {
         return IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
     }
 
+    /// @dev Whether live NAV reflects a loss that has not yet been recognized by report(). Exact on every path:
+    /// deposit-path callers run after TokenizedStrategy has added the deposit to totalAssets.
+    function _pendingLoss() internal view returns (bool) {
+        return nav() + 2 < TokenizedStrategy.totalAssets();
+    }
+
     /*//////////////////////////////////////////////////////////////
                     INTERNAL STRATEGY FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -213,7 +220,7 @@ contract USD3 is BaseHooksUpgradeable {
     /// counted at face by nav) when paused, below one share, or — on the deposit/tend path
     /// (enforceSlack) — when the mint's ≤1-unit rounding cost is not covered by realized-but-unreported
     /// interest, so deposit spam cannot walk totalAssets past nav()+2 and freeze withdrawals.
-    function _wrapUSDC(uint256 amount, uint256 pendingCredit, bool enforceSlack) private {
+    function _wrapUSDC(uint256 amount, bool enforceSlack) private {
         if (amount == 0 || Pausable(address(WAUSDC)).paused()) return;
         uint256 shares = WAUSDC.previewDeposit(amount);
         uint256 maxShares = WAUSDC.maxMint(address(this));
@@ -226,26 +233,27 @@ contract USD3 is BaseHooksUpgradeable {
             uint256 gain = WAUSDC.convertToAssets(aggregate + shares) - baseValue;
             if (cost > gain) {
                 uint256 navNow = baseValue + asset.balanceOf(address(this));
-                if (TokenizedStrategy.totalAssets() + pendingCredit + (cost - gain) > navNow) return;
+                if (TokenizedStrategy.totalAssets() + (cost - gain) > navNow) return;
             }
         }
         try WAUSDC.mint(shares, address(this)) {} catch {}
     }
 
     /// @dev Deploy funds to MorphoCredit market respecting maxOnCredit ratio and subordination cap
-    /// @param _amount Amount of asset to deploy
-    function _deployFunds(uint256 _amount) internal override {
-        if (_amount == 0) return;
+    /// @dev TokenizedStrategy calls this before adding the current deposit to totalAssets, so deployment is deferred
+    /// to the post-deposit hook where the pending-loss predicate needs no deposit compensation.
+    function _deployFunds(uint256) internal override {}
 
-        // Wrap USDC to waUSDC. pendingCredit = _amount (the full loose balance) is exact for a fresh deposit
-        // and conservative otherwise: any pre-existing idle inflates it, so the slack gate can only over-skip,
-        // never over-wrap. TokenizedStrategy passes the full loose balance on each deposit, so a deferred pile is
-        // retried by the next deposit and is also cleared by the ungated report-time wrap; no keeper signal is needed.
-        _wrapUSDC(_amount, _amount, true);
+    /// @dev Deploys loose funds after TokenizedStrategy has accounted for the current deposit or mint.
+    function _deployDepositedFunds() private {
+        uint256 amount = asset.balanceOf(address(this));
+        if (amount == 0) return;
+
+        _wrapUSDC(amount, true);
 
         // A paused wrapper blocks every waUSDC transfer, not just mint and burn, so supplying to Morpho would
         // revert and take the deposit with it. Hold the funds locally instead; a later tend or report deploys
-        // them once the pause lifts. Mirrors the guard in _tend.
+        // them once the pause lifts. Mirrors the guard in _applyDeployCap.
         if (Pausable(address(WAUSDC)).paused()) return;
 
         uint256 maxOnCreditRatio = maxOnCredit();
@@ -318,7 +326,7 @@ contract USD3 is BaseHooksUpgradeable {
 
         morphoCredit.accrueInterest(params);
 
-        if (!TokenizedStrategy.isShutdown()) _wrapUSDC(asset.balanceOf(address(this)), 0, false);
+        if (!TokenizedStrategy.isShutdown()) _wrapUSDC(asset.balanceOf(address(this)), false);
 
         return nav();
     }
@@ -329,10 +337,8 @@ contract USD3 is BaseHooksUpgradeable {
         if (TokenizedStrategy.isShutdown()) {
             return;
         }
-        if (Pausable(address(WAUSDC)).paused()) return;
-
         // First wrap any idle USDC to waUSDC
-        _wrapUSDC(_totalIdle, 0, true);
+        _wrapUSDC(_totalIdle, true);
 
         _applyDeployCap(true);
     }
@@ -342,6 +348,8 @@ contract USD3 is BaseHooksUpgradeable {
     /// deployment from local waUSDC only when supplying is permitted.
     /// @param allowSupply Whether deploying additional local waUSDC is allowed
     function _applyDeployCap(bool allowSupply) private {
+        if (Pausable(address(WAUSDC)).paused()) return;
+
         // Calculate based on waUSDC amounts
         uint256 deployedWaUSDC = suppliedWaUSDC();
         uint256 localWaUSDC = balanceOfWaUSDC();
@@ -383,20 +391,25 @@ contract USD3 is BaseHooksUpgradeable {
         if (deployed > target) {
             return (deployed - target) > threshold;
         }
-        if (target > deployed && localWaUSDC > 0) {
+        if (target > deployed && localWaUSDC > 0 && !_pendingLoss()) {
             return (target - deployed) > threshold;
         }
         return false;
     }
 
-    /// @dev Helper function to supply waUSDC to MorphoCredit
+    /// @dev Helper function to supply waUSDC to MorphoCredit. Skips silently under a pending loss (report() owns
+    /// recognition); a supply the market rejects is deferred to a later tend or report and surfaced by the event.
     /// @param amount Amount of waUSDC to supply
     /// @return supplied Actual amount supplied (for consistency with withdraw helper)
     function _supplyToMorpho(uint256 amount) internal returns (uint256 supplied) {
-        if (amount == 0) return 0;
+        if (amount == 0 || _pendingLoss()) return 0;
 
-        morphoCredit.supply(_marketParams, amount, 0, address(this), "");
-        return amount;
+        try morphoCredit.supply(_marketParams, amount, 0, address(this), "") returns (uint256, uint256) {
+            return amount;
+        } catch {
+            emit RebalanceDeferred(amount);
+            return 0;
+        }
     }
 
     /// @dev Helper function to withdraw waUSDC from MorphoCredit
@@ -453,7 +466,7 @@ contract USD3 is BaseHooksUpgradeable {
         // lifts nav() back over totalAssets on its own, and report() re-bases totalAssets to nav definitively. No
         // funds are at risk, so the residual withdraw-side drift is accepted rather than tracked in mutable state
         // under this guard.
-        if (nav() + 2 < totalAssets) {
+        if (_pendingLoss()) {
             return 0;
         }
 
@@ -557,6 +570,8 @@ contract USD3 is BaseHooksUpgradeable {
             ringFencedLiquidity += assets;
             emit RingFencedLiquidityIncreased(receiver, assets, ringFencedLiquidity);
         }
+
+        _deployDepositedFunds();
     }
 
     /**
