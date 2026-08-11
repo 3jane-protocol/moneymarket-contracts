@@ -30,6 +30,7 @@ library MathLib {
 
     /// @dev Returns (`x` * `y`) / `d` rounded up.
     function mulDivUp(uint256 x, uint256 y, uint256 d) internal pure returns (uint256) {
+        require(d > 0, "division by zero");
         return (x * y + (d - 1)) / d;
     }
 
@@ -63,6 +64,7 @@ library MathLib {
     /// @return The continuously compounded rate per second that would produce this growth (scaled by WAD)
     function wInverseTaylorCompounded(uint256 x, uint256 n) internal pure returns (uint256) {
         require(x >= WAD, "ln undefined");
+        require(n > 0, "duration must be > 0");
 
         uint256 firstTerm = x - WAD;
         uint256 secondTerm = wMulDown(firstTerm, firstTerm);
