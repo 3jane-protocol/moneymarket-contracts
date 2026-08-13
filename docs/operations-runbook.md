@@ -14,12 +14,29 @@ These are live-contract procedures. Every step names its access control, because
 
 Do not think of this as a race against a distant recovery event. Ordinary interest — Aave yield on recalled waUSDC plus accrual on the outstanding borrow book — is enough to make the very next report profitable, so the leak begins at the next report rather than at markdown reversal. Markdown reversal determines the *size* of the leak, not whether it starts.
 
-**The control is that `report()` and `syncTrancheShare()` are `onlyKeepers`.** No third party can force a report during the window, and holding reports is cheap because pending profit blocks neither senior withdrawals nor anything else. `syncTrancheShare()` now reports under the currently stored fee before writing the configured fee, so calling it while the wiped tranche's old fee is nonzero would realize exactly the windfall this procedure prevents. **The production keeper relayer auto-syncs the tranche fee, and it holds a keeper role — so `onlyKeepers` does not protect you here.** Halting the relayer's reporting *and* its tranche-fee sync is step zero of this procedure, not a precaution; keep it halted until the fee bits read zero. Then:
+**The control is that `report()` and `syncTrancheShare()` are `onlyKeepers`.** No third party can force a report during the window, and holding reports is cheap because pending profit blocks neither senior withdrawals nor anything else. **The production keeper relayer holds a keeper role and auto-syncs the tranche fee, so `onlyKeepers` does not protect you here.** Halt the relayer's reporting on recognizing the wipe and keep it halted until the fee bits read zero. Then:
 
 1. Set `TRANCHE_SHARE_VARIANT` to `0` via `ProtocolConfig.setConfig` (`src/ProtocolConfig.sol:83`, owner-gated — a governance action through the 24h params timelock, so it is not immediate; start it as soon as a wiping loss is recognized rather than waiting for recovery to look imminent).
-2. Once that lands, have USD3 management call the inherited `setPerformanceFee(0)` through the TokenizedStrategy interface. This deliberately makes the uncheckpointed fee change that is correct only for a wiped junior tranche: pending profit belongs to the seniors that absorbed the excess loss. **Step 1 has no effect on reports until this runs.**
-3. Verify the fee bits are zero, then have a keeper call `USD3.syncTrancheShare()`. Its mandatory checkpoint now runs at the already-zero old fee and writes the configured zero again.
-4. Resume ordinary reporting. If a report or sync lands before step 2, the old tranche share is still live. Never use this procedure for a partial junior loss; zeroing the fee without a checkpoint would misallocate profit away from a surviving junior tranche.
+2. Once that lands, have a keeper call `USD3.syncTrancheShare()`, which writes the configured zero into the fee bits. **Step 1 has no effect on reports until this runs.**
+3. Verify the fee bits are zero, then resume reporting. If a report lands between steps 1 and 2, the old tranche share is still live and the windfall is realized.
+
+In this wiped state the retroactive reprice described below is the *desired* outcome — pending profit belongs to the seniors that absorbed the excess loss — so this is the one procedure where syncing before reporting is correct. Never apply it to a partial junior loss.
+
+## Changing `TRANCHE_SHARE_VARIANT` outside an incident
+
+**Trigger.** Any routine change to the tranche share.
+
+**What the contracts do.** `syncTrancheShare()` (`src/usd3/USD3.sol`) writes the new share straight into the performance-fee bits and deliberately does **not** report first. `TokenizedStrategy.report()` applies whichever fee is live at execution time to the entire profit interval since the previous report (`lib/tokenized-strategy/src/TokenizedStrategy.sol:1119-1161`), so the new share is charged against profit that accrued under the old one. Raising the share transfers already-earned senior yield to sUSD3; lowering it transfers already-earned junior yield to seniors.
+
+This is accepted as an operator-managed policy rather than a code boundary — forcing a report inside `syncTrancheShare` would couple a parameter change to loss recognition and junior-share burning, which is a worse footgun than the reprice. Guardian filed it as round-3 `A/M-15`; it is recorded as accepted residual risk, not remediated.
+
+**Procedure.** For every tranche-share change:
+
+1. **Halt the relayer's tranche-fee sync before the timelocked config change executes.** The relayer can otherwise land the first sync itself, on its own cadence, with no preceding report — which is exactly the failure this procedure exists to prevent, and it is not an ordering you control once the config value is live.
+2. Call `USD3.report()` **in the same transaction or multisig batch** as the following `syncTrancheShare()`, in that order. Same-block is exact for profit visible to USD3 accounting: `report()` writes the current NAV to `totalAssets`, so the next report cannot recharge it. Split across blocks, the interval between them is repriced.
+3. Resume the relayer only after confirming the fee bits match the configured value.
+
+**What this procedure does not cover.** Borrower-local premium is not enumerated by `report()`; it enters supply assets only when `accruePremiumsForBorrowers` runs (`src/MorphoCredit.sol:146`), which is permissionless and list-driven. Premium earned under the old share but materialized after the change is reported at the new one, and no ordering discipline available to the operator closes that. Sweeping the borrower list immediately before step 2 narrows it. Note also that the timelocked config change is publicly observable, so entry into the favoured tranche during the 24h window is possible and is likewise not closed by this procedure.
 
 **Restoring senior deployment.** Setting `MIN_SUSD3_BACKING_RATIO` to `0` makes `_subordinationDeployCapWaUSDC` return `type(uint256).max` (`USD3.sol:195-196`) and unblocks deployment. This removes the first-loss buffer at exactly the moment tail risk has materialized, so treat it as a deliberate override requiring a decision, not a default step.
 

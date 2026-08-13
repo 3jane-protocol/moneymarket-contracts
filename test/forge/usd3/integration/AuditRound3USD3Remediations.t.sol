@@ -29,33 +29,6 @@ contract USD3AuditRound3FeeAndUnlockTest is Setup {
         asset.approve(address(strategy), type(uint256).max);
     }
 
-    function test_syncTrancheShareReportsPendingProfitAtOldRate() public {
-        uint16 oldTrancheShare = 1_000;
-        uint256 pendingProfit = 100_000e6;
-
-        vm.startPrank(management);
-        strategy.setPerformanceFee(oldTrancheShare);
-        strategy.setPerformanceFeeRecipient(performanceFeeRecipient);
-        vm.stopPrank();
-
-        vm.prank(alice);
-        strategy.deposit(1_000_000e6, alice);
-        airdrop(asset, address(strategy), pendingProfit);
-
-        uint256 storedAssetsBefore = strategy.totalAssets();
-        uint256 feeSharesBefore = strategy.balanceOf(performanceFeeRecipient);
-        assertGt(usd3.nav(), storedAssetsBefore, "airdrop should leave profit pending");
-
-        protocolConfig.setConfig(ProtocolConfigLib.TRANCHE_SHARE_VARIANT, 0);
-        vm.prank(keeper);
-        usd3.syncTrancheShare();
-
-        uint256 feeSharesMinted = strategy.balanceOf(performanceFeeRecipient) - feeSharesBefore;
-        assertEq(strategy.totalAssets(), usd3.nav(), "sync should checkpoint pending profit");
-        assertGt(feeSharesMinted, 0, "old nonzero tranche share should receive the checkpointed profit");
-        assertEq(strategy.performanceFee(), 0, "sync should install the new tranche share after the checkpoint");
-    }
-
     function test_zeroProfitUnlockRevertsWhileLossIsPending() public {
         setMaxOnCredit(10_000);
 
