@@ -359,6 +359,60 @@ contract NotificationVaultTest is Setup {
         assertEq(ERC20(address(vault)).balanceOf(bob), shares / 4);
     }
 
+    function test_startCooldownRevertsWhileBypassed() public {
+        uint256 shares = _depositToVault(market, 100e6);
+
+        vm.prank(management);
+        vault.setCooldownBypass(market, true);
+
+        vm.prank(market);
+        vm.expectRevert(INotificationVault.CooldownBypassed.selector);
+        vault.startCooldown(shares);
+    }
+
+    function test_setCooldownBypassGrantClearsExistingCooldown() public {
+        uint256 shares = _depositToVault(alice, 100e6);
+
+        vm.prank(alice);
+        vault.startCooldown(shares);
+
+        vm.prank(management);
+        vault.setCooldownBypass(alice, true);
+
+        (uint256 cooldownEnd, uint256 windowEnd, uint256 cooldownShares) = vault.getCooldownStatus(alice);
+        assertEq(cooldownEnd, 0, "bypass grant retained the cooldown end");
+        assertEq(windowEnd, 0, "bypass grant retained the cooldown window");
+        assertEq(cooldownShares, 0, "bypass grant retained the cooldown ticket");
+    }
+
+    function test_revokedBypassCannotReuseStaleCooldownOnFreshShares() public {
+        vm.prank(management);
+        vault.setCooldownBypass(market, true);
+
+        uint256 shares = _depositToVault(market, 100e6);
+
+        vm.prank(market);
+        (bool cooldownStarted,) = address(vault).call(abi.encodeCall(vault.startCooldown, (shares)));
+
+        vm.prank(market);
+        ERC20(address(vault)).transfer(bob, shares);
+        assertEq(ERC20(address(vault)).balanceOf(market), 0);
+
+        vm.prank(management);
+        vault.setCooldownBypass(market, false);
+
+        skip(COOLDOWN + 1);
+        uint256 freshShares = _depositToVault(market, 100e6);
+
+        assertEq(vault.availableWithdrawLimit(market), 0, "stale cooldown quota re-armed against fresh shares");
+
+        vm.prank(market);
+        vm.expectRevert();
+        vault.redeem(freshShares, market, market);
+
+        assertFalse(cooldownStarted, "startCooldown succeeded while bypassed");
+    }
+
     function test_setCooldownBypassOnlyManagement() public {
         vm.prank(alice);
         vm.expectRevert();

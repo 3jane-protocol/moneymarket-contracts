@@ -255,6 +255,11 @@ contract sUSD3 is BaseHooksUpgradeable {
             return 0;
         }
 
+        // Block deposits if USD3 has unrealized losses
+        if (USD3(address(asset)).nav() + 2 < IStrategy(address(asset)).totalAssets()) {
+            return 0;
+        }
+
         // Get the subordinated debt cap in USDC terms
         uint256 subordinatedDebtCapUSDC = getSubordinatedDebtCapInUSDC();
 

@@ -73,7 +73,10 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
     /// @dev Mutable risk configuration. Per-epoch exit capacity is `exitCapBps` of the greater of the configured
     /// protocol cap and live active commitment; derivation and assignment semantics live at `_assignExitMaturity`.
-    /// `maxAuctionAwardBps` is the runtime auction-kicker off-switch. `slashFeeBps` is charged on auction-awarded
+    /// `maxAuctionAwardBps` bounds the auction kicker, and zeroing it disables the kicker only if the change lands
+    /// before the funding deadline: `setMaxAuctionAwardBps` is `synced`, so `_syncGlobal` may finalize the slash and
+    /// open the auction slot before the setter body runs, after which the setter reverts `InvalidPhase`. It is a
+    /// pre-deadline control, not a post-deadline off-switch. `slashFeeBps` is charged on auction-awarded
     /// slashed margin and capped by the unawarded surplus.
     RiskConfig internal _riskConfig;
 

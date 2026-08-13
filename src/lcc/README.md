@@ -96,6 +96,12 @@ by their own setter: `setRiskCaps` re-checks `protocolCommitmentCap`, `userCommi
 and revert `InvalidPhase` while an auction is live. `setRiskCaps` likewise rejects any protocol-cap change during a
 live auction, while permitting changes to its other fields if the protocol cap stays fixed.
 
+**Change these before the funding deadline.** All three setters are `synced`, and `_syncGlobal` runs before the
+setter body — so once the deadline has passed, the setter's own call can finalize the slash and open the auction
+slot, and then revert `InvalidPhase` against the slot it just created. The auction is deliberately not disableable
+once its window has opened; treat `maxAuctionAwardBps` and `slashFeeBps` as pre-deadline controls and land any
+change while the epoch is still in `Funding` or earlier.
+
 | Field                     | Meaning                                                                  | Validation bound                                     |
 | ------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------- |
 | `owner`                   | Vault owner                                                              | non-zero                                             |

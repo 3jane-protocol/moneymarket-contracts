@@ -784,6 +784,13 @@ contract USD3 is BaseHooksUpgradeable {
         emit MinDepositUpdated(_minDeposit);
     }
 
+    /// @notice Set the profit unlock time without releasing locked profit ahead of an unreported loss.
+    /// @dev Nonzero updates retain the TokenizedStrategy implementation's behavior.
+    function setProfitMaxUnlockTime(uint256 _profitMaxUnlockTime) external onlyManagement {
+        require(_profitMaxUnlockTime != 0 || !_pendingLoss(), "!loss");
+        _delegateCall(msg.data);
+    }
+
     /*//////////////////////////////////////////////////////////////
                         KEEPER FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -812,6 +819,13 @@ contract USD3 is BaseHooksUpgradeable {
         // Read the tranche share variant (yield share to sUSD3 in basis points)
         uint256 trancheShare = config.getTrancheShareVariant();
         require(trancheShare <= 10_000);
+
+        // Settle pending profit or loss under the tranche share that applied before this update.
+        uint256 preSupply = TokenizedStrategy.totalSupply();
+        uint256 preAssets = TokenizedStrategy.totalAssets();
+        _preReportHook();
+        (, uint256 loss) = _reportInternal();
+        _postReportHook(loss, preAssets, preSupply);
 
         // Get the storage slot for performanceFee using the library
         bytes32 targetSlot = TokenizedStrategyStorageLib.profitConfigSlot();

@@ -799,7 +799,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             uint256 available = totalSupplyAssets > minAssets ? totalSupplyAssets - minAssets : 0;
 
             // Preserve the minimum supply share price and wind down if the markdown reaches the floor.
-            if (increase > available) {
+            if (increase >= available) {
                 increase = available;
                 marketInWindDown[id] = true;
             }
@@ -926,7 +926,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             uint256 protectedAssets = minAssets < totalSupplyAssets ? minAssets : totalSupplyAssets;
             uint256 remainingAssets = totalSupplyAssets - loss;
 
-            if (remainingAssets < protectedAssets) {
+            if (remainingAssets <= protectedAssets) {
                 remainingAssets = protectedAssets;
                 marketInWindDown[id] = true;
             }
