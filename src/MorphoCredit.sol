@@ -161,40 +161,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /* INTERNAL FUNCTIONS - PREMIUM CALCULATIONS */
 
-    /// @dev Calculates the premium amount to be added based on observed base rate growth
-    /// @param borrowAssetsAtLastAccrual The borrower's assets at last premium accrual
-    /// @param borrowAssetsCurrent The borrower's current assets (including base interest)
-    /// @param premiumRate The borrower's premium rate per second (scaled by WAD)
-    /// @param elapsed Time elapsed since last accrual
-    /// @return premiumAmount The premium amount to add
-    function _calculateBorrowerPremiumAmount(
-        uint256 borrowAssetsAtLastAccrual,
-        uint256 borrowAssetsCurrent,
-        uint256 premiumRate,
-        uint256 elapsed
-    ) internal pure returns (uint256 premiumAmount) {
-        // Prevent division by zero
-        if (borrowAssetsAtLastAccrual == 0 || elapsed == 0) return 0;
-
-        // Calculate the actual base growth
-        uint256 baseGrowthActual;
-        uint256 baseRatePerSecond;
-        if (borrowAssetsCurrent > borrowAssetsAtLastAccrual) {
-            baseGrowthActual = borrowAssetsCurrent - borrowAssetsAtLastAccrual;
-            baseRatePerSecond = borrowAssetsCurrent.wDivUp(borrowAssetsAtLastAccrual).wInverseTaylorCompounded(elapsed);
-        }
-
-        // Combine base rate with premium rate (both per-second)
-        uint256 combinedRate = baseRatePerSecond + premiumRate;
-
-        // Calculate compound growth using wTaylorCompounded
-        uint256 totalGrowth = combinedRate.wTaylorCompounded(elapsed);
-        uint256 totalGrowthAmount = borrowAssetsAtLastAccrual.wMulDown(totalGrowth);
-
-        // Premium amount is the difference between total growth and actual base growth
-        premiumAmount = totalGrowthAmount > baseGrowthActual ? totalGrowthAmount - baseGrowthActual : 0;
-    }
-
     /// @dev Calculate ongoing premium and penalty rate if already past grace period
     /// @return premiumAmount The calculated premium amount (including penalty if applicable)
     function _calculateOngoingPremiumAndPenalty(
@@ -224,9 +190,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             }
         }
 
-        premiumAmount = _calculateBorrowerPremiumAmount(
-            premium.borrowAssetsAtLastAccrual, borrowAssetsCurrent, totalPremiumRate, elapsed
-        );
+        premiumAmount = borrowAssetsCurrent.wMulDown(totalPremiumRate.wTaylorCompounded(elapsed));
     }
 
     /// @dev Calculate initial penalty when first transitioning into penalty period
@@ -239,7 +203,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @dev Penalty calculation logic:
     /// 1. Only applies if status is Delinquent or Default
     /// 2. Only for first accrual after grace period ends (lastAccrualTime <= cycleEndDate + gracePeriod)
-    /// 3. Uses ending balance from obligation as the principal
+    /// 3. Uses the greater of current debt plus premium and the obligation's ending balance as the principal
     /// 4. Calculates penalty from cycle end date to now
     /// 5. Adds basePremiumAmount to current assets for accurate compounding
     function _calculateInitialPenalty(
@@ -266,9 +230,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (elapsed > MAX_ELAPSED_TIME) {
             elapsed = MAX_ELAPSED_TIME;
         }
-        penaltyAmount = _calculateBorrowerPremiumAmount(
-            obligation.endingBalance, borrowAssetsCurrent + basePremiumAmount, terms.irp, elapsed
-        );
+        uint256 currentDebtWithPremium = borrowAssetsCurrent + basePremiumAmount;
+        uint256 penaltyPrincipal =
+            currentDebtWithPremium > obligation.endingBalance ? currentDebtWithPremium : obligation.endingBalance;
+        penaltyAmount = penaltyPrincipal.wMulDown(terms.irp.wTaylorCompounded(elapsed));
     }
 
     /// @dev Update position and market with premium shares
@@ -351,7 +316,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// - Captures the current borrow amount after all accruals
     /// - Updates borrowAssetsAtLastAccrual to this new value
     /// - Ensures next premium calculation starts from correct base
-    /// - Only updates if borrower has a premium rate set
     /// @dev Called after every borrow, repay, or liquidation to maintain accuracy
     function _snapshotBorrowerPosition(Id id, address borrower) internal {
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
