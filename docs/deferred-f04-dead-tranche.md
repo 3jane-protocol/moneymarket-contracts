@@ -15,9 +15,36 @@ When a MorphoCredit loss exceeds sUSD3's USD3 balance, `_postReportHook` (`USD3.
 Deferred. Three verified facts and one judgement carry it:
 
 - **USD3 degrades rather than breaks** (fact). With a zero cap, `_applyDeployCap` withdraws from MorphoCredit bounded by available liquidity and cannot revert (`_withdrawFromMorpho` caps at `min(position, liquidity)` and returns 0 when none, `USD3.sol:411-414`), so reports complete and senior withdrawals stay live — the `availableWithdrawLimit` halt gate fires only on unrealized *loss* (`nav() + 2 < totalAssets`, `:456`), never in the profit direction. The recall is liquidity-bounded, not total: borrowed funds return only as borrowers repay, drained progressively by `_tendTrigger`, which stays armed while anything remains deployed (`:375`).
-- **The facility stops writing new credit; it does not stop earning** (fact). Recalled waUSDC keeps accruing Aave passive yield and the legacy borrow book keeps accruing interest. The deferral cost is the credit spread on recallable funds.
-- **Consequences 1 and 2 are static** (fact). The deposit rejection and the zero cap are pure functions of the wiped state — no counter, timer, or balance drifts while the tranche sits dead. Both contracts are upgradeable behind the 7-day timelock, so an upgrade months later achieves exactly what one now would. Deferring costs foregone spread, not recoverability.
-- **The urgency call** (judgement): a facility earning passive yield with live senior exits is materially different from a bricked vault, so this does not warrant an emergency ship.
+- ~~**The facility stops writing new credit; it does not stop earning** (fact).~~ **CORRECTED — see the correction note below. The first clause is false.** Recalled waUSDC does keep accruing Aave passive yield and the legacy borrow book keeps accruing interest, so the earning half stands.
+- ~~**Consequences 1 and 2 are static** (fact).~~ **CORRECTED — see below. Consequence 2 is not static.** What survives: both contracts are upgradeable behind the 7-day timelock, so an upgrade months later still achieves what one now would, and deferring costs foregone spread rather than recoverability.
+- **The urgency call** (judgement): a facility earning passive yield with live senior exits is materially different from a bricked vault, so this does not warrant an emergency ship. **This judgement still holds, but on narrower grounds than originally written** — see the correction.
+
+### Correction — two "facts" above were wrong (Guardian round 4, `B/M-25`)
+
+Guardian's `B/M-25` falsifies the premises, not the deferral. Recorded here because this document exists so
+the analysis is never re-researched, and re-researching it from the uncorrected text would reproduce the
+error.
+
+**"The facility stops writing new credit" is false.** A wiped junior tranche drives
+`_subordinationDeployCapWaUSDC` to zero (`src/usd3/USD3.sol:191-209`) and report/tend recall available
+liquidity — but nothing stops a *borrower* drawing. A Morpho repayment returns waUSDC and reduces debt
+before token collection (`src/Morpho.sol:275-305`), and `_beforeBorrow` (`src/MorphoCredit.sol:601-632`)
+checks helper, wind-down, core pause, cycle status, debt cap and minimum borrow — but never USD3's live
+junior cap or a pending recall. A Current borrower with headroom can therefore reborrow the liquidity a
+repayment just recreated, before tend runs. Credit keeps being written from a dead tranche.
+
+**"Consequences 1 and 2 are static" is false for consequence 2.** The zero cap is not a pure function of the
+wiped state: repayment recreates borrowable liquidity, so the gap between the zero cap and actual deployed
+exposure drifts with borrower activity while the tranche sits dead. Consequence 1 (deposit rejection) is
+genuinely static.
+
+**What this changes.** The deferral itself survives — the exposure is dormant at
+`MIN_SUSD3_BACKING_RATIO = 0`, since the "wipe drives the cap to zero" policy is disabled outright, and the
+repayment subsystem is unused. But the *procedure* was wrong: before any wipe-and-recall sequence, require
+`IS_PAUSED` or `DEBT_CAP = 0` so the recreated liquidity cannot be redrawn. A structural fix — a borrow
+admission check against USD3's live cap or a pending recall — is a **prerequisite of ever setting a nonzero
+backing ratio with live credited borrowers**, not of today. Note it would sit in MorphoCredit; margin is
+386 bytes as of `d0d7bb37` (it was 29 before the premium rewrite).
 
 Consequence 3 is the only irreversible leg and is handled operationally: set `TRANCHE_SHARE_VARIANT` to 0 (`ProtocolConfig.setConfig`, `:83`, owner = 24h params timelock), then keeper-call `USD3.syncTrancheShare()` (`USD3.sol:793`). See `docs/operations-runbook.md`. Sizing the exposure precisely:
 

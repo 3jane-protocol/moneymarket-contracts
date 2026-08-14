@@ -42,6 +42,8 @@ This is accepted as an operator-managed policy rather than a code boundary — f
 
 **What none of this fixes.** The junior tranche remains unrecapitalizable until F-04 part 2 ships. Nothing revives sUSD3 short of that or a shutdown and redeploy. Reverse step 1 only once the fix is live and the tranche has been reset.
 
+**Before any wipe-and-recall sequence, stop borrowing first.** The F-04 record previously stated that a wiped tranche "stops writing new credit" and that the zero deployment cap is static. Both are false (Guardian round-4 `B/M-25`, corrected in `docs/deferred-f04-dead-tranche.md`). A Morpho repayment returns waUSDC and reduces debt before token collection (`src/Morpho.sol:275-305`), and `_beforeBorrow` (`src/MorphoCredit.sol:601-632`) never checks USD3's live junior cap or a pending recall — so a Current borrower with headroom can redraw the liquidity a repayment just recreated, ahead of tend. Set `IS_PAUSED`, or `DEBT_CAP` to `0`, **before** recalling, and keep it set until the recall has completed. This is dormant at the live configuration only because `MIN_SUSD3_BACKING_RATIO` is `0`, which disables the wipe-drives-cap-to-zero policy outright; it becomes live the moment that ratio is set nonzero with credited borrowers outstanding.
+
 ## Loss report landing during a waUSDC pause
 
 **Trigger.** A `USD3.report()` recognizes a MorphoCredit loss while the waUSDC wrapper is paused.
