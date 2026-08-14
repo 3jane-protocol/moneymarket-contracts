@@ -202,6 +202,77 @@ contract PremiumCompoundingTest is BaseTest {
         assertLt(finalDebt, currentDebt + unclampedPremium, "elapsed time must be clamped to MAX_ELAPSED_TIME");
     }
 
+    // Anti-griefing guard: spamming accruePremiumsForBorrowers every few seconds must not suppress
+    // premium yield. Two properties make this hold, and this test breaks if either is lost:
+    // 1. Sub-threshold accruals (totalPremium < MIN_PREMIUM_THRESHOLD) return before the
+    //    lastAccrualTime write, so elapsed time is deferred and keeps accumulating, not discarded.
+    // 2. Premium is charged on current borrow assets, not borrowAssetsAtLastAccrual, so the
+    //    unconditional snapshot rewrite performed on every accruePremiumsForBorrowers call cannot
+    //    shrink the amount charged.
+    function testAccrualSpamCannotSuppressPremiumYield() public {
+        // Zero base rate isolates premium: all debt growth below is charged premium.
+        configurableIrm.setApr(0);
+
+        // The 1-wei MIN_PREMIUM_THRESHOLD is only reachable per-call with small debt; lift the
+        // dust floor so the borrower can sit in the sub-threshold regime.
+        vm.prank(OWNER);
+        protocolConfig.setConfig(keccak256("MIN_BORROW"), 0);
+
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
+
+        // 2.5e9 per-second WAD (~7.9% APR) on 1e7 wei of debt accrues exactly 0.25 wei of premium
+        // per 10-second step, so three out of every four spam calls are sub-threshold.
+        uint256 premiumRate = 2.5e9;
+        vm.prank(address(creditLine));
+        creditLine.setCreditLine(id, BORROWER, 10_000e18, uint128(premiumRate));
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1e7, 0, BORROWER, BORROWER);
+
+        uint256 debtStart = _currentBorrowerDebt();
+        (uint128 accrualClockStart,,) = morphoCredit.borrowerPremium(id, BORROWER);
+
+        uint256 step = 10 seconds;
+        uint256 totalPeriod = 3 days;
+
+        // First spam call is sub-threshold: it must charge nothing AND leave the accrual clock
+        // untouched, so the elapsed time it covers is deferred rather than discarded.
+        vm.warp(block.timestamp + step);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        (uint128 accrualClockAfterOne,,) = morphoCredit.borrowerPremium(id, BORROWER);
+        assertEq(accrualClockAfterOne, accrualClockStart, "sub-threshold accrual must not advance the clock");
+        assertEq(_currentBorrowerDebt(), debtStart, "sub-threshold accrual must charge nothing");
+
+        for (uint256 elapsed = step; elapsed < totalPeriod; elapsed += step) {
+            vm.warp(block.timestamp + step);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        }
+
+        uint256 totalCharged = _currentBorrowerDebt() - debtStart;
+        uint256 singleAccrualReference = debtStart.wMulDown(premiumRate.wTaylorCompounded(totalPeriod));
+
+        assertGt(totalCharged, 0, "spammed accrual must still charge premium");
+
+        // Tolerance 0.5% relative. Legitimate drift between the spammed and single-shot figures is
+        // (a) Taylor partitioning: the single accrual carries the x^2/2 and x^3/6 compounding terms
+        //     over the full 3 days (~3e-4 relative here) that per-slice charging realizes only
+        //     through debt growth, and
+        // (b) rounding: each charging event floors via wMulDown (losing the sub-wei residual, under
+        //     0.25 wei per event with these parameters) and share conversion rounds by 1 wei.
+        // Both are orders of magnitude inside 0.5%, while the guarded failure -- yield collapsing
+        // toward zero under spam -- is a 100% deviation.
+        assertApproxEqRel(
+            totalCharged, singleAccrualReference, 0.005e18, "spam must not suppress premium versus a single accrual"
+        );
+    }
+
+    function _currentBorrowerDebt() internal view returns (uint256) {
+        Position memory pos = morpho.position(id, BORROWER);
+        Market memory market = morpho.market(id);
+        return uint256(pos.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
+    }
+
     function testMonthlyPremiumAccrualAppliesStableRateToCurrentDebt() public {
         // Set base rate to 10% APR
         configurableIrm.setApr(0.1e18);

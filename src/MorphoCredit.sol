@@ -384,8 +384,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
         uint128 oldRate = premium.rate;
 
-        // Set the new rate
+        // Set the new rate and reset the accrual clock so the new rate applies
+        // only from this point; premium under the old rate was accrued above.
         premium.rate = newRate;
+        if (borrowShares > 0) premium.lastAccrualTime = uint128(block.timestamp);
         borrowerPremium[id][borrower] = premium;
 
         // Take snapshot after setting the new rate if there are borrow shares
