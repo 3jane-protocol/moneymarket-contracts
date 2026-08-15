@@ -289,21 +289,34 @@ contract LCCExitTest is LCCBase {
         }
     }
 
-    function testOverflowFillToCapRejectsNextNewExitBucket() public {
+    function testFullListFallbackPreservesDeferralPrecedenceAndReusesTrackedBucket() public {
         _deployOverflowBucketVault();
         uint256 activeCommitment = _buildExitBucketLadder();
         _assertExitBucketCount(MAX_EXIT_MATURITY_BUCKETS);
 
-        (address overflow,) = _depositNextExactFitLadderAccount(MAX_EXIT_MATURITY_BUCKETS, activeCommitment);
+        (address overflow, uint256 overflowCommitment) =
+            _depositNextExactFitLadderAccount(MAX_EXIT_MATURITY_BUCKETS, activeCommitment);
 
-        // The unbounded assignment would open a 129th bucket, but the caller's narrower consent takes precedence.
+        // First-fit needs the untracked 129th maturity; the caller's narrower consent takes precedence over the
+        // full-list aggregate fallback.
         vm.expectRevert(LCCErrorsLib.ExitDeferralExceeded.selector);
         vm.prank(overflow);
         vault.requestExit(MAX_EXIT_MATURITY_BUCKETS - 1, type(uint256).max);
 
-        vm.expectRevert(LCCErrorsLib.ExitCapacityReached.selector);
+        uint256 gasBefore = gasleft();
         vm.prank(overflow);
-        vault.requestExit(type(uint256).max, type(uint256).max);
+        uint256 maturity = vault.requestExit(type(uint256).max, type(uint256).max);
+        uint256 gasUsed = gasBefore - gasleft();
+
+        emit log_named_uint("full-list fallback requestExit gas", gasUsed);
+        assertEq(maturity, MAX_EXIT_DELAY_EPOCHS);
+        assertEq(
+            vault.exitBucketCommitmentByMaturity(maturity),
+            LADDER_INITIAL_CAP * FLOOR_EXIT_CAP_BPS / BPS + overflowCommitment
+        );
+        _assertExitBucketCount(MAX_EXIT_MATURITY_BUCKETS);
+        assertLt(gasUsed, BLOCK_GAS_LIMIT);
+        assertGt(BLOCK_GAS_LIMIT - gasUsed, GAS_HEADROOM);
     }
 
     function testExitIntoExistingBucketSucceedsAtCap() public {

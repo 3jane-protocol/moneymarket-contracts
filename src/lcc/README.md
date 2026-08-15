@@ -44,7 +44,7 @@ funds calls and auction fills. The worked examples below use symbolic round numb
 | `LCCVaultFactory.sol`            | Owner-gated `BeaconProxy` deployment + provenance registry                |
 | `interfaces/ILCCVault.sol`       | External API, structs, and per-function NatSpec (the API reference)       |
 | `libraries/LCCAuctionLib.sol`    | Stateless auction pricing math; externally linked into the implementation |
-| `libraries/LCCConfigLib.sol`     | Externally linked validation and derived auction step duration            |
+| `libraries/LCCConfigLib.sol`     | Externally linked validation, exit assignment, and derived timing         |
 | `libraries/LCCAccountLib.sol`    | Pure in-memory account transitions (activate, mature, default, clear)     |
 | `libraries/LCCBucketListLib.sol` | Sparse epoch-keyed bucket lists with swap-remove and 1-based index maps   |
 | `libraries/LCCTypesLib.sol`      | Packed storage structs (upgrade-frozen layout)                            |
@@ -635,11 +635,28 @@ it unchanged, and no funding touches it.
 live utilization is deliberately path-dependent. Capacity is recomputed for every request, so it is never below
 the configured-cap value at that request, but it can decline as `activeCommitment` declines through amortizing
 funding or slash finalization. `activeCommitment` is the aggregate and can include flooring-dust return commitment
-not attributable to any account, which only widens capacity. Funded or slashed amounts free bucket room retroactively. A request
-larger than the whole per-epoch capacity takes the first bucket with any remaining room.
+not attributable to any account, which only widens capacity. Funded or slashed amounts free bucket room
+retroactively. A request larger than the whole per-epoch capacity takes the first bucket with any remaining room.
 During a live auction, capacity uses the post-slash trough before settlement restores return commitment, so a
 non-defaulting exiter can be deferred farther than the same request just after settlement; this is a fairness and
 UX artifact, not an accounting or fund-safety issue.
+
+Per-bucket capacity is hard during normal first-fit assignment. Only when all 128 maturity-list keys are occupied
+and first-fit would require a new key does assignment reuse an eligible tracked maturity and deliberately soften
+that individual limit. Eligible keys lie within the caller's deferral window. Admission requires their scheduled
+commitment plus the account to fit `N * C`, where `C` is the runtime per-bucket capacity and `N` is the eligible
+tracked-key count. This is the only operative aggregate bound. Because total scheduled commitment plus the
+requesting account cannot exceed the live commitment denominator, admission is unconditional once
+`N >= ceil(BPS / exitCapBps)` (32 at `MIN_EXIT_CAP_BPS`), apart from base-unit flooring; the bound therefore has
+teeth only for narrow deferral windows. The least-loaded eligible maturity wins, with the earliest breaking ties;
+the account is never split. More precisely, let `S` be eligible scheduled commitment before the request and `A` be
+the admitted account's actual commitment. The aggregate gate gives `S + A <= N * C`, while the minimum-load bucket
+has at most `S / N`; its post-assignment load is therefore at most
+`S / N + A <= C + A * (1 - 1 / N)`. Its overshoot beyond capacity is strictly less than `A`. The bound uses the
+account's actual commitment, not the live `userCommitmentCap`, because return-pool replay can credit an account
+above that admission cap. The rejected earliest-eligible alternative would have only the aggregate bound and could
+concentrate an overshoot approaching `(N - 1) * C` in one bucket. Per-bucket smoothing is deliberately soft in this
+full-list path.
 
 The caller bounds that first-fit scan with `maxDeferralEpochs`: 0 accepts only
 `currentEpoch + exitDelayEpochs`, `N` accepts up to `N` epochs past it, and `type(uint256).max` accepts any
@@ -654,13 +671,15 @@ the original `exitBucketMarginByMaturity` and `exitBucketCommitmentByMaturity` g
 Per-call exit exposure similarly packs six `uint128` values into three words and keeps `listed` in a fourth word.
 The explicit flag is the exact-once guard for `exitMaturitiesByCall` membership and must not be derived from amounts.
 
-**Bucket-cap trio.** Live maturity buckets are hard-capped at `MAX_EXIT_MATURITY_BUCKETS = 2 * 64 = 128`; a request
-that would create a 129th bucket reverts `ExitCapacityReached`. `exitDelayEpochs <= 64` and `exitCapBps >= 313`
+**Bucket-cap trio.** Live maturity keys are hard-capped at `MAX_EXIT_MATURITY_BUCKETS = 2 * 64 = 128`; a request
+never creates a 129th key. When the full-list aggregate fallback cannot admit into an existing eligible key it
+reverts `ExitCapacityReached`. `exitDelayEpochs <= 64` and `exitCapBps >= 313`
 (`MIN_EXIT_CAP_BPS`) are enforced at config so worst-case honest exit demand — including first-fit fragmentation —
-stays within 128. Scan termination instead relies on the runtime capacity clamp: capacity is always at least one, so
-any empty bucket terminates the scan and only buckets with nonzero commitment are skipped. Every bucket increase is
-tracked by `_trackExitMaturity`, every empty bucket is removed by `_pruneExitMaturityIfEmpty`, and the live list is
-capped at 128, so the scan takes at most 129 iterations. The limit remains reachable through cap-raise
+has enough aggregate scheduling room across reachable tracked keys. Scan termination instead relies on the runtime
+capacity clamp: capacity is always at least one, so any empty bucket terminates the scan and only buckets with
+nonzero commitment are skipped. Every bucket increase is tracked by `_trackExitMaturity`, every empty bucket is
+removed by `_pruneExitMaturityIfEmpty`, and the live list is capped at 128, so first-fit reaches an empty key or the
+aggregate fallback in at most 129 iterations. The limit remains reachable through cap-raise
 sequences: each raise can restore deposit headroom and increase capacity, allowing an exact-capacity new account to
 open the next maturity without fitting any prior nonempty bucket.
 

@@ -941,6 +941,77 @@ contract LCCInvariantHandler is Test {
     }
 }
 
+/// @dev Generates a fresh exact-capacity exiter per action. Recomputing the protocol cap reproduces the cap-raise
+/// fragmentation sequence that can fill all 128 live maturity keys; subsequent actions must reuse tracked keys.
+contract LCCExitFragmentationHandler is Test {
+    uint256 internal constant BPS_ = 10_000;
+    uint256 internal constant EXIT_CAP_BPS = 313;
+    uint256 internal constant INITIAL_PROTOCOL_CAP = 32e18;
+
+    LCCVault internal immutable fragmentationVault;
+    LCCMockToken internal immutable fragmentationMargin;
+    address internal immutable fragmentationOwner;
+    uint256 internal actorNonce;
+
+    constructor(LCCVault vault_, LCCMockToken margin_, address owner_) {
+        fragmentationVault = vault_;
+        fragmentationMargin = margin_;
+        fragmentationOwner = owner_;
+    }
+
+    function fragment() external {
+        uint256 activeCommitment = fragmentationVault.totals().activeCommitment;
+        uint256 protocolCap = Math.max(INITIAL_PROTOCOL_CAP, Math.ceilDiv(activeCommitment * BPS_, BPS_ - EXIT_CAP_BPS));
+        uint256 capacity = Math.mulDiv(protocolCap, EXIT_CAP_BPS, BPS_);
+        assertGe(protocolCap, activeCommitment + capacity);
+
+        vm.prank(fragmentationOwner);
+        fragmentationVault.setRiskCaps(protocolCap, type(uint128).max, EXIT_CAP_BPS, 0);
+
+        address actor = address(uint160(uint256(keccak256(abi.encode(address(this), ++actorNonce)))));
+        fragmentationMargin.mint(actor, capacity);
+        vm.startPrank(actor);
+        fragmentationMargin.approve(address(fragmentationVault), type(uint256).max);
+        fragmentationVault.deposit(capacity, 1, type(uint256).max, true, type(uint256).max);
+        fragmentationVault.requestExit(type(uint256).max, type(uint256).max);
+        vm.stopPrank();
+    }
+}
+
+contract LCCExitListStatefulInvariantTest is LCCBase {
+    uint256 internal constant MAX_EXIT_MATURITY_BUCKETS = 128;
+    uint256 internal constant MAX_EXIT_DELAY_EPOCHS = 64;
+    uint256 internal constant EXIT_MATURITY_LIST_SLOT = 22;
+
+    LCCExitFragmentationHandler internal fragmentationHandler;
+
+    function setUp() public override {
+        super.setUp();
+        _assertLayoutSlot("exitMaturityList", EXIT_MATURITY_LIST_SLOT);
+
+        ILCCVault.VaultParams memory params = _params(address(oracle), 32e18, type(uint128).max, 313);
+        params.marginRatioBps = BPS;
+        params.exitDelayEpochs = MAX_EXIT_DELAY_EPOCHS;
+        _deployVaultWithParams(params);
+
+        fragmentationHandler = new LCCExitFragmentationHandler(vault, margin, owner);
+        targetContract(address(fragmentationHandler));
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = LCCExitFragmentationHandler.fragment.selector;
+        targetSelector(FuzzSelector({addr: address(fragmentationHandler), selectors: selectors}));
+    }
+
+    function invariant_ExitMaturityListLengthNeverExceeds128() public view {
+        assertLe(uint256(vm.load(address(vault), bytes32(EXIT_MATURITY_LIST_SLOT))), MAX_EXIT_MATURITY_BUCKETS);
+    }
+
+    function afterInvariant() public view {
+        uint256 length = uint256(vm.load(address(vault), bytes32(EXIT_MATURITY_LIST_SLOT)));
+        assertGt(length, 0, "fragmentation handler was not exercised");
+        assertLe(length, MAX_EXIT_MATURITY_BUCKETS);
+    }
+}
+
 contract LCCStatefulInvariantTest is LCCBase {
     // Storage slots used only for raw invariant inspection.
     uint256 internal constant ACCOUNTS_SLOT = 15;

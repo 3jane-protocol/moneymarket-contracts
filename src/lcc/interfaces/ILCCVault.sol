@@ -337,7 +337,18 @@ interface ILCCVault {
     /// cannot be guaranteed the earliest bucket. Consequently `maxDeferralEpochs == 0` is systematically most likely
     /// to revert for the largest positions, contrary to the natural intuition that they receive priority. Reverts if
     /// the wall-clock deadline has expired, an exit is already pending, the account holds pending margin, or it has
-    /// no active position; cap-raise sequences can still reach the 128-live-bucket limit and revert
+    /// no active position. Cap-raise sequences can still fill the 128-live-bucket list. If first-fit would then need
+    /// a new key, the request stays within the caller's deferral window and reuses the least-loaded eligible tracked
+    /// maturity (earliest on ties), but only when eligible scheduled commitment plus the account fits
+    /// `eligibleCount * capacity`. This is the only operative aggregate bound and constrains only narrow deferral
+    /// windows: admission is unconditional at `ceil(BPS / exitCapBps)` eligible keys (32 at the minimum cap ratio),
+    /// apart from base-unit flooring. The full-list fallback deliberately softens an individual bucket's capacity
+    /// without splitting the account. For eligible load `S`, eligible bucket count `N`, capacity `C`, and the
+    /// admitted account's actual commitment `A`, the aggregate gate is `S + A <= N * C`. Least-loaded selection
+    /// bounds the selected bucket's post-assignment load by `S / N + A <= C + A * (1 - 1 / N)`, so its overshoot is
+    /// strictly less than `A`; replay can make `A` exceed the live `userCommitmentCap`. The rejected
+    /// earliest-eligible alternative would retain only the aggregate bound and could concentrate an overshoot
+    /// approaching `(N - 1) * C` in one bucket. The fallback never tracks a 129th key and otherwise reverts
     /// `ExitCapacityReached`.
     /// @param maxDeferralEpochs Maximum accepted epochs past the earliest available maturity.
     /// @param deadline Wall-clock timestamp after which the exit request reverts.
