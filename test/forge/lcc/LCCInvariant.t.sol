@@ -211,7 +211,8 @@ contract LCCInvariantHandler is Test {
         ) return;
 
         uint256 expectedMaturity = _expectedExitMaturity(account.activeCommitment);
-        uint256 earliestMaturity = invariantVault.currentEpoch() + invariantVault.epochConfig().exitDelayEpochs;
+        uint256 earliestMaturity = invariantVault.currentEpoch() + invariantVault.epochConfig().exitDelayEpochs
+            + (invariantVault.currentPhase() == ILCCVault.Phase.Normal ? 0 : 1);
         if (expectedMaturity - earliestMaturity > maxDeferralEpochs) {
             vm.prank(actor);
             try invariantVault.requestExit(maxDeferralEpochs, type(uint256).max) {
@@ -873,7 +874,8 @@ contract LCCInvariantHandler is Test {
                 BPS
             )
         );
-        maturity = invariantVault.currentEpoch() + invariantVault.epochConfig().exitDelayEpochs;
+        maturity = invariantVault.currentEpoch() + invariantVault.epochConfig().exitDelayEpochs
+            + (invariantVault.currentPhase() == ILCCVault.Phase.Normal ? 0 : 1);
 
         while (true) {
             uint256 assigned = invariantVault.exitBucketCommitmentByMaturity(maturity);

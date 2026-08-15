@@ -55,7 +55,8 @@ interface ILCCVault {
     /// @param userCommitmentCap Per-account cap on active+pending commitment (fundingAsset).
     /// @param exitCapBps Per-epoch exit capacity as a fraction of the exit-capacity denominator, in bps; must satisfy
     /// `exitCapBps * 64 >= 2 * BPS` (>= 313) and `<= BPS`.
-    /// @param exitDelayEpochs Minimum epochs between an exit request and its earliest maturity; at most 64.
+    /// @param exitDelayEpochs Minimum epochs between a Normal-phase exit request and its earliest maturity; requests
+    /// after Normal add one epoch to preserve prospective call exposure while another call can still open. At most 64.
     /// @param minCommitmentEpochs Minimum epochs an account must be committed (counted from commitmentStartEpoch,
     /// the later of its latest deposit activation and one epoch after the call that produced its latest nonzero
     /// return-pool re-credit) before it can request an exit; at most 64, 0 disables the gate. Composed lockup: the
@@ -325,11 +326,18 @@ interface ILCCVault {
     /// active commitment declines through amortization or slashing. Aggregate active commitment may conservatively
     /// include unattributed return commitment, which only widens capacity. The account stays callable until maturity.
     /// At execution, the earliest available maturity is re-evaluated from the executing `currentEpoch` plus
-    /// `exitDelayEpochs`, and `maxDeferralEpochs` bounds displacement from that maturity: 0 accepts only that maturity
-    /// and `type(uint256).max` accepts any maturity. It therefore bounds displacement within the executing epoch
-    /// rather than pinning an absolute maturity on its own. The two bounds compose: because execution cannot occur
-    /// after `deadline`, the assigned maturity never exceeds the epoch containing `deadline` plus `exitDelayEpochs`
-    /// plus `maxDeferralEpochs`. Shortening `deadline` therefore tightens the absolute guarantee as well as limiting
+    /// `exitDelayEpochs` during Normal, when that epoch's call outcome is still unknown. A request during PreCall,
+    /// Funding, or Closed adds one epoch. While another call can still open — outside shutdown and before the last
+    /// callable epoch's call window has passed — this makes the request span an epoch whose call outcome was unknown
+    /// when it was made; at the shutdown or sunset edge, `claimRemainingMargin` supplies the withdrawal path without
+    /// manufacturing call exposure. The phase boundary is deliberately conservative during PreCall before a call
+    /// opens: the holder is already bound to that epoch's unknown outcome, but still receives the bounded one-epoch
+    /// shift needed to cover call-free Funding uniformly. `maxDeferralEpochs` bounds displacement from that
+    /// phase-aware earliest maturity: 0 accepts only that maturity and `type(uint256).max` accepts any maturity. It
+    /// therefore bounds displacement within the executing epoch rather than pinning an absolute maturity on its own.
+    /// The two bounds compose: because execution cannot occur after `deadline`, the assigned maturity never exceeds
+    /// the epoch containing `deadline` plus `exitDelayEpochs`, the possible one-epoch phase adjustment, and
+    /// `maxDeferralEpochs`. Shortening `deadline` therefore tightens the absolute guarantee as well as limiting
     /// mempool staleness. The deferral bound is unrelated to the `maxEpochs` scheduled-sunset configuration.
     ///
     /// An account whose commitment exceeds the entire per-epoch capacity uses the oversized-account escape clause

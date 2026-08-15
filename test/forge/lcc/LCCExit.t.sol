@@ -237,7 +237,7 @@ contract LCCExitTest is LCCBase {
         assertEq(vault.totals().activeMargin, 0);
     }
 
-    function testPrunedMaturityBucketCanBeReusedInSameEpoch() public {
+    function testPrunedMaturityBucketIsIneligibleForPostNormalRequestInSameEpoch() public {
         _deposit(alice, 100e18);
         _deposit(bob, 100e18);
 
@@ -251,10 +251,12 @@ contract LCCExitTest is LCCBase {
         assertEq(vault.exitBucketCommitmentByMaturity(1), 0);
 
         vm.prank(bob);
-        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
 
-        assertEq(vault.exitBucketMarginByMaturity(1), 100e18);
-        assertEq(vault.exitBucketCommitmentByMaturity(1), 200e18);
+        assertEq(vault.exitBucketMarginByMaturity(1), 0);
+        assertEq(vault.exitBucketCommitmentByMaturity(1), 0);
+        assertEq(vault.exitBucketMarginByMaturity(2), 100e18);
+        assertEq(vault.exitBucketCommitmentByMaturity(2), 200e18);
     }
 
     function testExitRequestedAfterCallOpenRemainsLiableForOpenCall() public {
@@ -262,7 +264,7 @@ contract LCCExitTest is LCCBase {
         _openCall(100e18);
 
         vm.prank(alice);
-        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
 
         vm.warp(START + EPOCH);
         vm.expectEmit(true, true, false, true, address(vault));
@@ -271,6 +273,129 @@ contract LCCExitTest is LCCBase {
 
         assertEq(_accruedTreasuryMargin(), 0);
         assertEq(vault.claimableExitedMargin(alice), 0);
+    }
+
+    function testExitRequestedAfterCallFreePreCallWindowRemainsLiableForNextEpochCall() public {
+        _deposit(alice, 100e18);
+
+        // Epoch 0's only call-opening window has passed without a call. The request must still span epoch 1's
+        // unknown call outcome rather than maturing as that next call window opens.
+        vm.warp(START + NORMAL + PRE_CALL);
+        assertEq(uint256(vault.currentPhase()), uint256(ILCCVault.Phase.Funding));
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+
+        _openCallAtEpoch(1, 100e18);
+        assertEq(vault.obligationOf(1, alice), 100e18);
+
+        _finishFundingAtEpoch(1);
+        vault.finalizeEpochSlash(1);
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.UserDefaulted(alice, 1, 100e18, 200e18);
+        _syncAs(alice);
+    }
+
+    function testExitDelayOneNormalRequestMaturesNextEpochAndBindsCurrentCall() public {
+        _deposit(alice, 100e18);
+
+        assertEq(uint256(vault.currentPhase()), uint256(ILCCVault.Phase.Normal));
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
+
+        _openCall(100e18);
+        assertEq(vault.obligationOf(0, alice), 100e18);
+    }
+
+    function testExitDelayOnePostNormalRequestsMatureInTwoEpochsAndBindNextCall() public {
+        _deposit(alice, 100e18);
+        _deposit(bob, 100e18);
+        _deposit(carol, 100e18);
+
+        vm.warp(START + NORMAL);
+        assertEq(uint256(vault.currentPhase()), uint256(ILCCVault.Phase.PreCall));
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+
+        vm.warp(START + NORMAL + PRE_CALL);
+        assertEq(uint256(vault.currentPhase()), uint256(ILCCVault.Phase.Funding));
+        vm.prank(bob);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+
+        vm.warp(START + NORMAL + PRE_CALL + FUNDING);
+        assertEq(uint256(vault.currentPhase()), uint256(ILCCVault.Phase.Closed));
+        vm.prank(carol);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+
+        _openCallAtEpoch(1, 300e18);
+        assertEq(vault.obligationOf(1, alice), 100e18);
+        assertEq(vault.obligationOf(1, bob), 100e18);
+        assertEq(vault.obligationOf(1, carol), 100e18);
+    }
+
+    function testExitDelayTwoUsesSameNormalAndPostNormalSplit() public {
+        ILCCVault.VaultParams memory params = _params(CAP, CAP);
+        params.exitDelayEpochs = 2;
+        _deployVaultWithParams(params);
+
+        address dave = makeAddr("dave");
+        _mintAndApprove(dave, 100e18, 0);
+        _deposit(alice, 100e18);
+        _deposit(bob, 100e18);
+        _deposit(carol, 100e18);
+        _deposit(dave, 100e18);
+
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+
+        vm.warp(START + NORMAL);
+        vm.prank(bob);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 3);
+
+        vm.warp(START + NORMAL + PRE_CALL);
+        vm.prank(carol);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 3);
+
+        vm.warp(START + NORMAL + PRE_CALL + FUNDING);
+        vm.prank(dave);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 3);
+    }
+
+    function testPostNormalShiftMovesTightDeferralWindowUniformly() public {
+        ILCCVault.VaultParams memory params = _params(address(oracle), 100e18, 100e18, 2_000);
+        params.marginRatioBps = BPS;
+        _deployVaultWithParams(params);
+
+        assertEq(_deposit(alice, 20e18), 20e18);
+        assertEq(_deposit(bob, 1e18), 1e18);
+
+        vm.warp(START + NORMAL);
+        vm.prank(alice);
+        assertEq(vault.requestExit(0, type(uint256).max), 2);
+
+        vm.expectRevert(LCCErrorsLib.ExitDeferralExceeded.selector);
+        vm.prank(bob);
+        vault.requestExit(0, type(uint256).max);
+    }
+
+    function testPostNormalFullListFallbackUsesShiftedEligibleSetWithoutTrackingNewKey() public {
+        _deployOverflowBucketVault();
+        uint256 activeCommitment = _buildExitBucketLadder();
+        _assertExitBucketCount(MAX_EXIT_MATURITY_BUCKETS);
+
+        (address overflow, uint256 overflowCommitment) =
+            _depositNextExactFitLadderAccount(MAX_EXIT_MATURITY_BUCKETS, activeCommitment);
+        uint256 excludedLoad = vault.exitBucketCommitmentByMaturity(MAX_EXIT_DELAY_EPOCHS);
+        uint256 selectedLoad = vault.exitBucketCommitmentByMaturity(MAX_EXIT_DELAY_EPOCHS + 1);
+
+        vm.warp(START + NORMAL);
+        vm.prank(overflow);
+        uint256 maturity = vault.requestExit(type(uint256).max, type(uint256).max);
+
+        assertEq(maturity, MAX_EXIT_DELAY_EPOCHS + 1);
+        assertEq(vault.exitBucketCommitmentByMaturity(MAX_EXIT_DELAY_EPOCHS), excludedLoad);
+        assertEq(vault.exitBucketCommitmentByMaturity(maturity), selectedLoad + overflowCommitment);
+        assertEq(vault.exitBucketCommitmentByMaturity(MAX_EXIT_DELAY_EPOCHS + MAX_EXIT_MATURITY_BUCKETS), 0);
+        _assertExitBucketCount(MAX_EXIT_MATURITY_BUCKETS);
     }
 
     function testMaxExitDelayHonestOneExitPerEpochDoesNotHitCapacity() public {
@@ -480,89 +605,106 @@ contract LCCExitTest is LCCBase {
         _assertExitBucketCount(accountCount);
     }
 
-    /// @dev Characterizes ordering sensitivity: unrelated amortizing funding can reduce live capacity and move a
-    /// later unbounded exit from maturity 1 to 2.
+    /// @dev Characterizes ordering sensitivity at the phase-aware floor: unrelated amortizing funding can reduce
+    /// live capacity and move a later unbounded post-Normal exit from maturity 2 to 3.
     function testCharacterizationAmortizationCanChangeSubsequentExitMaturity() public {
-        ILCCVault.VaultParams memory params = _params(address(oracle), 100e18, 100e18, 5_000);
+        ILCCVault.VaultParams memory params = _params(address(oracle), 125e18, 100e18, 5_000);
         params.marginRatioBps = BPS;
         _deployVaultWithParams(params);
 
+        address dave = makeAddr("dave");
+        _mintAndApprove(dave, 40e18, 0);
         assertEq(_deposit(alice, 30e18), 30e18);
+        assertEq(_deposit(dave, 40e18), 40e18);
         assertEq(_deposit(bob, 15e18), 15e18);
-        assertEq(_deposit(carol, 55e18), 55e18);
+        assertEq(_deposit(carol, 40e18), 40e18);
 
         vm.prank(owner);
         vault.setRiskCaps(10e18, 100e18, 5_000, 0);
 
         vm.prank(alice);
         assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
+        vm.prank(dave);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+
+        _openCall(60e18);
 
         uint256 snapshot = vm.snapshotState();
-        vm.prank(bob);
-        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
-        assertTrue(vm.revertToStateAndDelete(snapshot), "snapshot restore failed");
-
-        _openCall(20e18);
-        assertEq(_fund(carol), 11e18);
-        assertEq(vault.totals().activeCommitment, 89e18);
-
+        vm.warp(START + NORMAL + PRE_CALL);
         vm.prank(bob);
         assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+        assertTrue(vm.revertToStateAndDelete(snapshot), "snapshot restore failed");
+
+        assertEq(_fund(carol), 19.2e18);
+        assertEq(vault.totals().activeCommitment, 105.8e18);
+
+        vm.prank(bob);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 3);
     }
 
-    /// @dev Pins accepted L-07 behavior: first-fit maturity is fixed, so reopened earlier capacity can let a later
-    /// requester overtake an earlier requester whose still-outstanding exit remains assigned to a later epoch.
-    function testCharacterizationLaterRequesterCanOvertakeFixedEarlierExit() public {
-        ILCCVault.VaultParams memory params = _params(address(oracle), 100e18, 100e18, 5_000);
+    /// @dev Pins accepted L-07 behavior under the phase-aware floor: first-fit maturity is fixed, so reopened
+    /// post-Normal capacity can still let a later requester overtake an earlier exit assigned beyond that floor.
+    function testCharacterizationPostNormalRequesterCanOvertakeLaterFixedExit() public {
+        ILCCVault.VaultParams memory params = _params(address(oracle), 120e18, 100e18, 5_000);
         params.marginRatioBps = BPS;
         _deployVaultWithParams(params);
 
+        address dave = makeAddr("dave");
+        _mintAndApprove(dave, 40e18, 40e18);
         assertEq(_deposit(alice, 40e18), 40e18);
-        assertEq(_deposit(bob, 20e18), 20e18);
-        assertEq(_deposit(carol, 20e18), 20e18);
+        assertEq(_deposit(dave, 40e18), 40e18);
+        assertEq(_deposit(bob, 30e18), 30e18);
+        assertEq(_deposit(carol, 10e18), 10e18);
 
         vm.prank(alice);
         assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
+        vm.prank(dave);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
         vm.prank(bob);
         uint256 earlierRequesterMaturity = vault.requestExit(type(uint256).max, type(uint256).max);
-        assertEq(earlierRequesterMaturity, 2);
+        assertEq(earlierRequesterMaturity, 3);
 
-        _openCall(40e18);
-        assertEq(_fund(alice), 20e18);
-        assertEq(vault.exitBucketCommitmentByMaturity(1), 20e18);
+        _openCall(30e18);
+        assertEq(_fund(dave), 10e18);
+        assertEq(vault.exitBucketCommitmentByMaturity(2), 30e18);
         assertEq(vault.getAccount(bob).exitMaturityEpoch, earlierRequesterMaturity);
 
         vm.prank(carol);
         uint256 laterRequesterMaturity = vault.requestExit(type(uint256).max, type(uint256).max);
-        assertEq(laterRequesterMaturity, 1);
-        assertEq(vault.getAccount(bob).exitMaturityEpoch, 2);
-        assertEq(vault.getAccount(carol).exitMaturityEpoch, 1);
+        assertEq(laterRequesterMaturity, 2);
+        assertEq(vault.getAccount(bob).exitMaturityEpoch, 3);
+        assertEq(vault.getAccount(carol).exitMaturityEpoch, 2);
         assertLt(laterRequesterMaturity, earlierRequesterMaturity);
     }
 
-    function testBoundedExitRejectsAmortizationDrivenMaturityChange() public {
-        ILCCVault.VaultParams memory params = _params(address(oracle), 100e18, 100e18, 5_000);
+    function testBoundedExitRejectsAmortizationDrivenDeferralFromShiftedEarliest() public {
+        ILCCVault.VaultParams memory params = _params(address(oracle), 125e18, 100e18, 5_000);
         params.marginRatioBps = BPS;
         _deployVaultWithParams(params);
 
+        address dave = makeAddr("dave");
+        _mintAndApprove(dave, 40e18, 0);
         assertEq(_deposit(alice, 30e18), 30e18);
+        assertEq(_deposit(dave, 40e18), 40e18);
         assertEq(_deposit(bob, 15e18), 15e18);
-        assertEq(_deposit(carol, 55e18), 55e18);
+        assertEq(_deposit(carol, 40e18), 40e18);
 
         vm.prank(owner);
         vault.setRiskCaps(10e18, 100e18, 5_000, 0);
 
         vm.prank(alice);
         assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 1);
+        vm.prank(dave);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
 
         uint256 snapshot = vm.snapshotState();
         vm.prank(bob);
         assertEq(vault.requestExit(0, type(uint256).max), 1);
         assertTrue(vm.revertToStateAndDelete(snapshot), "snapshot restore failed");
 
-        _openCall(20e18);
-        assertEq(_fund(carol), 11e18);
-        assertEq(vault.totals().activeCommitment, 89e18);
+        _openCall(60e18);
+        assertEq(_fund(carol), 19.2e18);
+        assertEq(vault.totals().activeCommitment, 105.8e18);
 
         vm.expectRevert(LCCErrorsLib.ExitDeferralExceeded.selector);
         vm.prank(bob);

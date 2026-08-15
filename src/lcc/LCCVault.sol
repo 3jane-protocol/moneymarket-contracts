@@ -1446,12 +1446,13 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     {
         uint256 commitmentDenominator = Math.max(_riskConfig.protocolCommitmentCap, uint256(_totals.activeCommitment));
         uint256 capacity = Math.max(1, commitmentDenominator.mulDiv(_riskConfig.exitCapBps, BPS));
+        uint256 earliestMaturity = _nextUncalledEpoch() + _assetConfig.exitDelayEpochs;
         maturityEpoch = LCCConfigLib.assignExitMaturity(
             exitBucketByMaturity,
             exitMaturityList,
             exitMaturityIndexPlusOne,
             accountCommitment,
-            _currentEpoch() + _assetConfig.exitDelayEpochs,
+            earliestMaturity,
             maxDeferralEpochs,
             capacity
         );
@@ -1460,10 +1461,16 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
     /* EPOCH & PHASE MATH */
 
+    /// @dev Returns the first epoch whose call-opening window has not begun. Deposit activation and exit-maturity
+    /// anchoring both depend on this shared boundary; changing it moves both lifecycles.
+    function _nextUncalledEpoch() internal view returns (uint256 epoch) {
+        epoch = _currentEpoch();
+        if (_phaseAt(_now()) != Phase.Normal) ++epoch;
+    }
+
     function _depositActivation() internal view returns (uint256 activationEpoch, bool immediate) {
-        uint256 epoch = _currentEpoch();
-        immediate = _phaseAt(_now()) == Phase.Normal && !epochs[epoch].callOpened;
-        activationEpoch = immediate ? epoch : epoch + 1;
+        activationEpoch = _nextUncalledEpoch();
+        immediate = activationEpoch == _currentEpoch();
     }
 
     function _requireNoPriorUnsettledCall(uint256 epoch) internal view {

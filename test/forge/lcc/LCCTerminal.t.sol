@@ -286,6 +286,22 @@ contract LCCTerminalTest is LCCBase {
         assertEq(vault.totals().activeMargin, 0);
     }
 
+    function testCallFreeFinalEpochPostNormalExitCanClaimAtTerminal() public {
+        _deployVaultWithParams(_termParams(1));
+        _deposit(alice, 100e18);
+
+        vm.warp(START + NORMAL + PRE_CALL);
+        assertFalse(vault.getEpochState(0).callOpened);
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+
+        vm.warp(START + EPOCH);
+        uint256 beforeBalance = margin.balanceOf(alice);
+        vm.prank(alice);
+        assertEq(vault.claimRemainingMargin(alice), 100e18);
+        assertEq(margin.balanceOf(alice), beforeBalance + 100e18);
+    }
+
     function testClaimExitedMarginStillWorksAfterTerminal() public {
         _deployVaultWithParams(_termParams(1));
         _deposit(alice, 100e18);
