@@ -25,6 +25,25 @@ This repository extends Morpho Blue with 3Jane credit primitives and USD3/sUSD3 
 - Per-borrower premium model layered on top of base IRM rate.
 - Settlement paths include write-off handling and JANE markdown/redistribution integration.
 
+## USD3/sUSD3 Tranche Waterfall and Risk Disclosure
+
+USD3 is the senior USDC strategy and sUSD3 holds USD3 as subordinate capital. The reported-loss waterfall is not an
+unqualified “junior principal first” waterfall. `TokenizedStrategy.report()` first burns strategy-owned locked-profit
+shares left from prior profitable USD3 reports. USD3 measures that burn and burns sUSD3's USD3 shares only for the
+remaining loss, capped by sUSD3's balance. Any loss beyond both buffers reduces USD3 holders proportionally.
+
+This ordering protects current USD3 senior principal and PPS while locked profit covers the loss, but it is not neutral
+to senior holders: cash-collected profit that would otherwise have unlocked to USD3 holders is consumed before junior
+principal. During that portion of the waterfall, sUSD3 principal survives. This locked-profit-first ordering is intended
+behavior and must be included when describing the amount of first-loss protection available to USD3 holders.
+
+Neither tranche has a dedicated emergency sUSD3 supply-cap key. USD3's supply cap stops USD3 deposits; sUSD3 admission
+instead follows its live accounting-loss guard and debt/subordination-cap calculation. There is no reversible emergency
+config write that stops all new sUSD3 deposits. The config owner can set `TRANCHE_RATIO` to 1 bp to reduce capacity to
+dust, but setting it to zero falls back to 1,500 bps rather than stopping deposits. A complete stop requires the one-way
+TokenizedStrategy `shutdownStrategy()` action, callable by the sUSD3 strategy's current management or emergency admin.
+Those live addresses must be read before relying on that path.
+
 ## Jane Domain (Token + Rewards)
 
 - `src/jane/Jane.sol` implements the JANE token with role-based mint/transfer controls and `MarkdownController` integration for borrower freezes and redistribution.

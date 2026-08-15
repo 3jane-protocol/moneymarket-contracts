@@ -8,13 +8,24 @@ These are live-contract procedures. Every step names its access control, because
 
 **Trigger.** A `USD3.report()` recognizes a MorphoCredit loss larger than sUSD3's USD3 balance.
 
+**Scope boundary.** This procedure applies only after sUSD3 reaches exactly zero assets with shares still outstanding.
+It does not cover a positive-but-negligible sUSD3 PPS. That distinct state can also make recapitalization ineffective,
+but the zero-asset reset assumptions and this runbook do not apply. Confirm the exact zero-asset state before using the
+steps below; see `docs/deferred-f04-dead-tranche.md`.
+
 **What happens on its own.** `_postReportHook` burns sUSD3's USD3 shares, capped at its balance (`src/usd3/USD3.sol:593-611`, burn at `:614` via `_burnSharesFromSusd3`, `:648`), so the junior tranche wipes to exactly zero and the remainder socializes to USD3 seniors. sUSD3 reports its USD3 balance as total assets (`src/usd3/sUSD3.sol:125`), so after it reports it holds zero assets with shares outstanding. In that state `TokenizedStrategy` converts deposits to zero shares and rejects them, so **the junior tranche cannot be recapitalized**, and `_subordinationDeployCapWaUSDC` returns 0 whenever sUSD3 holds no shares (`USD3.sol:202`), so **senior deployment is frozen**.
 
 **The part that needs an operator, and is time-sensitive.** While the tranche is wiped, *any profitable report* mints the tranche share to the performance-fee recipient, which is sUSD3 — so value that economically belongs to the seniors who absorbed the excess loss accrues to a share class worth nothing, and un-deadens it at a negligible price per share, letting wiped holders redeem the windfall. Nothing in the contracts prevents this.
 
 Do not think of this as a race against a distant recovery event. Ordinary interest — Aave yield on recalled waUSDC plus accrual on the outstanding borrow book — is enough to make the very next report profitable, so the leak begins at the next report rather than at markdown reversal. Markdown reversal determines the *size* of the leak, not whether it starts.
 
-**The control is that `report()` and `syncTrancheShare()` are `onlyKeepers`.** No third party can force a report during the window, and holding reports is cheap because pending profit blocks neither senior withdrawals nor anything else. **The production keeper relayer holds a keeper role and auto-syncs the tranche fee, so `onlyKeepers` does not protect you here.** Halt the relayer's reporting on recognizing the wipe and keep it halted until the fee bits read zero. Then:
+**The control is that `report()` and `syncTrancheShare()` are `onlyKeepers`.** In TokenizedStrategy this admits both
+strategy management and the configured keeper. The live USD3 keeper is a router contract at
+`0xc22158100b823E1EF612fBA265941Efe9e7d7975`, but its downstream authorization surface was not established by the
+available ABI probes. Do not assume a particular relayer or EOA is the only caller. Halt both the management path and
+every router-authorized path verified from current source/ABI; if the router authorization cannot be enumerated, the
+halt precondition is not satisfied. Holding reports is cheap because pending profit blocks neither senior withdrawals
+nor anything else. Keep both paths halted from recognition of the wipe until the fee bits read zero. Then:
 
 1. Set `TRANCHE_SHARE_VARIANT` to `0` via `ProtocolConfig.setConfig` (`src/ProtocolConfig.sol:83`, owner-gated — a governance action through the 24h params timelock, so it is not immediate; start it as soon as a wiping loss is recognized rather than waiting for recovery to look imminent).
 2. Once that lands, have a keeper call `USD3.syncTrancheShare()`, which writes the configured zero into the fee bits. **Step 1 has no effect on reports until this runs.**
@@ -32,9 +43,12 @@ This is accepted as an operator-managed policy rather than a code boundary — f
 
 **Procedure.** For every tranche-share change:
 
-1. **Halt the relayer's tranche-fee sync before the timelocked config change executes.** The relayer can otherwise land the first sync itself, on its own cadence, with no preceding report — which is exactly the failure this procedure exists to prevent, and it is not an ordering you control once the config value is live.
+1. **Halt strategy management and every verified caller behind the keeper router before the timelocked config change
+   executes.** Any admitted caller can otherwise land the first sync with no preceding report. The router's current
+   allowlist is an explicit evidence requirement; do not infer it from the keeper address alone.
 2. Call `USD3.report()` **in the same transaction or multisig batch** as the following `syncTrancheShare()`, in that order. Same-block is exact for profit visible to USD3 accounting: `report()` writes the current NAV to `totalAssets`, so the next report cannot recharge it. Split across blocks, the interval between them is repriced.
-3. Resume the relayer only after confirming the fee bits match the configured value.
+3. Resume strategy management and verified keeper-router callers only after confirming the fee bits match the
+   configured value.
 
 **What this procedure does not cover.** Borrower-local premium is not enumerated by `report()`; it enters supply assets only when `accruePremiumsForBorrowers` runs (`src/MorphoCredit.sol:146`), which is permissionless and list-driven. Premium earned under the old share but materialized after the change is reported at the new one, and no ordering discipline available to the operator closes that. Sweeping the borrower list immediately before step 2 narrows it. Note also that the timelocked config change is publicly observable, so entry into the favoured tranche during the 24h window is possible and is likewise not closed by this procedure.
 
@@ -43,6 +57,33 @@ This is accepted as an operator-managed policy rather than a code boundary — f
 **What none of this fixes.** The junior tranche remains unrecapitalizable until F-04 part 2 ships. Nothing revives sUSD3 short of that or a shutdown and redeploy. Reverse step 1 only once the fix is live and the tranche has been reset.
 
 **Before any wipe-and-recall sequence, stop borrowing first.** The F-04 record previously stated that a wiped tranche "stops writing new credit" and that the zero deployment cap is static. Both are false (Guardian round-4 `B/M-25`, corrected in `docs/deferred-f04-dead-tranche.md`). A Morpho repayment returns waUSDC and reduces debt before token collection (`src/Morpho.sol:275-305`), and `_beforeBorrow` (`src/MorphoCredit.sol:601-632`) never checks USD3's live junior cap or a pending recall — so a Current borrower with headroom can redraw the liquidity a repayment just recreated, ahead of tend. Set `IS_PAUSED`, or `DEBT_CAP` to `0`, **before** recalling, and keep it set until the recall has completed. This is dormant at the live configuration only because `MIN_SUSD3_BACKING_RATIO` is `0`, which disables the wipe-drives-cap-to-zero policy outright; it becomes live the moment that ratio is set nonzero with credited borrowers outstanding.
+
+## USD3 and sUSD3 admission controls
+
+`ProtocolConfig.setEmergencyConfig` accepts exactly four restrictions: `IS_PAUSED = 1`, or `DEBT_CAP = 0`,
+`MAX_ON_CREDIT = 0`, and `USD3_SUPPLY_CAP = 0`. There is no sUSD3 supply-cap key and no reversible emergency config
+write that stops all junior deposits. `USD3_SUPPLY_CAP = 0` stops USD3 deposits, not direct deposits of already-held
+USD3 into sUSD3. `DEBT_CAP = 0` also does not necessarily close sUSD3 capacity while actual market debt remains,
+because the junior cap uses the greater of actual debt and configured potential debt.
+
+If all new sUSD3 deposits must stop, first read the sUSD3 TokenizedStrategy `management()` and `emergencyAdmin()`
+addresses. Either can call `shutdownStrategy()`, which halts deposit/mint but is a one-way, irreversible strategy
+shutdown. Do not submit a nonexistent junior-cap key, and do not assume the ProtocolConfig emergency controller also
+holds either sUSD3 strategy role without a live read.
+
+## Helper seed for recurring junior top-ups
+
+The one-transaction Helper hop deposits USDC into USD3 with the Helper as the immediate USD3 receiver, then deposits
+the newly minted USD3 into sUSD3 for the user. The Helper normally returns to a zero USD3 share balance, so USD3's
+receiver-based opening minimum applies again on every hop even when the final sUSD3 user is established.
+
+Seed the production Helper permanently with one USD3 base-unit share and verify `USD3.balanceOf(Helper) >= 1` after
+deployment, any Helper replacement, and any strategy migration. The hop deposits only the newly minted shares, so the
+seed remains behind; USD3 losses change PPS rather than the seed's share count. Do not substitute
+`supplyCapExempt[Helper]`: it bypasses only the receiver-level first-time minimum at the actual hop deposit, while
+`Helper` first checks the non-exempt user's `availableDepositLimit`, so supply-cap headroom and borrower restrictions
+still bind. If the seed is absent, sub-minimum hops revert atomically; users can use the two-transaction
+USD3-then-sUSD3 route until the seed is restored.
 
 ## Loss report landing during a waUSDC pause
 
@@ -77,6 +118,69 @@ This is accepted as an operator-managed policy rather than a code boundary — f
 1. Recognize the pattern: repeated `RebalanceDeferred` emissions with `suppliedWaUSDC()` unchanged across tends.
 2. Stop the automated keeper loop for this strategy, or filter its trigger; the signal will not clear on its own.
 3. The latch is not exclusive to wind-down ending: `_tendTrigger` recomputes from live deployed, local, and target values (`USD3.sol:378-397`), so it remains true only while its balance and configuration inputs are unchanged. Leaving wind-down or shutting the strategy down clears it, but so does lowering `maxOnCredit` until the target is at or below deployed, a waUSDC pause (`USD3.sol:376`), or drift falling under the trigger threshold.
+
+## Creating and authorizing an LCC vault
+
+LCC deployment has split authority. The main Safe owns `LCCVaultFactory`; USD3 management is the 24-hour parameters
+timelock `0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2`; and each facility manifest must explicitly declare its approved,
+nonzero vault owner. The LCC beacon's separate fleet upgrade authority is the 7-day timelock. Do not require or
+represent those roles as one account. See `docs/deployment.md` for the timing trade-offs when selecting a facility
+owner.
+
+Use `script/operations/CreateLCCVaultSafe.s.sol` with the same finalized JSON in every phase:
+
+1. Complete the facility-specific leverage-dispersion and per-stake loss-budget review. The example deliberately leaves
+   `acknowledgePerpetualTenor` and `acknowledgeFullAuctionAward` false. Set the first true only when a perpetual
+   `maxEpochs = 0` facility has an approved dispersion justification; set the second true only when the loss budget
+   approves `maxAuctionAwardBps = 10000`, the maximum award-loss case. Record the named approver. The script rejects
+   either extreme without its acknowledgement and rejects a missing or zero `params.owner`; it verifies the deployed
+   owner against that explicit declaration but does not mandate a particular address.
+2. Keep `startTimestamp` far enough in the future to survive the governance delay. Run
+   `schedulePrerequisites(string,uint256,bool)` with an attempt nonce (start at `0`). The script computes the CREATE2
+   address from the final parameters and facility ID, confirms the factory owner, confirms the beacon is owned by the
+   expected 7-day timelock, confirms USD3 management is the expected 24-hour timelock, and prepares one timelock
+   operation containing
+   `setSupplyCapExempt(predictedVault, true)` and
+   `setRingFenceConduit(predictedVault, true)`.
+3. After the 24-hour delay, run `executePrerequisites(string,uint256,bool)` with byte-identical JSON and the same
+   attempt nonce. A completed TimelockController operation cannot be rescheduled; use a fresh nonce for a new attempt.
+   Confirm both USD3 flags are true at the predicted, still-undeployed address.
+4. Run `run(string,bool)`. The factory Safe creates only that pre-authorized CREATE2 vault. The script verifies the
+   simulated vault's address, factory provenance, owner, protocol wiring, and both USD3 flags.
+5. After the Safe transaction executes on chain, run `verify(string)` with the deployment JSON. Archive its successful
+   output with the manifest. `verify(address,address)` with the vault and explicit expected owner is a fallback when the
+   JSON is unavailable, but the JSON-based check is authoritative because it also recomputes the expected address.
+
+The two USD3 flags are continuing operating preconditions, not one-time deployment ceremony. Before approving any USD3
+management batch that touches either mapping, resolve whether the target is a factory-registered LCC vault. Never clear
+either flag for an active facility, and never clear only one: revocation must be paired and atomic. Planned retirement
+may revoke both only after the facility is permanently in shutdown or terminal wind-down, no call or auction remains
+open, every off-chain purchase has settled, and the related ring-fence amount has been released. Re-run the verifier
+after every registry change; an active vault must still pass both flag checks.
+
+If either permission is accidentally revoked while a facility is live, treat it as a funding incident. Pause the LCC
+effective clock before the affected deadline, schedule and execute restoration through USD3 management, run the
+post-deployment verifier, and unpause only after an end-to-end funding simulation succeeds. Ordinary USD3 cap headroom
+is not a substitute for the exemption.
+
+## LCC funding cash and approval sizing
+
+For every open call, `obligationOf(epoch, user)` is the authoritative gross funding obligation. Margin does not offset
+that amount. `fundCall` pulls `max(obligation, USD3.previewMint(1))`, with the second term permitted to exceed the
+obligation by at most 1,000 funding-asset base units so dust funding can mint one USD3 share. Size both liquid cash and
+allowance for that pulled amount.
+
+Example: a 20% call against a user's $1,000,000 active commitment produces a $200,000 obligation (subject only to the
+contract's upward unit rounding). If the user has $75,000 of active margin and amortizes, the vault pulls the full
+$200,000 first and returns $15,000 of margin as a separate transfer; it does not reduce the amount due to $125,000.
+The incorrect $125,000 figure is $75,000 short, understating the gross requirement by 37.5%. The user's net cash change
+after both legs is $185,000, but $200,000 must be available for the atomic funding pull. In
+the corresponding auction example, a $37,500 margin award on a $200,000 fill is an 18.75% cash-on-cash return; dividing
+the award by the $1,000,000 commitment and reporting 3.75% uses the wrong capital base.
+
+Funding is all-or-nothing. A revert records no partial payment, and an account still unfunded at the deadline is
+slash-eligible for its entire remaining margin, not only the called fraction. Re-read `obligationOf` and
+`USD3.previewMint(1)` immediately before submission rather than funding from an illustrative estimate.
 
 ## LCC Closed-window delivery or oracle outage
 

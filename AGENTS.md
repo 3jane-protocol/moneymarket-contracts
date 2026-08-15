@@ -186,7 +186,12 @@ A checkpointing fix was implemented and then **deliberately reverted**. Do not r
 
 **This is accepted residual risk with an operational precondition, and must be described that way — never as a complete mitigation.** Two independent reviews were explicit that "report before syncing" is not a full boundary, and the finding itself documents the ordering already reallocating profit twice on mainnet in June 2026 ($7,863 and $31,307 reports, the latter allocating $3,131 at the new rate). The precondition, with the procedure in `docs/operations-runbook.md`:
 
-- The production keeper relayer holds a keeper role and auto-syncs the tranche fee. It must be **halted before a timelocked `TRANCHE_SHARE_VARIANT` change executes**, or it can land the first sync itself with no preceding report. Without this the mitigation is fiction — the operator does not control ordering once the config value is live.
+- The configured USD3 keeper is a router contract, and its downstream authorization surface was not established by the
+  available ABI probes. TokenizedStrategy also admits strategy management through its keeper gate. Before a timelocked
+  `TRANCHE_SHARE_VARIANT` change executes, enumerate the router's current callers from verified source/ABI and halt
+  every one of them together with strategy management. If that authorization census cannot be produced, the halt
+  precondition is not satisfied; any admitted caller can land the first sync with no preceding report once the config
+  value is live.
 - `report()` and `syncTrancheShare()` must land in **one transaction or multisig batch**, in that order. Same-block is exact for profit visible to USD3 accounting; split across blocks, the interval between them is repriced.
 - Two residuals are **not** closed by any ordering discipline and must not be claimed as closed: borrower-local premium materialized after the change (`accruePremiumsForBorrowers`, `src/MorphoCredit.sol:146`, is permissionless and list-driven, so old-period income is reported at the new share), and entry into the favoured tranche during the publicly observable 24h timelock window.
 

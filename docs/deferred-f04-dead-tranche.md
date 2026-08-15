@@ -6,6 +6,11 @@
 
 When a MorphoCredit loss exceeds sUSD3's USD3 balance, `_postReportHook` (`USD3.sol:577`) burns sUSD3's entire balance — the burn is capped at that balance (`:593-595`) and executed via `_burnSharesFromSusd3` (`:599`, defined `:633`) — wiping the junior tranche to exactly zero and socializing the remainder to USD3 seniors. sUSD3 reports its USD3 balance as total assets (`sUSD3.sol:125`), so after it reports it holds zero assets with shares outstanding. Three consequences follow:
 
+**Scope carve-out — positive-but-negligible PPS.** This record and the associated operations-runbook procedure address
+only the exact zero-asset state above. They do not cover the round-4 `B/H-01` state in which sUSD3 still has positive
+assets but its PPS is negligible. A positive balance does not satisfy this design's zero-asset gates, and the dead-
+tranche runbook must not be applied to that state. Establish exact zero assets before relying on anything below.
+
 1. **The tranche cannot be recapitalized.** With zero total assets and supply outstanding, `TokenizedStrategy` converts deposits to zero shares and reverts (`ZERO_SHARES`; the mint path reverts `ZERO_ASSETS`).
 2. **Senior deployment freezes.** `_subordinationDeployCapWaUSDC` returns 0 whenever sUSD3 holds no USD3 shares (`USD3.sol:195`; only while `MIN_SUSD3_BACKING_RATIO` is nonzero, `:189`), so the effective cap is 0 and every tend/report recalls deployed funds.
 3. **Recovery routes to a dead class.** The tranche share mints to the performance-fee recipient, which is sUSD3, so restitution owed to the seniors who absorbed the excess loss accrues to a worthless share class and revives it at negligible price per share.

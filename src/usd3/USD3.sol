@@ -28,11 +28,11 @@ interface IWaUSDC is IERC4626 {
  * @notice Senior tranche strategy for USDC-based lending on 3Jane's credit markets
  * @dev Implements Yearn V3 tokenized strategy pattern for unsecured lending via MorphoCredit.
  * Deploys USDC capital to 3Jane's modified Morpho Blue markets that use credit-based
- * underwriting instead of collateral. Features first-loss protection through sUSD3
- * subordinate tranche absorption.
+ * underwriting instead of collateral. Its loss waterfall uses strategy-owned locked-profit shares
+ * before sUSD3 subordinate capital, then exposes USD3 holders to any residual loss.
  *
  * Key features:
- * - Senior tranche with first-loss protection from sUSD3 holders
+ * - Senior tranche whose current principal and PPS are buffered first by locked profit, then by sUSD3 holdings
  * - Configurable deployment ratio to credit markets (maxOnCredit)
  * - Automatic yield distribution to sUSD3 via performance fees
  * - Loss absorption through direct share burning of sUSD3 holdings
@@ -46,10 +46,14 @@ interface IWaUSDC is IERC4626 {
  * - Keeper-controlled updates ensure protocol-wide consistency
  *
  * Loss Absorption Mechanism:
- * - When losses occur, sUSD3 shares are burned first (subordination)
- * - Direct storage manipulation used to burn shares without asset transfers
- * - USD3 holders protected up to total sUSD3 holdings
- * - Losses exceeding sUSD3 balance shared proportionally among USD3 holders
+ * - TokenizedStrategy first burns strategy-owned locked-profit shares remaining from prior profitable reports
+ * - USD3 burns sUSD3-held USD3 shares only for the loss remaining after that locked-profit burn
+ * - Current USD3 principal and PPS remain protected while locked profit covers the loss, but cash-collected profit
+ *   that would otherwise unlock to USD3 holders is consumed before junior principal
+ * - Direct storage manipulation burns the required sUSD3-held shares without asset transfers, capped by its balance
+ * - Losses exceeding both outstanding locked profit and sUSD3's USD3 balance reduce USD3 holders proportionally
+ * - Both loss-to-share conversions round down; at high PPS, a loss worth less than one base share can burn nothing
+ *   from either buffer and still reduce senior PPS
  */
 contract USD3 is BaseHooksUpgradeable {
     using MorphoLib for IMorpho;
@@ -458,9 +462,9 @@ contract USD3 is BaseHooksUpgradeable {
         uint256 idleAsset = asset.balanceOf(address(this));
         uint256 totalAssets = TokenizedStrategy.totalAssets();
 
-        // First-loss guard: while nav trails totalAssets, an unrealized loss is pending, so halt withdrawals
-        // until report() burns it against the sUSD3 first-loss tranche rather than paying exiting senior holders at a
-        // stale price. The +2 tolerance absorbs the <=1-unit waUSDC wrap/unwrap rounding drift. Deposit-side drift is
+        // Loss-waterfall guard: while nav trails totalAssets, an unrealized loss is pending, so halt withdrawals until
+        // report() applies the locked-profit-then-sUSD3 waterfall rather than paying exiting senior holders at a stale
+        // price. The +2 tolerance absorbs the <=1-unit waUSDC wrap/unwrap rounding drift. Deposit-side drift is
         // gated at the source in _wrapUSDC (enforceSlack); the withdraw-side redeem can still nudge the gap past +2,
         // but that halt is transient and liveness-only: nav() converts at the live waUSDC rate, so accruing interest
         // lifts nav() back over totalAssets on its own, and report() re-bases totalAssets to nav definitively. No
@@ -751,10 +755,10 @@ contract USD3 is BaseHooksUpgradeable {
 
     /**
      * @notice Update supply-cap and first-time minimum-deposit exemption status for a receiver.
-     * @dev An exempt receiver may only be deposited to by itself. Granting this flag to a router or aggregator that
-     * deposits on behalf of users makes those deposits revert. For example, exempting Helper breaks its non-hop path
-     * for every retail user because Helper deposits to the user, while its hop path keeps working because Helper
-     * deposits to itself; there is no signal at the Helper layer that only one path is broken.
+     * @dev An exempt receiver may only be deposited to by itself. A third party depositing directly to that exempt
+     * receiver reverts. Helper is the USD3 receiver only on its hop path, and its user-level limit check still applies
+     * the supply cap and borrower restriction before the deposit. Exempting Helper therefore bypasses only the
+     * receiver-level first-time minimum for that path; it does not affect the non-hop path, whose receiver is the user.
      * @dev Pair this flag operationally with `ringFenceConduit`. When both flags are set, every accepted deposit is a
      * self-deposit and receives ring-fence credit. Revoking this exemption while leaving the conduit flag set permits
      * third-party deposits that receive no ring-fence credit. LCC deployment grants both flags atomically; revoke them
