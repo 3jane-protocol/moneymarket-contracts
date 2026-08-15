@@ -88,22 +88,28 @@ contract USD3UpgradeMultisigBatchTest is Setup {
             "USDC allowance preserved"
         );
 
-        // The deprecated whitelistEnabled slot still holds true, but the cleaned logic has no gate to read it.
-        uint256 limitBeforeDeposit = ITokenizedStrategy(address(upgraded)).maxDeposit(alice);
-        assertGt(limitBeforeDeposit, 0, "deprecated whitelist slots are inert");
         assertEq(
             uint256(vm.load(address(upgraded), INITIALIZABLE_STORAGE_SLOT)) & type(uint64).max,
             3,
             "initializer version preserved across upgrade"
         );
 
+        // The deprecated whitelistEnabled slot still holds true and alice was never whitelisted, so a
+        // successful deposit directly proves that the cleaned logic has no gate reading the old slots.
+        uint256 depositAssets = 100e6;
+        assertGe(
+            ITokenizedStrategy(address(upgraded)).maxDeposit(alice),
+            depositAssets,
+            "upgrade fixture must have executable cap headroom"
+        );
         vm.startPrank(alice);
-        asset.approve(address(upgraded), 100e6);
-        uint256 shares = ITokenizedStrategy(address(upgraded)).deposit(100e6, alice);
+        asset.approve(address(upgraded), depositAssets);
+        uint256 shares = ITokenizedStrategy(address(upgraded)).deposit(depositAssets, alice);
         uint256 withdrawn = ITokenizedStrategy(address(upgraded)).redeem(shares, alice, alice);
         vm.stopPrank();
 
-        assertEq(withdrawn, 100e6, "post-upgrade deposit/withdraw");
+        assertGt(shares, 0, "deprecated whitelist slots are inert");
+        assertEq(withdrawn, depositAssets, "post-upgrade deposit/withdraw");
     }
 
     /// @dev Executes the production batch shape in order: the implementation upgrade first, then the

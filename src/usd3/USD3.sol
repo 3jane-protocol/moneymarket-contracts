@@ -535,7 +535,24 @@ contract USD3 is BaseHooksUpgradeable {
         if (cap <= currentTotalAssets) {
             return 0;
         }
-        return cap - currentTotalAssets;
+
+        uint256 headroom = cap - currentTotalAssets;
+        uint256 maxShares = TokenizedStrategy.convertToShares(headroom);
+        if (maxShares == 0) {
+            // Zero-share headroom is unexecutable for every receiver.
+            return 0;
+        }
+
+        uint256 minimum = minDeposit;
+        if (minimum == 0 || TokenizedStrategy.balanceOf(_owner) != 0) {
+            return headroom;
+        }
+        if (headroom < minimum || TokenizedStrategy.previewMint(maxShares) < minimum) {
+            // Deliberately under-advertise one executable maxDeposit value for fresh receivers in this narrow
+            // band instead of advertising a maxMint value that reverts.
+            return 0;
+        }
+        return headroom;
     }
 
     /*//////////////////////////////////////////////////////////////
