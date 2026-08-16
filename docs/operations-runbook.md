@@ -79,11 +79,12 @@ receiver-based opening minimum applies again on every hop even when the final sU
 
 Seed the production Helper permanently with one USD3 base-unit share and verify `USD3.balanceOf(Helper) >= 1` after
 deployment, any Helper replacement, and any strategy migration. The hop deposits only the newly minted shares, so the
-seed remains behind; USD3 losses change PPS rather than the seed's share count. Do not substitute
-`supplyCapExempt[Helper]`: it bypasses only the receiver-level first-time minimum at the actual hop deposit, while
-`Helper` first checks the non-exempt user's `availableDepositLimit`, so supply-cap headroom and borrower restrictions
-still bind. If the seed is absent, sub-minimum hops revert atomically; users can use the two-transaction
-USD3-then-sUSD3 route until the seed is restored.
+seed remains behind; USD3 losses change PPS rather than the seed's share count. Prefer the seed over
+`supplyCapExempt[Helper]`: either addresses the receiver-level first-time minimum, and `Helper` prechecks the final
+receiver's `availableDepositLimit` (`src/Helper.sol:70`) so supply-cap headroom and borrower restrictions bind under
+both, but the exemption grants the Helper broader standing privilege than the opening minimum requires. If the seed
+is absent, sub-minimum hops revert atomically; users can use the two-transaction USD3-then-sUSD3 route until the seed
+is restored.
 
 ## Loss report landing during a waUSDC pause
 

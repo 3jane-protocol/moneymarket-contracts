@@ -36,8 +36,10 @@ abstract contract USD3v12UpgradeBase is TimelockHelper {
         require(newImpl.code.length > 0, "USD3_IMPL has no code");
     }
 
-    /// @dev v1.2 removes enforcement of the deprecated USD3 deposit lock. Check at scheduling and again at execution
-    /// so a config write during the 7-day delay cannot turn the implementation swap into an unannounced lock release.
+    /// @dev v1.2 removes enforcement of the deprecated USD3 deposit lock. The sanctioned scripts recheck this value
+    /// while preparing and simulating the Safe batch, which catches a config write that has already landed during the
+    /// 7-day delay, but the check is not atomic with timelock execution: a write landing after preflight and before
+    /// Safe execution bypasses it, and a direct `EXECUTOR_ROLE` call bypasses both the script and its recheck.
     function _requireCommitmentTimeDisabled() internal view {
         require(PROTOCOL_CONFIG.code.length > 0, "ProtocolConfig has no code");
         require(
