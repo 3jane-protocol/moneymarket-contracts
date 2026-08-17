@@ -10,7 +10,7 @@ import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
 import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 
 contract LCCReturnPoolTest is LCCBase {
-    uint256 internal constant RISK_CONFIG_SLOT = 4;
+    uint256 internal constant RISK_CONFIG_SLOT = 3;
 
     function setUp() public override {
         super.setUp();
@@ -234,7 +234,7 @@ contract LCCReturnPoolTest is LCCBase {
         address dana = makeAddr("dana");
         _mintAndApprove(dana, 1, 0);
         vm.prank(dana);
-        uint256 freshCommitment = vault.deposit(1, 1, type(uint256).max, true, type(uint256).max);
+        uint256 freshCommitment = vault.deposit(1, dana, 1, type(uint256).max, true, type(uint256).max);
         assertEq(freshCommitment, 500_000);
         assertEq(aliceAccount.activeCommitment - freshCommitment, 250_000, "50% excess over a fresh deposit");
         assertGt(
@@ -575,6 +575,7 @@ contract LCCReturnPoolTest is LCCBase {
         vm.store(address(vault), _mappingSlot(0, MARGIN_PRICE_AT_CALL_OPEN_SLOT), bytes32(0));
 
         vm.warp(START + EPOCH);
+        vm.prank(stranger);
         vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
         vault.materializeAccount(alice);
 

@@ -3,7 +3,7 @@ pragma solidity ^0.8.22;
 
 import {Test} from "../../../lib/forge-std/src/Test.sol";
 
-import {LCCConfigLib} from "../../../src/lcc/libraries/LCCConfigLib.sol";
+import {LCCExitLib} from "../../../src/lcc/libraries/LCCExitLib.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 import {LCCTypesLib} from "../../../src/lcc/libraries/LCCTypesLib.sol";
 
@@ -11,6 +11,10 @@ contract LCCExitAssignmentHarness {
     mapping(uint256 => LCCTypesLib.Bucket) internal buckets;
     uint256[] internal maturities;
     mapping(uint256 => uint256) internal indexPlusOne;
+    mapping(uint256 => mapping(uint256 => LCCTypesLib.ExitExposure)) internal exposureByCallAndMaturity;
+    mapping(uint256 => uint256[]) internal maturitiesByCall;
+
+    uint256 internal constant BPS = 10_000;
 
     function seed(uint256 maturity, uint128 commitment) external {
         require(indexPlusOne[maturity] == 0, "duplicate");
@@ -24,8 +28,8 @@ contract LCCExitAssignmentHarness {
         view
         returns (uint256)
     {
-        return LCCConfigLib.assignExitMaturity(
-            buckets, maturities, indexPlusOne, accountCommitment, earliestMaturity, maxDeferralEpochs, capacity
+        return LCCExitLib.assignExitMaturity(
+            buckets, accountCommitment, maxDeferralEpochs, capacity, earliestMaturity | (BPS << 64)
         );
     }
 
@@ -35,8 +39,8 @@ contract LCCExitAssignmentHarness {
         uint256 maxDeferralEpochs,
         uint256 capacity
     ) external returns (uint256 maturity) {
-        maturity = LCCConfigLib.assignExitMaturity(
-            buckets, maturities, indexPlusOne, accountCommitment, earliestMaturity, maxDeferralEpochs, capacity
+        maturity = LCCExitLib.assignExitMaturity(
+            buckets, accountCommitment, maxDeferralEpochs, capacity, earliestMaturity | (BPS << 64)
         );
         buckets[maturity].commitment += uint128(accountCommitment);
     }
@@ -46,7 +50,7 @@ contract LCCExitAssignmentHarness {
     }
 }
 
-contract LCCConfigLibExitTest is Test {
+contract LCCExitLibExitTest is Test {
     uint256 internal constant MAX_EXIT_MATURITY_BUCKETS = 128;
     uint256 internal constant EARLIEST = 100;
     uint256 internal constant CAPACITY = 10;

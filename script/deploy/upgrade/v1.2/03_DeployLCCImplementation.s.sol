@@ -10,9 +10,10 @@ import {LCCWiringCheck} from "../../../utils/LCCWiringCheck.sol";
 /**
  * @title DeployLCCImplementation v1.2
  * @notice Deploy the shared LCCVault implementation with its protocol-wide immutable wiring.
- * @dev LCCAuctionLib and LCCConfigLib are externally linked. Forge deploys and links both during broadcast; every
- *      future implementation redeploy must deploy and link both libraries again. The implementation CREATE2 address
- *      is deployer-dependent because the linked library addresses are embedded in its initcode.
+ * @dev LCCAuctionLib, LCCConfigLib, and LCCExitLib are externally linked. Forge deploys and links all three during
+ *      broadcast; every future implementation redeploy must deploy and link all three libraries again. The
+ *      implementation CREATE2 address is deployer-dependent because the linked library addresses are embedded in its
+ *      initcode.
  *
  *      This script intentionally imports LCCVault without LCCVaultFactory so each retains its canonical optimizer
  *      settings.
@@ -60,8 +61,8 @@ contract DeployLCCImplementation is Script, LCCWiringCheck {
         console2.log("Address:", vaultImpl);
         console2.log("");
         console2.log("Next steps:");
-        console2.log("  1. Verify LCCAuctionLib, LCCConfigLib, and LCCVault on Etherscan");
-        console2.log("  2. Record both linked library addresses for future implementation upgrades");
+        console2.log("  1. Verify LCCAuctionLib, LCCConfigLib, LCCExitLib, and LCCVault on Etherscan");
+        console2.log("  2. Record all three linked library addresses for future implementation upgrades");
         console2.log("  3. Run 04_DeployLCCBeaconAndFactory.s.sol with:");
         console2.log("     LCC_VAULT_IMPL=%s", vaultImpl);
 

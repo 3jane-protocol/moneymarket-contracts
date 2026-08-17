@@ -122,11 +122,17 @@ is restored.
 
 ## Creating and authorizing an LCC vault
 
-LCC deployment has split authority. The main Safe owns `LCCVaultFactory`; USD3 management is the 24-hour parameters
-timelock `0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2`; and each facility manifest must explicitly declare its approved,
-nonzero vault owner. The LCC beacon's separate fleet upgrade authority is the 7-day timelock. Do not require or
-represent those roles as one account. See `docs/deployment.md` for the timing trade-offs when selecting a facility
-owner.
+LCC deployment has split authority. The main Safe holds the non-upgradeable `LCCVaultFactory`'s sole `OWNER_ROLE`;
+USD3 management is the 24-hour parameters timelock `0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2`; and the LCC beacon's
+separate fleet upgrade authority is the 7-day timelock. Do not require or represent those roles as one account. Vault
+manifests contain facility parameters and risk acknowledgements, not an independent authority address. The factory
+owner controls every vault in the family, so an ownership change has family-wide rather than per-facility blast radius.
+
+Before each deployment, review and record `factory.owner()`, enumerate `factory.OWNER_ROLE()` with
+`getRoleMemberCount` and `getRoleMember`, and review `factory.pendingOwner()`. The owner must match the intended main
+Safe and the `OWNER_ROLE` census must contain that sole member. If `pendingOwner()` is nonzero, resolve or expressly
+approve the pending family-wide authority transfer before proceeding. See `docs/deployment.md` for the timing
+trade-offs of factory-wide authority.
 
 Use `script/operations/CreateLCCVaultSafe.s.sol` with the same finalized JSON in every phase:
 
@@ -135,9 +141,7 @@ Use `script/operations/CreateLCCVaultSafe.s.sol` with the same finalized JSON in
    only when a perpetual `maxEpochs = 0` facility has an approved dispersion justification; set the second true only
    when `minCommitmentEpochs + exitDelayEpochs >= maxEpochs != 0` deliberately makes terminal wind-down the only exit;
    set the third true only when the loss budget approves `maxAuctionAwardBps = 10000`, the maximum award-loss case.
-   Record the named approver. The script rejects each case without its acknowledgement and rejects a missing or zero
-   `params.owner`; it verifies the deployed owner against that explicit declaration but does not mandate a particular
-   address.
+   Record the named approver. The script rejects each case without its acknowledgement.
 2. Keep `startTimestamp` far enough in the future to survive the governance delay. Run
    `schedulePrerequisites(string,uint256,bool)` with an attempt nonce (start at `0`). The script computes the CREATE2
    address from the final parameters and facility ID, confirms the factory owner, confirms the beacon is owned by the
@@ -149,10 +153,10 @@ Use `script/operations/CreateLCCVaultSafe.s.sol` with the same finalized JSON in
    attempt nonce. A completed TimelockController operation cannot be rescheduled; use a fresh nonce for a new attempt.
    Confirm both USD3 flags are true at the predicted, still-undeployed address.
 4. Run `run(string,bool)`. The factory Safe creates only that pre-authorized CREATE2 vault. The script verifies the
-   simulated vault's address, factory provenance, owner, protocol wiring, and both USD3 flags.
+   simulated vault's address, factory provenance, protocol wiring, and both USD3 flags.
 5. After the Safe transaction executes on chain, run `verify(string)` with the deployment JSON. Archive its successful
-   output with the manifest. `verify(address,address)` with the vault and explicit expected owner is a fallback when the
-   JSON is unavailable, but the JSON-based check is authoritative because it also recomputes the expected address.
+   output with the manifest. `verify(address)` with the vault is the fallback when the JSON is unavailable, but
+   `verify(string)` is authoritative because it also recomputes the expected address from the manifest.
 
 The two USD3 flags are continuing operating preconditions, not one-time deployment ceremony. Before approving any USD3
 management batch that touches either mapping, resolve whether the target is a factory-registered LCC vault. Never clear
@@ -187,7 +191,7 @@ slash-eligible for its entire remaining margin, not only the called fraction. Re
 
 ## LCC Closed-window delivery or oracle outage
 
-**Trigger.** An LCC shortfall auction is in its `Closed` phase and either the margin oracle or the USD3/USD3n delivery path is unavailable long enough that fills cannot execute.
+**Trigger.** An LCC shortfall auction is in its `Closed` phase and either the margin oracle or the USD3/USD3l delivery path is unavailable long enough that fills cannot execute.
 
 **Why intervention matters.** Completed settlement cannot distinguish “nobody bid” from “nobody could bid.” If an auction-eligible epoch reaches its effective Closed end with zero fills, the whole gross slash pool accrues to treasury. Wall-clock delay alone does not justify different settlement economics.
 
@@ -215,6 +219,87 @@ also changes `protocolCommitmentCap`. That reverts the entire timelocked transac
 `userCommitmentCap`, `exitCapBps`, and `minDeposit` changes, even if no slot existed when it was queued. The risk is
 bounded by the pending auction's Closed window. If the other three parameters must change while a slot is live,
 re-pass the current protocol cap unchanged.
+
+## Granting DEPOSIT_OPERATOR_ROLE
+
+**Hard rule.** Never grant `DEPOSIT_OPERATOR_ROLE` to a generic arbitrary-calldata router. The factory authenticates
+the payer contract, not the router's end user and not the beneficiary's consent. A generic router would let any user
+deposit for a whitelisted victim. Grant only to a dedicated adapter that verifies beneficiary authorization, or to a
+closed facility operator with a documented consent channel. A consent-verifying adapter must bind at least a nonce,
+deadline, vault, payer, asset and commitment bounds, and the `allowPendingActivation` choice. If a generic router must
+be admitted, implement the factory consent registry or in-protocol signature check first.
+
+**Trust consequences.** A role holder can refresh a beneficiary's `commitmentStartEpoch` with floor-sized deposits,
+consume the beneficiary's `userCommitmentCap` and the protocol cap, and stage pending exposure that blocks both
+`requestExit` and the bouncer's `bounceCommitment`. Margin is irrevocably credited to the beneficiary; the payer has
+no recovery right. Revocation stops new delegated deposits but does not unwind credited active or pending exposure.
+The payer is intentionally not checked against the depositor whitelist; the beneficiary still passes the whitelist,
+one-vault policy, and admissions module.
+
+Before granting the role:
+
+1. Verify the candidate is the approved consent-verifying adapter bytecode, or record the closed facility operator's
+   consent channel and accountable owner. Reject any target that forwards caller-selected arbitrary calldata.
+2. Verify `factory.getRoleAdmin(factory.DEPOSIT_OPERATOR_ROLE()) == factory.OWNER_ROLE()` and that the Safe is the
+   sole owner. Submit `grantRole` from the factory owner.
+3. Verify `factory.isDepositOperator(candidate)` is true. The view is for operations and integrations; enforcement
+   occurs inside `authorizeDeposit`.
+
+Before every adapter-routed deposit, pre-check the beneficiary is nonzero and whitelisted, has no exit in progress,
+has no incompatible pending activation, and is eligible under the warm one-vault pointer and admissions module.
+Check beneficiary and protocol cap headroom, current oracle availability, commitment bounds, and deadline. Default
+`allowPendingActivation` to `false`; permit `true` only when the beneficiary's signed authorization explicitly chose
+pending activation. These pre-checks reduce failed transactions but do not replace the adapter's consent proof.
+
+## LCC depositor bounce
+
+**Trigger.** A family `BOUNCER_ROLE` operator must remove some or all of a depositor's active commitment.
+
+1. If the account can be more than 64 finalized calls behind, call `materializeAccount(user)` permissionlessly until
+   bounded replay is complete. A bounce never bypasses replay.
+2. Check `pauseState`. A paused vault makes every `synced` entrypoint revert, including `bounceCommitment`; the owner
+   must unpause before the bouncer acts.
+3. Check the current account. A pending deposit makes the bounce revert `PendingDepositExists`; wait for its next-epoch
+   activation and retry. Any exit in progress, including matured-but-unclaimed exit margin, makes the bounce revert
+   `ExitInProgress`; let the exit mature and have the user call `claimExitedMargin` instead.
+4. Check `pendingAuctionEpochPlusOne` and the current call. A live auction or an opened, unfinalized current call makes
+   the bounce revert `InvalidPhase`; settle or finalize that call first.
+5. Submit `bounceCommitment(user, commitment)`. The amount is nominal active commitment, and the returned margin is
+   the pro-rata floor. Removing the entire active commitment closes only an otherwise plain active account; it is not
+   a full-closeout sentinel and does not absorb pending or exit state.
+
+The return transfer goes directly to the depositor. If a blacklistable margin token refuses transfers to that
+holder, the whole bounce reverts. There is no escrow override: pause the facility while the incident is assessed,
+and use the established shutdown/wind-down process if governance decides the facility cannot safely continue.
+Shutdown does not make the blocked transfer succeed, but it prevents new exposure and enables the ordinary claims
+that remain transferable.
+
+## LCC family registry migration
+
+The registry moves lazily; no administrator deregisters users. To migrate from vault A to vault B, first reach a
+permanently closed account in A, then deposit into B. B's successful deposit calls the factory last, and the factory
+automatically re-points `vaultOf[user]` from A to B. A matured exiter is still open until the user calls
+`claimExitedMargin`, even when the claim amount is zero. Shutdown users likewise call `claimRemainingMargin`; an
+otherwise plain account whose entire active commitment was bounced is already eligible to re-point.
+
+If A has more than 64 finalized calls beyond the user's stored cursor, the first B deposit is conservatively denied.
+Call `materializeAccount(user)` on A permissionlessly, in batches if needed, then retry B. A live auction can also
+keep the closure replay incomplete until settlement.
+
+Disabling `oneVaultPolicyEnabled` is prospective-only: deposits may create multiple open positions and the outermost
+successful deposit remains the warm `vaultOf` pointer. Before re-enabling, inventory all such users, reconcile every
+multi-vault user offchain to one open position, and verify that no family vault is paused or shut with an unclaimable
+position. Admission checks only the vault named by the warm pointer: if A remains open while B is recorded, closing
+and reopening B after re-enablement does not discover A. Re-enabling does not close existing positions, and the latest
+warm pointer can top-up-block a healthy older position until the recorded vault closes.
+
+## LCC factory ownership rotation
+
+A two-step factory ownership transfer re-keys every family vault, including exceptional settlement recovery. Do not
+start or accept a rotation while any vault has a pending auction slot with a missing call-open price snapshot. Both
+steps of recovery — installing a healthy margin oracle and sending the owner-triggered `synced` disposal — must stay
+under one owner throughout the incident. Confirm every family vault's pending slot and snapshot state before
+proposing the new owner.
 
 ## Related
 

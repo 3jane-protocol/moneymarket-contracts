@@ -122,6 +122,7 @@ contract LCCRollTest is LCCBase {
         vm.prank(alice);
         assertEq(vault.fundCall(false), 50e18);
 
+        factory.setOneVaultPolicyEnabled(false);
         vm.warp(START);
         _deployVaultWithParams(_params(CAP, CAP));
         _deposit(alice, 100e18);
@@ -234,6 +235,7 @@ contract LCCRollTest is LCCBase {
         assertEq(vault.claimRemainingMargin(alice), 100e18);
         assertEq(margin.balanceOf(alice), aliceBefore + 100e18);
 
+        factory.setOneVaultPolicyEnabled(false);
         _deployVaultWithParams(_params(CAP, CAP));
         _deposit(alice, 100e18);
         _openCall(50e18);

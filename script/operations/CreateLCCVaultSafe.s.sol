@@ -33,8 +33,7 @@ interface IOwnableView {
  * @dev The shipped authority split requires two governance phases. The 24-hour parameters timelock first schedules and
  *      executes the USD3 supply-cap exemption and ring-fence conduit writes for the predicted CREATE2 address. Only
  *      after both flags are live may the factory-owning Safe create the vault. The script separately verifies the
- *      beacon's 7-day-timelock owner. The vault owner must be explicitly declared in the JSON; the script rejects zero
- *      and verifies that the deployed owner matches the declaration without mandating a particular authority.
+ *      beacon's 7-day-timelock owner and the factory's family-wide owner role.
  *
  *      The JSON `facilityId` is encoded as `facilityKey = keccak256(bytes(facilityId))`, then the factory salt is
  *      `keccak256(abi.encode(bytes32("3JANE_LCC_VAULT_V1"), block.chainid, facilityKey))`. This UTF-8 byte encoding
@@ -203,7 +202,7 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
             addToBatch(address(factory), abi.encodeCall(ILCCVaultFactoryCreate2.createVault, (config.params, salt)));
         address simulatedVault = abi.decode(createReturndata, (address));
         require(simulatedVault == vault, "Simulated vault address mismatch");
-        _requireDeployedVault(factory, usd3, vault, config.params.owner);
+        _requireDeployedVault(factory, usd3, vault);
         _requireSingleCallBatch("LCC creation must be one Safe call");
 
         _executeSafeBatch(send);
@@ -214,7 +213,7 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         this.run(jsonPath, false);
     }
 
-    /// @notice Verify the predicted vault address, owner, factory provenance, wiring, and both USD3 permissions.
+    /// @notice Verify the predicted vault address, factory provenance, wiring, and both USD3 permissions.
     function verify(string memory jsonPath) external view {
         address safeAddress = vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE);
         LCCVaultFactory factory = _factory();
@@ -225,20 +224,19 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         console2.log("=== Verify Deployed LCC Vault ===");
         console2.log("CREATE2 salt:", vm.toString(salt));
         console2.log("Predicted vault:", vault);
-        _requireDeployedVault(factory, usd3, vault, config.params.owner);
-        console2.log("PASS: owner, provenance, wiring, supply-cap exemption, and ring-fence conduit");
+        _requireDeployedVault(factory, usd3, vault);
+        console2.log("PASS: provenance, wiring, supply-cap exemption, and ring-fence conduit");
     }
 
-    /// @notice Verify a deployed vault against an explicitly supplied expected owner when its JSON is unavailable.
-    function verify(address vault, address expectedOwner) external view {
+    /// @notice Verify a deployed vault when its deployment JSON is unavailable.
+    function verify(address vault) external view {
         LCCVaultFactory factory = _factory();
         IUSD3Registry usd3 = IUSD3Registry(USD3_PROXY);
 
         console2.log("=== Verify Deployed LCC Vault ===");
         console2.log("Vault:", vault);
-        console2.log("Expected vault owner:", expectedOwner);
-        _requireDeployedVault(factory, usd3, vault, expectedOwner);
-        console2.log("PASS: owner, provenance, wiring, supply-cap exemption, and ring-fence conduit");
+        _requireDeployedVault(factory, usd3, vault);
+        console2.log("PASS: provenance, wiring, supply-cap exemption, and ring-fence conduit");
     }
 
     function _factory() internal view returns (LCCVaultFactory factory) {
@@ -255,7 +253,6 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         address safeAddress
     ) internal view returns (bytes32 salt, address vault) {
         require(bytes(config.facilityId).length != 0, "Facility ID not set");
-        require(config.params.owner != address(0), "Vault owner must be nonzero");
         require(config.params.marginAsset != address(0), "Margin asset not set");
         require(config.params.marginOracle != address(0), "Margin oracle not set");
         _requireHoldToMaturityAcknowledgement(config.params, config.acknowledgeHoldToMaturity);
@@ -287,14 +284,9 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         require(config.params.startTimestamp > block.timestamp, "Vault start timestamp must be in the future");
     }
 
-    function _requireDeployedVault(LCCVaultFactory factory, IUSD3Registry usd3, address vault, address expectedOwner)
-        internal
-        view
-    {
-        require(expectedOwner != address(0), "Expected vault owner must be nonzero");
+    function _requireDeployedVault(LCCVaultFactory factory, IUSD3Registry usd3, address vault) internal view {
         require(vault != address(0) && vault.code.length > 0, "LCC vault is not deployed");
         require(factory.isVault(vault), "LCC vault is not factory registered");
-        require(IOwnableView(vault).owner() == expectedOwner, "LCC vault owner mismatch");
         _requireLCCWiring(vault, USD3_PROXY);
         require(usd3.supplyCapExempt(vault), "LCC vault supply-cap exemption missing");
         require(usd3.ringFenceConduit(vault), "LCC vault ring-fence conduit missing");
@@ -361,7 +353,7 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
     ) internal view {
         console2.log("Factory Safe:", safeAddress);
         console2.log("Parameters timelock / USD3 management:", PARAMS_TIMELOCK);
-        console2.log("Declared vault owner:", config.params.owner);
+        console2.log("Factory owner:", factory.owner());
         console2.log("Beacon timelock:", BEACON_TIMELOCK);
         console2.log("LCC factory:", address(factory));
         console2.log("USD3 proxy:", USD3_PROXY);
@@ -381,14 +373,12 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
 
     function _parseDeploymentConfig(string memory jsonPath) internal view returns (DeploymentConfig memory config) {
         string memory json = vm.readFile(jsonPath);
-        require(vm.keyExistsJson(json, ".owner"), "Vault owner must be explicitly declared");
         config.facilityId = vm.parseJsonString(json, ".facilityId");
         config.acknowledgeHoldToMaturity = vm.parseJsonBool(json, ".acknowledgeHoldToMaturity");
         config.acknowledgePerpetualTenor = vm.parseJsonBool(json, ".acknowledgePerpetualTenor");
         config.acknowledgeFullAuctionAward = vm.parseJsonBool(json, ".acknowledgeFullAuctionAward");
 
         ILCCVault.VaultParams memory params;
-        params.owner = vm.parseJsonAddress(json, ".owner");
         params.marginAsset = vm.parseJsonAddress(json, ".marginAsset");
         params.marginOracle = vm.parseJsonAddress(json, ".marginOracle");
         params.startTimestamp = vm.parseJsonUint(json, ".startTimestamp");

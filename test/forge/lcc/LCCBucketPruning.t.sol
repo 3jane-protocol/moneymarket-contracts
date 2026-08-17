@@ -7,13 +7,13 @@ import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 contract LCCBucketPruningTest is LCCBase {
     // These slots intentionally mirror the upgrade-frozen LCCVault storage-layout snapshot. Reading the internal
     // sparse-list bookkeeping directly lets the tests prove both list contents and every 1-based index mapping.
-    uint256 internal constant TOTALS_SLOT = 10;
-    uint256 internal constant PENDING_BUCKET_SLOT = 18;
-    uint256 internal constant ACTIVATION_LIST_SLOT = 19;
-    uint256 internal constant ACTIVATION_INDEX_SLOT = 20;
-    uint256 internal constant EXIT_BUCKET_SLOT = 21;
-    uint256 internal constant MATURITY_LIST_SLOT = 22;
-    uint256 internal constant MATURITY_INDEX_SLOT = 23;
+    uint256 internal constant TOTALS_SLOT = 9;
+    uint256 internal constant PENDING_BUCKET_SLOT = 17;
+    uint256 internal constant ACTIVATION_LIST_SLOT = 18;
+    uint256 internal constant ACTIVATION_INDEX_SLOT = 19;
+    uint256 internal constant EXIT_BUCKET_SLOT = 20;
+    uint256 internal constant MATURITY_LIST_SLOT = 21;
+    uint256 internal constant MATURITY_INDEX_SLOT = 22;
 
     function setUp() public override {
         super.setUp();

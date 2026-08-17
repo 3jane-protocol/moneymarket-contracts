@@ -10,14 +10,17 @@ const MAX_RUNTIME_BYTES = 24_276;
 const EIP_170_LIMIT = 24_576;
 const AUCTION_LIBRARY_SOURCE = "src/lcc/libraries/LCCAuctionLib.sol";
 const CONFIG_LIBRARY_SOURCE = "src/lcc/libraries/LCCConfigLib.sol";
+const EXIT_LIBRARY_SOURCE = "src/lcc/libraries/LCCExitLib.sol";
 const EXPECTED_LINKED_LIBRARIES = new Map([
   [AUCTION_LIBRARY_SOURCE, "LCCAuctionLib"],
   [CONFIG_LIBRARY_SOURCE, "LCCConfigLib"],
+  [EXIT_LIBRARY_SOURCE, "LCCExitLib"],
 ]);
 const STORAGE_LAYOUT_BASELINE = "docs/lcc-vault-storage-layout.json";
 const ABI_BASELINE = "docs/lcc-vault-abi-baseline.json";
 const NEGATIVE_FIXTURE_DIRECTORY = "scripts/fixtures/lcc-storage-layout";
 const ARTIFACT_RESOLUTION_FIXTURE_DIRECTORY = "scripts/fixtures/lcc-artifact-resolution";
+const LINK_REFERENCE_FIXTURE_DIRECTORY = "scripts/fixtures/lcc-link-references";
 const EXPECTED_NEGATIVE_FIXTURES = [
   "base-storage-insertion.json",
   "gap-shrinkage.json",
@@ -29,6 +32,7 @@ const EXPECTED_ARTIFACT_RESOLUTION_FIXTURES = [
   "canonical-tiebreak.json",
   "noncanonical-via-ir.json",
 ];
+const EXPECTED_LINK_REFERENCE_FIXTURES = ["two-library-only.json", "unexpected-fourth-library.json"];
 const LCC_VAULT_SETTINGS = {
   compiler: EXPECTED_COMPILER,
   evmVersion: "cancun",
@@ -425,6 +429,47 @@ function verifyArtifactResolutionNegativeFixtures() {
   }
 }
 
+function linkedLibraryDifference(linkReferences) {
+  const linkedSources = Object.keys(linkReferences);
+  const hasExpectedLinkReferences =
+    linkedSources.length === EXPECTED_LINKED_LIBRARIES.size &&
+    [...EXPECTED_LINKED_LIBRARIES].every(
+      ([source, library]) =>
+        Object.hasOwn(linkReferences, source) && Object.keys(linkReferences[source]).join(",") === library,
+    );
+  if (hasExpectedLinkReferences) return undefined;
+
+  return (
+    `expected exactly ${[...EXPECTED_LINKED_LIBRARIES.values()].join(", ")} link references, ` +
+    `found ${linkedSources.join(", ") || "none"}`
+  );
+}
+
+function verifyLinkReferenceNegativeFixtures() {
+  const directory = path.resolve(process.cwd(), LINK_REFERENCE_FIXTURE_DIRECTORY);
+  if (!fs.existsSync(directory)) fail(`missing ${directory}`);
+  const fixtureFiles = new Set(fs.readdirSync(directory).filter((file) => file.endsWith(".json")));
+  const missingFixtures = EXPECTED_LINK_REFERENCE_FIXTURES.filter((file) => !fixtureFiles.has(file));
+  if (missingFixtures.length !== 0) fail(`missing link-reference negative fixtures: ${missingFixtures.join(", ")}`);
+
+  for (const fixtureFile of EXPECTED_LINK_REFERENCE_FIXTURES) {
+    const fixture = readJson(path.join(LINK_REFERENCE_FIXTURE_DIRECTORY, fixtureFile));
+    if (typeof fixture?.linkReferences !== "object" || !Array.isArray(fixture?.expectedErrorFragments)) {
+      fail(`link-reference negative fixture ${fixtureFile} is malformed`);
+    }
+
+    const difference = linkedLibraryDifference(fixture.linkReferences);
+    if (difference === undefined) fail(`link-reference negative fixture ${fixtureFile} was not rejected`);
+    const missingFragments = fixture.expectedErrorFragments.filter((fragment) => !difference.includes(fragment));
+    if (missingFragments.length !== 0) {
+      fail(
+        `link-reference negative fixture ${fixtureFile} error omitted: ${missingFragments.join(", ")}; ` +
+          `found ${difference}`,
+      );
+    }
+  }
+}
+
 function main() {
   const outputDirectory = forgeOutputDirectory();
   const lccVaultResolution = resolveArtifactBySettings(
@@ -449,16 +494,8 @@ function main() {
   }
 
   const linkReferences = artifact.deployedBytecode?.linkReferences ?? {};
-  const linkedSources = Object.keys(linkReferences);
-  const hasExpectedLinkReferences =
-    linkedSources.length === EXPECTED_LINKED_LIBRARIES.size &&
-    [...EXPECTED_LINKED_LIBRARIES].every(
-      ([source, library]) =>
-        Object.hasOwn(linkReferences, source) && Object.keys(linkReferences[source]).join(",") === library,
-    );
-  if (!hasExpectedLinkReferences) {
-    fail(`expected exactly LCCAuctionLib and LCCConfigLib link references, found ${linkedSources.join(", ") || "none"}`);
-  }
+  const linkedLibraryError = linkedLibraryDifference(linkReferences);
+  if (linkedLibraryError !== undefined) fail(linkedLibraryError);
 
   let layoutResult;
   try {
@@ -471,6 +508,7 @@ function main() {
   }
   verifyNegativeFixtures();
   verifyArtifactResolutionNegativeFixtures();
+  verifyLinkReferenceNegativeFixtures();
 
   let canonicalArtifactAbi;
   let abiDifference;
@@ -503,7 +541,7 @@ function main() {
 
   console.log(
     `LCCVault release artifact: ${runtimeBytes} bytes, ${EIP_170_LIMIT - runtimeBytes} bytes below EIP-170, ` +
-      `${EXPECTED_OPTIMIZER_RUNS} runs; LCCAuctionLib and LCCConfigLib link references present; ` +
+      `${EXPECTED_OPTIMIZER_RUNS} runs; LCCAuctionLib, LCCConfigLib, and LCCExitLib link references present; ` +
       `storage layout and external ABI match reviewer-controlled baselines; ` +
       `LCCVault and NotificationVault artifacts match their canonical compiler, EVM, via-IR, optimizer, and metadata settings`,
   );

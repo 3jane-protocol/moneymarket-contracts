@@ -20,8 +20,6 @@
   "minCommitmentEpochs": 1,
   "minDepositAssets": 0,
   "normalDuration": 345600,
-  "owner": "0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2",
-  "ownerNote": "Must be the explicitly approved facility owner; review the timing trade-offs in docs/deployment.md",
   "preCallDuration": 86400,
   "protocolCommitmentCap": 10000000000000,
   "slashFeeBps": 1000,

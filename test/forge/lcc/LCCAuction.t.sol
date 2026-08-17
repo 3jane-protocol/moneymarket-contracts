@@ -12,8 +12,8 @@ import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
 contract LCCAuctionTest is LCCBase {
     uint256 internal constant DEADLINE = START + NORMAL + PRE_CALL + FUNDING;
     uint256 internal constant WINDOW_END = START + EPOCH;
-    uint256 internal constant CLOCK_CONFIG_SLOT = 1;
-    uint256 internal constant ACCOUNTS_SLOT = 15;
+    uint256 internal constant CLOCK_CONFIG_SLOT = 0;
+    uint256 internal constant ACCOUNTS_SLOT = 14;
     uint256 internal constant UINT64_MASK = type(uint64).max;
 
     function setUp() public override {

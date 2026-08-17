@@ -19,9 +19,9 @@ commitment  = marginValue * BPS / marginRatioBps       // leveraged callable com
 
 `ORACLE_PRICE_SCALE` is `1e36` and `BPS` is `10_000`. With `marginRatioBps = 2000` the leverage is `BPS / 2000 = 5x`.
 
-The vault owner opens at most one **capital call** per epoch. Each account with active commitment then owes a
+The factory owner opens at most one **capital call** per epoch. Each account with active commitment then owes a
 ceil-rounded pro-rata slice of the call, funded **all-or-nothing** during the Funding phase; the funded amount is
-delivered to the funder as wrapped USD3n (USDC routed through USD3 into the notification vault). An account that
+delivered to the funder as wrapped USD3l (USDC routed through USD3 into the notification vault). An account that
 does not meet its obligation by the funding deadline has its margin slashed into the epoch pool, and the resulting
 call shortfall is offered through a step-decay auction. The treasury receives `slashFeeBps` of the take basis plus
 the unfilled share of every auction-eligible epoch after its full window, including an untouched epoch with no
@@ -41,10 +41,11 @@ funds calls and auction fills. The worked examples below use symbolic round numb
 | File                             | Responsibility                                                            |
 | -------------------------------- | ------------------------------------------------------------------------- |
 | `LCCVault.sol`                   | The vault: clock, deposits, calls, funding, lazy sync, slash, auction     |
-| `LCCVaultFactory.sol`            | Owner-gated `BeaconProxy` deployment + provenance registry                |
+| `LCCVaultFactory.sol`            | Family roles, deposit admission/registry, and `BeaconProxy` deployment    |
 | `interfaces/ILCCVault.sol`       | External API, structs, and per-function NatSpec (the API reference)       |
 | `libraries/LCCAuctionLib.sol`    | Stateless auction pricing math; externally linked into the implementation |
-| `libraries/LCCConfigLib.sol`     | Externally linked validation, exit assignment, and derived timing         |
+| `libraries/LCCConfigLib.sol`     | Externally linked validation and derived auction step duration            |
+| `libraries/LCCExitLib.sol`       | Externally linked exit assignment and frozen exposure reconciliation      |
 | `libraries/LCCAccountLib.sol`    | Pure in-memory account transitions (activate, mature, default, clear)     |
 | `libraries/LCCBucketListLib.sol` | Sparse epoch-keyed bucket lists with swap-remove and 1-based index maps   |
 | `libraries/LCCTypesLib.sol`      | Packed storage structs (upgrade-frozen layout)                            |
@@ -60,10 +61,11 @@ over the shared `LCCBase` harness.
 
 ## 3. Actors and trust model
 
-- **Owner** — fully trusted. Opens calls (`openEpochCall`), tunes mutable risk caps (`setRiskCaps`,
-  `setMaxAuctionAwardBps`, `setSlashFeeBps`, `setMarginOracle`), controls the pause guardian, can pause/unpause, and
-  can trigger `shutdown`. Ownership is transferable for governance rotation and incident recovery but cannot be
-  renounced, because an ownerless vault could never unpause, shut down, or open calls. `setMarginOracle` is an
+- **Factory owner** — fully trusted family-wide. Opens calls (`openEpochCall`), tunes mutable risk caps
+  (`setRiskCaps`, `setMaxAuctionAwardBps`, `setSlashFeeBps`, `setMarginOracle`), manages subordinate roles, can
+  pause/unpause, and can trigger `shutdown`. Two-step factory ownership transfer re-keys every vault; owner-role
+  renunciation is blocked, and the deliberately unheld default admin prevents minting additional owners.
+  `setMarginOracle` is an
   owner-trusted rotation that reprices subsequent deposits and auction fill awards but not the price used to convert
   an opened call's remaining return pool. While paused the owner may rotate even a responsive oracle because no fills can execute. While
   unpaused, rotation is blocked during a live auction only while the current oracle still prices fills, so a
@@ -71,21 +73,75 @@ over the shared `LCCBase` harness.
   `marginAsset`-to-`fundingAsset` price at `ORACLE_PRICE_SCALE`. The owner controls the call size; a dust-sized
   `callAmount` can force every account to owe a single funding unit (see §7), a documented owner surface.
   `setRiskCaps` freezes every `protocolCommitmentCap` change while an auction is live because settlement reads that
-  cap; the other risk fields remain mutable when the protocol cap is unchanged.
-- **Pause guardian** — owner-appointed circuit-breaker account. The guardian may pause the vault but cannot unpause
-  and cannot change configuration.
+  cap; the other risk fields remain mutable when the protocol cap is unchanged. Do not rotate factory ownership
+  while any family vault has a pending auction slot with a missing price snapshot: both oracle repair and the
+  recovering owner-triggered sync must remain under one owner.
+- **Factory guardian** — `GUARDIAN_ROLE` circuit-breaker account. A guardian may pause any family vault but cannot
+  unpause and cannot change configuration.
+- **Lister** — `LISTER_ROLE` account that batch-manages the family depositor whitelist.
+- **Bouncer** — `BOUNCER_ROLE` account that may reduce active commitment and return its paired active margin. Bounce
+  is a trusted instant-exit valve that bypasses `exitDelayEpochs`, `exitCapBps` bucket capacity, and
+  `minCommitmentEpochs`.
+- **Deposit operator** — `DEPOSIT_OPERATOR_ROLE` payer allowed to fund margin irrevocably credited to another
+  beneficiary. Grant only to a consent-verifying adapter or a closed facility operator with a documented consent
+  channel, never to a generic arbitrary-calldata router; the role holder can otherwise refresh beneficiary lockups,
+  consume cap headroom, and stage pending deposits that block exits and bounce remediation.
+- **Admissions module** — optional narrow view-only decision hook for first deposits and closed-account reopens. It
+  cannot write factory registry or role state, and it does not re-check top-ups in the currently registered open vault.
 - **Margin oracle** — fully trusted. Returns a fresh `marginAsset`-to-`fundingAsset` price scaled by
   `ORACLE_PRICE_SCALE`, absorbing any token-decimal conversion. Deposits, call-open snapshots, and auction fills
   reject a zero price (`OraclePriceInvalid`).
 - **Depositor / funder** — posts margin, funds its own obligation (`fundCall(bool)`), and exits (`requestExit`).
 - **Push funder** — funds another account's obligation with `fundCall(address)`; always amortizes.
-- **Auction filler** — fills an epoch's shortfall via `takeAuction` for wrapped USD3n plus a collateral kicker.
+- **Auction filler** — fills an epoch's shortfall via `takeAuction` for wrapped USD3l plus a collateral kicker.
 - **Treasury** — protocol-wide recipient of slashed margin and unsold auction collateral. Immutable.
 - **Beacon owner** — 3Jane's 7-day timelock; can replace logic under every beacon-backed vault after the delay.
 
 Operational requirements: the `marginAsset` must be a standard ERC20 (fee-on-transfer or rebasing tokens break
 margin conservation), and each vault must be on USD3's `supplyCapExempt` list so funding and fill deposits bypass
-supply-cap headroom and first-time minimums.
+supply-cap headroom and first-time minimums. A zero USD3 supply cap takes precedence over that exemption and blocks
+all deposits as an emergency pause.
+
+### Factory-family authority and registry
+
+`LCCVaultFactory` is the non-upgradeable authority root for the whole family as well as its admission registry and
+proxy deployer. The deliberately unheld `DEFAULT_ADMIN_ROLE` prevents direct owner-role grants: two-step
+`transferOwnership` / `acceptOwnership` is the only `OWNER_ROLE` mutation path, and owner renunciation is blocked. A
+zero-address proposal cancels a pending transfer; proposing the current owner displaces a stale pending owner and can
+be accepted without changing role membership.
+Integrators should verify a candidate vault through `factory.isVault(vault)`, which is the exact provenance check.
+There is deliberately no `factory()` getter within the tight vault runtime budget, and slot 29 is upgrade-layout
+documentation rather than an integration API.
+The owner administers `LISTER_ROLE`, `BOUNCER_ROLE`, `GUARDIAN_ROLE`, and `DEPOSIT_OPERATOR_ROLE`. Vaults read
+emergency and settlement authority only through the factory-local `isOwner`, `isGuardian`, and `isBouncer` views;
+those functions never consult an admissions module or another external contract. The factory also exposes the same
+local, constant-time `isDepositOperator` role view for integrators, while production enforcement occurs inside
+`authorizeDeposit` and no settlement path reads it. A family ownership rotation therefore changes authority and
+exceptional settlement recovery for every vault at once.
+
+Deposits are whitelisted and prospectively limited to one open family vault by default. Every beneficiary passes the
+same whitelist, one-vault, and admissions checks. A self-deposit needs no operator role; when payer and beneficiary
+differ, the payer must hold `DEPOSIT_OPERATOR_ROLE`, and that role check precedes the same-vault top-up short-circuit.
+The payer is deliberately not checked against the depositor whitelist. The factory records the beneficiary's last
+authorized vault in `vaultOf`; a deposit elsewhere can lazily repoint only after bounded replay completes and reports
+zero exposure. Admission checks only the vault currently named by `vaultOf`; it never scans the unbounded family list.
+An incomplete replay of that named vault is conservatively open, and a matured exit remains open until
+`claimExitedMargin`. The whitelist applies to every deposit. The optional admissions module applies to first deposits,
+reopens, and cross-pointer admissions, but a top-up in the currently registered open vault bypasses it. The owner may
+independently disable whitelist or one-vault enforcement. While the one-vault policy is off, last-deposit recording
+remains warm but no exclusivity invariant is claimed; under nested deposits, the outermost successful frame writes
+last. Re-enabling is prospective and does not close or repair positions opened during the disabled interval.
+
+There are two deliberate owner-accepted registry residuals. First, disabling the one-vault rule permits multiple open
+positions and re-enabling is prospective only. Second, a user who opened positions in A and then B while the policy
+was off has `vaultOf` pointing at B even while A remains open. If the policy is re-enabled, the user closes B, and
+then reopens B, the named-vault check sees B as closed and does not discover the displaced position in A. Both are
+bounded to users grandfathered by a policy-off window and are unreachable when the user's entire deposit history
+occurred under an enabled policy. They are accepted in preference to an unbounded per-deposit scan that calls bounded
+replay on every family vault. Before re-enabling, reconcile all multi-vault users offchain and verify no family vault
+is paused or shut with unclaimable positions, because the latest recorded vault controls the named check and future
+top-ups. Registry migration never needs an admin clear: close in A, then the next successful deposit in B re-points
+automatically. Matured exiters must claim before the closure predicate can free their slot.
 
 ### Configuration parameters
 
@@ -104,7 +160,6 @@ change while the epoch is still in `Funding` or earlier.
 
 | Field                     | Meaning                                                                  | Validation bound                                     |
 | ------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------- |
-| `owner`                   | Vault owner                                                              | non-zero                                             |
 | `marginAsset`             | ERC20 performance bond                                                   | non-zero; must be standard ERC20                     |
 | `marginOracle`            | Margin-to-funding price oracle                                           | non-zero                                             |
 | `startTimestamp`          | Epoch-zero start                                                         | `<= type(uint64).max`                                |
@@ -176,9 +231,9 @@ current wall clock, so every lifecycle window resumes with the same effective ti
 
 ## 4.1 Pause circuit breaker
 
-`pause()` is callable by the owner or the configured guardian. It freezes the derived clock and makes every `synced`
+`pause()` is callable by the factory owner or any factory `GUARDIAN_ROLE` member. It freezes the derived clock and makes every `synced`
 entrypoint revert before state progression, including deposits, exits, funding, auctions, slash finalization,
-materialization, and synced owner setters. `shutdown`, `setMarginOracle`, pause/unpause/guardian management, and views
+materialization, and synced owner setters. `shutdown`, `setMarginOracle`, pause/unpause, factory role management, and views
 remain live so the owner can wind down or rotate an oracle during an incident. While paused, no auction fill can
 execute, so the owner may replace even a still-responsive but compromised oracle before resuming; while unpaused,
 the live-auction guard still permits recovery only when the old oracle is zero-price or reverting.
@@ -186,7 +241,7 @@ the live-auction guard still permits recovery only when the old oracle is zero-p
 `unpause()` is owner-only and the pause has no time bound: margin stays frozen until the owner unpauses or shuts the
 vault down, an accepted extension of the fully-trusted-owner model. Shutdown ends an active pause, emits `Unpaused`,
 and immediately enables wind-down claims while recording the same frozen effective timestamp for slash semantics.
-`pause()` remains callable after shutdown so the guardian or owner can stop a faulty wind-down claim path; the owner
+`pause()` remains callable after shutdown so a factory guardian or owner can stop a faulty wind-down claim path; the owner
 must unpause again to resume claims. Each elapsed pause duration is accumulated into the clock offset, so all epochs,
 funding deadlines, auction windows, exit maturities, and terminal checks shift by exactly the paused duration.
 
@@ -247,11 +302,13 @@ resolved.
 
 ## 6. Deposits and commitment
 
-`deposit` pulls `assets` of `marginAsset` from the caller (self-deposit only — a deposit creates a callable
-obligation), reads the oracle, and derives `commitment = marginValue * BPS / marginRatioBps`. The caller supplies
-inclusive nonzero `minCommitment` / `maxCommitment` bounds, an `allowPendingActivation` opt-in, and a wall-clock
-`deadline`. Both caps are checked against active+pending totals: `protocolCommitmentCap` vault-wide and
-`userCommitmentCap` per account (`CapExceeded`).
+`deposit` pulls `assets` of `marginAsset` from the caller and irrevocably credits the `onBehalfOf` beneficiary, then
+reads the oracle and derives `commitment = marginValue * BPS / marginRatioBps`. Self-deposits pass the caller as the
+beneficiary and need no operator role; a distinct payer must hold the factory's `DEPOSIT_OPERATOR_ROLE`. The caller
+supplies inclusive nonzero `minCommitment` / `maxCommitment` bounds, an `allowPendingActivation` opt-in, and a
+wall-clock `deadline`. Both caps are checked against active+pending totals: `protocolCommitmentCap` vault-wide and
+`userCommitmentCap` on the beneficiary account (`CapExceeded`). Factory authorization runs last, so a rejection is
+fail-late but atomically unwinds the margin pull, account writes, and event.
 
 Activation follows `_depositActivation`: **immediate** (credited to `activeMargin` / `activeCommitment` now) only
 when the phase is `Normal` and no call has opened for the current epoch; otherwise **pending** for epoch `e+1`,
@@ -288,7 +345,7 @@ above it. `obligationOf` returns `0` once the account has funded, the epoch is f
 
 Funding must mint at least one USD3 share. The vault computes
 `fundingAmount = max(obligation, usd3.previewMint(1))` before writing settlement state and pulls that amount from the
-payer. Any extra amount is delivered to the beneficiary as USD3n but does not alter obligation-denominated
+payer. Any extra amount is delivered to the beneficiary as USD3l but does not alter obligation-denominated
 settlement accounting. The extra pull is capped at `MAX_FUNDING_TOP_UP = 1_000` funding-asset base units;
 `FundingTopUpExcessive` protects approvals if USD3 PPS jumps between a quote and execution. Payers should approve
 `obligationOf(epoch, user) + 1_000` base units, or compute
@@ -317,7 +374,7 @@ sequenceDiagram
     V->>F: safeTransferFrom(payer, vault, fundingAmount)
     V->>U3: deposit(fundingAmount)
     U3->>NV: deposit USD3
-    NV-->>U: mint USD3n shares
+    NV-->>U: mint USD3l shares
     opt amortize
         V-->>U: transfer releasedMargin
     end
@@ -326,11 +383,11 @@ sequenceDiagram
 **Amortize** (`fundCall(false)`): the account pays its obligation, releases margin proportionally
 (`releasedMargin = activeMargin * obligation / activeCommitment`, floor), and its callable commitment drops by the
 obligation. Active totals decrease. **Roll** (`fundCall(true)`): the account pays the obligation, receives wrapped
-USD3n, but retains its **full** margin and **full** callable commitment; exposure re-arms every epoch, its pro-rata
+USD3l, but retains its **full** margin and **full** callable commitment; exposure re-arms every epoch, its pro-rata
 share of later calls grows as amortizers decay, and lifetime obligations are unbounded. A live exiter cannot roll
 (`ExitInProgress`) but may still amortize.
 
-**Push funding** (`fundCall(address user)`): the caller pays; released margin, USD3n, and funded status accrue to
+**Push funding** (`fundCall(address user)`): the caller pays; released margin, USD3l, and funded status accrue to
 `user`. Push funding **always amortizes** so the payer cannot keep the user's margin locked. A push fund can
 front-run and deny a user's intended roll for that epoch; the user can restore commitment by re-depositing the
 released margin.
@@ -630,7 +687,7 @@ re-credit**. The latter is the first epoch in which the credit can back a new ca
 settlement runs. Every deposit and any such nonzero credit advances it monotonically, rounding-dropped credits leave
 it unchanged, and no funding touches it.
 
-**Maturity assignment.** `_assignExitMaturity` is first-fit by request time (not strict FIFO). During Normal it
+**Maturity assignment.** `LCCExitLib.assignExitMaturity` is first-fit by request time (not strict FIFO). During Normal it
 starts at `currentEpoch + exitDelayEpochs`. During PreCall, Funding, or Closed it starts one epoch later, at
 `currentEpoch + exitDelayEpochs + 1`. Normal is the only phase before that epoch's call-opening window; Closed is
 still part of the same epoch. While a call can still open — outside shutdown and before the last callable epoch's
@@ -690,7 +747,7 @@ reverts `ExitCapacityReached`. `exitDelayEpochs <= 64` and `exitCapBps >= 313`
 (`MIN_EXIT_CAP_BPS`) are enforced at config so worst-case honest exit demand — including first-fit fragmentation —
 has enough aggregate scheduling room across reachable tracked keys. Scan termination instead relies on the runtime
 capacity clamp: capacity is always at least one, so any empty bucket terminates the scan and only buckets with
-nonzero commitment are skipped. Every bucket increase is tracked by `_trackExitMaturity`, every empty bucket is
+nonzero commitment are skipped. Every bucket increase is tracked by `LCCExitLib.recordExitRequest`, every empty bucket is
 removed by `_pruneExitMaturityIfEmpty`, and the live list is capped at 128, so first-fit reaches an empty key or the
 aggregate fallback in at most 129 iterations. The limit remains reachable through cap-raise
 sequences: each raise can restore deposit headroom and increase capacity, allowing an exact-capacity new account to
@@ -755,6 +812,18 @@ disposed epoch's Closed end.
 margin, and already-matured claimable exit margin, bypassing the maturity and `minCommitmentEpochs` gates that
 `claimExitedMargin` enforces. A lagging account may need `materializeAccount` batches first (§5).
 
+**`bounceCommitment`** is an active-only bouncer action. It removes the requested nominal active commitment and
+returns the paired active margin pro rata. A pending deposit must fold before the bouncer retries, and an exiting user
+is left to the existing exit claim. Removing the entire active commitment of an otherwise plain account leaves zero
+exposure, so the factory registry can repoint lazily when the user deposits into another family vault. A blacklistable
+margin token can still reject the direct return transfer; pause or shutdown is the operational fallback. There is no
+full-closeout sentinel: passing the account's full active commitment does not refund pending margin, consume
+claimable exit margin, or clear an exit. The bouncer must materialize lagging accounts first and unpause the vault
+before acting. This trusted instant-exit path bypasses `exitDelayEpochs`, the `exitCapBps` maturity-bucket rationing,
+and `minCommitmentEpochs`; the operational sequence is in
+[`docs/operations-runbook.md`](../../docs/operations-runbook.md). The deferred full-closeout design is recorded in
+[`docs/lcc-deferred-full-closeout-bounce.md`](../../docs/lcc-deferred-full-closeout-bounce.md).
+
 ## 11. Deployment and upgrade topology
 
 ```mermaid
@@ -763,7 +832,9 @@ flowchart TD
     BE -->|points at| IMPL["LCCVault implementation<br/>(immutables: notificationVault, usd3, fundingAsset, treasury)"]
     ALIB["LCCAuctionLib"] -.->|external link| IMPL
     CLIB["LCCConfigLib"] -.->|external link| IMPL
-    FO["factory owner"] -->|owns| FAC["LCCVaultFactory"]
+    XLIB["LCCExitLib"] -.->|external link| IMPL
+    FO["factory owner<br/>OWNER_ROLE"] -->|two-step authority| FAC["LCCVaultFactory<br/>roles + admissions + vaultOf"]
+    GR["listers / guardians"] -->|subordinate roles| FAC
     FAC -->|createVault| P1["BeaconProxy vault A"]
     FAC -->|createVault| P2["BeaconProxy vault B"]
     P1 -.->|delegates logic| BE
@@ -771,25 +842,37 @@ flowchart TD
     RP["unregistered proxy"] -.->|anyone can point| BE
 ```
 
-`LCCAuctionLib` and `LCCConfigLib` are the two externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
+`LCCAuctionLib`, `LCCConfigLib`, and `LCCExitLib` are the three externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-24,099 bytes, 177 bytes below the 24,276-byte release ceiling and 477 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+24,254 bytes, 22 bytes below the 24,276-byte release ceiling and 322 bytes below EIP-170. The active-only monolith
+measured 24,703 bytes, so the exit library remains required. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls
 `_disableInitializers()`. `LCCVaultFactory` deploys per-facility `BeaconProxy` instances with atomic `initialize`
-calldata; per-facility params live in proxy storage. The factory registry (`isVault` / `allVaults`) records owner-vetted
-**provenance only** — the beacon is public, so anyone can point an unregistered proxy at it. Packed structs in
-`LCCTypesLib` are upgrade-frozen layout. The layout retains the full 50-slot `__gap` after the call-open price
-snapshot: while LCC is pre-deployment, new state such as `marginPriceAtCallOpen` is declared above the gap rather
-than consuming it, so the post-deployment reserve stays at 50. Once deployed, new state must consume gap slots.
-Both `LCCAuctionLib` and `LCCConfigLib` must be re-linked on every implementation redeploy. Every future
+calldata; per-facility params live in proxy storage. The proxy captures the deploying factory exactly once, and the
+factory registers the proxy after construction. The beacon remains public, but an unregistered proxy cannot pass the
+factory's deposit gate; an EOA-initialized shell captures that codeless authority and fails closed on its first deposit.
+Packed structs in `LCCTypesLib` are upgrade-frozen layout.
+The v2 fresh-family layout starts at `_clockConfig` slot 0, stores `factory` at slot 29, and retains a 49-slot
+`__gap` beginning at slot 30. Once deployed, new state must consume gap slots, `factory` must never gain a setter,
+and `isAccountClosed` semantics are upgrade-frozen. Integrators verify vault provenance through
+`factory.isVault(vault)` rather than a vault-side getter or raw storage inspection.
+`LCCExitLib` anchors at `exitBucketByMaturity` and derives the next four exit-storage roots; their adjacency is
+upgrade-frozen even though the library has no storage of its own. All three linked libraries must be re-linked on
+every implementation redeploy; deployment tooling must verify that each linked address contains the approved runtime
+bytecode before implementation deployment or a beacon upgrade. This is the third owner-accepted residual: there is
+no onchain code-size guard because it would catch only codeless links while wrong-but-code-bearing libraries still
+pass and require the same procedural bytecode check. On an upgrade with existing exit state, a codeless `LCCExitLib`
+silently no-ops the void call-open snapshot and slash-reduction hooks while aggregate totals still fall; maturity can
+then double-decrement the buckets and brick sync. The sole returning call currently keeps a fresh codeless-linked
+vault from populating those lists, but that ordering property is not library authentication. Every future
 implementation must preserve runtime exit capacity of at least one, or normalize existing configurations during the
-upgrade; the `Math.max(1, ...)` clamp in `_assignExitMaturity` is the scan-termination invariant.
+upgrade; the `Math.max(1, ...)` clamp in `LCCExitLib.assignExitMaturity` is the scan-termination invariant.
 `yarn build:forge:size` embeds the build-profile storage layout in the canonical artifact and recursively compares
 its complete type graph against the reviewer-controlled
-`docs/lcc-vault-storage-layout.json`; the checker never regenerates that baseline. The full upgrade checklist of
-record lives in
+`docs/lcc-vault-storage-layout.json`; the checker never regenerates that baseline. The full upgrade checklist of record
+lives in
 [`docs/architecture.md`](../../docs/architecture.md).
 
 ## 12. Known sharp edges / reviewer invariants

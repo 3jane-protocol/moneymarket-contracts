@@ -10,7 +10,7 @@ import {IUSD3} from "./interfaces/IUSD3.sol";
 /**
  * @title NotificationVault
  * @notice General-purpose ERC4626 wrapper that adds a withdrawal cooldown to USD3 (asset = USD3,
- *         shares = USD3n), so wrapped USD3 can serve as money-market collateral without being
+ *         shares = USD3l), so wrapped USD3 can serve as money-market collateral without being
  *         unwrappable within a cooldown window.
  * @dev Holds USD3 directly (1:1, no second yield layer) and intentionally disables reporting, so PPS
  *      stays exactly 1 and donations are never reconciled into share price. `usd3` is fixed at
@@ -74,7 +74,7 @@ contract NotificationVault is BaseHooksUpgradeable {
     }
 
     function symbol() external pure returns (string memory) {
-        return "USD3n";
+        return "USD3l";
     }
 
     /// @dev No-op: the vault holds USD3 directly and never deploys it elsewhere.
@@ -84,7 +84,7 @@ contract NotificationVault is BaseHooksUpgradeable {
     function _freeFunds(uint256) internal override {}
 
     /// @notice Reporting is disabled so the wrapper never adds a second yield layer or reconciles
-    ///         donations into PPS; USD3n stays 1:1 with USD3 on deposit/withdraw alone.
+    ///         donations into PPS; USD3l stays 1:1 with USD3 on deposit/withdraw alone.
     /// @dev Overrides the keeper-facing entrypoint to revert directly; `_harvestAndReport` below also
     ///      reverts as a backstop for the (now-unreachable) internal report path.
     function report() external pure override returns (uint256, uint256) {
@@ -126,7 +126,7 @@ contract NotificationVault is BaseHooksUpgradeable {
     ///      cooled shares are also non-transferable until withdrawn. A new call overwrites any prior cooldown.
     ///      Bypassed accounts exit without cooling and are rejected here, so no ticket can exist while the
     ///      bypass lets shares move without consuming it.
-    /// @param shares Number of USD3n shares to put into cooldown.
+    /// @param shares Number of USD3l shares to put into cooldown.
     function startCooldown(uint256 shares) external {
         if (cooldownBypass[msg.sender]) revert CooldownBypassed();
         if (shares == 0) revert InvalidAmount();

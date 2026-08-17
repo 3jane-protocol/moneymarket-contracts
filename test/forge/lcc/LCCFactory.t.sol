@@ -2,13 +2,19 @@
 pragma solidity ^0.8.22;
 
 import {LCCAssetOnlyVault, LCCBase} from "./LCCBase.t.sol";
+import {IAccessControl} from "../../../lib/openzeppelin/contracts/access/IAccessControl.sol";
+import {UpgradeableBeacon} from "../../../lib/openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {LCCVaultFactory} from "../../../src/lcc/LCCVaultFactory.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 
 contract LCCFactoryTest is LCCBase {
-    event VaultCreated(address indexed vault, address indexed owner);
+    string internal constant AUCTION_LIB_FQN = "src/lcc/libraries/LCCAuctionLib.sol:LCCAuctionLib";
+    string internal constant CONFIG_LIB_FQN = "src/lcc/libraries/LCCConfigLib.sol:LCCConfigLib";
+    string internal constant EXIT_LIB_FQN = "src/lcc/libraries/LCCExitLib.sol:LCCExitLib";
+
+    event VaultCreated(address indexed vault);
 
     address internal factoryOwner = makeAddr("factoryOwner");
     address internal outsider = makeAddr("outsider");
@@ -98,14 +104,14 @@ contract LCCFactoryTest is LCCBase {
         bytes32 salt = keccak256("facility-a");
 
         address expectedPlain = factory.predictVaultAddress(params, bytes32(0));
-        vm.expectEmit(true, true, false, true, address(factory));
-        emit VaultCreated(expectedPlain, params.owner);
+        vm.expectEmit(true, false, false, true, address(factory));
+        emit VaultCreated(expectedPlain);
         vm.prank(factoryOwner);
         address plain = factory.createVault(params);
 
         address expectedCreate2 = factory.predictVaultAddress(params, salt);
-        vm.expectEmit(true, true, false, true, address(factory));
-        emit VaultCreated(expectedCreate2, params.owner);
+        vm.expectEmit(true, false, false, true, address(factory));
+        emit VaultCreated(expectedCreate2);
         vm.prank(factoryOwner);
         address deterministic = factory.createVault(params, salt);
 
@@ -116,8 +122,14 @@ contract LCCFactoryTest is LCCBase {
         assertEq(factory.numVaults(), 2);
         assertEq(factory.allVaults()[0], plain);
         assertEq(factory.allVaults()[1], deterministic);
-        assertEq(LCCVault(plain).owner(), params.owner);
-        assertEq(LCCVault(deterministic).owner(), params.owner);
+
+        bytes32 guardianRole = factory.GUARDIAN_ROLE();
+        vm.prank(factoryOwner);
+        factory.grantRole(guardianRole, outsider);
+        vm.prank(outsider);
+        LCCVault(plain).pause();
+        (bool paused,,) = LCCVault(plain).pauseState();
+        assertTrue(paused);
     }
 
     function testFactoryCreate2DifferentSaltDifferentAddress() public {
@@ -190,12 +202,17 @@ contract LCCFactoryTest is LCCBase {
     function testFactoryRejectsNonOwnerCreateVault() public {
         LCCVaultFactory factory = new LCCVaultFactory(factoryOwner, address(beacon));
         ILCCVault.VaultParams memory params = _params(CAP, CAP);
+        bytes32 ownerRole = factory.OWNER_ROLE();
 
-        vm.expectRevert(LCCErrorsLib.NotOwner.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, outsider, ownerRole)
+        );
         vm.prank(outsider);
         factory.createVault(params);
 
-        vm.expectRevert(LCCErrorsLib.NotOwner.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, outsider, ownerRole)
+        );
         vm.prank(outsider);
         factory.createVault(params, keccak256("facility-a"));
     }
@@ -229,6 +246,33 @@ contract LCCFactoryTest is LCCBase {
         LCCAssetOnlyVault badNotificationVault = new LCCAssetOnlyVault(address(noFundingAsset));
         vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
         new LCCVault(address(badNotificationVault), treasury);
+    }
+
+    function testImplementationDeploymentDoesNotAuthenticateCodelessExitLibraryLink() public {
+        address codelessExitLibrary = makeAddr("codelessExitLibrary");
+        assertEq(codelessExitLibrary.code.length, 0);
+
+        // Deliberate accepted residual: deployment authenticates every linked bytecode; see docs/deployment.md.
+        address implementation = _deployImplementationWithExitLibrary(codelessExitLibrary);
+        assertNotEq(implementation, address(0), "deployment procedure must authenticate linked bytecode");
+    }
+
+    function testExitLibraryRejectsZeroWordReturnForVoidCall() public {
+        LCCVault mislinkedVault = _deployVaultWithExitLibrary(address(new LCCZeroWordExitLibrary()));
+        _depositInto(mislinkedVault, alice, 100e18);
+
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
+        vm.prank(alice);
+        mislinkedVault.requestExit(type(uint256).max, type(uint256).max);
+    }
+
+    function testExitLibraryRejectsTwoWordReturnForResultCall() public {
+        LCCVault mislinkedVault = _deployVaultWithExitLibrary(address(new LCCTwoWordExitLibrary()));
+        _depositInto(mislinkedVault, alice, 100e18);
+
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
+        vm.prank(alice);
+        mislinkedVault.requestExit(type(uint256).max, type(uint256).max);
     }
 
     function testInitializerValidation() public {
@@ -267,10 +311,87 @@ contract LCCFactoryTest is LCCBase {
         assertEq(vault.riskConfig().exitCapBps, 313);
         assertEq(vault.riskConfig().protocolCommitmentCap, 31);
     }
+
+    function _deployImplementationWithExitLibrary(address exitLibrary) internal returns (address implementation) {
+        string memory outDir = vm.envOr("FOUNDRY_OUT", string("out"));
+        address auctionLibrary = vm.deployCode(string.concat(outDir, "/LCCAuctionLib.sol/LCCAuctionLib.json"));
+        address configLibrary = vm.deployCode(string.concat(outDir, "/LCCConfigLib.sol/LCCConfigLib.json"));
+        string memory hexCode =
+            vm.parseJsonString(vm.readFile(string.concat(outDir, "/LCCVault.sol/LCCVault.json")), ".bytecode.object");
+        hexCode = _linkLibrary(hexCode, AUCTION_LIB_FQN, auctionLibrary);
+        hexCode = _linkLibrary(hexCode, CONFIG_LIB_FQN, configLibrary);
+        hexCode = _linkLibrary(hexCode, EXIT_LIB_FQN, exitLibrary);
+        require(!vm.contains(hexCode, "__$"), "unlinked references remain");
+
+        bytes memory initCode =
+            abi.encodePacked(vm.parseBytes(hexCode), abi.encode(address(notificationVault), treasury));
+        assembly ("memory-safe") {
+            implementation := create(0, add(initCode, 0x20), mload(initCode))
+        }
+    }
+
+    function _deployVaultWithExitLibrary(address exitLibrary) internal returns (LCCVault mislinkedVault) {
+        address implementation = _deployImplementationWithExitLibrary(exitLibrary);
+        assertNotEq(implementation, address(0), "mislinked implementation deployment failed");
+
+        UpgradeableBeacon mislinkedBeacon = new UpgradeableBeacon(implementation, owner);
+        LCCVaultFactory mislinkedFactory = new LCCVaultFactory(owner, address(mislinkedBeacon));
+        mislinkedFactory.grantRole(mislinkedFactory.LISTER_ROLE(), owner);
+        address[] memory depositor = new address[](1);
+        depositor[0] = alice;
+        mislinkedFactory.setDepositorsWhitelisted(depositor, true);
+        mislinkedVault = LCCVault(mislinkedFactory.createVault(_params(CAP, CAP)));
+    }
+
+    function _depositInto(LCCVault target, address depositor, uint256 assets) internal {
+        margin.mint(depositor, assets);
+        vm.startPrank(depositor);
+        margin.approve(address(target), assets);
+        target.deposit(assets, depositor, 1, type(uint256).max, true, type(uint256).max);
+        vm.stopPrank();
+    }
+
+    function _linkLibrary(string memory hexCode, string memory fqn, address libraryAddress)
+        internal
+        returns (string memory)
+    {
+        string memory placeholder = string.concat("__$", _hexN(keccak256(bytes(fqn)), 17), "$__");
+        require(vm.contains(hexCode, placeholder), "library link placeholder not found");
+        return vm.replace(hexCode, placeholder, vm.replace(vm.toLowercase(vm.toString(libraryAddress)), "0x", ""));
+    }
+
+    function _hexN(bytes32 value, uint256 bytesLength) internal pure returns (string memory) {
+        bytes memory table = "0123456789abcdef";
+        bytes memory output = new bytes(2 * bytesLength);
+        for (uint256 i = 0; i < bytesLength; ++i) {
+            output[2 * i] = table[uint8(value[i]) >> 4];
+            output[2 * i + 1] = table[uint8(value[i]) & 0x0f];
+        }
+        return string(output);
+    }
 }
 
 contract LCCZeroImplBeacon {
     function implementation() external pure returns (address) {
         return address(0);
+    }
+}
+
+contract LCCZeroWordExitLibrary {
+    fallback() external {
+        assembly ("memory-safe") {
+            mstore(0, 0)
+            return(0, 0x20)
+        }
+    }
+}
+
+contract LCCTwoWordExitLibrary {
+    fallback() external {
+        assembly ("memory-safe") {
+            mstore(0, 0)
+            mstore(0x20, 0)
+            return(0, 0x40)
+        }
     }
 }

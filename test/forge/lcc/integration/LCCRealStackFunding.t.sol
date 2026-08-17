@@ -8,7 +8,6 @@ import {NotificationVault} from "../../../../src/usd3/NotificationVault.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
 import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 
-import {BeaconProxy} from "../../../../lib/openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
 import {UpgradeableBeacon} from "../../../../lib/openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {
@@ -20,7 +19,6 @@ import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrat
 
 // ABI-load-bearing mirror of ILCCVault.VaultParams. Keep the field order and types identical.
 struct VaultParams {
-    address owner;
     address marginAsset;
     address marginOracle;
     uint256 startTimestamp;
@@ -120,9 +118,9 @@ struct AuctionState {
 
 interface ILCCVaultLike {
     function initialize(VaultParams calldata params) external;
-    function owner() external view returns (address);
     function deposit(
         uint256 assets,
+        address onBehalfOf,
         uint256 minCommitment,
         uint256 maxCommitment,
         bool allowPendingActivation,
@@ -148,6 +146,15 @@ interface ILCCVaultLike {
     function riskConfig() external view returns (RiskConfig memory);
 }
 
+interface ILCCVaultFactoryLike {
+    function createVault(VaultParams calldata params, bytes32 salt) external returns (address vault);
+    function LISTER_ROLE() external view returns (bytes32);
+    function grantRole(bytes32 role, address account) external;
+    function setDepositorsWhitelisted(address[] calldata depositors, bool allowed) external;
+    function setOneVaultPolicyEnabled(bool enabled) external;
+    function isOwner(address account) external view returns (bool);
+}
+
 contract LCCRealStackOracle {
     uint256 public price;
 
@@ -167,6 +174,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
 
     string internal constant AUCTION_LIB_FQN = "src/lcc/libraries/LCCAuctionLib.sol:LCCAuctionLib";
     string internal constant CONFIG_LIB_FQN = "src/lcc/libraries/LCCConfigLib.sol:LCCConfigLib";
+    string internal constant EXIT_LIB_FQN = "src/lcc/libraries/LCCExitLib.sol:LCCExitLib";
 
     uint256 internal constant ORACLE_PRICE_SCALE = 1e36;
     uint256 internal constant BPS = 10_000;
@@ -193,7 +201,9 @@ contract LCCRealStackFundingIntegrationTest is Setup {
     MockERC20 internal margin;
     LCCRealStackOracle internal oracle;
     UpgradeableBeacon internal beacon;
+    ILCCVaultFactoryLike internal lccFactory;
     ILCCVaultLike internal vault;
+    uint256 internal nextVaultSalt;
 
     function setUp() public override {
         super.setUp();
@@ -218,6 +228,20 @@ contract LCCRealStackFundingIntegrationTest is Setup {
 
         address implementation = _deployLinkedLCCVaultImpl(address(notificationVault), treasury);
         beacon = new UpgradeableBeacon(implementation, lccOwner);
+        lccFactory = ILCCVaultFactoryLike(
+            vm.deployCode("out/LCCVaultFactory.sol/LCCVaultFactory.json", abi.encode(lccOwner, address(beacon)))
+        );
+        address[] memory depositors = new address[](6);
+        depositors[0] = alice;
+        depositors[1] = bob;
+        depositors[2] = carol;
+        depositors[3] = filler;
+        depositors[4] = seeder;
+        depositors[5] = lccOwner;
+        vm.startPrank(lccOwner);
+        lccFactory.grantRole(lccFactory.LISTER_ROLE(), lccOwner);
+        lccFactory.setDepositorsWhitelisted(depositors, true);
+        vm.stopPrank();
 
         testProtocolConfig.setConfig(ProtocolConfigLib.USD3_SUPPLY_CAP, USD3_SUPPLY_CAP);
         vault = _newVault(_baseParams(), true);
@@ -232,7 +256,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         VaultParams memory params = _driftTripwireParams();
         ILCCVaultLike driftVault = _newVault(params, true);
 
-        assertEq(driftVault.owner(), params.owner);
+        assertTrue(lccFactory.isOwner(lccOwner));
 
         AssetConfig memory assets = driftVault.assetConfig();
         assertEq(assets.marginAsset, params.marginAsset);
@@ -407,7 +431,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         assertEq(claimed.commitmentStartEpoch, 1);
     }
 
-    function testSelfFundAmortizePullsObligationDeliversUSD3n() public {
+    function testSelfFundAmortizePullsObligationDeliversUSD3l() public {
         _deposit(vault, alice, 100e6);
         _deposit(vault, bob, 50e6);
         _openCall(vault, 75e6);
@@ -475,6 +499,9 @@ contract LCCRealStackFundingIntegrationTest is Setup {
     /// a conduit). This characterizes the failure mode where that registration is OMITTED — USD3 then silently does
     /// not fence, leaving funder liquidity unreserved. The opted-in counterpart is the reference behavior below.
     function testUnregisteredConduitsDoNotFenceOrdinaryDustOrAuctionFunding() public {
+        vm.prank(lccOwner);
+        lccFactory.setOneVaultPolicyEnabled(false);
+
         ILCCVaultLike dustVault = _newVault(_baseParams(), true);
         ILCCVaultLike auctionVault = _newVault(_auctionParams(), true);
         _approveVault(dustVault, carol);
@@ -570,7 +597,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         assertGt(state.fundedAmount, state.callAmount);
     }
 
-    function testAuctionTakeDeliversRealUSD3nAndAwardsMargin() public {
+    function testAuctionTakeDeliversRealUSD3lAndAwardsMargin() public {
         ILCCVaultLike auctionVault = _newVault(_auctionParams(), true);
         _approveVault(auctionVault, alice);
         _approveVault(auctionVault, bob);
@@ -731,25 +758,19 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         returns (address implementation)
     {
         string memory outDir = vm.envOr("FOUNDRY_OUT", string("out"));
-        string memory auctionArtifact = string.concat(outDir, "/LCCAuctionLib.sol/LCCAuctionLib.json");
-        string memory configArtifact = string.concat(outDir, "/LCCConfigLib.sol/LCCConfigLib.json");
-        string memory vaultArtifact = string.concat(outDir, "/LCCVault.sol/LCCVault.json");
 
         // Use the explicit artifact path because the LCC size profile emits a second artifact with the same FQN.
-        address auctionLibrary = vm.deployCode(auctionArtifact);
-        address configLibrary = vm.deployCode(configArtifact);
+        address auctionLibrary = vm.deployCode(string.concat(outDir, "/LCCAuctionLib.sol/LCCAuctionLib.json"));
+        address configLibrary = vm.deployCode(string.concat(outDir, "/LCCConfigLib.sol/LCCConfigLib.json"));
+        address exitLibrary = vm.deployCode(string.concat(outDir, "/LCCExitLib.sol/LCCExitLib.json"));
 
         // The test profile artifact is via-IR-OFF and non-canonical. The same test exercises the canonical via-IR
         // release settings when it runs under the test-lcc-ir profile.
-        string memory artifact = vm.readFile(vaultArtifact);
-        string memory hexCode = vm.parseJsonString(artifact, ".bytecode.object");
-        string memory auctionPlaceholder = string.concat("__$", _hexN(keccak256(bytes(AUCTION_LIB_FQN)), 17), "$__");
-        string memory configPlaceholder = string.concat("__$", _hexN(keccak256(bytes(CONFIG_LIB_FQN)), 17), "$__");
-        require(vm.contains(hexCode, auctionPlaceholder), "LCCAuctionLib link placeholder not found");
-        require(vm.contains(hexCode, configPlaceholder), "LCCConfigLib link placeholder not found");
-
-        hexCode = vm.replace(hexCode, auctionPlaceholder, _hexAddress(auctionLibrary));
-        hexCode = vm.replace(hexCode, configPlaceholder, _hexAddress(configLibrary));
+        string memory hexCode =
+            vm.parseJsonString(vm.readFile(string.concat(outDir, "/LCCVault.sol/LCCVault.json")), ".bytecode.object");
+        hexCode = _linkLibrary(hexCode, AUCTION_LIB_FQN, auctionLibrary, "LCCAuctionLib link placeholder not found");
+        hexCode = _linkLibrary(hexCode, CONFIG_LIB_FQN, configLibrary, "LCCConfigLib link placeholder not found");
+        hexCode = _linkLibrary(hexCode, EXIT_LIB_FQN, exitLibrary, "LCCExitLib link placeholder not found");
         require(!vm.contains(hexCode, "__$"), "unlinked references remain");
 
         bytes memory initCode = abi.encodePacked(vm.parseBytes(hexCode), abi.encode(notificationVault_, treasury_));
@@ -759,10 +780,18 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         require(implementation != address(0), "LCCVault implementation deployment failed");
     }
 
+    function _linkLibrary(string memory hexCode, string memory fqn, address libraryAddress, string memory errorMessage)
+        internal
+        returns (string memory)
+    {
+        string memory placeholder = string.concat("__$", _hexN(keccak256(bytes(fqn)), 17), "$__");
+        require(vm.contains(hexCode, placeholder), errorMessage);
+        return vm.replace(hexCode, placeholder, _hexAddress(libraryAddress));
+    }
+
     function _newVault(VaultParams memory params, bool supplyCapExempt) internal returns (ILCCVaultLike deployed) {
-        deployed = ILCCVaultLike(
-            address(new BeaconProxy(address(beacon), abi.encodeCall(ILCCVaultLike.initialize, (params))))
-        );
+        vm.prank(lccOwner);
+        deployed = ILCCVaultLike(lccFactory.createVault(params, bytes32(++nextVaultSalt)));
 
         if (supplyCapExempt) {
             vm.prank(management);
@@ -779,7 +808,6 @@ contract LCCRealStackFundingIntegrationTest is Setup {
 
     function _baseParams() internal view returns (VaultParams memory) {
         return VaultParams({
-            owner: lccOwner,
             marginAsset: address(margin),
             marginOracle: address(oracle),
             startTimestamp: startTimestamp,
@@ -836,7 +864,6 @@ contract LCCRealStackFundingIntegrationTest is Setup {
 
     function _driftTripwireParams() internal view returns (VaultParams memory params) {
         params = VaultParams({
-            owner: lccOwner,
             marginAsset: address(margin),
             marginOracle: address(oracle),
             startTimestamp: startTimestamp,
@@ -874,7 +901,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
 
     function _deposit(ILCCVaultLike target, address actor, uint256 amount) internal returns (uint256 commitment) {
         vm.prank(actor);
-        commitment = target.deposit(amount, 1, type(uint256).max, true, type(uint256).max);
+        commitment = target.deposit(amount, actor, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function _openCall(ILCCVaultLike target, uint256 amount) internal {

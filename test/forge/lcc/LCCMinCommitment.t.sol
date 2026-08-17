@@ -8,10 +8,10 @@ import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 contract LCCMinCommitmentTest is LCCBase {
     // These slots mirror the reviewer-controlled storage-layout baseline. The raw-state fixtures below isolate
     // account replay states that public admission deliberately cannot construct.
-    uint256 internal constant SYNC_STATE_SLOT = 12;
-    uint256 internal constant ACCOUNTS_SLOT = 15;
-    uint256 internal constant EPOCHS_SLOT = 16;
-    uint256 internal constant CALLED_EPOCH_LIST_SLOT = 17;
+    uint256 internal constant SYNC_STATE_SLOT = 11;
+    uint256 internal constant ACCOUNTS_SLOT = 14;
+    uint256 internal constant EPOCHS_SLOT = 15;
+    uint256 internal constant CALLED_EPOCH_LIST_SLOT = 16;
     uint256 internal constant UINT64_MASK = type(uint64).max;
 
     function setUp() public override {

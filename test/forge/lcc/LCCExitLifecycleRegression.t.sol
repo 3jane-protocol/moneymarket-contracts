@@ -13,8 +13,8 @@ contract LCCExitLifecycleRegressionTest is LCCBase {
     uint256 internal constant MAX_MATERIALIZE_STEPS = 64;
     uint256 internal constant FLOOR_EXIT_CAP_BPS = 313;
     uint256 internal constant FRAGMENTATION_PROTOCOL_CAP = 1_000_000e18;
-    uint256 internal constant ACCOUNTS_SLOT = 15;
-    uint256 internal constant EXIT_MATURITY_LIST_SLOT = 22;
+    uint256 internal constant ACCOUNTS_SLOT = 14;
+    uint256 internal constant EXIT_MATURITY_LIST_SLOT = 21;
 
     struct FallbackMetrics {
         uint256 earliestMaturity;

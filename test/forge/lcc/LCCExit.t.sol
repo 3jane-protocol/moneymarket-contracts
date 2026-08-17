@@ -15,7 +15,7 @@ contract LCCExitTest is LCCBase {
     // Smallest exitCapBps accepted by the floor: exitCapBps * MAX_EXIT_DELAY_EPOCHS >= 2 * BPS.
     uint256 internal constant FLOOR_EXIT_CAP_BPS = 313;
     uint256 internal constant LADDER_INITIAL_CAP = 32e18;
-    uint256 internal constant EXIT_MATURITY_LIST_SLOT = 22;
+    uint256 internal constant EXIT_MATURITY_LIST_SLOT = 21;
     // Gas assertions target the mainnet block gas limit, not this environment's block.gaslimit.
     uint256 internal constant BLOCK_GAS_LIMIT = 30_000_000;
     uint256 internal constant GAS_HEADROOM = 5_000_000;

@@ -59,6 +59,14 @@ library LCCAccountLib {
                 || (account.claimableExitMargin == 0 && (!account.exitRequested || account.exitClaimed)));
     }
 
+    /// @notice Returns whether the account has no economic exposure in the vault family registry sense.
+    /// @dev A matured exit remains open until `claimExitedMargin` clears its claimable margin and exit metadata.
+    function isZeroExposure(ILCCVault.Account memory account) internal pure returns (bool) {
+        return account.activeMargin == 0 && account.activeCommitment == 0 && account.pendingMargin == 0
+            && account.pendingCommitment == 0 && account.claimableExitMargin == 0
+            && (!account.exitRequested || account.exitClaimed);
+    }
+
     function clearExit(ILCCVault.Account memory account) internal pure {
         account.exitRequested = false;
         account.exitMaturityEpoch = 0;
