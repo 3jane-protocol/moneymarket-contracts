@@ -46,6 +46,7 @@ contract NotificationVault is BaseHooksUpgradeable {
     error NoActiveCooldown();
     error InsufficientShares();
     error ReportsDisabled();
+    error CooldownBypassed();
 
     /// @param _usd3 The USD3 strategy this vault wraps; bound for the life of the implementation.
     /// @dev Sets the `usd3` immutable. Immutables live in the implementation bytecode and are read correctly
@@ -122,8 +123,11 @@ contract NotificationVault is BaseHooksUpgradeable {
     /// @notice Start (or overwrite) the caller's withdrawal cooldown for `shares`.
     /// @dev Withdrawal/redemption is then only available during the window `[cooldownEnd, windowEnd]`;
     ///      cooled shares are also non-transferable until withdrawn. A new call overwrites any prior cooldown.
+    ///      Bypassed accounts exit without cooling and are rejected here, so no ticket can exist while the
+    ///      bypass lets shares move without consuming it.
     /// @param shares Number of USD3n shares to put into cooldown.
     function startCooldown(uint256 shares) external {
+        if (cooldownBypass[msg.sender]) revert CooldownBypassed();
         if (shares == 0) revert InvalidAmount();
 
         uint256 userBalance = IERC20(address(this)).balanceOf(msg.sender);
@@ -163,8 +167,14 @@ contract NotificationVault is BaseHooksUpgradeable {
     /// @notice Management toggle: let `account` withdraw/redeem and transfer its own shares without cooldown.
     /// @dev Owner-keyed only — it does not grant ERC20 allowance and cannot move another owner's shares.
     ///      Intended for trusted custody/market addresses that own collateral shares.
+    ///      Any bypass transition clears the account's cooldown, so a ticket started before a grant cannot
+    ///      survive into (or past) the bypassed period and later apply to shares that never cooled.
     function setCooldownBypass(address account, bool allowed) external onlyManagement {
         if (account == address(0)) revert InvalidAddress();
+        if (cooldownBypass[account] != allowed && cooldowns[account].shares != 0) {
+            delete cooldowns[account];
+            emit CooldownCancelled(account);
+        }
         cooldownBypass[account] = allowed;
         emit CooldownBypassUpdated(account, allowed);
     }

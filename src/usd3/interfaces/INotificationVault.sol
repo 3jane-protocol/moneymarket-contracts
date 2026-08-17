@@ -21,6 +21,7 @@ interface INotificationVault is IStrategy {
     error NoActiveCooldown();
     error InsufficientShares();
     error ReportsDisabled();
+    error CooldownBypassed();
 
     function startCooldown(uint256 shares) external;
     function cancelCooldown() external;

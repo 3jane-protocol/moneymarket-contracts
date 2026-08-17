@@ -784,6 +784,13 @@ contract USD3 is BaseHooksUpgradeable {
         emit MinDepositUpdated(_minDeposit);
     }
 
+    /// @notice Set the profit unlock time without releasing locked profit ahead of an unreported loss.
+    /// @dev Nonzero updates retain the TokenizedStrategy implementation's behavior.
+    function setProfitMaxUnlockTime(uint256 _profitMaxUnlockTime) external onlyManagement {
+        require(_profitMaxUnlockTime != 0 || !_pendingLoss(), "!loss");
+        _delegateCall(msg.data);
+    }
+
     /*//////////////////////////////////////////////////////////////
                         KEEPER FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -806,6 +813,9 @@ contract USD3 is BaseHooksUpgradeable {
      * @dev Only callable by keepers to ensure controlled updates
      */
     function syncTrancheShare() external onlyKeepers {
+        // Deliberately does not report: operators should report immediately before changing the tranche share variant.
+        // This keeps loss recognition and junior-share burning separate; any repricing is operator-managed.
+
         // Get the protocol config through MorphoCredit
         IProtocolConfig config = _protocolConfig();
 
