@@ -89,6 +89,12 @@ contract LCCPauseTest is LCCBase {
         (bool paused,,) = vault.pauseState();
         assertTrue(paused);
 
+        vm.prank(owner);
+        vault.unpause();
+        vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
+        vm.prank(guardian);
+        vault.pause();
+
         OracleMock newOracle = new OracleMock();
         newOracle.setPrice(ORACLE_PRICE_SCALE);
         vm.prank(owner);

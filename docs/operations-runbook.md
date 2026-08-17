@@ -122,11 +122,17 @@ is restored.
 
 ## Creating and authorizing an LCC vault
 
-LCC deployment has split authority. The main Safe owns `LCCVaultFactory`; USD3 management is the 24-hour parameters
-timelock `0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2`; and each facility manifest must explicitly declare its approved,
-nonzero vault owner. The LCC beacon's separate fleet upgrade authority is the 7-day timelock. Do not require or
-represent those roles as one account. See `docs/deployment.md` for the timing trade-offs when selecting a facility
-owner.
+LCC deployment has split authority. The main Safe holds the non-upgradeable `LCCVaultFactory`'s sole `OWNER_ROLE`;
+USD3 management is the 24-hour parameters timelock `0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2`; and the LCC beacon's
+separate fleet upgrade authority is the 7-day timelock. Do not require or represent those roles as one account. Vault
+manifests contain facility parameters and risk acknowledgements, not an independent authority address. The factory
+owner controls every vault in the family, so an ownership change has family-wide rather than per-facility blast radius.
+
+Before each deployment, review and record `factory.owner()`, enumerate `factory.OWNER_ROLE()` with
+`getRoleMemberCount` and `getRoleMember`, and review `factory.pendingOwner()`. The owner must match the intended main
+Safe and the `OWNER_ROLE` census must contain that sole member. If `pendingOwner()` is nonzero, resolve or expressly
+approve the pending family-wide authority transfer before proceeding. See `docs/deployment.md` for the timing
+trade-offs of factory-wide authority.
 
 Use `script/operations/CreateLCCVaultSafe.s.sol` with the same finalized JSON in every phase:
 
@@ -135,9 +141,7 @@ Use `script/operations/CreateLCCVaultSafe.s.sol` with the same finalized JSON in
    only when a perpetual `maxEpochs = 0` facility has an approved dispersion justification; set the second true only
    when `minCommitmentEpochs + exitDelayEpochs >= maxEpochs != 0` deliberately makes terminal wind-down the only exit;
    set the third true only when the loss budget approves `maxAuctionAwardBps = 10000`, the maximum award-loss case.
-   Record the named approver. The script rejects each case without its acknowledgement and rejects a missing or zero
-   `params.owner`; it verifies the deployed owner against that explicit declaration but does not mandate a particular
-   address.
+   Record the named approver. The script rejects each case without its acknowledgement.
 2. Keep `startTimestamp` far enough in the future to survive the governance delay. Run
    `schedulePrerequisites(string,uint256,bool)` with an attempt nonce (start at `0`). The script computes the CREATE2
    address from the final parameters and facility ID, confirms the factory owner, confirms the beacon is owned by the
@@ -149,10 +153,10 @@ Use `script/operations/CreateLCCVaultSafe.s.sol` with the same finalized JSON in
    attempt nonce. A completed TimelockController operation cannot be rescheduled; use a fresh nonce for a new attempt.
    Confirm both USD3 flags are true at the predicted, still-undeployed address.
 4. Run `run(string,bool)`. The factory Safe creates only that pre-authorized CREATE2 vault. The script verifies the
-   simulated vault's address, factory provenance, owner, protocol wiring, and both USD3 flags.
+   simulated vault's address, factory provenance, protocol wiring, and both USD3 flags.
 5. After the Safe transaction executes on chain, run `verify(string)` with the deployment JSON. Archive its successful
-   output with the manifest. `verify(address,address)` with the vault and explicit expected owner is a fallback when the
-   JSON is unavailable, but the JSON-based check is authoritative because it also recomputes the expected address.
+   output with the manifest. `verify(address)` with the vault is the fallback when the JSON is unavailable, but
+   `verify(string)` is authoritative because it also recomputes the expected address from the manifest.
 
 The two USD3 flags are continuing operating preconditions, not one-time deployment ceremony. Before approving any USD3
 management batch that touches either mapping, resolve whether the target is a factory-registered LCC vault. Never clear

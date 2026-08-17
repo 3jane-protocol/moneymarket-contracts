@@ -122,7 +122,14 @@ contract LCCFactoryTest is LCCBase {
         assertEq(factory.numVaults(), 2);
         assertEq(factory.allVaults()[0], plain);
         assertEq(factory.allVaults()[1], deterministic);
-        assertTrue(factory.isOwner(factoryOwner));
+
+        bytes32 guardianRole = factory.GUARDIAN_ROLE();
+        vm.prank(factoryOwner);
+        factory.grantRole(guardianRole, outsider);
+        vm.prank(outsider);
+        LCCVault(plain).pause();
+        (bool paused,,) = LCCVault(plain).pauseState();
+        assertTrue(paused);
     }
 
     function testFactoryCreate2DifferentSaltDifferentAddress() public {
