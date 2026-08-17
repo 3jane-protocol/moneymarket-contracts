@@ -118,6 +118,73 @@ contract SupplySharePriceFloorTest is BaseTest {
         assertTrue(morphoCredit.marketInWindDown(id), "wind-down cleared without governance");
     }
 
+    function testFloorTruncatedBorrowerCureRestoresOnlyAppliedMarkdown() public {
+        uint256 assets = 1 ether;
+        _supplyFrom(SUPPLIER, 2 * assets);
+        _setupBorrowerWithLoan(BORROWER, assets);
+        _setupBorrowerWithLoan(ONBEHALF, assets);
+
+        vm.prank(OWNER);
+        markdownManager.setEnableMarkdown(ONBEHALF, true);
+
+        address[] memory borrowers = new address[](2);
+        borrowers[0] = BORROWER;
+        borrowers[1] = ONBEHALF;
+        uint256[] memory bpsList = new uint256[](2);
+        bpsList[0] = 10_000;
+        bpsList[1] = 10_000;
+        uint256[] memory balances = new uint256[](2);
+        balances[0] = assets;
+        balances[1] = assets;
+        _createMultipleObligations(id, borrowers, bpsList, balances, 0);
+
+        markdownManager.setMarkdownForBorrower(BORROWER, assets);
+        markdownManager.setMarkdownForBorrower(ONBEHALF, assets);
+        _continueMarketCycles(id, block.timestamp + GRACE_PERIOD_DURATION + DELINQUENCY_PERIOD_DURATION + 1);
+
+        uint256 minAssets = _minSupplyAssets(morpho.market(id).totalSupplyShares);
+        uint256 appliedForOnBehalf = assets - minAssets;
+
+        // BORROWER's full markdown applies first; ONBEHALF's is truncated at the floor.
+        vm.expectEmit(true, true, false, true, address(morphoCredit));
+        emit EventsLib.BorrowerMarkdownUpdated(id, ONBEHALF, 0, appliedForOnBehalf);
+        morphoCredit.accruePremiumsForBorrowers(id, borrowers);
+
+        Market memory atFloor = morpho.market(id);
+        assertEq(atFloor.totalSupplyAssets, minAssets, "second markdown did not stop at floor");
+        assertTrue(morphoCredit.marketInWindDown(id), "truncated markdown did not wind down market");
+        assertEq(atFloor.totalMarkdownAmount, assets + appliedForOnBehalf, "market markdown tally");
+        assertEq(morphoCredit.markdownState(id, BORROWER), assets, "untruncated stored markdown");
+        assertEq(
+            morphoCredit.markdownState(id, ONBEHALF), appliedForOnBehalf, "stored markdown exceeds applied markdown"
+        );
+
+        // The truncated borrower cures in full; only the markdown applied for it may be restored.
+        Position memory onBehalfPosition = morpho.position(id, ONBEHALF);
+        loanToken.setBalance(ONBEHALF, assets);
+        vm.prank(ONBEHALF);
+        morpho.repay(marketParams, 0, onBehalfPosition.borrowShares, ONBEHALF, "");
+
+        Market memory afterCure = morpho.market(id);
+        assertEq(afterCure.totalSupplyAssets, assets, "cure restored more than was applied for the borrower");
+        assertEq(afterCure.totalMarkdownAmount, assets, "cure consumed the defaulted borrower's markdown");
+        assertEq(morphoCredit.markdownState(id, ONBEHALF), 0, "cured borrower markdown not cleared");
+
+        // Settle the still-defaulted borrower; supply must not exceed the tokens actually backing the market.
+        vm.prank(address(creditLine));
+        morphoCredit.settleAccount(marketParams, BORROWER);
+
+        Market memory settled = morpho.market(id);
+        assertEq(settled.totalBorrowAssets, 0, "borrow assets not cleared");
+        assertEq(settled.totalMarkdownAmount, 0, "markdown tally not cleared");
+        assertEq(
+            settled.totalSupplyAssets,
+            loanToken.balanceOf(address(morpho)),
+            "supply assets exceed tokens backing the market"
+        );
+        _assertSupplySharePriceFloor(settled);
+    }
+
     function testWithdrawThenMarkdownUsesSaturatingAvailableAssets() public {
         uint256 assets = 1 ether;
         _supplyFrom(SUPPLIER, assets);
@@ -282,6 +349,33 @@ contract SupplySharePriceFloorTest is BaseTest {
         morpho.withdraw(marketParams, 1, 0, SUPPLIER, SUPPLIER);
 
         assertTrue(morphoCredit.marketInWindDown(id), "exit paths cleared wind-down");
+    }
+
+    function testSettleFullyTruncatedBorrowerOnLegacySubFloorMarketSaturates() public {
+        uint256 assets = 1 ether;
+        _supplyFrom(SUPPLIER, assets);
+        _setupBorrowerWithLoan(BORROWER, assets / 2);
+
+        // Model a legacy market whose supply collapsed below the floor before this implementation was installed.
+        Market memory legacy = morpho.market(id);
+        _setSupplyTotals(10, legacy.totalSupplyShares);
+
+        // No capacity above the floor remains, so the borrower's markdown increase is fully truncated.
+        _moveToDefaultAndTouch(BORROWER, assets / 2);
+        assertEq(morphoCredit.markdownState(id, BORROWER), 0, "truncated markdown was stored");
+        assertTrue(morphoCredit.marketInWindDown(id), "full truncation did not wind down market");
+
+        // Settlement must saturate at the protected assets instead of reverting: wind-down blocks new supply,
+        // so a revert here would make the bad debt permanently unwritable.
+        vm.prank(address(creditLine));
+        morphoCredit.settleAccount(marketParams, BORROWER);
+
+        Market memory settled = morpho.market(id);
+        assertEq(settled.totalBorrowAssets, 0, "borrow assets not cleared");
+        assertEq(settled.totalBorrowShares, 0, "borrow shares not cleared");
+        assertEq(settled.totalSupplyAssets, 10, "settlement changed protected assets");
+        assertEq(settled.totalMarkdownAmount, 0, "markdown tally not cleared");
+        assertTrue(morphoCredit.marketInWindDown(id), "settlement cleared wind-down");
     }
 
     function testSupplyConsistencyCheckIncludesVirtualShares() public {
