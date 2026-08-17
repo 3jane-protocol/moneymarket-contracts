@@ -514,7 +514,7 @@ contract USD3 is BaseHooksUpgradeable {
     /// @param _owner Address to check limit for
     /// @return Maximum amount that can be deposited
     function availableDepositLimit(address _owner) public view override returns (uint256) {
-        if (Pausable(address(WAUSDC)).paused()) {
+        if (!supplyCapExempt[_owner] && Pausable(address(WAUSDC)).paused()) {
             return 0;
         }
 
