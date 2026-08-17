@@ -53,6 +53,17 @@ contract DeployLCCBeaconAndFactory is Script, LCCWiringCheck, SevenDayTimelockCh
         require(beacon.implementation() == lccVaultImpl, "LCC beacon implementation mismatch");
         require(beacon.owner() == sevenDayTimelock, "LCC beacon owner mismatch");
         require(factory.owner() == SAFE_ADDRESS, "LCC factory owner mismatch");
+        require(factory.getRoleMemberCount(factory.OWNER_ROLE()) == 1, "LCC factory owner count mismatch");
+        require(factory.getRoleMemberCount(factory.DEFAULT_ADMIN_ROLE()) == 0, "LCC factory default admin held");
+        require(factory.getRoleAdmin(factory.LISTER_ROLE()) == factory.OWNER_ROLE(), "LCC lister admin mismatch");
+        require(factory.getRoleAdmin(factory.BOUNCER_ROLE()) == factory.OWNER_ROLE(), "LCC bouncer admin mismatch");
+        require(factory.getRoleAdmin(factory.GUARDIAN_ROLE()) == factory.OWNER_ROLE(), "LCC guardian admin mismatch");
+        require(
+            factory.getRoleAdmin(factory.DEPOSIT_OPERATOR_ROLE()) == factory.OWNER_ROLE(),
+            "LCC deposit operator admin mismatch"
+        );
+        require(factory.whitelistEnabled(), "LCC factory whitelist disabled at deploy");
+        require(factory.oneVaultPolicyEnabled(), "LCC factory one-vault policy disabled at deploy");
         require(factory.beacon() == beaconAddress, "LCC factory beacon mismatch");
         require(factory.numVaults() == 0, "LCC factory registry not empty");
 
@@ -62,8 +73,12 @@ contract DeployLCCBeaconAndFactory is Script, LCCWiringCheck, SevenDayTimelockCh
         console2.log("");
         console2.log("Next steps:");
         console2.log("  1. Record LCC_FACTORY=%s", factoryAddress);
-        console2.log("  2. Route all beacon upgrades through the 7-day timelock");
-        console2.log("  3. After 06_ExecuteUSD3v12Upgrade.s.sol executes, create vaults with CreateLCCVaultSafe.s.sol");
+        console2.log("  2. Safe grants LISTER_ROLE, BOUNCER_ROLE, and GUARDIAN_ROLE");
+        console2.log("  3. Grant DEPOSIT_OPERATOR_ROLE only to consent-verifying adapters or closed operators");
+        console2.log("  4. Never grant DEPOSIT_OPERATOR_ROLE to a generic arbitrary-calldata router");
+        console2.log("  5. Safe sets the initial depositor whitelist and optional admissions module");
+        console2.log("  6. Route all beacon upgrades through the 7-day timelock");
+        console2.log("  7. After 06_ExecuteUSD3v12Upgrade.s.sol executes, create vaults with CreateLCCVaultSafe.s.sol");
 
         return (beaconAddress, factoryAddress);
     }

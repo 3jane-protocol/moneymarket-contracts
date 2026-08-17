@@ -10,7 +10,7 @@ import {IUSD3} from "./interfaces/IUSD3.sol";
 /**
  * @title NotificationVault
  * @notice General-purpose ERC4626 wrapper that adds a withdrawal cooldown to USD3 (asset = USD3,
- *         shares = USD3n), so wrapped USD3 can serve as money-market collateral without being
+ *         shares = USD3l), so wrapped USD3 can serve as money-market collateral without being
  *         unwrappable within a cooldown window.
  * @dev Holds USD3 directly (1:1, no second yield layer) and intentionally disables reporting, so PPS
  *      stays exactly 1 and donations are never reconciled into share price. `usd3` is fixed at
@@ -46,6 +46,7 @@ contract NotificationVault is BaseHooksUpgradeable {
     error NoActiveCooldown();
     error InsufficientShares();
     error ReportsDisabled();
+    error CooldownBypassed();
 
     /// @param _usd3 The USD3 strategy this vault wraps; bound for the life of the implementation.
     /// @dev Sets the `usd3` immutable. Immutables live in the implementation bytecode and are read correctly
@@ -58,12 +59,13 @@ contract NotificationVault is BaseHooksUpgradeable {
     }
 
     /// @notice Initialize the proxy: roles and the fixed cooldown config (USD3 comes from the constructor).
+    /// @dev The nonzero cooldown guard is inert for already-initialized proxies and protects future deployments only.
     function initialize(address _management, address _keeper, uint64 _cooldownDuration, uint64 _withdrawalWindow)
         external
         initializer
     {
         if (_management == address(0) || _keeper == address(0)) revert InvalidAddress();
-        if (_withdrawalWindow == 0) revert InvalidCooldownConfig();
+        if (_cooldownDuration == 0 || _withdrawalWindow == 0) revert InvalidCooldownConfig();
 
         cooldownDuration = _cooldownDuration;
         withdrawalWindow = _withdrawalWindow;
@@ -72,7 +74,7 @@ contract NotificationVault is BaseHooksUpgradeable {
     }
 
     function symbol() external pure returns (string memory) {
-        return "USD3n";
+        return "USD3l";
     }
 
     /// @dev No-op: the vault holds USD3 directly and never deploys it elsewhere.
@@ -82,7 +84,7 @@ contract NotificationVault is BaseHooksUpgradeable {
     function _freeFunds(uint256) internal override {}
 
     /// @notice Reporting is disabled so the wrapper never adds a second yield layer or reconciles
-    ///         donations into PPS; USD3n stays 1:1 with USD3 on deposit/withdraw alone.
+    ///         donations into PPS; USD3l stays 1:1 with USD3 on deposit/withdraw alone.
     /// @dev Overrides the keeper-facing entrypoint to revert directly; `_harvestAndReport` below also
     ///      reverts as a backstop for the (now-unreachable) internal report path.
     function report() external pure override returns (uint256, uint256) {
@@ -122,8 +124,11 @@ contract NotificationVault is BaseHooksUpgradeable {
     /// @notice Start (or overwrite) the caller's withdrawal cooldown for `shares`.
     /// @dev Withdrawal/redemption is then only available during the window `[cooldownEnd, windowEnd]`;
     ///      cooled shares are also non-transferable until withdrawn. A new call overwrites any prior cooldown.
-    /// @param shares Number of USD3n shares to put into cooldown.
+    ///      Bypassed accounts exit without cooling and are rejected here, so no ticket can exist while the
+    ///      bypass lets shares move without consuming it.
+    /// @param shares Number of USD3l shares to put into cooldown.
     function startCooldown(uint256 shares) external {
+        if (cooldownBypass[msg.sender]) revert CooldownBypassed();
         if (shares == 0) revert InvalidAmount();
 
         uint256 userBalance = IERC20(address(this)).balanceOf(msg.sender);
@@ -163,8 +168,14 @@ contract NotificationVault is BaseHooksUpgradeable {
     /// @notice Management toggle: let `account` withdraw/redeem and transfer its own shares without cooldown.
     /// @dev Owner-keyed only — it does not grant ERC20 allowance and cannot move another owner's shares.
     ///      Intended for trusted custody/market addresses that own collateral shares.
+    ///      Any bypass transition clears the account's cooldown, so a ticket started before a grant cannot
+    ///      survive into (or past) the bypassed period and later apply to shares that never cooled.
     function setCooldownBypass(address account, bool allowed) external onlyManagement {
         if (account == address(0)) revert InvalidAddress();
+        if (cooldownBypass[account] != allowed && cooldowns[account].shares != 0) {
+            delete cooldowns[account];
+            emit CooldownCancelled(account);
+        }
         cooldownBypass[account] = allowed;
         emit CooldownBypassUpdated(account, allowed);
     }

@@ -151,7 +151,7 @@ contract LCCSetOracleTest is LCCBase {
         assertEq(vault.assetConfig().marginOracle, address(newOracle));
     }
 
-    function testWindowClosedAuctionUsesSnapshotWhenLiveOracleIsDead() public {
+    function testWindowClosedUnfilledAuctionDivertsPoolWithoutConsultingLiveOracle() public {
         _deployAuctionVault();
         _setupShortfallAuction();
 
@@ -169,9 +169,9 @@ contract LCCSetOracleTest is LCCBase {
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         assertTrue(state.slashFinalized);
-        assertEq(state.returnPool, 50e18);
-        assertEq(state.returnCommitment, 100e18);
-        assertEq(_accruedTreasuryMargin(), 0);
+        assertEq(state.returnPool, 0);
+        assertEq(state.returnCommitment, 0);
+        assertEq(_accruedTreasuryMargin(), 50e18);
     }
 
     function testDueSlashDisposalUsesSnapshotWhenLiveOracleIsDead() public {
@@ -215,14 +215,16 @@ contract LCCSetOracleTest is LCCBase {
         (, uint256 award) = vault.takeAuction(25e18, 2.5e18, type(uint256).max);
         assertEq(award, 2.5e18);
 
+        SettlementReference memory settlement = _referenceSettlement(50e18, award, 25e18, 50e18, 5_000, 1_000, true);
+
         vm.warp(WINDOW_END);
         vault.materializeAccount(carol);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(state.returnPool, 47.25e18);
-        assertEq(state.returnCommitment, 94.5e18);
-        assertEq(_accruedTreasuryMargin(), 0.25e18);
+        assertEq(state.returnPool, settlement.baseReturn);
+        assertEq(state.returnCommitment, 2 * settlement.baseReturn);
+        assertEq(_accruedTreasuryMargin(), settlement.unfilledPool + settlement.fee);
     }
 
     function _setupShortfallAuction() internal {

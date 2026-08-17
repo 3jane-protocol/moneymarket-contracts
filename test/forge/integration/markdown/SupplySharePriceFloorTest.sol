@@ -285,7 +285,27 @@ contract SupplySharePriceFloorTest is BaseTest {
         _assertSupplySharePriceFloor(settled);
     }
 
-    function testWindDownTripsOnlyOnTruncationAndLeavesExitPathsOpen() public {
+    function testSettlementAtExactFloorTripsWindDown() public {
+        creditLine.setMm(address(0));
+
+        uint256 assets = 1 ether;
+        _supplyFrom(SUPPLIER, assets);
+
+        Market memory supplied = morpho.market(id);
+        uint256 protectedAssets = _minSupplyAssets(supplied.totalSupplyShares);
+        uint256 exactFloorLoss = uint256(supplied.totalSupplyAssets) - protectedAssets;
+        _setupBorrowerWithLoan(BORROWER, exactFloorLoss);
+
+        vm.prank(address(creditLine));
+        morphoCredit.settleAccount(marketParams, BORROWER);
+
+        Market memory settled = morpho.market(id);
+        assertEq(settled.totalSupplyAssets, protectedAssets, "settlement did not land at exact floor");
+        assertTrue(morphoCredit.marketInWindDown(id), "exact-floor settlement did not trip wind-down");
+        _assertSupplySharePriceFloor(settled);
+    }
+
+    function testWindDownTripsAtExactFloorAndLeavesExitPathsOpen() public {
         uint256 assets = 1 ether;
         _supplyFrom(SUPPLIER, assets);
         _setupBorrowerWithLoan(BORROWER, assets);
@@ -294,7 +314,12 @@ contract SupplySharePriceFloorTest is BaseTest {
         uint256 available = uint256(supplied.totalSupplyAssets) - _minSupplyAssets(supplied.totalSupplyShares);
         _moveToDefaultAndTouch(BORROWER, available);
 
-        assertFalse(morphoCredit.marketInWindDown(id), "exact available markdown tripped wind-down");
+        assertEq(
+            morpho.market(id).totalSupplyAssets,
+            _minSupplyAssets(supplied.totalSupplyShares),
+            "exact markdown did not land at the floor"
+        );
+        assertTrue(morphoCredit.marketInWindDown(id), "exact-floor markdown did not trip wind-down");
         assertEq(morpho.market(id).totalMarkdownAmount, available, "exact markdown was truncated");
 
         markdownManager.setMarkdownForBorrower(BORROWER, assets);

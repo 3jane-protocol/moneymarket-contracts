@@ -53,7 +53,7 @@ contract LCCTerminalTest is LCCBase {
         assertEq(vault.totals().pendingMargin, 0);
     }
 
-    function testLastCallSettlesInTerminalAndBothSidesWithdraw() public {
+    function testLastCallSettlesUnfilledInTerminalAndDivertsDefaulterPool() public {
         _deployTermAuctionVault(1);
         _deposit(alice, 100e18);
         _deposit(bob, 50e18);
@@ -65,16 +65,18 @@ contract LCCTerminalTest is LCCBase {
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
 
         vm.warp(START + EPOCH);
+        vault.materializeAccount(bob);
         uint256 bobBefore = margin.balanceOf(bob);
+        vm.expectRevert(LCCErrorsLib.NothingToClaim.selector);
         vm.prank(bob);
-        assertEq(vault.claimRemainingMargin(bob), 50e18);
+        vault.claimRemainingMargin(bob);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(state.returnPool, 50e18);
-        assertEq(state.returnCommitment, 100e18);
-        assertEq(_accruedTreasuryMargin(), 0);
-        assertEq(margin.balanceOf(bob), bobBefore + 50e18);
+        assertEq(state.returnPool, 0);
+        assertEq(state.returnCommitment, 0);
+        assertEq(_accruedTreasuryMargin(), 50e18);
+        assertEq(margin.balanceOf(bob), bobBefore);
 
         uint256 aliceBefore = margin.balanceOf(alice);
         vm.prank(alice);
@@ -100,12 +102,12 @@ contract LCCTerminalTest is LCCBase {
         assertEq(vault.claimRemainingMargin(alice), 50e18);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(state.returnPool, 50e18);
-        assertEq(state.returnCommitment, 100e18);
-        assertEq(_accruedTreasuryMargin(), 0);
+        assertEq(state.returnPool, 0);
+        assertEq(state.returnCommitment, 0);
+        assertEq(_accruedTreasuryMargin(), 50e18);
     }
 
-    function testHigherTerminalOraclePriceKeepsReturnPoolDespiteCapHeadroom() public {
+    function testHigherTerminalOraclePriceCannotReverseLateEligibleZeroFillOutcome() public {
         ILCCVault.VaultParams memory params = _auctionParams();
         params.maxEpochs = 1;
         params.protocolCommitmentCap = 200e18;
@@ -117,24 +119,23 @@ contract LCCTerminalTest is LCCBase {
         vm.prank(owner);
         vault.setRiskCaps(1, 200e18, 2_000, 0);
         _finishFunding();
-        vault.finalizeEpochSlash(0);
         oracle.setPrice(2 * ORACLE_PRICE_SCALE);
 
         vm.warp(START + EPOCH);
+        vault.materializeAccount(bob);
+        vm.expectRevert(LCCErrorsLib.NothingToClaim.selector);
         vm.prank(bob);
-        assertEq(vault.claimRemainingMargin(bob), 1e18);
+        vault.claimRemainingMargin(bob);
 
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(state.returnPool, 100e18);
-        assertEq(state.returnCommitment, 200e18);
-        assertEq(_accruedTreasuryMargin(), 0);
+        assertEq(state.returnPool, 0);
+        assertEq(state.returnCommitment, 0);
+        assertEq(_accruedTreasuryMargin(), 100e18);
     }
 
     function testLastEpochEarlyFullFillDoesNotDivertReturnPool() public {
-        // The last callable epoch's auction fully fills DURING its own Closed window, so disposal runs while
-        // _currentEpoch() is still maxEpochs-1 (not yet terminal). The wind-down relaxation must still apply
-        // (the returned commitment can never back a future call), or the tight cap would divert returnPool to
-        // treasury. maxEpochs = 1 → epoch 0 is the last callable epoch.
+        // The last callable epoch's auction fully fills during its own Closed window. The epoch-anchored wind-down
+        // relaxation already applies because this returned commitment can never back a later call.
         ILCCVault.VaultParams memory params = _auctionParams();
         params.maxEpochs = 1;
         params.protocolCommitmentCap = 200e18;
@@ -162,19 +163,17 @@ contract LCCTerminalTest is LCCBase {
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        // Wind-down applies (disposed epoch == maxEpochs-1): the full 100e18 returnPool is preserved for
-        // defaulters rather than clamped to 0 and swept to treasury. Commitment remains bounded by the 200e18
-        // slashed amount, and with a zero award there is no fee basis.
-        assertEq(state.returnPool, 100e18);
-        assertEq(state.returnCommitment, 200e18);
-        assertEq(_accruedTreasuryMargin(), 0);
+        // Wind-down skips the cap clamp, while the settlement-time first-step floor still charges the reserved fee.
+        SettlementReference memory settlement = _referenceSettlement(100e18, 0, 200e18, 200e18, 5_000, 1_000, true);
+        assertEq(state.returnPool, settlement.baseReturn);
+        assertEq(state.returnCommitment, 2 * settlement.baseReturn);
+        assertEq(_accruedTreasuryMargin(), settlement.fee);
     }
 
-    function testOlderEpochSettledInLastEpochClosedIsWindDown() public {
+    function testOlderUnfilledAuctionSettledInLastEpochClosedStillDivertsPool() public {
         // maxEpochs = 2 (epochs 0 and 1 callable; epoch 1 is the last). Epoch 0's auction is left pending and first
-        // settles during epoch 1's Closed phase — after the last call-opening (PreCall) window has passed but before
-        // terminal. No call can ever open again, so disposal must be wind-down and retain the call-open valuation
-        // even if the live oracle dies, though _currentEpoch() (1) has not reached maxEpochs (2).
+        // settles during epoch 1's Closed phase. Its zero fill diverts the gross pool before valuation, independent
+        // of the dead live oracle and of how late the older epoch is touched.
         _deployTermAuctionVault(2);
         _deposit(alice, 100e18);
         _deposit(bob, 50e18);
@@ -192,19 +191,78 @@ contract LCCTerminalTest is LCCBase {
         assertLt(lastEpochClosed, START + 2 * EPOCH); // epoch 1 Closed, pre-terminal
         vm.warp(lastEpochClosed);
 
-        // A permissionless touch settles epoch 0's now-due auction at this late point; disposal is wind-down.
+        // A permissionless touch settles epoch 0's now-due auction at this late point.
         vault.materializeAccount(alice);
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
         ILCCVault.EpochState memory state = vault.getEpochState(0);
-        assertEq(state.returnPool, 50e18);
-        assertEq(state.returnCommitment, 100e18);
-        assertEq(_accruedTreasuryMargin(), 0);
+        assertEq(state.returnPool, 0);
+        assertEq(state.returnCommitment, 0);
+        assertEq(_accruedTreasuryMargin(), 50e18);
+    }
+
+    function testOlderPartialFillSettlementIsIndependentOfTerminalTouchTime() public {
+        ILCCVault.VaultParams memory params = _auctionParams();
+        params.maxEpochs = 2;
+        params.protocolCommitmentCap = 300e18;
+        params.userCommitmentCap = 300e18;
+        _deployVaultWithParams(params);
+
+        _deposit(alice, 100e18);
+        _deposit(bob, 50e18);
+        _openCall(150e18);
+        _fund(alice);
+
+        vm.prank(owner);
+        vault.setRiskCaps(200e18, 300e18, 2_000, 0);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+
+        uint256 fill = 10e18;
+        vm.warp(START + NORMAL + PRE_CALL + FUNDING + 5);
+        uint256 expectedAward = _referenceAward(50e18, 0, fill, 50e18, 5, 5, 5_000, 1_000, 10_000, ORACLE_PRICE_SCALE);
+        vm.prank(carol);
+        (, uint256 award) = vault.takeAuction(fill, expectedAward, type(uint256).max);
+        assertEq(award, expectedAward);
+        assertGt(award, 0);
+
+        ILCCVault.EpochState memory openState = vault.getEpochState(0);
+        uint256 fundedCallOpenCommitment = openState.fundedAmount + openState.fundedUsersRemainingCommitment;
+        assertEq(fundedCallOpenCommitment, 200e18);
+        assertEq(vault.riskConfig().protocolCommitmentCap, fundedCallOpenCommitment);
+
+        uint256 snapshot = vm.snapshotState();
+
+        vm.warp(START + EPOCH);
+        vault.materializeAccount(alice);
+        ILCCVault.EpochState memory atClosedEnd = vault.getEpochState(0);
+        uint256 treasuryAtClosedEnd = _accruedTreasuryMargin();
+        assertEq(atClosedEnd.returnPool, 0);
+        assertEq(atClosedEnd.returnCommitment, 0);
+        assertEq(treasuryAtClosedEnd, 50e18 - award);
+
+        assertTrue(vm.revertToState(snapshot), "closed-end branch restore failed");
+        vm.warp(START + EPOCH + NORMAL + PRE_CALL);
+        vault.materializeAccount(alice);
+        ILCCVault.EpochState memory afterLastPreCall = vault.getEpochState(0);
+        assertEq(afterLastPreCall.returnPool, atClosedEnd.returnPool);
+        assertEq(afterLastPreCall.returnCommitment, atClosedEnd.returnCommitment);
+        assertEq(_accruedTreasuryMargin(), treasuryAtClosedEnd);
+
+        assertTrue(vm.revertToState(snapshot), "post-PreCall branch restore failed");
+        vm.warp(START + 2 * EPOCH);
+        vault.materializeAccount(alice);
+        ILCCVault.EpochState memory atTerminal = vault.getEpochState(0);
+        assertEq(atTerminal.returnPool, atClosedEnd.returnPool);
+        assertEq(atTerminal.returnCommitment, atClosedEnd.returnCommitment);
+        assertEq(_accruedTreasuryMargin(), treasuryAtClosedEnd);
+
+        assertTrue(vm.revertToStateAndDelete(snapshot), "terminal branch restore failed");
     }
 
     function testMaturedExitersCanUseRemainingClaimAtAndAfterMaxEpochs() public {
         ILCCVault.VaultParams memory params = _params(400e18, 400e18);
-        params.maxEpochs = 1;
+        params.maxEpochs = 3;
         params.exitCapBps = 5_000;
         _deployVaultWithParams(params);
 
@@ -217,25 +275,41 @@ contract LCCTerminalTest is LCCBase {
         vm.prank(bob);
         assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
 
-        vm.warp(START + EPOCH);
+        vm.warp(START + 3 * EPOCH);
         vm.prank(alice);
         assertEq(vault.claimRemainingMargin(alice), 100e18);
 
-        vm.warp(START + 2 * EPOCH);
+        vm.warp(START + 4 * EPOCH);
         vm.prank(bob);
         assertEq(vault.claimRemainingMargin(bob), 100e18);
 
         assertEq(vault.totals().activeMargin, 0);
     }
 
+    function testCallFreePostNormalExitCanClaimAtTerminal() public {
+        _deployVaultWithParams(_termParams(3));
+        _deposit(alice, 100e18);
+
+        vm.warp(START + NORMAL + PRE_CALL);
+        assertFalse(vault.getEpochState(0).callOpened);
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+
+        vm.warp(START + 3 * EPOCH);
+        uint256 beforeBalance = margin.balanceOf(alice);
+        vm.prank(alice);
+        assertEq(vault.claimRemainingMargin(alice), 100e18);
+        assertEq(margin.balanceOf(alice), beforeBalance + 100e18);
+    }
+
     function testClaimExitedMarginStillWorksAfterTerminal() public {
-        _deployVaultWithParams(_termParams(1));
+        _deployVaultWithParams(_termParams(2));
         _deposit(alice, 100e18);
 
         vm.prank(alice);
         vault.requestExit(type(uint256).max, type(uint256).max);
 
-        vm.warp(START + EPOCH);
+        vm.warp(START + 2 * EPOCH);
         vm.prank(alice);
         assertEq(vault.claimExitedMargin(alice), 100e18);
     }

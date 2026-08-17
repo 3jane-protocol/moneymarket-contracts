@@ -27,7 +27,6 @@ contract LCCConfigLibTest is Test {
     uint256 internal constant MAX_PROTOCOL_CAP = 100_000_000e18;
     uint256 internal constant MIN_USER_CAP = 1_000_000e18;
 
-    address internal owner = makeAddr("owner");
     address internal margin = makeAddr("margin");
     address internal oracle = makeAddr("oracle");
     LCCConfigHarness internal validator = new LCCConfigHarness();
@@ -72,10 +71,9 @@ contract LCCConfigLibTest is Test {
 
     function testFuzzValidateRejectsZeroAddresses(ParamSeed memory seed, uint256 field) public {
         ILCCVault.VaultParams memory params = _boundParams(seed);
-        field = bound(field, 0, 2);
-        if (field == 0) params.owner = address(0);
-        if (field == 1) params.marginAsset = address(0);
-        if (field == 2) params.marginOracle = address(0);
+        field = bound(field, 0, 1);
+        if (field == 0) params.marginAsset = address(0);
+        if (field == 1) params.marginOracle = address(0);
 
         vm.expectRevert(LCCErrorsLib.ZeroAddress.selector);
         validator.validate(params);
@@ -265,7 +263,6 @@ contract LCCConfigLibTest is Test {
 
     function _baseParams() internal view returns (ILCCVault.VaultParams memory) {
         return ILCCVault.VaultParams({
-            owner: owner,
             marginAsset: margin,
             marginOracle: oracle,
             startTimestamp: START,

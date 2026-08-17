@@ -1,0 +1,15 @@
+{
+  "linkReferences": {
+    "src/lcc/libraries/LCCAuctionLib.sol": {
+      "LCCAuctionLib": {}
+    },
+    "src/lcc/libraries/LCCConfigLib.sol": {
+      "LCCConfigLib": {}
+    }
+  },
+  "expectedErrorFragments": [
+    "expected exactly LCCAuctionLib, LCCConfigLib, LCCExitLib link references",
+    "src/lcc/libraries/LCCAuctionLib.sol",
+    "src/lcc/libraries/LCCConfigLib.sol"
+  ]
+}

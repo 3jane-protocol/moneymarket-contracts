@@ -4,6 +4,9 @@ pragma solidity ^0.8.18;
 import {MainnetForkBase} from "./MainnetForkBase.t.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
 import {USD3_old} from "../../../../src/usd3/USD3_old.sol";
+import {ProtocolConfig} from "../../../../src/ProtocolConfig.sol";
+import {IMorphoCredit} from "../../../../src/interfaces/IMorpho.sol";
+import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 import {
@@ -21,6 +24,8 @@ contract USD3UpgradeForkTest is MainnetForkBase {
     function test_currentUpgradePreservesLiveState() public requiresFork {
         ITokenizedStrategy usd3 = ITokenizedStrategy(USD3_PROXY);
         USD3 usd3View = USD3(USD3_PROXY);
+        address whitelistedProbe = makeAddr("whitelistedProbe");
+        address nonWhitelistedProbe = makeAddr("nonWhitelistedProbe");
 
         // Pre-upgrade reads are limited to getters that exist on the deployed implementation;
         // supplyCapExempt ships with this upgrade and is only readable afterwards.
@@ -34,13 +39,26 @@ contract USD3UpgradeForkTest is MainnetForkBase {
 
         assertEq(assetBefore, USDC, "live proxy asset is already USDC");
 
-        // Enable the whitelist gate on the deployed implementation so the deprecated bool slot is genuinely
-        // nonzero across the upgrade; the cleaned logic has no gate to read it. The deployed implementation
-        // matches the frozen v2 ABI for the whitelist surface.
-        address management = usd3.management();
-        vm.prank(management);
-        USD3_old(USD3_PROXY).setWhitelistEnabled(true);
-        assertEq(usd3.maxDeposit(address(0x1234)), 0, "deployed impl whitelist gate active");
+        // The pinned live cap leaves only 294.54 USDC of headroom, below the 1,000 USDC first-deposit minimum,
+        // so raise it on the isolated fork to keep the fresh-receiver whitelist assertions non-vacuous.
+        {
+            uint256 executableHeadroom = minDepositBefore == 0 ? 1 : minDepositBefore;
+            ProtocolConfig protocolConfig =
+                ProtocolConfig(IMorphoCredit(address(usd3View.morphoCredit())).protocolConfig());
+            vm.prank(protocolConfig.owner());
+            protocolConfig.setConfig(ProtocolConfigLib.USD3_SUPPLY_CAP, totalAssetsBefore + executableHeadroom);
+
+            // Enable the whitelist gate on the deployed implementation so the deprecated bool slot is genuinely
+            // nonzero across the upgrade; the cleaned logic has no gate to read it. The deployed implementation
+            // matches the frozen v2 ABI for the whitelist surface.
+            address management = usd3.management();
+            vm.prank(management);
+            USD3_old(USD3_PROXY).setWhitelist(whitelistedProbe, true);
+            vm.prank(management);
+            USD3_old(USD3_PROXY).setWhitelistEnabled(true);
+            assertEq(usd3.maxDeposit(whitelistedProbe), executableHeadroom, "whitelisted probe is admitted");
+            assertEq(usd3.maxDeposit(nonWhitelistedProbe), 0, "deployed impl whitelist gate active");
+        }
 
         _upgradeProxyToCleanup();
 
@@ -59,8 +77,9 @@ contract USD3UpgradeForkTest is MainnetForkBase {
         }
         assertEq(usd3View.nav(), navBefore, "NAV preserved");
 
-        // The deprecated whitelistEnabled slot still holds true; the cleaned logic must ignore it.
-        assertGt(usd3.maxDeposit(address(0x1234)), 0, "deprecated whitelist slots are inert");
+        // The probes are both fresh and differ only in their deprecated whitelist entry. Equal limits prove
+        // that the cleaned logic ignores those slots without requiring sub-minimum headroom to be advertised.
+        _assertDeprecatedWhitelistInert(usd3, whitelistedProbe, nonWhitelistedProbe, minDepositBefore);
 
         // Exercise a real withdrawal against live mainnet state: sUSD3 is the largest USD3 holder.
         uint256 redeemShares = usd3.maxRedeem(sUSD3Before);
@@ -74,6 +93,21 @@ contract USD3UpgradeForkTest is MainnetForkBase {
         assertEq(IERC20(USDC).balanceOf(receiver) - usdcBefore, withdrawn, "USDC delivered to receiver");
 
         console2.log("USD3 fork cleanup upgrade preserved live state");
+    }
+
+    function _assertDeprecatedWhitelistInert(
+        ITokenizedStrategy usd3,
+        address whitelistedProbe,
+        address nonWhitelistedProbe,
+        uint256 minimum
+    ) internal view {
+        assertEq(usd3.balanceOf(whitelistedProbe), 0, "whitelisted probe must be fresh");
+        assertEq(usd3.balanceOf(nonWhitelistedProbe), 0, "non-whitelisted probe must be fresh");
+        uint256 whitelistedLimit = usd3.maxDeposit(whitelistedProbe);
+        uint256 nonWhitelistedLimit = usd3.maxDeposit(nonWhitelistedProbe);
+        assertEq(nonWhitelistedLimit, whitelistedLimit, "deprecated whitelist slots are inert");
+        assertGt(nonWhitelistedLimit, 0, "inertness check requires positive cap headroom");
+        assertGe(nonWhitelistedLimit, minimum, "advertised headroom must clear the minimum deposit");
     }
 
     function _upgradeProxyToCleanup() internal {

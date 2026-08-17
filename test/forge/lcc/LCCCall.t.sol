@@ -41,15 +41,16 @@ contract LCCCallTest is LCCBase {
         vault.openEpochCall(0, 100e18);
 
         vm.warp(START + NORMAL);
-        vm.expectRevert();
+        vm.expectRevert(LCCErrorsLib.Unauthorized.selector);
+        vm.prank(stranger);
         vault.openEpochCall(0, 100e18);
     }
 
-    function testDepositCreditsCallerOnly() public {
-        // deposit is self-only: there is no receiver argument to credit a third party's obligation.
+    function testSelfDepositCreditsCallerOnly() public {
+        // A self-deposit credits Alice's own callable obligation.
         vm.startPrank(alice);
         margin.approve(address(vault), type(uint256).max);
-        vault.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
+        vault.deposit(100e18, alice, 1, type(uint256).max, true, type(uint256).max);
         vm.stopPrank();
 
         assertEq(vault.getAccount(alice).activeMargin, 100e18);

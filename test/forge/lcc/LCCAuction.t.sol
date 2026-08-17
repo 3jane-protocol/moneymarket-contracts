@@ -12,8 +12,8 @@ import {ORACLE_PRICE_SCALE} from "../../../src/libraries/ConstantsLib.sol";
 contract LCCAuctionTest is LCCBase {
     uint256 internal constant DEADLINE = START + NORMAL + PRE_CALL + FUNDING;
     uint256 internal constant WINDOW_END = START + EPOCH;
-    uint256 internal constant CLOCK_CONFIG_SLOT = 1;
-    uint256 internal constant ACCOUNTS_SLOT = 15;
+    uint256 internal constant CLOCK_CONFIG_SLOT = 0;
+    uint256 internal constant ACCOUNTS_SLOT = 14;
     uint256 internal constant UINT64_MASK = type(uint64).max;
 
     function setUp() public override {
@@ -66,17 +66,18 @@ contract LCCAuctionTest is LCCBase {
         _fund(alice);
 
         // Nobody touches the vault until two steps into the window: elapsed is measured from the funding
-        // deadline, not the kick, so the ramp is already at 75%.
+        // deadline, not the kick, so the reserved award ramp is already at 75%.
         vm.warp(DEADLINE + 10);
         vault.finalizeEpochSlash(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
 
+        uint256 expectedAward = _referenceAward(50e18, 0, 25e18, 50e18, 10, 5, 5_000, 1_000, 10_000, oracle.price());
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(25e18, 18.75e18, type(uint256).max);
-        assertEq(award, 18.75e18);
+        (, uint256 award) = vault.takeAuction(25e18, expectedAward, type(uint256).max);
+        assertEq(award, expectedAward);
     }
 
-    function testNoKickWhenFinalizedAfterWindow() public {
+    function testNoKickWhenFinalizedAfterWindowUsesCompletedZeroFillTreatment() public {
         _deposit(alice, 100e18);
         _deposit(bob, 50e18);
         _openCall(150e18);
@@ -85,7 +86,8 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(WINDOW_END + 1);
         vault.finalizeEpochSlash(0);
 
-        assertEq(_accruedTreasuryMargin(), 0);
+        assertEq(vault.getAuctionState(0).shortfallAmount, 0);
+        assertEq(_accruedTreasuryMargin(), 50e18);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
@@ -128,25 +130,28 @@ contract LCCAuctionTest is LCCBase {
     function testPartialFillsAcrossStepsAndLazySweep() public {
         _setupShortfallAuction();
 
-        // Step 1 (50% offered = 25e18): fill half the shortfall.
+        // Step 1: fill half the shortfall from the fee-reserved ramp.
         vm.warp(DEADLINE + 5);
+        uint256 expectedAward1 = _referenceAward(50e18, 0, 25e18, 50e18, 5, 5, 5_000, 1_000, 10_000, oracle.price());
         vm.prank(carol);
-        (uint256 filled1, uint256 award1) = vault.takeAuction(25e18, 12.5e18, type(uint256).max);
+        (uint256 filled1, uint256 award1) = vault.takeAuction(25e18, expectedAward1, type(uint256).max);
         assertEq(filled1, 25e18);
-        assertEq(award1, 12.5e18);
+        assertEq(award1, expectedAward1);
 
-        // Step 2 (75% offered = 37.5e18): clamp a too-large fill to the 25e18 remaining.
+        // Step 2: clamp a too-large fill to the 25e18 remaining.
         vm.warp(DEADLINE + 10);
+        uint256 expectedAward2 =
+            _referenceAward(50e18, award1, 25e18, 50e18, 10, 5, 5_000, 1_000, 10_000, oracle.price());
         vm.prank(bob);
-        (uint256 filled2, uint256 award2) = vault.takeAuction(100e18, 18.75e18, type(uint256).max);
+        (uint256 filled2, uint256 award2) = vault.takeAuction(100e18, expectedAward2, type(uint256).max);
         assertEq(filled2, 25e18);
-        assertEq(award2, 18.75e18);
+        assertEq(award2, expectedAward2);
 
-        // Full fill settles immediately: the slash fee is charged on awarded margin and capped by the remainder.
+        // Full fill settles immediately with the full take reserved by the award ceiling.
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        uint256 feeOnAward = (award1 + award2) / 10;
-        uint256 remainder = 50e18 - award1 - award2;
-        assertEq(_accruedTreasuryMargin(), feeOnAward < remainder ? feeOnAward : remainder);
+        SettlementReference memory expected =
+            _referenceSettlement(50e18, award1 + award2, 50e18, 50e18, 5_000, 1_000, true);
+        assertEq(_accruedTreasuryMargin(), expected.fee);
         assertEq(notificationVault.balanceOf(carol), 25e18);
         assertEq(notificationVault.balanceOf(bob), 25e18);
     }
@@ -155,19 +160,24 @@ contract LCCAuctionTest is LCCBase {
         _setupShortfallAuction();
 
         vm.warp(DEADLINE + 5);
+        uint256 expectedAward = _referenceAward(50e18, 0, 10e18, 50e18, 5, 5, 5_000, 1_000, 10_000, oracle.price());
         vm.prank(carol);
-        (, uint256 award) = vault.takeAuction(10e18, 5e18, type(uint256).max);
-        assertEq(award, 5e18);
+        (, uint256 award) = vault.takeAuction(10e18, expectedAward, type(uint256).max);
+        assertEq(award, expectedAward);
+
+        SettlementReference memory expected = _referenceSettlement(50e18, award, 10e18, 50e18, 5_000, 1_000, true);
 
         vm.warp(WINDOW_END);
         vm.expectEmit(true, false, false, true, address(vault));
-        emit LCCEventsLib.SlashSurplusDisposed(0, 0.5e18, 44.5e18, 89e18);
+        emit LCCEventsLib.SlashSurplusDisposed(
+            0, expected.unfilledPool + expected.fee, expected.baseReturn, expected.baseReturn * 2
+        );
         vm.expectEmit(true, false, false, true, address(vault));
-        emit LCCEventsLib.AuctionSettled(0, 10e18, 5e18);
+        emit LCCEventsLib.AuctionSettled(0, 10e18, expectedAward);
         vault.materializeAccount(carol);
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(_accruedTreasuryMargin(), 0.5e18);
+        assertEq(_accruedTreasuryMargin(), expected.unfilledPool + expected.fee);
 
         vm.warp(WINDOW_END + 1);
         vm.expectRevert(LCCErrorsLib.AuctionNotLive.selector);
@@ -179,8 +189,9 @@ contract LCCAuctionTest is LCCBase {
         _setupShortfallAuction();
         vm.warp(DEADLINE + 5);
 
+        uint256 expectedAward = _referenceAward(50e18, 0, 50e18, 50e18, 5, 5, 5_000, 1_000, 10_000, oracle.price());
         vm.prank(carol);
-        vault.takeAuction(50e18, 25e18, type(uint256).max);
+        vault.takeAuction(50e18, expectedAward, type(uint256).max);
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
 
@@ -189,7 +200,7 @@ contract LCCAuctionTest is LCCBase {
         vault.takeAuction(1e18, 0, type(uint256).max);
     }
 
-    function testMidWindowFullFillMatchesBoundarySettlementWithNextEpochExit() public {
+    function testMidWindowFullFillAndBoundarySettlementUseDifferentFilledEligibility() public {
         ILCCVault.VaultParams memory params = _auctionParams();
         params.protocolCommitmentCap = 300e18;
         _deployVaultWithParams(params);
@@ -215,17 +226,20 @@ contract LCCAuctionTest is LCCBase {
 
         ILCCVault.EpochState memory midWindow = vault.getEpochState(0);
         uint256 midWindowTreasury = _accruedTreasuryMargin();
-        assertEq(midWindow.returnPool, 50e18);
-        assertEq(midWindow.returnCommitment, 100e18);
+        SettlementReference memory eagerExpected = _referenceSettlement(50e18, 0, 50e18, 50e18, 5_000, 1_000, true);
+        assertEq(midWindow.returnPool, eagerExpected.baseReturn);
+        assertEq(midWindow.returnCommitment, eagerExpected.baseReturn * 2);
+        assertEq(midWindowTreasury, eagerExpected.fee);
 
         assertTrue(vm.revertToState(snapshot));
         vm.warp(WINDOW_END);
         vault.materializeAccount(bob);
 
         ILCCVault.EpochState memory boundary = vault.getEpochState(0);
-        assertEq(boundary.returnPool, midWindow.returnPool);
-        assertEq(boundary.returnCommitment, midWindow.returnCommitment);
-        assertEq(_accruedTreasuryMargin(), midWindowTreasury);
+        assertEq(boundary.returnPool, 0);
+        assertEq(boundary.returnCommitment, 0);
+        assertEq(_accruedTreasuryMargin(), 50e18);
+        assertGt(midWindow.returnPool, boundary.returnPool);
     }
 
     function testDepositRevertsWhileAuctionIsLive() public {
@@ -350,10 +364,10 @@ contract LCCAuctionTest is LCCBase {
         vault.materializeAccount(carol);
 
         _setMaxEpochsForTest(3);
-        uint256 beforeBalance = margin.balanceOf(bob);
+        assertEq(vault.getAccount(bob).activeMargin, 0);
+        vm.expectRevert(LCCErrorsLib.NothingToClaim.selector);
         vm.prank(bob);
-        assertEq(vault.claimRemainingMargin(bob), 50e18);
-        assertEq(margin.balanceOf(bob), beforeBalance + 50e18);
+        vault.claimRemainingMargin(bob);
     }
 
     function testOracleCapBindsAtFillTimePrice() public {
@@ -382,10 +396,11 @@ contract LCCAuctionTest is LCCBase {
             5,
             vault.auctionConfig().auctionStepDuration,
             vault.auctionConfig().auctionStepDecayRateBps,
+            vault.riskConfig().slashFeeBps,
             vault.riskConfig().maxAuctionAwardBps,
             oracle.price()
         );
-        assertEq(quotedAward, 25e18);
+        assertEq(quotedAward, _referenceAward(50e18, 0, fill, 50e18, 5, 5, 5_000, 1_000, 10_000, oracle.price()));
 
         oracle.setPrice(ORACLE_PRICE_SCALE * 1e18);
 
@@ -449,9 +464,10 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(DEADLINE + 5);
 
         uint256 usdcBefore = usdc.balanceOf(carol);
+        uint256 expectedAward = _referenceAward(50e18, 0, 10e18, 50e18, 5, 5, 5_000, 1_000, 10_000, oracle.price());
         vm.expectRevert(LCCErrorsLib.InsufficientMarginAward.selector);
         vm.prank(carol);
-        vault.takeAuction(10e18, 5e18 + 1, block.timestamp);
+        vault.takeAuction(10e18, expectedAward + 1, block.timestamp);
 
         LCCAuctionLib.AuctionState memory state = vault.getAuctionState(0);
         assertEq(state.filledAmount, 0);
@@ -464,11 +480,12 @@ contract LCCAuctionTest is LCCBase {
         _setupShortfallAuction();
         vm.warp(DEADLINE + 5);
 
+        uint256 expectedAward = _referenceAward(50e18, 0, 10e18, 50e18, 5, 5, 5_000, 1_000, 10_000, oracle.price());
         vm.prank(carol);
-        (uint256 filled, uint256 award) = vault.takeAuction(10e18, 5e18, block.timestamp);
+        (uint256 filled, uint256 award) = vault.takeAuction(10e18, expectedAward, block.timestamp);
 
         assertEq(filled, 10e18);
-        assertEq(award, 5e18);
+        assertEq(award, expectedAward);
     }
 
     function testTakeAcceptsFavorableOracleMoveAboveQuotedAward() public {
@@ -484,10 +501,11 @@ contract LCCAuctionTest is LCCBase {
             5,
             vault.auctionConfig().auctionStepDuration,
             vault.auctionConfig().auctionStepDecayRateBps,
+            vault.riskConfig().slashFeeBps,
             vault.riskConfig().maxAuctionAwardBps,
             oracle.price()
         );
-        assertEq(quotedAward, 12.5e18);
+        assertEq(quotedAward, _referenceAward(50e18, 0, fill, 50e18, 5, 5, 5_000, 1_000, 10_000, oracle.price()));
 
         oracle.setPrice(ORACLE_PRICE_SCALE);
 
@@ -495,7 +513,7 @@ contract LCCAuctionTest is LCCBase {
         (uint256 filled, uint256 award) = vault.takeAuction(fill, quotedAward, type(uint256).max);
 
         assertEq(filled, fill);
-        assertEq(award, 25e18);
+        assertEq(award, _referenceAward(50e18, 0, fill, 50e18, 5, 5, 5_000, 1_000, 10_000, oracle.price()));
         assertGt(award, quotedAward);
     }
 
@@ -503,27 +521,31 @@ contract LCCAuctionTest is LCCBase {
         _setupShortfallAuction();
         vm.warp(DEADLINE + 15);
 
+        uint256 expectedPriorAward =
+            _referenceAward(50e18, 0, 40e18, 50e18, 15, 5, 5_000, 1_000, 10_000, oracle.price());
         vm.prank(carol);
-        (uint256 priorFill, uint256 priorAward) = vault.takeAuction(40e18, 35e18, type(uint256).max);
+        (uint256 priorFill, uint256 priorAward) = vault.takeAuction(40e18, expectedPriorAward, type(uint256).max);
         assertEq(priorFill, 40e18);
-        assertEq(priorAward, 35e18);
+        assertEq(priorAward, expectedPriorAward);
 
         LCCAuctionLib.AuctionState memory priorState = vault.getAuctionState(0);
         assertEq(priorState.shortfallAmount - priorState.filledAmount, 10e18);
-        assertEq(priorState.marginPool - priorState.marginAwarded, 15e18);
+        assertEq(priorState.marginPool - priorState.marginAwarded, 50e18 - expectedPriorAward);
 
+        uint256 expectedRemainingAward =
+            _referenceAward(50e18, priorAward, 10e18, 50e18, 15, 5, 5_000, 1_000, 10_000, oracle.price());
         vm.expectRevert(LCCErrorsLib.InsufficientMarginAward.selector);
         vm.prank(bob);
-        vault.takeAuction(20e18, 17.5e18, type(uint256).max);
+        vault.takeAuction(20e18, expectedRemainingAward + 1, type(uint256).max);
 
         LCCAuctionLib.AuctionState memory revertedState = vault.getAuctionState(0);
         assertEq(revertedState.filledAmount, priorState.filledAmount);
         assertEq(revertedState.marginAwarded, priorState.marginAwarded);
 
         vm.prank(bob);
-        (uint256 filled, uint256 award) = vault.takeAuction(20e18, 8.75e18, type(uint256).max);
+        (uint256 filled, uint256 award) = vault.takeAuction(20e18, expectedRemainingAward, type(uint256).max);
         assertEq(filled, 10e18);
-        assertEq(award, 8.75e18);
+        assertEq(award, expectedRemainingAward);
     }
 
     function testZeroOraclePriceRevertsTake() public {
@@ -619,8 +641,17 @@ contract LCCAuctionTest is LCCBase {
         assertEq(config.auctionStepDuration, 1);
         assertEq(maximumLiveStep, 9);
 
-        uint256 expectedAward = LCCAuctionLib.offeredPool(
-            50e18, liveTimestamp - deadline, config.auctionStepDuration, config.auctionStepDecayRateBps
+        uint256 expectedAward = _referenceAward(
+            50e18,
+            0,
+            50e18,
+            50e18,
+            liveTimestamp - deadline,
+            config.auctionStepDuration,
+            config.auctionStepDecayRateBps,
+            vault.riskConfig().slashFeeBps,
+            vault.riskConfig().maxAuctionAwardBps,
+            oracle.price()
         );
         vm.prank(carol);
         (uint256 filled, uint256 award) = vault.takeAuction(50e18, expectedAward, type(uint256).max);
@@ -663,7 +694,7 @@ contract LCCAuctionTest is LCCBase {
         vault.openEpochCall(1, 100e18);
 
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
-        assertEq(_accruedTreasuryMargin(), 0);
+        assertEq(_accruedTreasuryMargin(), 50e18);
 
         vm.warp(START + EPOCH + NORMAL + PRE_CALL);
         vm.prank(alice);
@@ -672,9 +703,8 @@ contract LCCAuctionTest is LCCBase {
         vm.warp(START + EPOCH + NORMAL + PRE_CALL + FUNDING);
         vault.finalizeEpochSlash(1);
 
-        // The epoch-0 defaulter's returned surplus is live commitment again for epoch 1, so Alice's funding
-        // does not cover the entire second call.
-        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 2);
+        // Epoch 0 completed unfilled, so its pool went to treasury and Alice alone fully covers epoch 1.
+        assertEq(vault.syncState().pendingAuctionEpochPlusOne, 0);
     }
 
     function testExitingDefaulterFeedsPoolAndExitBucketCarved() public {

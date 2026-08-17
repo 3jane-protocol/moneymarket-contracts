@@ -8,6 +8,7 @@ import {Vm} from "../../../lib/forge-std/src/Vm.sol";
 
 contract LCCPauseMetamorphicTest is LCCBase {
     function testFuzzPauseResumeMatchesUnpausedLifecycle(uint8 rawPausePoint, uint32 rawDuration) public {
+        factory.setOneVaultPolicyEnabled(false);
         uint256 pausePoint = bound(uint256(rawPausePoint), 0, 7);
         uint256 duration = bound(uint256(rawDuration), 1, 13 days);
 
@@ -24,6 +25,7 @@ contract LCCPauseMetamorphicTest is LCCBase {
     }
 
     function testFuzzShutdownWhilePausedMatchesShutdownAtSameEffectiveTime(uint32 rawDuration) public {
+        factory.setOneVaultPolicyEnabled(false);
         uint256 duration = bound(uint256(rawDuration), 1, 13 days);
         ILCCVault.VaultParams memory params = _auctionParams();
         LCCVault unpausedRun = _newVault(params);
@@ -33,13 +35,13 @@ contract LCCPauseMetamorphicTest is LCCBase {
 
         vm.warp(START + 1);
         vm.prank(alice);
-        unpausedRun.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
+        unpausedRun.deposit(100e18, alice, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(alice);
-        pausedRun.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
+        pausedRun.deposit(100e18, alice, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(bob);
-        unpausedRun.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
+        unpausedRun.deposit(100e18, bob, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(bob);
-        pausedRun.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
+        pausedRun.deposit(100e18, bob, 1, type(uint256).max, true, type(uint256).max);
 
         vm.warp(START + NORMAL);
         vm.prank(owner);
@@ -65,7 +67,7 @@ contract LCCPauseMetamorphicTest is LCCBase {
         assertEq(_stateHash(pausedRun, 0, pausedDefaults), unpausedHash);
         assertEq(pausedRun.shutdownState().timestamp, unpausedRun.shutdownState().timestamp);
         assertEq(pausedRun.shutdownState().epoch, unpausedRun.shutdownState().epoch);
-        (, bool paused,, uint64 accumulated) = pausedRun.pauseState();
+        (bool paused,, uint64 accumulated) = pausedRun.pauseState();
         assertFalse(paused);
         assertEq(accumulated, duration);
         assertEq(_effectiveTime(pausedRun), pauseAt);
@@ -79,11 +81,11 @@ contract LCCPauseMetamorphicTest is LCCBase {
         shift = _maybePause(target, pausePoint, 0, START + 1, shift, duration);
         vm.warp(START + 1 + shift);
         vm.prank(alice);
-        target.deposit(100e18, 1, type(uint256).max, true, type(uint256).max);
+        target.deposit(100e18, alice, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(bob);
-        target.deposit(50e18, 1, type(uint256).max, true, type(uint256).max);
+        target.deposit(50e18, bob, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(carol);
-        target.deposit(50e18, 1, type(uint256).max, true, type(uint256).max);
+        target.deposit(50e18, carol, 1, type(uint256).max, true, type(uint256).max);
 
         shift = _maybePause(target, pausePoint, 1, START + NORMAL, shift, duration);
         vm.warp(START + NORMAL + shift);

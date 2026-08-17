@@ -72,11 +72,36 @@ contract LCCProxyTest is LCCBase {
         assertEq(epochAfter.marginAtCallOpen, epochBefore.marginAtCallOpen);
     }
 
+    function testSameSourceBeaconRedeployPreservesPopulatedIsAccountClosedSemantics() public {
+        _deposit(alice, 100e18);
+        vm.prank(alice);
+        vault.requestExit(type(uint256).max, type(uint256).max);
+        vm.warp(START + EPOCH);
+        vm.prank(alice);
+        vault.claimExitedMargin(alice);
+        _deposit(bob, 50e18);
+
+        bool closedBefore = vault.isAccountClosed(alice);
+        bool openBefore = vault.isAccountClosed(bob);
+        assertTrue(closedBefore);
+        assertFalse(openBefore);
+
+        LCCVault sameSourceImplementation = new LCCVault(address(notificationVault), treasury);
+        beacon.upgradeTo(address(sameSourceImplementation));
+
+        assertEq(vault.isAccountClosed(alice), closedBefore);
+        assertEq(vault.isAccountClosed(bob), openBefore);
+    }
+
     function testFactoryVaultsShareImmutableTreasury() public {
         ILCCVault.VaultParams memory params = _params(CAP, CAP);
         params.maxEpochs = 1;
 
         LCCVaultFactory factory = new LCCVaultFactory(owner, address(beacon));
+        vm.prank(owner);
+        factory.setWhitelistEnabled(false);
+        vm.prank(owner);
+        factory.setOneVaultPolicyEnabled(false);
         vm.startPrank(owner);
         LCCVault first = LCCVault(factory.createVault(params));
         LCCVault second = LCCVault(factory.createVault(params, keccak256("facility-b")));
@@ -86,9 +111,9 @@ contract LCCProxyTest is LCCBase {
         _approveVault(second, alice);
 
         vm.prank(alice);
-        first.deposit(10e18, 1, type(uint256).max, true, type(uint256).max);
+        first.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
         vm.prank(alice);
-        second.deposit(20e18, 1, type(uint256).max, true, type(uint256).max);
+        second.deposit(20e18, alice, 1, type(uint256).max, true, type(uint256).max);
 
         oracle.setPrice(4_999e18);
         vm.warp(START + NORMAL);
@@ -107,7 +132,7 @@ contract LCCProxyTest is LCCBase {
         assertEq(second.assetConfig().treasury, treasury);
     }
 
-    function testEmptyInitShellPanicsThenFirstCallerCanInitialize() public {
+    function testEoaInitializedShellFailsClosedOnFirstDeposit() public {
         LCCVault shell = LCCVault(address(new BeaconProxy(address(beacon), "")));
 
         vm.expectRevert(stdError.divisionError);
@@ -117,12 +142,16 @@ contract LCCProxyTest is LCCBase {
         shell.materializeAccount(alice);
 
         ILCCVault.VaultParams memory params = _params(CAP, CAP);
-        params.owner = alice;
         vm.prank(alice);
         shell.initialize(params);
+        assertEq(shell.currentEpoch(), 0);
 
-        assertEq(shell.owner(), alice);
-        assertEq(shell.epochConfig().epochLength, EPOCH);
+        _mintAndApprove(shell, alice, 1e18, 0);
+        vm.expectRevert();
+        vm.prank(alice);
+        shell.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
+        assertTrue(shell.isAccountClosed(alice));
+        assertEq(factory.vaultOf(alice), address(0));
     }
 
     function testWidthBoundsAtLimitPass() public {

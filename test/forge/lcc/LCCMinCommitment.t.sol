@@ -8,11 +8,10 @@ import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 contract LCCMinCommitmentTest is LCCBase {
     // These slots mirror the reviewer-controlled storage-layout baseline. The raw-state fixtures below isolate
     // account replay states that public admission deliberately cannot construct.
-    uint256 internal constant SYNC_STATE_SLOT = 12;
-    uint256 internal constant ACCOUNTS_SLOT = 15;
-    uint256 internal constant EPOCHS_SLOT = 16;
-    uint256 internal constant CALLED_EPOCH_LIST_SLOT = 17;
-    uint256 internal constant RETURN_CREDIT_EPOCH_SLOT = 29;
+    uint256 internal constant SYNC_STATE_SLOT = 11;
+    uint256 internal constant ACCOUNTS_SLOT = 14;
+    uint256 internal constant EPOCHS_SLOT = 15;
+    uint256 internal constant CALLED_EPOCH_LIST_SLOT = 16;
     uint256 internal constant UINT64_MASK = type(uint64).max;
 
     function setUp() public override {
@@ -21,9 +20,7 @@ contract LCCMinCommitmentTest is LCCBase {
         _assertLayoutSlot("accounts", ACCOUNTS_SLOT);
         _assertLayoutSlot("epochs", EPOCHS_SLOT);
         _assertLayoutSlot("calledEpochList", CALLED_EPOCH_LIST_SLOT);
-        _assertLayoutSlot("returnCreditEpochByCall", RETURN_CREDIT_EPOCH_SLOT);
         _assertLayoutSlot("marginPriceAtCallOpen", MARGIN_PRICE_AT_CALL_OPEN_SLOT);
-        _assertLayoutSlot("userCommitmentCapAtCallOpen", USER_COMMITMENT_CAP_AT_CALL_OPEN_SLOT);
     }
 
     function testMinZeroExitsSameEpoch() public {
@@ -143,7 +140,7 @@ contract LCCMinCommitmentTest is LCCBase {
         vm.warp(START + 2 * EPOCH);
         ILCCVault.Account memory preview = vault.getAccount(bob);
         assertGt(preview.activeMargin, 0);
-        assertEq(preview.commitmentStartEpoch, 1);
+        assertEq(preview.commitmentStartEpoch, 2);
 
         vault.materializeAccount(bob);
 
@@ -157,11 +154,37 @@ contract LCCMinCommitmentTest is LCCBase {
         vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + 3 * EPOCH);
+        vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
+        vm.prank(bob);
+        vault.requestExit(type(uint256).max, type(uint256).max);
+
+        vm.warp(START + 4 * EPOCH);
         vm.prank(bob);
         vault.requestExit(type(uint256).max, type(uint256).max);
     }
 
-    function testDelayedReturnPoolCreditAnchorsAtCreationEpoch() public {
+    function testDelayedSettlementDoesNotMoveReturnCreditExitGate() public {
+        _deployMinCommitmentVault(2, 0);
+        _deposit(alice, 100e18);
+        _deposit(bob, 100e18);
+        _openCall(100e18);
+        _fund(alice);
+        _finishFunding();
+
+        uint256 snapshot = vm.snapshotState();
+
+        uint256 epochOneGate = _settleDefaultAndReturnExitGate(1);
+        assertTrue(vm.revertToState(snapshot), "epoch-one branch restore failed");
+        uint256 epochThreeGate = _settleDefaultAndReturnExitGate(3);
+        assertTrue(vm.revertToStateAndDelete(snapshot), "epoch-three branch restore failed");
+        uint256 epochFiveGate = _settleDefaultAndReturnExitGate(5);
+
+        assertEq(epochOneGate, 3);
+        assertEq(epochThreeGate, epochOneGate);
+        assertEq(epochFiveGate, epochOneGate);
+    }
+
+    function testDelayedReturnPoolCreditAnchorsAtFirstUsableEpoch() public {
         _deployMinCommitmentVault(1, 0);
         _deposit(alice, 100e18);
         _deposit(bob, 100e18);
@@ -187,7 +210,7 @@ contract LCCMinCommitmentTest is LCCBase {
         assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 3);
     }
 
-    function testLateNoAuctionFinalizationRestartsFullMinimumPeriod() public {
+    function testLateNoAuctionFinalizationDoesNotExtendMinimumPeriod() public {
         _deployMinCommitmentVault(2, 0);
         _deposit(alice, 100e18);
         _deposit(bob, 100e18);
@@ -198,20 +221,10 @@ contract LCCMinCommitmentTest is LCCBase {
         vm.warp(START + 3 * EPOCH);
         vault.finalizeEpochSlash(0);
         vault.materializeAccount(bob);
-        assertEq(vault.getAccount(bob).commitmentStartEpoch, 3);
+        assertEq(vault.getAccount(bob).commitmentStartEpoch, 1);
 
-        vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
         vm.prank(bob);
-        vault.requestExit(type(uint256).max, type(uint256).max);
-
-        vm.warp(START + 4 * EPOCH);
-        vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
-        vm.prank(bob);
-        vault.requestExit(type(uint256).max, type(uint256).max);
-
-        vm.warp(START + 5 * EPOCH);
-        vm.prank(bob);
-        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 6);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 4);
     }
 
     function testAuctionWindowEndSettlementRestartsFullMinimumPeriod() public {
@@ -223,6 +236,10 @@ contract LCCMinCommitmentTest is LCCBase {
         _finishFunding();
         vault.finalizeEpochSlash(0);
         assertEq(vault.syncState().pendingAuctionEpochPlusOne, 1);
+
+        vm.warp(START + NORMAL + PRE_CALL + FUNDING + 5);
+        vm.prank(carol);
+        vault.takeAuction(25e18, 0, type(uint256).max);
 
         vm.warp(START + EPOCH);
         vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
@@ -244,7 +261,7 @@ contract LCCMinCommitmentTest is LCCBase {
         assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 3);
     }
 
-    function testFullyFilledAuctionUsesCallEpochAsCreditAnchor() public {
+    function testFullyFilledAuctionUsesFirstUsableEpochAsCreditAnchor() public {
         _deployMinCommitmentAuctionVault(1);
         _deposit(alice, 100e18);
         _deposit(bob, 50e18);
@@ -261,18 +278,23 @@ contract LCCMinCommitmentTest is LCCBase {
         vault.materializeAccount(bob);
         ILCCVault.Account memory account = vault.getAccount(bob);
         assertGt(account.activeMargin, 0);
-        assertEq(account.commitmentStartEpoch, 0);
+        assertEq(account.commitmentStartEpoch, 1);
 
         vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
         vm.prank(bob);
         vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + EPOCH);
+        vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
         vm.prank(bob);
-        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+        vault.requestExit(type(uint256).max, type(uint256).max);
+
+        vm.warp(START + 2 * EPOCH);
+        vm.prank(bob);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 3);
     }
 
-    function testTerminalDisposalRecordsCreditCreationEpoch() public {
+    function testTerminalDisposalUsesDeterministicCreditAnchor() public {
         _deployMinCommitmentVault(1, 1);
         _deposit(alice, 100e18);
         _deposit(bob, 100e18);
@@ -284,11 +306,10 @@ contract LCCMinCommitmentTest is LCCBase {
         vault.finalizeEpochSlash(0);
         vault.materializeAccount(bob);
 
-        assertEq(_storedReturnCreditEpoch(0), 1);
         assertEq(vault.getAccount(bob).commitmentStartEpoch, 1);
     }
 
-    function testShutdownDisposalRecordsCreditCreationEpoch() public {
+    function testDelayedShutdownDisposalUsesDeterministicCreditAnchor() public {
         _deployMinCommitmentVault(1, 0);
         _deposit(alice, 100e18);
         _deposit(bob, 100e18);
@@ -301,8 +322,7 @@ contract LCCMinCommitmentTest is LCCBase {
         vault.shutdown();
         vault.materializeAccount(bob);
 
-        assertEq(_storedReturnCreditEpoch(0), 2);
-        assertEq(vault.getAccount(bob).commitmentStartEpoch, 2);
+        assertEq(vault.getAccount(bob).commitmentStartEpoch, 1);
     }
 
     function testPendingActivatingOnDefaultEpochIsSlashedAndReanchored() public {
@@ -328,7 +348,7 @@ contract LCCMinCommitmentTest is LCCBase {
         assertEq(account.pendingCommitment, 0);
         assertEq(account.activeMargin, 100e18);
         assertEq(account.activeCommitment, 200e18);
-        assertEq(account.commitmentStartEpoch, 1);
+        assertEq(account.commitmentStartEpoch, 2);
     }
 
     function testFuturePendingSurvivesEarlierDefaultAndKeepsLaterAnchorAtReplayLevel() public {
@@ -410,20 +430,19 @@ contract LCCMinCommitmentTest is LCCBase {
         ILCCVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 1);
         assertEq(account.activeCommitment, 2);
-        assertEq(account.commitmentStartEpoch, 1);
+        assertEq(account.commitmentStartEpoch, 2);
     }
 
-    function testAbsentCreditCreationEpochFallsBackToCallEpoch() public {
+    function testSyntheticReturnCreditUsesDeterministicNextEpochAnchor() public {
         _deposit(alice, 100);
         _appendFinalizedReplayEpoch(2, 100, 25, 50);
-        assertEq(_storedReturnCreditEpoch(2), 0);
 
         vault.materializeAccount(alice);
 
         ILCCVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 25);
         assertEq(account.activeCommitment, 50);
-        assertEq(account.commitmentStartEpoch, 2);
+        assertEq(account.commitmentStartEpoch, 3);
     }
 
     function testPartialPairedReturnCreditReanchors() public {
@@ -435,7 +454,7 @@ contract LCCMinCommitmentTest is LCCBase {
         ILCCVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 25);
         assertEq(account.activeCommitment, 50);
-        assertEq(account.commitmentStartEpoch, 1);
+        assertEq(account.commitmentStartEpoch, 2);
     }
 
     function testRepeatedDefaultsAdvanceAnchorOnlyOnNonzeroCredit() public {
@@ -446,19 +465,19 @@ contract LCCMinCommitmentTest is LCCBase {
 
         _appendFinalizedReplayEpoch(1, 100e18, 100e18, 200e18);
         vault.materializeAccount(alice);
-        assertEq(_storedCommitmentStartEpoch(alice), 1);
+        assertEq(_storedCommitmentStartEpoch(alice), 2);
 
         _appendFinalizedReplayEpoch(2, 100e18, 100e18, 200e18);
         vault.materializeAccount(alice);
-        assertEq(_storedCommitmentStartEpoch(alice), 2);
+        assertEq(_storedCommitmentStartEpoch(alice), 3);
 
         _appendFinalizedReplayEpoch(3, 100e18, 0, 0);
         vault.materializeAccount(alice);
-        assertEq(_storedCommitmentStartEpoch(alice), 2);
+        assertEq(_storedCommitmentStartEpoch(alice), 3);
 
         _appendFinalizedReplayEpoch(4, 50e18, 50e18, 100e18);
         vault.materializeAccount(alice);
-        assertEq(_storedCommitmentStartEpoch(alice), 4);
+        assertEq(_storedCommitmentStartEpoch(alice), 5);
     }
 
     function testDefaultClearsExitAndReturnCreditRestartsCommitmentPeriod() public {
@@ -480,18 +499,23 @@ contract LCCMinCommitmentTest is LCCBase {
         assertFalse(account.exitRequested);
         assertTrue(account.exitClaimed);
         assertGt(account.activeMargin, 0);
-        assertEq(account.commitmentStartEpoch, 2);
+        assertEq(account.commitmentStartEpoch, 3);
 
         vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
         vm.prank(alice);
         vault.requestExit(type(uint256).max, type(uint256).max);
 
         vm.warp(START + 4 * EPOCH);
+        vm.expectRevert(LCCErrorsLib.CommitmentNotMature.selector);
         vm.prank(alice);
-        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 5);
+        vault.requestExit(type(uint256).max, type(uint256).max);
+
+        vm.warp(START + 5 * EPOCH);
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 6);
     }
 
-    function testEpochZeroReturnCreditLeavesZeroAnchor() public {
+    function testEpochZeroReturnCreditAnchorsAtEpochOne() public {
         _deposit(alice, 100e18);
         _appendFinalizedReplayEpoch(0, 100e18, 100e18, 200e18);
 
@@ -500,7 +524,7 @@ contract LCCMinCommitmentTest is LCCBase {
         ILCCVault.Account memory account = vault.getAccount(alice);
         assertEq(account.activeMargin, 100e18);
         assertEq(account.activeCommitment, 200e18);
-        assertEq(account.commitmentStartEpoch, 0);
+        assertEq(account.commitmentStartEpoch, 1);
     }
 
     function testChunkedMaterializationConvergesToUnboundedPreviewAnchor() public {
@@ -511,21 +535,21 @@ contract LCCMinCommitmentTest is LCCBase {
 
         // getAccount is an unbounded preview over the same stored input; materialization intentionally advances
         // only 64 calls per update, so intermediate storage tracks the bounded prefix before reaching the fixpoint.
-        assertEq(vault.getAccount(alice).commitmentStartEpoch, 130);
+        assertEq(vault.getAccount(alice).commitmentStartEpoch, 131);
 
         vault.materializeAccount(alice);
         assertEq(_storedCalledEpochCursor(alice), 64);
-        assertEq(_storedCommitmentStartEpoch(alice), 64);
-        assertEq(vault.getAccount(alice).commitmentStartEpoch, 130);
+        assertEq(_storedCommitmentStartEpoch(alice), 65);
+        assertEq(vault.getAccount(alice).commitmentStartEpoch, 131);
 
         vault.materializeAccount(alice);
         assertEq(_storedCalledEpochCursor(alice), 128);
-        assertEq(_storedCommitmentStartEpoch(alice), 128);
-        assertEq(vault.getAccount(alice).commitmentStartEpoch, 130);
+        assertEq(_storedCommitmentStartEpoch(alice), 129);
+        assertEq(vault.getAccount(alice).commitmentStartEpoch, 131);
 
         vault.materializeAccount(alice);
         assertEq(_storedCalledEpochCursor(alice), 130);
-        assertEq(_storedCommitmentStartEpoch(alice), 130);
+        assertEq(_storedCommitmentStartEpoch(alice), 131);
         assertEq(vault.getAccount(alice).commitmentStartEpoch, _storedCommitmentStartEpoch(alice));
     }
 
@@ -646,7 +670,6 @@ contract LCCMinCommitmentTest is LCCBase {
         vm.store(address(vault), bytes32(stateSlot + 9), bytes32(aggregateSlashedMargin));
         vm.store(address(vault), bytes32(stateSlot + 10), bytes32(returnPool));
         vm.store(address(vault), bytes32(stateSlot + 11), bytes32(returnCommitment));
-        vm.store(address(vault), _mappingSlot(epoch, USER_COMMITMENT_CAP_AT_CALL_OPEN_SLOT), bytes32(CAP));
 
         uint256 syncState = uint256(vm.load(address(vault), bytes32(SYNC_STATE_SLOT)));
         syncState = (syncState & ~(UINT64_MASK << 64)) | ((length + 1) << 64);
@@ -682,7 +705,14 @@ contract LCCMinCommitmentTest is LCCBase {
         return (uint256(vm.load(address(vault), bytes32(accountSlot + 4))) >> 88) & UINT64_MASK;
     }
 
-    function _storedReturnCreditEpoch(uint256 epoch) internal view returns (uint256) {
-        return uint256(vm.load(address(vault), _mappingSlot(epoch, RETURN_CREDIT_EPOCH_SLOT)));
+    function _settleDefaultAndReturnExitGate(uint256 settlementEpoch) internal returns (uint256) {
+        vm.warp(START + settlementEpoch * EPOCH);
+        vault.finalizeEpochSlash(0);
+        vault.materializeAccount(bob);
+
+        ILCCVault.Account memory account = vault.getAccount(bob);
+        assertGt(account.activeMargin, 0);
+        assertGt(account.activeCommitment, 0);
+        return account.commitmentStartEpoch + vault.epochConfig().minCommitmentEpochs;
     }
 }

@@ -54,7 +54,7 @@ contract LCCTypesHarness is LCCVault {
         returns (uint256)
     {
         auctionState = seed;
-        return LCCAuctionLib.applyFill(auctionState, fillAmount, 1, 1, 1, BPS, price);
+        return LCCAuctionLib.applyFill(auctionState, fillAmount, 1, 1, 1, 0, BPS, price);
     }
 }
 

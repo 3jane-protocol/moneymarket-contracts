@@ -47,6 +47,20 @@ library LCCAccountLib {
         if (account.exitRequested && !account.exitClaimed) clearExit(account);
     }
 
+    /// @notice Returns whether finalized-call replay cannot change any account economics or exit metadata.
+    /// @dev With no active or pending exposure, activation and maturity transitions are no-ops and the vault's
+    /// default predicate is false because active commitment is zero. A matured exit is therefore a replay fixed
+    /// point even while it holds claimable margin. A funded but pre-maturity exit is not: it must still replay the
+    /// maturity epoch so `exitMatured` and derived views become current.
+    function isReplayInert(ILCCVault.Account memory account) internal pure returns (bool) {
+        return account.activeMargin == 0 && account.activeCommitment == 0 && account.pendingMargin == 0
+            && account.pendingCommitment == 0
+            && (account.exitMatured
+                || (account.claimableExitMargin == 0 && (!account.exitRequested || account.exitClaimed)));
+    }
+
+    /// @notice Returns whether the account has no economic exposure in the vault family registry sense.
+    /// @dev A matured exit remains open until `claimExitedMargin` clears its claimable margin and exit metadata.
     function isZeroExposure(ILCCVault.Account memory account) internal pure returns (bool) {
         return account.activeMargin == 0 && account.activeCommitment == 0 && account.pendingMargin == 0
             && account.pendingCommitment == 0 && account.claimableExitMargin == 0

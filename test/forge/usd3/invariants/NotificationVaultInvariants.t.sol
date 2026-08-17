@@ -346,14 +346,6 @@ contract NotificationVaultHandler is Test {
     function toggleBypass(uint256 actorSeed, bool allowed) external {
         address actor = _actor(actorSeed);
 
-        if (!allowed && vault.cooldownBypass(actor)) {
-            (,, uint256 cooldownShares) = vault.getCooldownStatus(actor);
-            if (cooldownShares > ERC20(address(vault)).balanceOf(actor)) {
-                vm.prank(actor);
-                vault.cancelCooldown();
-            }
-        }
-
         vm.prank(management);
         vault.setCooldownBypass(actor, allowed);
     }

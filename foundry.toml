@@ -12,14 +12,18 @@ fs_permissions = [
     { access = "read", path = "out/LCCVault.sol" },
     { access = "read", path = "out/LCCAuctionLib.sol" },
     { access = "read", path = "out/LCCConfigLib.sol" },
+    { access = "read", path = "out/LCCExitLib.sol" },
+    { access = "read", path = "out/LCCVaultFactory.sol" },
 ]
-# LCCVault pins optimizer_runs = 150 (24,127 B runtime, 149 B below the 24,276 release ceiling, 449 B EIP-170 margin). The frozen USD3_old
-# upgrade-test artifact pins optimizer_runs = 200 for a different reason: it is the pre-cleanup implementation, and
-# under the test profile (via-ir disabled) it hits solc "Stack too deep" at higher runs, so the low pin is what lets
-# it compile without via-ir. It is a test-only fixture (deployed only inside the upgrade tests), so its runs are
-# otherwise immaterial. USD3 itself fits at the repo default with a thin ~862 B margin (23,714 B measured at 999999
-# runs), so future features may need a lower pin or cleanup. Foundry produces the canonical LCC deployment artifact
-# with official solc 0.8.35; Hardhat uses pinned stable solc-js for compilation but its output is non-canonical.
+# LCCVault pins optimizer_runs = 150 (24,254 B runtime after extracting exit accounting to LCCExitLib, leaving 22 B
+# below the 24,276 release ceiling and 322 B below EIP-170). The active-only monolith measured 24,703 B, so the
+# extraction remains necessary. The frozen USD3_old upgrade-test artifact pins optimizer_runs = 200 for a different
+# reason: it is the pre-cleanup implementation, and under the test profile (via-ir disabled) it hits solc "Stack too
+# deep" at higher runs, so the low pin is what lets it compile without via-ir. It is a test-only fixture (deployed only
+# inside the upgrade tests), so its runs are otherwise immaterial. USD3 itself fits at the repo default with a thin
+# ~862 B margin (23,714 B measured at 999999 runs), so future features may need a lower pin or cleanup. Foundry produces
+# the canonical LCC deployment artifact with official solc 0.8.35; Hardhat uses pinned stable solc-js for compilation
+# but its output is non-canonical.
 # src/usd3 is a Shanghai module — explicit so cancun-based profiles (test, script) keep production codegen. NV's source pragma caps canonical builds below 0.8.36 everywhere; the deploy script pins the deployed unit to 0.8.35, and scripts/check-lcc-release-artifact.js backstops build settings.
 additional_compiler_profiles = [
     { name = "lcc-cancun", evm_version = "cancun" },

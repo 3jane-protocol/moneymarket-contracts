@@ -8,18 +8,17 @@ import {NotificationVault} from "../../../../src/usd3/NotificationVault.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
 import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 
-import {BeaconProxy} from "../../../../lib/openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
 import {UpgradeableBeacon} from "../../../../lib/openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {
     TransparentUpgradeableProxy
 } from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "../../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
 
 // ABI-load-bearing mirror of ILCCVault.VaultParams. Keep the field order and types identical.
 struct VaultParams {
-    address owner;
     address marginAsset;
     address marginOracle;
     uint256 startTimestamp;
@@ -119,9 +118,9 @@ struct AuctionState {
 
 interface ILCCVaultLike {
     function initialize(VaultParams calldata params) external;
-    function owner() external view returns (address);
     function deposit(
         uint256 assets,
+        address onBehalfOf,
         uint256 minCommitment,
         uint256 maxCommitment,
         bool allowPendingActivation,
@@ -147,6 +146,15 @@ interface ILCCVaultLike {
     function riskConfig() external view returns (RiskConfig memory);
 }
 
+interface ILCCVaultFactoryLike {
+    function createVault(VaultParams calldata params, bytes32 salt) external returns (address vault);
+    function LISTER_ROLE() external view returns (bytes32);
+    function grantRole(bytes32 role, address account) external;
+    function setDepositorsWhitelisted(address[] calldata depositors, bool allowed) external;
+    function setOneVaultPolicyEnabled(bool enabled) external;
+    function isOwner(address account) external view returns (bool);
+}
+
 contract LCCRealStackOracle {
     uint256 public price;
 
@@ -166,8 +174,10 @@ contract LCCRealStackFundingIntegrationTest is Setup {
 
     string internal constant AUCTION_LIB_FQN = "src/lcc/libraries/LCCAuctionLib.sol:LCCAuctionLib";
     string internal constant CONFIG_LIB_FQN = "src/lcc/libraries/LCCConfigLib.sol:LCCConfigLib";
+    string internal constant EXIT_LIB_FQN = "src/lcc/libraries/LCCExitLib.sol:LCCExitLib";
 
     uint256 internal constant ORACLE_PRICE_SCALE = 1e36;
+    uint256 internal constant BPS = 10_000;
     uint256 internal constant USD3_SUPPLY_CAP = 100e6;
     uint256 internal constant FACILITY_CAP = 10_000_000e6;
     uint256 internal constant ACTOR_BALANCE = 1_000_000e6;
@@ -191,7 +201,9 @@ contract LCCRealStackFundingIntegrationTest is Setup {
     MockERC20 internal margin;
     LCCRealStackOracle internal oracle;
     UpgradeableBeacon internal beacon;
+    ILCCVaultFactoryLike internal lccFactory;
     ILCCVaultLike internal vault;
+    uint256 internal nextVaultSalt;
 
     function setUp() public override {
         super.setUp();
@@ -216,6 +228,20 @@ contract LCCRealStackFundingIntegrationTest is Setup {
 
         address implementation = _deployLinkedLCCVaultImpl(address(notificationVault), treasury);
         beacon = new UpgradeableBeacon(implementation, lccOwner);
+        lccFactory = ILCCVaultFactoryLike(
+            vm.deployCode("out/LCCVaultFactory.sol/LCCVaultFactory.json", abi.encode(lccOwner, address(beacon)))
+        );
+        address[] memory depositors = new address[](6);
+        depositors[0] = alice;
+        depositors[1] = bob;
+        depositors[2] = carol;
+        depositors[3] = filler;
+        depositors[4] = seeder;
+        depositors[5] = lccOwner;
+        vm.startPrank(lccOwner);
+        lccFactory.grantRole(lccFactory.LISTER_ROLE(), lccOwner);
+        lccFactory.setDepositorsWhitelisted(depositors, true);
+        vm.stopPrank();
 
         testProtocolConfig.setConfig(ProtocolConfigLib.USD3_SUPPLY_CAP, USD3_SUPPLY_CAP);
         vault = _newVault(_baseParams(), true);
@@ -230,7 +256,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         VaultParams memory params = _driftTripwireParams();
         ILCCVaultLike driftVault = _newVault(params, true);
 
-        assertEq(driftVault.owner(), params.owner);
+        assertTrue(lccFactory.isOwner(lccOwner));
 
         AssetConfig memory assets = driftVault.assetConfig();
         assertEq(assets.marginAsset, params.marginAsset);
@@ -284,13 +310,16 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING);
         shimVault.finalizeEpochSlash(0);
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING + 5);
+        VaultParams memory auctionParams = _auctionParams();
+        uint256 firstAward = _referenceStepOneAward(50e6, 0, 0, 10e6, 41e6, auctionParams);
         vm.startPrank(filler);
-        (uint256 filled, uint256 award) = shimVault.takeAuction(10e6, 6_097_560, type(uint256).max);
+        (uint256 filled, uint256 award) = shimVault.takeAuction(10e6, firstAward, type(uint256).max);
         assertEq(filled, 10e6);
-        assertEq(award, 6_097_560);
-        (filled, award) = shimVault.takeAuction(31e6, 18_902_439, type(uint256).max);
+        assertEq(award, firstAward);
+        uint256 secondAward = _referenceStepOneAward(50e6, award, filled, 31e6, 41e6, auctionParams);
+        (filled, award) = shimVault.takeAuction(31e6, secondAward, type(uint256).max);
         assertEq(filled, 31e6);
-        assertEq(award, 18_902_439);
+        assertEq(award, secondAward);
         vm.stopPrank();
 
         // Once the call and auction are settled, a Closed-phase deposit can safely remain pending for epoch 1,
@@ -333,8 +362,8 @@ contract LCCRealStackFundingIntegrationTest is Setup {
                 slashFinalized: true,
                 slashDisabledByShutdown: false,
                 slashedMargin: 50e6,
-                returnPool: 22_500_002,
-                returnCommitment: 45_000_004
+                returnPool: 25_000_001,
+                returnCommitment: 50_000_002
             })
         );
         _assertAuctionStateEq(
@@ -343,7 +372,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
                 shortfallAmount: uint128(41e6),
                 filledAmount: uint128(41e6),
                 marginPool: uint128(50e6),
-                marginAwarded: uint128(24_999_999)
+                marginAwarded: uint128(firstAward + secondAward)
             })
         );
 
@@ -402,7 +431,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         assertEq(claimed.commitmentStartEpoch, 1);
     }
 
-    function testSelfFundAmortizePullsObligationDeliversUSD3n() public {
+    function testSelfFundAmortizePullsObligationDeliversUSD3l() public {
         _deposit(vault, alice, 100e6);
         _deposit(vault, bob, 50e6);
         _openCall(vault, 75e6);
@@ -470,6 +499,9 @@ contract LCCRealStackFundingIntegrationTest is Setup {
     /// a conduit). This characterizes the failure mode where that registration is OMITTED — USD3 then silently does
     /// not fence, leaving funder liquidity unreserved. The opted-in counterpart is the reference behavior below.
     function testUnregisteredConduitsDoNotFenceOrdinaryDustOrAuctionFunding() public {
+        vm.prank(lccOwner);
+        lccFactory.setOneVaultPolicyEnabled(false);
+
         ILCCVaultLike dustVault = _newVault(_baseParams(), true);
         ILCCVaultLike auctionVault = _newVault(_auctionParams(), true);
         _approveVault(dustVault, carol);
@@ -502,6 +534,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING);
         auctionVault.finalizeEpochSlash(0);
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING + 5);
+
         vm.prank(filler);
         (uint256 filled,) = auctionVault.takeAuction(type(uint256).max, 0, type(uint256).max);
         assertEq(filled, 50e6);
@@ -564,7 +597,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         assertGt(state.fundedAmount, state.callAmount);
     }
 
-    function testAuctionTakeDeliversRealUSD3nAndAwardsMargin() public {
+    function testAuctionTakeDeliversRealUSD3lAndAwardsMargin() public {
         ILCCVaultLike auctionVault = _newVault(_auctionParams(), true);
         _approveVault(auctionVault, alice);
         _approveVault(auctionVault, bob);
@@ -578,6 +611,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING);
         auctionVault.finalizeEpochSlash(0);
         vm.warp(startTimestamp + NORMAL + PRE_CALL + FUNDING + 5);
+        uint256 expectedAward = _referenceStepOneAward(50e6, 0, 0, 50e6, 50e6, _auctionParams());
 
         uint256 payerBefore = underlyingAsset.balanceOf(filler);
         uint256 notificationBefore = IERC20(address(notificationVault)).balanceOf(filler);
@@ -585,19 +619,20 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         uint256 wrappedBefore = _wrappedWaUSDC();
 
         vm.prank(filler);
-        (uint256 filled, uint256 marginAward) = auctionVault.takeAuction(type(uint256).max, 25e6, type(uint256).max);
+        (uint256 filled, uint256 marginAward) =
+            auctionVault.takeAuction(type(uint256).max, expectedAward, type(uint256).max);
 
         assertEq(filled, 50e6);
-        assertEq(marginAward, 25e6);
+        assertEq(marginAward, expectedAward);
         assertEq(payerBefore - underlyingAsset.balanceOf(filler), 50e6);
         assertEq(IERC20(address(notificationVault)).balanceOf(filler) - notificationBefore, 50e6);
-        assertEq(margin.balanceOf(filler) - marginBefore, 25e6);
+        assertEq(margin.balanceOf(filler) - marginBefore, expectedAward);
         assertEq(_wrappedWaUSDC() - wrappedBefore, 50e6);
 
         AuctionState memory auction = auctionVault.getAuctionState(0);
         assertEq(auction.shortfallAmount, 50e6);
         assertEq(auction.filledAmount, 50e6);
-        assertEq(auction.marginAwarded, 25e6);
+        assertEq(auction.marginAwarded, expectedAward);
     }
 
     function testSupplyCapExemptionIsLoadBearing() public {
@@ -628,6 +663,33 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         assertTrue(strategy.supplyCapExempt(address(nonExemptVault)));
         assertEq(IERC20(address(notificationVault)).balanceOf(alice), 150e6);
         assertEq(strategy.ringFencedLiquidity(), 0);
+    }
+
+    function testPausedWrapperAllowsExemptLCCFundingAndRejectsNonExemptDeposit() public {
+        testProtocolConfig.setConfig(ProtocolConfigLib.USD3_SUPPLY_CAP, type(uint256).max);
+        _deposit(vault, alice, 100e6);
+        _openCall(vault, 100e6);
+
+        uint256 idleBefore = underlyingAsset.balanceOf(address(strategy));
+        uint256 localWaUSDCBefore = usd3.balanceOfWaUSDC();
+        uint256 suppliedWaUSDCBefore = usd3.suppliedWaUSDC();
+
+        waUSDC.setPaused(true);
+        assertTrue(strategy.supplyCapExempt(address(vault)));
+
+        assertEq(_fund(vault, alice, false), 100e6);
+
+        assertTrue(vault.fundedEpoch(0, alice));
+        assertEq(IERC20(address(notificationVault)).balanceOf(alice), 100e6);
+        assertEq(underlyingAsset.balanceOf(address(strategy)) - idleBefore, 100e6);
+        assertEq(usd3.balanceOfWaUSDC(), localWaUSDCBefore);
+        assertEq(usd3.suppliedWaUSDC(), suppliedWaUSDCBefore);
+
+        vm.prank(bob);
+        underlyingAsset.approve(address(strategy), 100e6);
+        vm.expectRevert(bytes("ERC4626: deposit more than max"));
+        vm.prank(bob);
+        strategy.deposit(100e6, bob);
     }
 
     function testDeliveryFailureUsd3CapZeroRollsBackThenRetrySucceeds() public {
@@ -696,25 +758,19 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         returns (address implementation)
     {
         string memory outDir = vm.envOr("FOUNDRY_OUT", string("out"));
-        string memory auctionArtifact = string.concat(outDir, "/LCCAuctionLib.sol/LCCAuctionLib.json");
-        string memory configArtifact = string.concat(outDir, "/LCCConfigLib.sol/LCCConfigLib.json");
-        string memory vaultArtifact = string.concat(outDir, "/LCCVault.sol/LCCVault.json");
 
         // Use the explicit artifact path because the LCC size profile emits a second artifact with the same FQN.
-        address auctionLibrary = vm.deployCode(auctionArtifact);
-        address configLibrary = vm.deployCode(configArtifact);
+        address auctionLibrary = vm.deployCode(string.concat(outDir, "/LCCAuctionLib.sol/LCCAuctionLib.json"));
+        address configLibrary = vm.deployCode(string.concat(outDir, "/LCCConfigLib.sol/LCCConfigLib.json"));
+        address exitLibrary = vm.deployCode(string.concat(outDir, "/LCCExitLib.sol/LCCExitLib.json"));
 
         // The test profile artifact is via-IR-OFF and non-canonical. The same test exercises the canonical via-IR
         // release settings when it runs under the test-lcc-ir profile.
-        string memory artifact = vm.readFile(vaultArtifact);
-        string memory hexCode = vm.parseJsonString(artifact, ".bytecode.object");
-        string memory auctionPlaceholder = string.concat("__$", _hexN(keccak256(bytes(AUCTION_LIB_FQN)), 17), "$__");
-        string memory configPlaceholder = string.concat("__$", _hexN(keccak256(bytes(CONFIG_LIB_FQN)), 17), "$__");
-        require(vm.contains(hexCode, auctionPlaceholder), "LCCAuctionLib link placeholder not found");
-        require(vm.contains(hexCode, configPlaceholder), "LCCConfigLib link placeholder not found");
-
-        hexCode = vm.replace(hexCode, auctionPlaceholder, _hexAddress(auctionLibrary));
-        hexCode = vm.replace(hexCode, configPlaceholder, _hexAddress(configLibrary));
+        string memory hexCode =
+            vm.parseJsonString(vm.readFile(string.concat(outDir, "/LCCVault.sol/LCCVault.json")), ".bytecode.object");
+        hexCode = _linkLibrary(hexCode, AUCTION_LIB_FQN, auctionLibrary, "LCCAuctionLib link placeholder not found");
+        hexCode = _linkLibrary(hexCode, CONFIG_LIB_FQN, configLibrary, "LCCConfigLib link placeholder not found");
+        hexCode = _linkLibrary(hexCode, EXIT_LIB_FQN, exitLibrary, "LCCExitLib link placeholder not found");
         require(!vm.contains(hexCode, "__$"), "unlinked references remain");
 
         bytes memory initCode = abi.encodePacked(vm.parseBytes(hexCode), abi.encode(notificationVault_, treasury_));
@@ -724,10 +780,18 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         require(implementation != address(0), "LCCVault implementation deployment failed");
     }
 
+    function _linkLibrary(string memory hexCode, string memory fqn, address libraryAddress, string memory errorMessage)
+        internal
+        returns (string memory)
+    {
+        string memory placeholder = string.concat("__$", _hexN(keccak256(bytes(fqn)), 17), "$__");
+        require(vm.contains(hexCode, placeholder), errorMessage);
+        return vm.replace(hexCode, placeholder, _hexAddress(libraryAddress));
+    }
+
     function _newVault(VaultParams memory params, bool supplyCapExempt) internal returns (ILCCVaultLike deployed) {
-        deployed = ILCCVaultLike(
-            address(new BeaconProxy(address(beacon), abi.encodeCall(ILCCVaultLike.initialize, (params))))
-        );
+        vm.prank(lccOwner);
+        deployed = ILCCVaultLike(lccFactory.createVault(params, bytes32(++nextVaultSalt)));
 
         if (supplyCapExempt) {
             vm.prank(management);
@@ -744,7 +808,6 @@ contract LCCRealStackFundingIntegrationTest is Setup {
 
     function _baseParams() internal view returns (VaultParams memory) {
         return VaultParams({
-            owner: lccOwner,
             marginAsset: address(margin),
             marginOracle: address(oracle),
             startTimestamp: startTimestamp,
@@ -775,9 +838,32 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         params.slashFeeBps = 1_000;
     }
 
+    /// @dev Independent step-one award model: reserve, ramp, oracle cap, global reserve clamp, then the cumulative
+    /// gross-eligible-pool clamp used to keep completed settlement non-negative at base-unit precision.
+    function _referenceStepOneAward(
+        uint256 grossPool,
+        uint256 alreadyAwarded,
+        uint256 alreadyFilled,
+        uint256 fill,
+        uint256 shortfall,
+        VaultParams memory params
+    ) internal pure returns (uint256 award) {
+        uint256 maxAward = Math.mulDiv(grossPool, BPS, BPS + params.slashFeeBps);
+        uint256 offered1 = maxAward - Math.mulDiv(maxAward, BPS - params.auctionStepDecayRateBps, BPS);
+        award = Math.mulDiv(offered1, fill, shortfall);
+        uint256 oracleCap = Math.mulDiv(fill, params.maxAuctionAwardBps, BPS);
+        if (award > oracleCap) award = oracleCap;
+        uint256 remainingAward = maxAward - alreadyAwarded;
+        if (award > remainingAward) award = remainingAward;
+
+        uint256 eligiblePool = Math.mulDiv(grossPool, alreadyFilled + fill, shortfall);
+        uint256 eligibleAward = Math.mulDiv(eligiblePool, BPS, BPS + params.slashFeeBps);
+        uint256 remainingEligible = eligibleAward > alreadyAwarded ? eligibleAward - alreadyAwarded : 0;
+        if (award > remainingEligible) award = remainingEligible;
+    }
+
     function _driftTripwireParams() internal view returns (VaultParams memory params) {
         params = VaultParams({
-            owner: lccOwner,
             marginAsset: address(margin),
             marginOracle: address(oracle),
             startTimestamp: startTimestamp,
@@ -815,7 +901,7 @@ contract LCCRealStackFundingIntegrationTest is Setup {
 
     function _deposit(ILCCVaultLike target, address actor, uint256 amount) internal returns (uint256 commitment) {
         vm.prank(actor);
-        commitment = target.deposit(amount, 1, type(uint256).max, true, type(uint256).max);
+        commitment = target.deposit(amount, actor, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function _openCall(ILCCVaultLike target, uint256 amount) internal {
