@@ -14,7 +14,7 @@ This directory contains deeper reference docs for engineering and agent workflow
 - `docs/deferred-f04-dead-tranche.md`: commit-pinned decision record for deferred F-04 part 2, dead-tranche recapitalization (NOT implemented; the shelved design and its validation findings).
 - `docs/tech-stack.md`: Toolchain, Foundry profiles, and environment requirements.
 - `docs/deployment.md`: CI workflow behavior and execution model.
-- `docs/operations-runbook.md`: Incident and operator procedures, including LCC auction outages, bounces, registry migration, policy re-enablement, and factory ownership rotation.
+- `docs/operations-runbook.md`: Incident and operator procedures, including USD3 pending-loss admission and borrow windows, LCC auction outages, bounces, registry migration, policy re-enablement, and factory ownership rotation.
 - `docs/doc-gardening.md`: Ongoing documentation maintenance checklist and guardrails.
 
 ## Primary Entry Points

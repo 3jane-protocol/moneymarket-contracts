@@ -71,7 +71,7 @@ parameters timelock:
 |---|---|---|
 | Maximum USD3 deployment ratio | `ProtocolConfig.setConfig(MAX_ON_CREDIT, value)` | `USD3.maxOnCredit()` is read-only |
 | sUSD3 withdrawal window | `ProtocolConfig.setConfig(SUSD3_WITHDRAWAL_WINDOW, value)` | Getter falls back to 2 days when the key is zero |
-| USD3 supply cap | `ProtocolConfig.setConfig(USD3_SUPPLY_CAP, value)` | Emergency authority may only set it to zero; zero blocks even exempt receivers |
+| USD3 supply cap | `ProtocolConfig.setConfig(USD3_SUPPLY_CAP, value)` | Emergency authority may only set it to zero; zero blocks even exempt receivers, so it can slash LCC funders mid-call — see the zero-cap hazard in `docs/operations-runbook.md` |
 | Stop all sUSD3 deposits | No reversible config key exists | One-way `sUSD3.shutdownStrategy()` is the only complete stop and requires current sUSD3 management or emergency admin |
 
 The deployed sUSD3 ABI also has no no-argument `withdraw()`, `usd3Strategy()`, or `setUsd3Strategy(address)` selector.

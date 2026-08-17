@@ -66,6 +66,15 @@ write that stops all junior deposits. `USD3_SUPPLY_CAP = 0` stops USD3 deposits,
 USD3 into sUSD3. `DEBT_CAP = 0` also does not necessarily close sUSD3 capacity while actual market debt remains,
 because the junior cap uses the greater of actual debt and configured potential debt.
 
+`USD3_SUPPLY_CAP = 0` is a total deposit halt, not a tighter cap: `availableDepositLimit()` returns zero for a zero
+cap (`src/usd3/USD3.sol:530-533`) **before** its `supplyCapExempt` early return (`USD3.sol:534-536`), so exempt
+receivers are not exempt from the halt. Never set the cap to zero while any LCC facility has an open capital call or
+a live shortfall auction: funding and fills both deliver through a USD3 deposit (`src/lcc/LCCVault.sol:898`, reached
+from `fundCall` at `:648`/`:655` and `takeAuction` at `:699`), so `fundCall` would revert and compelled funders still
+unfunded at the deadline would be slashed for their entire remaining margin. If the halt is unavoidable, pause the
+affected facilities' effective clocks before their funding deadlines first, exactly as for an accidentally revoked
+exemption flag (see "Creating and authorizing an LCC vault").
+
 If all new sUSD3 deposits must stop, first read the sUSD3 TokenizedStrategy `management()` and `emergencyAdmin()`
 addresses. Either can call `shutdownStrategy()`, which halts deposit/mint but is a one-way, irreversible strategy
 shutdown. Do not submit a nonexistent junior-cap key, and do not assume the ProtocolConfig emergency controller also
@@ -85,6 +94,23 @@ receiver's `availableDepositLimit` (`src/Helper.sol:70`) so supply-cap headroom 
 both, but the exemption grants the Helper broader standing privilege than the opening minimum requires. If the seed
 is absent, sub-minimum hops revert atomically; users can use the two-transaction USD3-then-sUSD3 route until the seed
 is restored.
+
+## Deposit admission and borrowing during a USD3 pending loss
+
+**Trigger.** Live NAV falls behind stored `totalAssets` — the `_pendingLoss()` predicate (`src/usd3/USD3.sol:185-187`) — between a MorphoCredit loss materializing and the `report()` that recognizes it.
+
+**What happens on its own.** Senior withdrawals halt (`availableWithdrawLimit` returns zero on the predicate, `USD3.sol:473-475`) and new deployment to MorphoCredit stops (`_supplyToMorpho` gate, `USD3.sol:409`). Two further guards recommended in review (Guardian round-2 M-04, re-raised on the merged board as M-03) are deliberately **not** implemented. These are standing deviations, not mitigations:
+
+- **Deposit admission stays open.** `availableDepositLimit()` (`USD3.sol:520`) is not zeroed while a loss is pending. A hard constraint rules out exactly one placement for such a guard: `supplyCapExempt` receivers return `type(uint256).max` at the early return (`USD3.sol:534-536`) before any later check, so a pending-loss guard **above** it would make `LCCVault.fundCall`'s USD3 deposit revert (`src/lcc/LCCVault.sol:898`, reached from `fundCall` at `:648`/`:655`) during a pending loss — converting an accounting delay into missed capital-call obligations and margin slashing. A guard placed **below** that early return, before the cap math at `USD3.sol:538`, would have preserved the exemption path and still zeroed deposits for everyone else; leaving the non-exempt path open as well was a deliberate decision, not forced by the constraint.
+- **No Morpho-side borrow prevention.** Nothing stops new borrowing that leaves deployed exposure above what live junior backing supports. Pre-existing over-cap deployment remains borrowable through the pending-loss window, and through the post-unpause window described under "Junior exit during a waUSDC pause" below.
+
+**Residual for deposits admitted during the window.** Admitted deposits sit in local waUSDC and cannot reach MorphoCredit until `report()` recognizes the loss. When the junior tranche fully covers the loss, such a depositor is exactly neutral: the required burn `loss·preSupply/preAssets` (`USD3.sol:620`) is independent of the deposit, so post-report PPS is unchanged. When the loss exceeds sUSD3's balance, the burn is capped at that balance (`USD3.sol:630-632`) and the remainder socializes across all seniors — including the admitted depositor, who cannot exit in the meantime because withdrawals are halted on the same predicate. On the exempt path this falls on LCC funders meeting a capital call, who are compelled depositors — declining costs them their margin — which is why that path is the one the placement constraint rules out gating.
+
+**What the operator must do.**
+
+1. Treat prompt loss recognition as the control: `report()` closes both windows, and no code guard substitutes for it. When the "Loss exceeding junior backing" procedure applies, its report hold takes precedence and deliberately extends this window; record that decision.
+2. If the window overlaps a waUSDC pause, follow the junior-exit entry below on unpause: keeper `tend` before borrowing resumes.
+3. Do not reach for `USD3_SUPPLY_CAP = 0` as a stopgap deposit halt while any LCC facility has an open call; see the zero-cap hazard under "USD3 and sUSD3 admission controls" above.
 
 ## Loss report landing during a waUSDC pause
 
