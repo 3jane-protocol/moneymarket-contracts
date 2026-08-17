@@ -3,6 +3,7 @@ pragma solidity ^0.8.22;
 
 import {LCCBase} from "./LCCBase.t.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
+import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 import {BPS} from "../../../src/libraries/ConstantsLib.sol";
 import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 
@@ -23,6 +24,66 @@ contract LCCExitLifecycleRegressionTest is LCCBase {
         uint256 selectedMaturity;
         uint256 eligibleScheduledBefore;
         uint256 aggregateCeiling;
+    }
+
+    function test_BoundedExitRejectsDirectMaturityAtSunset() public {
+        _deployVaultWithParams(_termParams(4));
+        _deposit(alice, 100e18);
+
+        vm.warp(START + 3 * EPOCH);
+        vm.expectRevert(LCCErrorsLib.VaultTerminal.selector);
+        vm.prank(alice);
+        vault.requestExit(type(uint256).max, type(uint256).max);
+    }
+
+    function test_BoundedExitHonoursLastNormalPhaseBoundary() public {
+        _deployVaultWithParams(_termParams(4));
+        _deposit(alice, 100e18);
+        _deposit(bob, 100e18);
+
+        vm.warp(START + 2 * EPOCH);
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 3);
+
+        vm.warp(START + 2 * EPOCH + NORMAL);
+        vm.expectRevert(LCCErrorsLib.VaultTerminal.selector);
+        vm.prank(bob);
+        vault.requestExit(type(uint256).max, type(uint256).max);
+
+        vm.warp(START + 3 * EPOCH);
+        uint256 balanceBefore = margin.balanceOf(alice);
+        vm.prank(alice);
+        assertEq(vault.claimExitedMargin(alice), 100e18);
+        assertEq(margin.balanceOf(alice), balanceBefore + 100e18);
+        assertEq(vault.currentEpoch(), 3);
+    }
+
+    function test_BoundedExitRejectsFirstFitWalkPastSunset() public {
+        ILCCVault.VaultParams memory params = _termParams(4);
+        params.protocolCommitmentCap = 400e18;
+        params.userCommitmentCap = 400e18;
+        params.exitCapBps = 2_500;
+        _deployVaultWithParams(params);
+
+        assertEq(_deposit(alice, 30e18), 60e18);
+        assertEq(_deposit(bob, 25e18), 50e18);
+
+        vm.warp(START + 2 * EPOCH);
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 3);
+        assertEq(vault.exitBucketCommitmentByMaturity(3), 60e18);
+
+        vm.expectRevert(LCCErrorsLib.VaultTerminal.selector);
+        vm.prank(bob);
+        vault.requestExit(type(uint256).max, type(uint256).max);
+    }
+
+    function test_PerpetualExitAssignmentRemainsUnboundedByTenor() public {
+        _deposit(alice, 100e18);
+
+        vm.warp(START + 3 * EPOCH);
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 4);
     }
 
     function test_ExitAdmissionWithFullMaturityListAndFragmentedCapacity() public {

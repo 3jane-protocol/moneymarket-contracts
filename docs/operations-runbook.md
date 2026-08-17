@@ -131,11 +131,13 @@ owner.
 Use `script/operations/CreateLCCVaultSafe.s.sol` with the same finalized JSON in every phase:
 
 1. Complete the facility-specific leverage-dispersion and per-stake loss-budget review. The example deliberately leaves
-   `acknowledgePerpetualTenor` and `acknowledgeFullAuctionAward` false. Set the first true only when a perpetual
-   `maxEpochs = 0` facility has an approved dispersion justification; set the second true only when the loss budget
-   approves `maxAuctionAwardBps = 10000`, the maximum award-loss case. Record the named approver. The script rejects
-   either extreme without its acknowledgement and rejects a missing or zero `params.owner`; it verifies the deployed
-   owner against that explicit declaration but does not mandate a particular address.
+   `acknowledgePerpetualTenor`, `acknowledgeHoldToMaturity`, and `acknowledgeFullAuctionAward` false. Set the first true
+   only when a perpetual `maxEpochs = 0` facility has an approved dispersion justification; set the second true only
+   when `minCommitmentEpochs + exitDelayEpochs >= maxEpochs != 0` deliberately makes terminal wind-down the only exit;
+   set the third true only when the loss budget approves `maxAuctionAwardBps = 10000`, the maximum award-loss case.
+   Record the named approver. The script rejects each case without its acknowledgement and rejects a missing or zero
+   `params.owner`; it verifies the deployed owner against that explicit declaration but does not mandate a particular
+   address.
 2. Keep `startTimestamp` far enough in the future to survive the governance delay. Run
    `schedulePrerequisites(string,uint256,bool)` with an attempt nonce (start at `0`). The script computes the CREATE2
    address from the final parameters and facility ID, confirms the factory owner, confirms the beacon is owned by the

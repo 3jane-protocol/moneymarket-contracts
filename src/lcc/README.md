@@ -738,8 +738,11 @@ disposed epoch.
 
 **Scheduled sunset.** When `maxEpochs != 0`, epochs `0..maxEpochs-1` are callable and epoch `maxEpochs` begins a
 terminal withdraw-only phase (`_terminal()`). `deposit` also rejects any pending activation whose activation epoch
-would be `maxEpochs`, so a last-callable-epoch deposit must activate immediately. `requestExit` and `openEpochCall`
-revert `VaultTerminal` once terminal.
+would be `maxEpochs`, so a last-callable-epoch deposit must activate immediately. `requestExit` rejects any assigned
+maturity at or after `maxEpochs`, including a first-fit walk past sunset, while `openEpochCall` reverts once terminal.
+Because requests outside Normal anchor to the next epoch, the final request boundary is the end of Normal in epoch
+`maxEpochs - 1 - exitDelayEpochs`. A bounded configuration with
+`minCommitmentEpochs + exitDelayEpochs >= maxEpochs` is deliberately hold-to-maturity and uses the terminal claim.
 Scheduled cap exemption is keyed to the disposed epoch, not the settlement clock. The last callable epoch (or a
 later epoch) uses saturating headroom without the protocol cap even when it settles during its own Closed phase,
 because its returned commitment can never back a later call. An older epoch keeps its original cap clamp even if
@@ -770,7 +773,7 @@ flowchart TD
 
 `LCCAuctionLib` and `LCCConfigLib` are the two externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-24,116 bytes, 160 bytes below the 24,276-byte release ceiling and 460 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+24,099 bytes, 177 bytes below the 24,276-byte release ceiling and 477 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls

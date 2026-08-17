@@ -5,6 +5,7 @@ import {Script, console2} from "forge-std/Script.sol";
 import {ITimelockController} from "../../src/interfaces/ITimelockController.sol";
 import {LCCVaultFactory} from "../../src/lcc/LCCVaultFactory.sol";
 import {ILCCVault} from "../../src/lcc/interfaces/ILCCVault.sol";
+import {LCCDeploymentAcknowledgements} from "../utils/LCCDeploymentAcknowledgements.sol";
 import {LCCWiringCheck} from "../utils/LCCWiringCheck.sol";
 import {SafeHelper} from "../utils/SafeHelper.sol";
 import {TimelockHelper} from "../utils/TimelockHelper.sol";
@@ -38,7 +39,8 @@ interface IOwnableView {
  *      The JSON `facilityId` is encoded as `facilityKey = keccak256(bytes(facilityId))`, then the factory salt is
  *      `keccak256(abi.encode(bytes32("3JANE_LCC_VAULT_V1"), block.chainid, facilityKey))`. This UTF-8 byte encoding
  *      and ABI formula are the off-repo reproduction convention. The JSON must explicitly acknowledge perpetual tenor
- *      when `maxEpochs == 0` and full-pool auction awards when `maxAuctionAwardBps == 10_000`.
+ *      when `maxEpochs == 0`, hold-to-maturity when `minCommitmentEpochs + exitDelayEpochs >= maxEpochs != 0`, and
+ *      full-pool auction awards when `maxAuctionAwardBps == 10_000`.
  *
  *      Usage, in order:
  *      1. --sig "schedulePrerequisites(string,uint256,bool)" data/lcc-vault-params.json 0 false
@@ -50,10 +52,11 @@ interface IOwnableView {
  *      mainnet RPC URL for each phase. The JSON `facilityId` must be durable, governance-assigned, and recorded in the
  *      deployment manifest.
  */
-contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringCheck {
+contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringCheck, LCCDeploymentAcknowledgements {
     struct DeploymentConfig {
         ILCCVault.VaultParams params;
         string facilityId;
+        bool acknowledgeHoldToMaturity;
         bool acknowledgePerpetualTenor;
         bool acknowledgeFullAuctionAward;
     }
@@ -255,6 +258,7 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         require(config.params.owner != address(0), "Vault owner must be nonzero");
         require(config.params.marginAsset != address(0), "Margin asset not set");
         require(config.params.marginOracle != address(0), "Margin oracle not set");
+        _requireHoldToMaturityAcknowledgement(config.params, config.acknowledgeHoldToMaturity);
         require(
             config.params.maxEpochs != 0 || config.acknowledgePerpetualTenor,
             "Perpetual tenor requires explicit acknowledgement"
@@ -366,6 +370,8 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         console2.log("JSON file:", jsonPath);
         console2.log("CREATE2 salt:", vm.toString(salt));
         console2.log("Predicted vault:", vault);
+        console2.log("Hold-to-maturity:", _isHoldToMaturity(config.params));
+        console2.log("Hold-to-maturity acknowledgement:", config.acknowledgeHoldToMaturity);
         console2.log("Perpetual tenor:", config.params.maxEpochs == 0);
         console2.log("Perpetual-tenor acknowledgement:", config.acknowledgePerpetualTenor);
         console2.log("Full-pool auction award:", config.params.maxAuctionAwardBps == BPS);
@@ -377,6 +383,7 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         string memory json = vm.readFile(jsonPath);
         require(vm.keyExistsJson(json, ".owner"), "Vault owner must be explicitly declared");
         config.facilityId = vm.parseJsonString(json, ".facilityId");
+        config.acknowledgeHoldToMaturity = vm.parseJsonBool(json, ".acknowledgeHoldToMaturity");
         config.acknowledgePerpetualTenor = vm.parseJsonBool(json, ".acknowledgePerpetualTenor");
         config.acknowledgeFullAuctionAward = vm.parseJsonBool(json, ".acknowledgeFullAuctionAward");
 

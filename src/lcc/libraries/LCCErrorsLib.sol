@@ -24,7 +24,8 @@ library LCCErrorsLib {
     error NotPaused();
     /// @notice Thrown when a caller is not authorized for the action.
     error Unauthorized();
-    /// @notice Thrown when a new call, deposit, or exit request is attempted after scheduled sunset.
+    /// @notice Thrown when a new call, deposit, or exit request is attempted after scheduled sunset, or would only
+    /// take effect at or after scheduled sunset.
     error VaultTerminal();
     /// @notice Thrown when an exit request would create more tracked maturity buckets than the vault supports.
     error ExitCapacityReached();

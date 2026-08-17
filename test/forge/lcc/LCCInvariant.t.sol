@@ -228,6 +228,8 @@ contract LCCInvariantHandler is Test {
         vm.prank(actor);
         try invariantVault.requestExit(maxDeferralEpochs, type(uint256).max) returns (uint256 maturity) {
             assertEq(maturity, expectedMaturity);
+            uint256 maxEpochs = invariantVault.epochConfig().maxEpochs;
+            if (maxEpochs != 0) assertLt(maturity, maxEpochs);
             ILCCVault.RiskConfig memory riskConfig = invariantVault.riskConfig();
             uint256 activeCommitment = invariantVault.totals().activeCommitment;
             uint256 capacity = Math.max(
@@ -237,7 +239,12 @@ contract LCCInvariantHandler is Test {
                 assertLe(invariantVault.exitBucketCommitmentByMaturity(maturity), capacity);
             }
         } catch (bytes memory reason) {
-            if (!_expectedRequestExitError(reason)) fail();
+            if (_revertSelector(reason) == LCCErrorsLib.VaultTerminal.selector) {
+                uint256 maxEpochs = invariantVault.epochConfig().maxEpochs;
+                assertTrue(maxEpochs != 0 && expectedMaturity >= maxEpochs);
+            } else if (!_expectedRequestExitError(reason)) {
+                fail();
+            }
         }
     }
 
@@ -903,9 +910,9 @@ contract LCCInvariantHandler is Test {
     // _replayForUpdate: deposit, requestExit, and the claims. deposit adds the live-oracle read and the
     // activation/call-window lifecycle errors, CapExceeded, and InvalidAmount; requestExit adds InvalidAmount (a
     // synced default can zero its commitment after the stale guard). The handler predicts the first-fit maturity
-    // before every bounded exit:
-    // an insufficient fuzzed deferral must revert with ExitDeferralExceeded, while that selector is never accepted
-    // by this whitelist. The deadline is fixed at type(uint256).max, so DeadlineExpired is likewise never accepted.
+    // before every bounded exit: VaultTerminal is asserted against that maturity rather than accepted here, and an
+    // insufficient fuzzed deferral must revert with ExitDeferralExceeded. Both selectors are deliberately kept out
+    // of this whitelist. The deadline is fixed at type(uint256).max, so DeadlineExpired is likewise never accepted.
     // With eight actors holding at most one live exit each, the 128-bucket limit is unreachable and
     // ExitCapacityReached must not be accepted. Claims add NOTHING
     // beyond the base -- their preconditions make NoExitRequested/ExitNotMature/NothingToClaim unreachable, so

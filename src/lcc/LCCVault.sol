@@ -1456,6 +1456,8 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
             maxDeferralEpochs,
             capacity
         );
+        uint256 maxEpochs = _clockConfig.maxEpochs;
+        if (maxEpochs != 0 && maturityEpoch >= maxEpochs) revert LCCErrorsLib.VaultTerminal();
         _trackExitMaturity(maturityEpoch);
     }
 

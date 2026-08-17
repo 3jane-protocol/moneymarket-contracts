@@ -338,7 +338,10 @@ interface ILCCVault {
     /// The two bounds compose: because execution cannot occur after `deadline`, the assigned maturity never exceeds
     /// the epoch containing `deadline` plus `exitDelayEpochs`, the possible one-epoch phase adjustment, and
     /// `maxDeferralEpochs`. Shortening `deadline` therefore tightens the absolute guarantee as well as limiting
-    /// mempool staleness. The deferral bound is unrelated to the `maxEpochs` scheduled-sunset configuration.
+    /// mempool staleness. A bounded vault rejects an assigned maturity at or after `maxEpochs`; therefore its last
+    /// request boundary is the end of Normal in epoch `maxEpochs - 1 - exitDelayEpochs`. Configurations where
+    /// `minCommitmentEpochs + exitDelayEpochs >= maxEpochs` deliberately provide only terminal wind-down, not an
+    /// in-tenor exit request.
     ///
     /// An account whose commitment exceeds the entire per-epoch capacity uses the oversized-account escape clause
     /// only inside the `assigned < capacity` guard. It takes the first bucket with any remaining room and therefore
