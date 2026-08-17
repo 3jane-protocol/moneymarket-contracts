@@ -44,7 +44,7 @@ funds calls and auction fills. The worked examples below use symbolic round numb
 | `LCCVaultFactory.sol`            | Owner-gated `BeaconProxy` deployment + provenance registry                |
 | `interfaces/ILCCVault.sol`       | External API, structs, and per-function NatSpec (the API reference)       |
 | `libraries/LCCAuctionLib.sol`    | Stateless auction pricing math; externally linked into the implementation |
-| `libraries/LCCConfigLib.sol`     | Externally linked validation and derived auction step duration            |
+| `libraries/LCCConfigLib.sol`     | Externally linked validation, exit assignment, and derived timing         |
 | `libraries/LCCAccountLib.sol`    | Pure in-memory account transitions (activate, mature, default, clear)     |
 | `libraries/LCCBucketListLib.sol` | Sparse epoch-keyed bucket lists with swap-remove and 1-based index maps   |
 | `libraries/LCCTypesLib.sol`      | Packed storage structs (upgrade-frozen layout)                            |
@@ -117,7 +117,7 @@ change while the epoch is still in `Funding` or earlier.
 | `protocolCommitmentCap`   | Vault-wide active+pending commitment cap (mutable: setRiskCaps)          | `> 0` and `<= type(uint128).max`                     |
 | `userCommitmentCap`       | Per-account commitment cap (mutable: setRiskCaps)                        | `> 0` (no width bound)                               |
 | `exitCapBps`              | Exit capacity fraction of max(configured cap, live active commitment)    | `>= MIN_EXIT_CAP_BPS` (313) and `<= BPS`             |
-| `exitDelayEpochs`         | Min epochs from request to earliest maturity                             | `> 0` and `<= 64` (`MAX_EXIT_DELAY_EPOCHS`)          |
+| `exitDelayEpochs`         | Min epochs from a Normal-phase request to earliest maturity              | `> 0` and `<= 64` (`MAX_EXIT_DELAY_EPOCHS`)          |
 | `minCommitmentEpochs`     | Min committed epochs before an exit request; `0` disables                | `<= 64`                                              |
 | `minDepositAssets`        | Minimum margin deposit (mutable: setRiskCaps)                            | none (may be `0`)                                    |
 | `auctionStepCount`        | Price steps across the Closed window; `0` disables auction               | `0`, or `>= 2` and `<= epochLength - phaseDurations` |
@@ -201,7 +201,8 @@ funding deadlines, auction windows, exit maturities, and terminal checks shift b
   freshness.
 - `requestExit(maxDeferralEpochs, deadline)` has no phase check; it is gated by `VaultTerminal`,
   `DeadlineExpired`, `ExitInProgress`, `PendingDepositExists`, `InvalidAmount` (no active position),
-  `CommitmentNotMature`, `ExitDeferralExceeded`, and `ExitCapacityReached`.
+  `CommitmentNotMature`, `ExitDeferralExceeded`, and `ExitCapacityReached`. A request after Normal is accepted but
+  its earliest maturity moves one epoch later.
 - `claimExitedMargin` / `claimRemainingMargin` have no phase check; they are gated by maturity, shutdown/terminal,
   and materialization lifecycle conditions.
 
@@ -629,38 +630,69 @@ re-credit**. The latter is the first epoch in which the credit can back a new ca
 settlement runs. Every deposit and any such nonzero credit advances it monotonically, rounding-dropped credits leave
 it unchanged, and no funding touches it.
 
-**Maturity assignment.** `_assignExitMaturity` is first-fit by request time (not strict FIFO): it starts at
-`currentEpoch + exitDelayEpochs` and walks forward to the first bucket with room, where per-epoch capacity is
-`max(1, max(protocolCommitmentCap, activeCommitment) * exitCapBps / BPS)`. Flooring the denominator at aggregate
-live utilization is deliberately path-dependent. Capacity is recomputed for every request, so it is never below
-the configured-cap value at that request, but it can decline as `activeCommitment` declines through amortizing
-funding or slash finalization. `activeCommitment` is the aggregate and can include flooring-dust return commitment
-not attributable to any account, which only widens capacity. Funded or slashed amounts free bucket room retroactively. A request
-larger than the whole per-epoch capacity takes the first bucket with any remaining room.
+**Maturity assignment.** `_assignExitMaturity` is first-fit by request time (not strict FIFO). During Normal it
+starts at `currentEpoch + exitDelayEpochs`. During PreCall, Funding, or Closed it starts one epoch later, at
+`currentEpoch + exitDelayEpochs + 1`. Normal is the only phase before that epoch's call-opening window; Closed is
+still part of the same epoch. While a call can still open — outside shutdown and before the last callable epoch's
+call window has passed — the rule guarantees that **an accepted exit request spans at least one epoch whose call
+outcome was unknown when the request was made**. At the shutdown or sunset edge, no prospective call exposure can be
+manufactured, and `claimRemainingMargin` supplies the wind-down withdrawal path. The phase key is deliberately and
+boundedly conservative for a request during PreCall before a call opens: the holder is already bound to that epoch's
+still-unknown outcome, so the one-epoch shift buys no additional exposure, but keying only on `callOpened` would miss
+the call-free Funding case. The configured delay therefore keeps its plain meaning for a holder who commits before
+the current call window opens, while a later request costs one additional epoch.
+
+From that phase-aware earliest maturity, assignment walks forward to the first bucket with room, where per-epoch
+capacity is `max(1, max(protocolCommitmentCap, activeCommitment) * exitCapBps / BPS)`. Flooring the denominator at
+aggregate live utilization is deliberately path-dependent. Capacity is recomputed for every request, so it is
+never below the configured-cap value at that request, but it can decline as `activeCommitment` declines through
+amortizing funding or slash finalization. `activeCommitment` is the aggregate and can include flooring-dust return
+commitment not attributable to any account, which only widens capacity. Funded or slashed amounts free bucket room
+retroactively. A request larger than the whole per-epoch capacity takes the first bucket with any remaining room.
 During a live auction, capacity uses the post-slash trough before settlement restores return commitment, so a
 non-defaulting exiter can be deferred farther than the same request just after settlement; this is a fairness and
 UX artifact, not an accounting or fund-safety issue.
 
-The caller bounds that first-fit scan with `maxDeferralEpochs`: 0 accepts only
-`currentEpoch + exitDelayEpochs`, `N` accepts up to `N` epochs past it, and `type(uint256).max` accepts any
-maturity. The names separate two intervals: `exitDelayEpochs` is the delay from now to the earliest available
-maturity, while deferral starts where that delay ends. The deferral bound is unrelated to the `maxEpochs` sunset
-schedule. `deadline` is inclusive and uses unadjusted wall-clock time, so a pause cannot extend transaction
-freshness. If both the caller's window and the 128-live-bucket limit would reject an exit, `ExitDeferralExceeded`
-takes precedence.
+Per-bucket capacity is hard during normal first-fit assignment. Only when all 128 maturity-list keys are occupied
+and first-fit would require a new key does assignment reuse an eligible tracked maturity and deliberately soften
+that individual limit. Eligible keys lie within the caller's deferral window. Admission requires their scheduled
+commitment plus the account to fit `N * C`, where `C` is the runtime per-bucket capacity and `N` is the eligible
+tracked-key count. This is the only operative aggregate bound. Because total scheduled commitment plus the
+requesting account cannot exceed the live commitment denominator, admission is unconditional once
+`N >= ceil(BPS / exitCapBps)` (32 at `MIN_EXIT_CAP_BPS`), apart from base-unit flooring; the bound therefore has
+teeth only for narrow deferral windows. The least-loaded eligible maturity wins, with the earliest breaking ties;
+the account is never split. More precisely, let `S` be eligible scheduled commitment before the request and `A` be
+the admitted account's actual commitment. The aggregate gate gives `S + A <= N * C`, while the minimum-load bucket
+has at most `S / N`; its post-assignment load is therefore at most
+`S / N + A <= C + A * (1 - 1 / N)`. Its overshoot beyond capacity is strictly less than `A`. The bound uses the
+account's actual commitment, not the live `userCommitmentCap`, because return-pool replay can credit an account
+above that admission cap. The rejected earliest-eligible alternative would have only the aggregate bound and could
+concentrate an overshoot approaching `(N - 1) * C` in one bucket. Per-bucket smoothing is deliberately soft in this
+full-list path.
+
+The caller bounds that first-fit scan with `maxDeferralEpochs`: 0 accepts only the phase-aware earliest maturity,
+`N` accepts up to `N` epochs past it, and `type(uint256).max` accepts any maturity. The one-epoch post-Normal shift
+moves the entire caller-approved window uniformly; deferral is always measured from the shifted earliest and needs
+no separate adjustment. The names separate two intervals: `exitDelayEpochs` is the Normal-request delay to the
+earliest available maturity, while deferral starts where the phase-aware delay ends. The deferral bound is unrelated
+to the `maxEpochs` sunset schedule. `deadline` is inclusive and uses unadjusted wall-clock time, so a pause cannot
+extend transaction freshness. If both the caller's window and the 128-live-bucket limit would reject an exit,
+`ExitDeferralExceeded` takes precedence.
 
 Each maturity bucket stores its margin and commitment as the two `uint128` halves of one `LCCTypesLib.Bucket` word;
 the original `exitBucketMarginByMaturity` and `exitBucketCommitmentByMaturity` getters still return `uint256`.
 Per-call exit exposure similarly packs six `uint128` values into three words and keeps `listed` in a fourth word.
 The explicit flag is the exact-once guard for `exitMaturitiesByCall` membership and must not be derived from amounts.
 
-**Bucket-cap trio.** Live maturity buckets are hard-capped at `MAX_EXIT_MATURITY_BUCKETS = 2 * 64 = 128`; a request
-that would create a 129th bucket reverts `ExitCapacityReached`. `exitDelayEpochs <= 64` and `exitCapBps >= 313`
+**Bucket-cap trio.** Live maturity keys are hard-capped at `MAX_EXIT_MATURITY_BUCKETS = 2 * 64 = 128`; a request
+never creates a 129th key. When the full-list aggregate fallback cannot admit into an existing eligible key it
+reverts `ExitCapacityReached`. `exitDelayEpochs <= 64` and `exitCapBps >= 313`
 (`MIN_EXIT_CAP_BPS`) are enforced at config so worst-case honest exit demand — including first-fit fragmentation —
-stays within 128. Scan termination instead relies on the runtime capacity clamp: capacity is always at least one, so
-any empty bucket terminates the scan and only buckets with nonzero commitment are skipped. Every bucket increase is
-tracked by `_trackExitMaturity`, every empty bucket is removed by `_pruneExitMaturityIfEmpty`, and the live list is
-capped at 128, so the scan takes at most 129 iterations. The limit remains reachable through cap-raise
+has enough aggregate scheduling room across reachable tracked keys. Scan termination instead relies on the runtime
+capacity clamp: capacity is always at least one, so any empty bucket terminates the scan and only buckets with
+nonzero commitment are skipped. Every bucket increase is tracked by `_trackExitMaturity`, every empty bucket is
+removed by `_pruneExitMaturityIfEmpty`, and the live list is capped at 128, so first-fit reaches an empty key or the
+aggregate fallback in at most 129 iterations. The limit remains reachable through cap-raise
 sequences: each raise can restore deposit headroom and increase capacity, allowing an exact-capacity new account to
 open the next maturity without fitting any prior nonempty bucket.
 
@@ -668,8 +700,11 @@ open the next maturity without fitting any prior nonempty bucket.
 
 ```
 earliest request  = commitmentStartEpoch + minCommitmentEpochs = 3 + 4 = 7
-earliest maturity  = requestEpoch + exitDelayEpochs             = 7 + 2 = 9   (later if the bucket is full; first-fit)
+Normal request maturity     = requestEpoch + exitDelayEpochs     = 7 + 2     = 9
+post-Normal request maturity = requestEpoch + exitDelayEpochs + 1 = 7 + 2 + 1 = 10
 ```
+
+Either earliest maturity can move later when its bucket is full under first-fit assignment.
 
 `claimExitedMargin` pays the matured margin. A **fully-funded exiter** matures with nothing claimable but must
 still call `claimExitedMargin` to clear the exit and make the account reusable (`clearExit`); otherwise it stays
@@ -703,8 +738,11 @@ disposed epoch.
 
 **Scheduled sunset.** When `maxEpochs != 0`, epochs `0..maxEpochs-1` are callable and epoch `maxEpochs` begins a
 terminal withdraw-only phase (`_terminal()`). `deposit` also rejects any pending activation whose activation epoch
-would be `maxEpochs`, so a last-callable-epoch deposit must activate immediately. `requestExit` and `openEpochCall`
-revert `VaultTerminal` once terminal.
+would be `maxEpochs`, so a last-callable-epoch deposit must activate immediately. `requestExit` rejects any assigned
+maturity at or after `maxEpochs`, including a first-fit walk past sunset, while `openEpochCall` reverts once terminal.
+Because requests outside Normal anchor to the next epoch, the final request boundary is the end of Normal in epoch
+`maxEpochs - 1 - exitDelayEpochs`. A bounded configuration with
+`minCommitmentEpochs + exitDelayEpochs >= maxEpochs` is deliberately hold-to-maturity and uses the terminal claim.
 Scheduled cap exemption is keyed to the disposed epoch, not the settlement clock. The last callable epoch (or a
 later epoch) uses saturating headroom without the protocol cap even when it settles during its own Closed phase,
 because its returned commitment can never back a later call. An older epoch keeps its original cap clamp even if
@@ -735,7 +773,7 @@ flowchart TD
 
 `LCCAuctionLib` and `LCCConfigLib` are the two externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-24,116 bytes, 160 bytes below the 24,276-byte release ceiling and 460 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
+24,099 bytes, 177 bytes below the 24,276-byte release ceiling and 477 bytes below EIP-170. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
 implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury` and calls

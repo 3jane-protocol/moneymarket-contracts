@@ -35,8 +35,12 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
     using SafeCast for uint256;
     using LCCAccountLib for Account;
 
+    // Declared here as well as in LCCErrorsLib so moving their only live reverts into the linked config library does
+    // not remove them from the implementation's stable artifact ABI.
+    error ExitCapacityReached();
+    error ExitDeferralExceeded();
+
     uint256 internal constant MAX_MATERIALIZE_STEPS = 64;
-    uint256 internal constant MAX_EXIT_MATURITY_BUCKETS = 2 * LCCConfigLib.MAX_EXIT_DELAY_EPOCHS;
     /// @notice Maximum extra fundingAsset pulled to ensure a dust obligation mints at least one USD3 share.
     uint256 internal constant MAX_FUNDING_TOP_UP = 1_000;
 
@@ -446,9 +450,6 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         }
 
         maturityEpoch = _assignExitMaturity(accountCommitment, maxDeferralEpochs);
-        if (exitMaturityIndexPlusOne[maturityEpoch] == 0 && exitMaturityList.length >= MAX_EXIT_MATURITY_BUCKETS) {
-            revert LCCErrorsLib.ExitCapacityReached();
-        }
         account.exitRequested = true;
         account.exitMaturityEpoch = maturityEpoch;
         account.exitClaimed = false;
@@ -460,7 +461,6 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
 
         LCCTypesLib.Bucket storage bucket = exitBucketByMaturity[maturityEpoch];
         _increaseBucket(bucket, accountMargin, accountCommitment);
-        _trackExitMaturity(maturityEpoch);
         _addCurrentCallExitExposure(msg.sender, accountMargin, accountCommitment, maturityEpoch);
 
         emit LCCEventsLib.ExitRequested(msg.sender, maturityEpoch, accountMargin, accountCommitment);
@@ -1160,7 +1160,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         bool bounded = maxSteps != 0;
         replay.account = account;
 
-        if (replay.account.isZeroExposure()) {
+        if (replay.account.isReplayInert()) {
             replay.account.calledEpochCursor = _syncState.finalizedCallPrefix;
             replay.complete = true;
             return replay;
@@ -1216,7 +1216,7 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
                 ++steps;
             }
 
-            if (replay.account.isZeroExposure()) {
+            if (replay.account.isReplayInert()) {
                 cursor = _syncState.finalizedCallPrefix;
                 break;
             }
@@ -1437,50 +1437,42 @@ contract LCCVault is ILCCVault, Initializable, Ownable, ReentrancyGuardTransient
         }
     }
 
-    /// @dev Assignment is first-fit by request time, not strict FIFO. Capacity is recomputed from live active
-    /// commitment for every request, so it is never below the configured-cap value at that request but is
-    /// path-dependent across requests. It can decline as active commitment declines through
-    /// amortization or slashing. Aggregate active commitment may conservatively include unattributed return
-    /// commitment, which only widens capacity. Funded or slashed amounts can free bucket room retroactively, and a
-    /// request larger than the whole per-epoch capacity takes the first bucket with any remaining room. Cap-raise
-    /// sequences can still reach the 128-bucket limit.
-    ///
-    /// Termination invariant: the `Math.max(1, ...)` clamp below is load-bearing and must not be removed. Capacity of
-    /// at least one makes any empty bucket terminate the scan; only nonzero-commitment buckets are skipped.
-    /// `_trackExitMaturity` and `_pruneExitMaturityIfEmpty` keep those buckets in the 128-entry maturity list, so the
-    /// scan takes at most 129 iterations.
+    /// @dev Computes the load-bearing nonzero runtime capacity and delegates the complete assignment policy to the
+    /// externally linked config library. The returned key is tracked here so assignment and membership update remain
+    /// one adapter operation; the library never returns an untracked key while the list is full.
     function _assignExitMaturity(uint256 accountCommitment, uint256 maxDeferralEpochs)
         internal
-        view
         returns (uint256 maturityEpoch)
     {
-        uint256 capacity = Math.max(
-            1,
-            Math.max(_riskConfig.protocolCommitmentCap, uint256(_totals.activeCommitment))
-                .mulDiv(_riskConfig.exitCapBps, BPS)
+        uint256 commitmentDenominator = Math.max(_riskConfig.protocolCommitmentCap, uint256(_totals.activeCommitment));
+        uint256 capacity = Math.max(1, commitmentDenominator.mulDiv(_riskConfig.exitCapBps, BPS));
+        uint256 earliestMaturity = _nextUncalledEpoch() + _assetConfig.exitDelayEpochs;
+        maturityEpoch = LCCConfigLib.assignExitMaturity(
+            exitBucketByMaturity,
+            exitMaturityList,
+            exitMaturityIndexPlusOne,
+            accountCommitment,
+            earliestMaturity,
+            maxDeferralEpochs,
+            capacity
         );
-
-        maturityEpoch = _currentEpoch() + _assetConfig.exitDelayEpochs;
-        while (true) {
-            uint256 assigned = exitBucketByMaturity[maturityEpoch].commitment;
-            if (assigned < capacity) {
-                uint256 remaining = capacity - assigned;
-                if (accountCommitment <= remaining || accountCommitment > capacity) return maturityEpoch;
-            }
-            if (maxDeferralEpochs == 0) revert LCCErrorsLib.ExitDeferralExceeded();
-            unchecked {
-                --maxDeferralEpochs;
-                ++maturityEpoch;
-            }
-        }
+        uint256 maxEpochs = _clockConfig.maxEpochs;
+        if (maxEpochs != 0 && maturityEpoch >= maxEpochs) revert LCCErrorsLib.VaultTerminal();
+        _trackExitMaturity(maturityEpoch);
     }
 
     /* EPOCH & PHASE MATH */
 
+    /// @dev Returns the first epoch whose call-opening window has not begun. Deposit activation and exit-maturity
+    /// anchoring both depend on this shared boundary; changing it moves both lifecycles.
+    function _nextUncalledEpoch() internal view returns (uint256 epoch) {
+        epoch = _currentEpoch();
+        if (_phaseAt(_now()) != Phase.Normal) ++epoch;
+    }
+
     function _depositActivation() internal view returns (uint256 activationEpoch, bool immediate) {
-        uint256 epoch = _currentEpoch();
-        immediate = _phaseAt(_now()) == Phase.Normal && !epochs[epoch].callOpened;
-        activationEpoch = immediate ? epoch : epoch + 1;
+        activationEpoch = _nextUncalledEpoch();
+        immediate = activationEpoch == _currentEpoch();
     }
 
     function _requireNoPriorUnsettledCall(uint256 epoch) internal view {

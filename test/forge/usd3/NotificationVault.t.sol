@@ -78,6 +78,15 @@ contract NotificationVaultTest is Setup {
         new NotificationVault(address(0));
     }
 
+    function test_initializeRejectsZeroCooldown() public {
+        NotificationVault implementation = new NotificationVault(address(usd3));
+        ProxyAdmin proxyAdmin = new ProxyAdmin(management);
+        bytes memory zeroCooldown = abi.encodeCall(NotificationVault.initialize, (management, keeper, 0, WINDOW));
+
+        vm.expectRevert(INotificationVault.InvalidCooldownConfig.selector);
+        new TransparentUpgradeableProxy(address(implementation), address(proxyAdmin), zeroCooldown);
+    }
+
     function test_initializeRejectsInvalidConfig() public {
         NotificationVault implementation = new NotificationVault(address(usd3));
         ProxyAdmin proxyAdmin = new ProxyAdmin(management);
@@ -303,7 +312,10 @@ contract NotificationVaultTest is Setup {
     }
 
     function test_zeroCooldownAllowsImmediateExitAndTransferWithLingeringCooldown() public {
-        NotificationVault zeroCooldownVault = _deployVault(0, WINDOW);
+        NotificationVault zeroCooldownVault = _deployVault(COOLDOWN, WINDOW);
+        vm.store(address(zeroCooldownVault), bytes32(uint256(50)), bytes32(uint256(WINDOW) << 64));
+        assertEq(zeroCooldownVault.cooldownDuration(), 0, "defensive zero-cooldown state setup failed");
+        assertEq(zeroCooldownVault.withdrawalWindow(), WINDOW, "withdrawal window changed");
         uint256 amount = 100e6;
 
         vm.startPrank(alice);

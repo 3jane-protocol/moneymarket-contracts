@@ -59,12 +59,13 @@ contract NotificationVault is BaseHooksUpgradeable {
     }
 
     /// @notice Initialize the proxy: roles and the fixed cooldown config (USD3 comes from the constructor).
+    /// @dev The nonzero cooldown guard is inert for already-initialized proxies and protects future deployments only.
     function initialize(address _management, address _keeper, uint64 _cooldownDuration, uint64 _withdrawalWindow)
         external
         initializer
     {
         if (_management == address(0) || _keeper == address(0)) revert InvalidAddress();
-        if (_withdrawalWindow == 0) revert InvalidCooldownConfig();
+        if (_cooldownDuration == 0 || _withdrawalWindow == 0) revert InvalidCooldownConfig();
 
         cooldownDuration = _cooldownDuration;
         withdrawalWindow = _withdrawalWindow;
