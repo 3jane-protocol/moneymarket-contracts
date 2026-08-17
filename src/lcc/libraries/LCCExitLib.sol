@@ -48,8 +48,8 @@ library LCCExitLib {
     /// at least one makes any empty bucket terminate the scan; only nonzero-commitment buckets are skipped. The vault's
     /// maturity tracking and pruning keep those buckets in the 128-entry maturity list, so the scan takes at most 129
     /// iterations. `packedCaps` stores the validated uint128 protocol/active commitments in its low/high halves;
-    /// `packedTiming` stores currentEpoch (uint64 after the caller's synced fold), exitCapBps (uint16), and
-    /// exitDelayEpochs (uint16). Packing changes only the delegatecall ABI, not the arithmetic widths used below.
+    /// `packedTiming` stores the phase-aware earliest maturity (uint64) and exitCapBps (uint16). Packing changes only
+    /// the delegatecall ABI, not the arithmetic widths used below.
     function assignExitMaturity(
         mapping(uint256 => LCCTypesLib.Bucket) storage exitBucketByMaturity,
         uint256 accountCommitment,
@@ -58,33 +58,64 @@ library LCCExitLib {
         uint256 packedTiming
     ) public view returns (uint256 maturityEpoch) {
         ExitStorage storage exitStorage = _exitStorage(exitBucketByMaturity);
-        uint256 protocolCommitmentCap = uint128(packedCaps);
-        uint256 activeCommitment = uint128(packedCaps >> 128);
-        uint256 currentEpoch = uint64(packedTiming);
-        uint256 exitCapBps = uint16(packedTiming >> 64);
-        uint256 exitDelayEpochs = uint16(packedTiming >> 80);
-        uint256 capacity = Math.max(1, Math.max(protocolCommitmentCap, activeCommitment).mulDiv(exitCapBps, BPS));
+        uint256 earliestMaturity = uint64(packedTiming);
+        uint256 capacity = Math.max(
+            1, Math.max(uint128(packedCaps), uint128(packedCaps >> 128)).mulDiv(uint16(packedTiming >> 64), BPS)
+        );
 
-        maturityEpoch = currentEpoch + exitDelayEpochs;
+        maturityEpoch = earliestMaturity;
+        uint256 remainingDeferralEpochs = maxDeferralEpochs;
         while (true) {
             uint256 assigned = exitStorage.bucketByMaturity[maturityEpoch].commitment;
             if (assigned < capacity) {
-                uint256 remaining = capacity - assigned;
-                if (accountCommitment <= remaining || accountCommitment > capacity) {
+                if (accountCommitment <= capacity - assigned || accountCommitment > capacity) {
                     if (
-                        exitStorage.maturityIndexPlusOne[maturityEpoch] == 0
-                            && exitStorage.maturityList.length >= MAX_EXIT_MATURITY_BUCKETS
-                    ) {
-                        revert LCCErrorsLib.ExitCapacityReached();
-                    }
-                    return maturityEpoch;
+                        exitStorage.maturityIndexPlusOne[maturityEpoch] != 0
+                            || exitStorage.maturityList.length < MAX_EXIT_MATURITY_BUCKETS
+                    ) return maturityEpoch;
+
+                    return
+                        _assignAtFullList(exitStorage, accountCommitment, earliestMaturity, maxDeferralEpochs, capacity);
                 }
             }
-            if (maxDeferralEpochs == 0) revert LCCErrorsLib.ExitDeferralExceeded();
+            if (remainingDeferralEpochs == 0) revert LCCErrorsLib.ExitDeferralExceeded();
             unchecked {
-                --maxDeferralEpochs;
+                --remainingDeferralEpochs;
                 ++maturityEpoch;
             }
+        }
+    }
+
+    /// @dev When all 128 maturity keys are occupied, admit against aggregate capacity within the caller's deferral
+    /// window and choose the least-loaded eligible bucket, breaking ties by earliest maturity. For eligible load S,
+    /// bucket count N, capacity C, and account commitment A, admission requires S + A <= N * C. The selected bucket's
+    /// post-assignment load is therefore at most S / N + A <= C + A * (1 - 1 / N), so overshoot is strictly below A.
+    function _assignAtFullList(
+        ExitStorage storage exitStorage,
+        uint256 accountCommitment,
+        uint256 earliestMaturity,
+        uint256 maxDeferralEpochs,
+        uint256 capacity
+    ) private view returns (uint256 selectedMaturity) {
+        uint256 eligibleCount;
+        uint256 scheduledCommitment;
+        uint256 selectedCommitment = type(uint256).max;
+
+        for (uint256 i = 0; i < exitStorage.maturityList.length; ++i) {
+            uint256 maturity = exitStorage.maturityList[i];
+            if (maturity < earliestMaturity || maturity - earliestMaturity > maxDeferralEpochs) continue;
+
+            uint256 commitment = exitStorage.bucketByMaturity[maturity].commitment;
+            scheduledCommitment += commitment;
+            ++eligibleCount;
+            if (commitment < selectedCommitment || (commitment == selectedCommitment && maturity < selectedMaturity)) {
+                selectedCommitment = commitment;
+                selectedMaturity = maturity;
+            }
+        }
+
+        if (scheduledCommitment + accountCommitment > eligibleCount * capacity) {
+            revert LCCErrorsLib.ExitCapacityReached();
         }
     }
 

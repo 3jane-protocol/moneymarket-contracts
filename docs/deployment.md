@@ -4,11 +4,97 @@
 
 This repository is a contracts codebase. "Deployment" here primarily means CI execution and release publishing behavior.
 
+## Mainnet Authority Register
+
+The live-controller rows below were read at mainnet block `25741635`; the LCC rows record the shipped deployment
+topology because no facility vault exists yet. They are a monitoring baseline, not immutable properties. Re-read live
+roles before every deployment, upgrade, or role-sensitive incident action, and verify each LCC address after deployment.
+
+| Surface | Controller / required owner | Delay / role |
+|---|---|---|
+| ProxyAdmins for USD3, sUSD3, MorphoCredit, ProtocolConfig, and the rate model | `0x3d3C41419aB401CD25055E8F9421D7D96D887885` | 7-day timelock (`getMinDelay() = 604800`) |
+| LCC `UpgradeableBeacon` | same 7-day timelock | Fleet implementation upgrades |
+| `ProtocolConfig.owner()` | `0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2` | 24-hour parameters timelock (`getMinDelay() = 86400`) |
+| USD3 and sUSD3 TokenizedStrategy `management()` | same 24-hour parameters timelock | `pendingManagement() == address(0)` on both |
+| LCC factory `owner()` / sole `OWNER_ROLE` | `0x33333333Bd7045F1A601A1E289D7AB21036fB5EF` | 3-of-5 main Safe; creates vaults and controls every family vault |
+
+The upgrade and parameter controllers are deliberately different. The 7-day timelock owns each live ProxyAdmin and
+must be monitored for implementation upgrades. The 24-hour timelock owns `ProtocolConfig` and controls parameter
+writes. In particular, ProtocolConfig being upgradeable through a 7-day-owned ProxyAdmin does not make its live
+`owner()` the 7-day timelock. Release monitoring should resolve every proxy's EIP-1967 admin, verify that admin's
+`owner()`, and separately read each implementation-level owner or management role.
+
+The USD3 and sUSD3 management hand-over had completed at the pinned block, with no pending management on either
+strategy. That does not mean the broader controller migration was complete: the EmergencyController-to-
+OperationalController switch-over below had not happened even though strategy management had moved to the parameters
+timelock.
+
+LCC v2 has no per-facility owner. The non-upgradeable factory's sole `OWNER_ROLE` is the family-wide authority for
+`openEpochCall`, `shutdown`, unpause, oracle rotation, mutable risk configuration, vault creation, and subordinate role
+administration. The shipped owner is the main 3-of-5 Safe rather than the 24-hour parameters timelock, avoiding a
+mandatory day-long delay on phase-sensitive actions: `shutdown()` must land strictly before `closedEnd(epoch)` to
+truncate an auction, and `openEpochCall()` must land during `PreCall`. Two-step factory ownership transfer re-keys every
+vault at once, so verify `factory.owner()`, its role census, and any pending owner before each deployment or incident.
+The durable JSON manifest records facility parameters and risk acknowledgements, not an independent vault owner.
+
+### Emergency authority
+
+At the same pinned block, `ProtocolConfig.emergencyAdmin()` still points to the old `EmergencyController` at
+`0x84B31B84917485E221305EDf590B8E3660d2E051`; the OperationalController switch-over had not executed.
+That controller's live role census was:
+
+| Role | Live members | Effect |
+|---|---|---|
+| `OWNER_ROLE` | main 3-of-5 Safe `0x33333333Bd7045F1A601A1E289D7AB21036fB5EF` | Administers `EMERGENCY_AUTHORIZED_ROLE` immediately, with no timelock |
+| `EMERGENCY_AUTHORIZED_ROLE` | the main Safe and Hypernative monitoring EOA `0x48c59b01Af01515E69460B6B5b55E557E914941d` | May invoke the controller's restricting emergency actions; does not administer roles |
+
+The missing timelock on `OWNER_ROLE` is real, but this is not single-key ownership: the owner is the 3-of-5 Safe, and
+the monitoring EOA holds only the emergency-authorized role. Re-read `ProtocolConfig.emergencyAdmin()` and enumerate
+the active controller's roles after the pending switch-over rather than assuming this snapshot remains current.
+
+### USD3 keeper indirection
+
+`USD3.keeper()` was `0xc22158100b823E1EF612fBA265941Efe9e7d7975`, a contract with approximately 7.4 KB of
+runtime code, not an EOA. Its downstream authorization surface was not established: probes for `owner()`,
+`management()`, `governance()`, `gov()`, `admin()`, `keeper()`, and `authorized(address)` all reverted. Do not publish
+an allowlist or claim that one EOA controls this router without verified source/ABI and a fresh authorization census.
+At the strategy layer, TokenizedStrategy permits both the configured keeper and strategy management to call keeper
+functions, so an operational halt must cover both paths.
+
+## USD3/sUSD3 Control Surface
+
+The implementation ABIs at HEAD contain `USD3.maxOnCredit()` and `sUSD3.withdrawalWindow()` as getters, but contain no
+`setMaxOnCredit` or `setWithdrawalWindow` selector. Both values come from `ProtocolConfig`, whose owner is the 24-hour
+parameters timelock:
+
+| Control | Authoritative write path | Notes |
+|---|---|---|
+| Maximum USD3 deployment ratio | `ProtocolConfig.setConfig(MAX_ON_CREDIT, value)` | `USD3.maxOnCredit()` is read-only |
+| sUSD3 withdrawal window | `ProtocolConfig.setConfig(SUSD3_WITHDRAWAL_WINDOW, value)` | Getter falls back to 2 days when the key is zero |
+| USD3 supply cap | `ProtocolConfig.setConfig(USD3_SUPPLY_CAP, value)` | Emergency authority may only set it to zero; zero blocks even exempt receivers |
+| Stop all sUSD3 deposits | No reversible config key exists | One-way `sUSD3.shutdownStrategy()` is the only complete stop and requires current sUSD3 management or emergency admin |
+
+The deployed sUSD3 ABI also has no no-argument `withdraw()`, `usd3Strategy()`, or `setUsd3Strategy(address)` selector.
+Integrators must use the inherited ERC-4626 withdraw/redeem functions and the actual implementation ABI, not assume
+those legacy declarations are callable.
+
+## USD3 v1.2 Upgrade Preconditions
+
+- `USD3_COMMITMENT_TIME` read `0` at mainnet block `25741635`. The v1.2 schedule and execution scripts both enforce
+  that it is still zero, because v1.2 no longer enforces the legacy deposit lock. The execution script rechecks the
+  value so its own path does not silently release a lock created during the 7-day delay. This is not a contract-level
+  prevention: any `EXECUTOR_ROLE` holder, including the main Safe and deployer EOA, can call the TimelockController's
+  `execute` directly and bypass both the script and its recheck. Do not set this reader-less key after the upgrade.
+- `USD3_REDEMPTION_FLOOR` and `USD3_REDEMPTION_FLOOR_BPS` both read `0` at that block. The implementation upgrade does
+  not activate the redemption floor. Before rollout approval, governance must either set reviewed nonzero values
+  through the 24-hour parameters timelock or explicitly sign off that the floor launches disabled. Until a nonzero
+  configuration is verified, do not describe the source-level floor as an active reserve.
+
 ## LCC Implementation Deployment
 
 The canonical `LCCVault` deployment artifact is compiled for Cancun with official solc `0.8.35`, via IR, 150
-optimizer runs, and no metadata bytecode hash. Its measured runtime is 24,102 bytes, 174 bytes below the internal
-ceiling and 474 bytes below EIP-170. The active-only bounce and family-authority monolith measured 24,703 bytes,
+optimizer runs, and no metadata bytecode hash. Its measured runtime is 24,254 bytes, 22 bytes below the internal
+ceiling and 322 bytes below EIP-170. The active-only bounce and family-authority monolith measured 24,703 bytes,
 127 bytes over EIP-170, so exit-exposure reconciliation and maturity assignment remain extracted into `LCCExitLib`
 at 150 runs.
 Because it uses `ReentrancyGuardTransient`, every deployment chain must support EIP-1153. Hardhat uses pinned stable

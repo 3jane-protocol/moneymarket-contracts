@@ -72,7 +72,10 @@ contract LCCVault is ILCCVault, Initializable, ReentrancyGuardTransient {
 
     /// @dev Mutable risk configuration. Per-epoch exit capacity is `exitCapBps` of the greater of the configured
     /// protocol cap and live active commitment; derivation and assignment semantics live at `_assignExitMaturity`.
-    /// `maxAuctionAwardBps` is the runtime auction-kicker off-switch. `slashFeeBps` is charged on auction-awarded
+    /// `maxAuctionAwardBps` bounds the auction kicker, and zeroing it disables the kicker only if the change lands
+    /// before the funding deadline: `setMaxAuctionAwardBps` is `synced`, so `_syncGlobal` may finalize the slash and
+    /// open the auction slot before the setter body runs, after which the setter reverts `InvalidPhase`. It is a
+    /// pre-deadline control, not a post-deadline off-switch. `slashFeeBps` is charged on auction-awarded
     /// slashed margin and capped by the unawarded surplus.
     RiskConfig internal _riskConfig;
 
@@ -467,10 +470,12 @@ contract LCCVault is ILCCVault, Initializable, ReentrancyGuardTransient {
                 accountCommitment,
                 maxDeferralEpochs,
                 _riskConfig.protocolCommitmentCap | (uint256(_totals.activeCommitment) << 128),
-                epoch | (_riskConfig.exitCapBps << 64) | (uint256(_assetConfig.exitDelayEpochs) << 80)
+                (_nextUncalledEpoch() + _assetConfig.exitDelayEpochs) | (_riskConfig.exitCapBps << 64)
             ),
             true
         );
+        uint256 maxEpochs = _clockConfig.maxEpochs;
+        if (maxEpochs != 0 && maturityEpoch >= maxEpochs) revert LCCErrorsLib.VaultTerminal();
         account.exitRequested = true;
         account.exitMaturityEpoch = maturityEpoch;
         account.exitClaimed = false;
@@ -1241,7 +1246,7 @@ contract LCCVault is ILCCVault, Initializable, ReentrancyGuardTransient {
         bool bounded = maxSteps != 0;
         replay.account = account;
 
-        if (replay.account.isZeroExposure()) {
+        if (replay.account.isReplayInert()) {
             replay.account.calledEpochCursor = _syncState.finalizedCallPrefix;
             replay.complete = true;
             return replay;
@@ -1297,7 +1302,7 @@ contract LCCVault is ILCCVault, Initializable, ReentrancyGuardTransient {
                 ++steps;
             }
 
-            if (replay.account.isZeroExposure()) {
+            if (replay.account.isReplayInert()) {
                 cursor = _syncState.finalizedCallPrefix;
                 break;
             }
@@ -1486,10 +1491,16 @@ contract LCCVault is ILCCVault, Initializable, ReentrancyGuardTransient {
 
     /* EPOCH & PHASE MATH */
 
+    /// @dev Returns the first epoch whose call-opening window has not begun. Deposit activation and exit-maturity
+    /// anchoring both depend on this shared boundary; changing it moves both lifecycles.
+    function _nextUncalledEpoch() internal view returns (uint256 epoch) {
+        epoch = _currentEpoch();
+        if (_phaseAt(_now()) != Phase.Normal) ++epoch;
+    }
+
     function _depositActivation() internal view returns (uint256 activationEpoch, bool immediate) {
-        uint256 epoch = _currentEpoch();
-        immediate = _phaseAt(_now()) == Phase.Normal && !epochs[epoch].callOpened;
-        activationEpoch = immediate ? epoch : epoch + 1;
+        activationEpoch = _nextUncalledEpoch();
+        immediate = activationEpoch == _currentEpoch();
     }
 
     function _requireNoPriorUnsettledCall(uint256 epoch) internal view {

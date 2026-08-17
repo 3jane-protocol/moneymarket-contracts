@@ -17,7 +17,7 @@ USD3 and sUSD3 are tokenized yield strategies built on Yearn V3's architecture f
 
 - Direct USDC deposits from users (not waUSDC)
 - Automatic internal wrapping of USDC to waUSDC for MorphoCredit deployment
-- Dynamic deployment ratio to MorphoCredit (0-100% via locally managed `maxOnCredit`)
+- Dynamic deployment ratio to MorphoCredit (0-100% via ProtocolConfig's `MAX_ON_CREDIT`)
 - Local waUSDC buffer for gas-efficient withdrawals
 - Protected from losses through sUSD3 first-loss absorption
 - Supply-cap exemptions for protocol-controlled deposit receivers
@@ -27,7 +27,7 @@ USD3 and sUSD3 are tokenized yield strategies built on Yearn V3's architecture f
 
 - Accepts USD3 tokens to provide subordinate capital
 - Configurable lock period for stability (via ProtocolConfig; 0 disables new locks)
-- Configurable cooldown period (via ProtocolConfig, default 7 days) + withdrawal window (local, default 2 days)
+- Configurable cooldown period and withdrawal window via ProtocolConfig (a zero withdrawal-window value defaults to 2 days)
 - Partial cooldown support for better UX
 - First-loss absorption protects USD3 holders
 - Maximum subordination ratio enforcement (via ProtocolConfig, default 15%)
@@ -258,21 +258,20 @@ test/forge/usd3/
 
 ### ProtocolConfig Integration
 
-Centrally managed parameters (with defaults):
+| Parameter | Change mechanism | Authority |
+| --- | --- | --- |
+| sUSD3 maximum subordination ratio | `ProtocolConfig.setConfig(TRANCHE_RATIO, value)`; a zero value falls back to 15% | ProtocolConfig owner |
+| sUSD3 lock duration | `ProtocolConfig.setConfig(SUSD3_LOCK_DURATION, value)`; zero disables new locks | ProtocolConfig owner |
+| sUSD3 cooldown period | `ProtocolConfig.setConfig(SUSD3_COOLDOWN_PERIOD, value)`; zero disables the cooldown requirement | ProtocolConfig owner |
+| USD3 interest distribution share to sUSD3 | Set `TRANCHE_SHARE_VARIANT` in ProtocolConfig, then call `USD3.syncTrancheShare()`; USD3 management can also call the inherited `setPerformanceFee` for values up to 50% | ProtocolConfig owner sets the configured value; USD3 keeper or management applies it via `syncTrancheShare`; USD3 management controls `setPerformanceFee` |
+| USD3 maximum deployment ratio | `ProtocolConfig.setConfig(MAX_ON_CREDIT, value)`; there is no local `setMaxOnCredit` | ProtocolConfig owner; the ProtocolConfig emergency admin can only set it to zero via `setEmergencyConfig` |
+| USD3 supply-cap exemptions | `USD3.setSupplyCapExempt(account, exempt)` | USD3 strategy management |
+| sUSD3 withdrawal window | `ProtocolConfig.setConfig(SUSD3_WITHDRAWAL_WINDOW, value)`; a zero value reads as the 2-day fallback | ProtocolConfig owner |
 
-- **sUSD3 Parameters**:
-  - Subordination ratio (default 15%)
-  - Lock duration (0 disables new locks)
-  - Cooldown period (default 7 days)
-  - Interest distribution share
-
-Locally managed parameters:
-
-- **USD3 Parameters**:
-  - Max deployment ratio (setMaxOnCredit)
-  - Supply cap exemptions
-- **sUSD3 Parameters**:
-  - Withdrawal window duration (setWithdrawalWindow)
+For an incident deployment stop, the ProtocolConfig owner (or its emergency admin through `setEmergencyConfig`)
+sets `MAX_ON_CREDIT` to zero. The new value immediately prevents USD3 from deploying additional senior capital to
+MorphoCredit. A USD3 keeper or strategy management should then call `tend()` (or `report()`, which tends after the
+report) to withdraw available deployed waUSDC toward the zero target; MorphoCredit liquidity can limit the pullback.
 
 ## Security Considerations
 

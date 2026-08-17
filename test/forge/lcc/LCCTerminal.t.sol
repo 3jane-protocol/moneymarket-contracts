@@ -262,7 +262,7 @@ contract LCCTerminalTest is LCCBase {
 
     function testMaturedExitersCanUseRemainingClaimAtAndAfterMaxEpochs() public {
         ILCCVault.VaultParams memory params = _params(400e18, 400e18);
-        params.maxEpochs = 1;
+        params.maxEpochs = 3;
         params.exitCapBps = 5_000;
         _deployVaultWithParams(params);
 
@@ -275,25 +275,41 @@ contract LCCTerminalTest is LCCBase {
         vm.prank(bob);
         assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
 
-        vm.warp(START + EPOCH);
+        vm.warp(START + 3 * EPOCH);
         vm.prank(alice);
         assertEq(vault.claimRemainingMargin(alice), 100e18);
 
-        vm.warp(START + 2 * EPOCH);
+        vm.warp(START + 4 * EPOCH);
         vm.prank(bob);
         assertEq(vault.claimRemainingMargin(bob), 100e18);
 
         assertEq(vault.totals().activeMargin, 0);
     }
 
+    function testCallFreePostNormalExitCanClaimAtTerminal() public {
+        _deployVaultWithParams(_termParams(3));
+        _deposit(alice, 100e18);
+
+        vm.warp(START + NORMAL + PRE_CALL);
+        assertFalse(vault.getEpochState(0).callOpened);
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+
+        vm.warp(START + 3 * EPOCH);
+        uint256 beforeBalance = margin.balanceOf(alice);
+        vm.prank(alice);
+        assertEq(vault.claimRemainingMargin(alice), 100e18);
+        assertEq(margin.balanceOf(alice), beforeBalance + 100e18);
+    }
+
     function testClaimExitedMarginStillWorksAfterTerminal() public {
-        _deployVaultWithParams(_termParams(1));
+        _deployVaultWithParams(_termParams(2));
         _deposit(alice, 100e18);
 
         vm.prank(alice);
         vault.requestExit(type(uint256).max, type(uint256).max);
 
-        vm.warp(START + EPOCH);
+        vm.warp(START + 2 * EPOCH);
         vm.prank(alice);
         assertEq(vault.claimExitedMargin(alice), 100e18);
     }

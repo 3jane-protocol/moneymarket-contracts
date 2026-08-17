@@ -665,6 +665,33 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         assertEq(strategy.ringFencedLiquidity(), 0);
     }
 
+    function testPausedWrapperAllowsExemptLCCFundingAndRejectsNonExemptDeposit() public {
+        testProtocolConfig.setConfig(ProtocolConfigLib.USD3_SUPPLY_CAP, type(uint256).max);
+        _deposit(vault, alice, 100e6);
+        _openCall(vault, 100e6);
+
+        uint256 idleBefore = underlyingAsset.balanceOf(address(strategy));
+        uint256 localWaUSDCBefore = usd3.balanceOfWaUSDC();
+        uint256 suppliedWaUSDCBefore = usd3.suppliedWaUSDC();
+
+        waUSDC.setPaused(true);
+        assertTrue(strategy.supplyCapExempt(address(vault)));
+
+        assertEq(_fund(vault, alice, false), 100e6);
+
+        assertTrue(vault.fundedEpoch(0, alice));
+        assertEq(IERC20(address(notificationVault)).balanceOf(alice), 100e6);
+        assertEq(underlyingAsset.balanceOf(address(strategy)) - idleBefore, 100e6);
+        assertEq(usd3.balanceOfWaUSDC(), localWaUSDCBefore);
+        assertEq(usd3.suppliedWaUSDC(), suppliedWaUSDCBefore);
+
+        vm.prank(bob);
+        underlyingAsset.approve(address(strategy), 100e6);
+        vm.expectRevert(bytes("ERC4626: deposit more than max"));
+        vm.prank(bob);
+        strategy.deposit(100e6, bob);
+    }
+
     function testDeliveryFailureUsd3CapZeroRollsBackThenRetrySucceeds() public {
         _deposit(vault, alice, 100e6);
         _openCall(vault, 100e6);

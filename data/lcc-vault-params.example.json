@@ -1,4 +1,10 @@
 {
+  "acknowledgeFullAuctionAward": false,
+  "acknowledgeFullAuctionAwardNote": "Set true only after the facility loss-budget review approves a 10000 bps award cap",
+  "acknowledgeHoldToMaturity": false,
+  "acknowledgeHoldToMaturityNote": "Set true only when the facility is deliberately configured with no in-tenor exit request",
+  "acknowledgePerpetualTenor": false,
+  "acknowledgePerpetualTenorNote": "Set true only after the leverage-dispersion review approves maxEpochs = 0",
   "auctionStepCount": 24,
   "auctionStepDecayRateBps": 500,
   "epochLength": 604800,

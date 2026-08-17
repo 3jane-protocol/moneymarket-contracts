@@ -63,7 +63,8 @@ interface ILCCVault {
     /// @param userCommitmentCap Per-account cap on active+pending commitment (fundingAsset).
     /// @param exitCapBps Per-epoch exit capacity as a fraction of the exit-capacity denominator, in bps; must satisfy
     /// `exitCapBps * 64 >= 2 * BPS` (>= 313) and `<= BPS`.
-    /// @param exitDelayEpochs Minimum epochs between an exit request and its earliest maturity; at most 64.
+    /// @param exitDelayEpochs Minimum epochs between a Normal-phase exit request and its earliest maturity; requests
+    /// after Normal add one epoch to preserve prospective call exposure while another call can still open. At most 64.
     /// @param minCommitmentEpochs Minimum epochs an account must be committed (counted from commitmentStartEpoch,
     /// the later of its latest deposit activation and one epoch after the call that produced its latest nonzero
     /// return-pool re-credit) before it can request an exit; at most 64, 0 disables the gate. Composed lockup: the
@@ -339,19 +340,40 @@ interface ILCCVault {
     /// active commitment declines through amortization or slashing. Aggregate active commitment may conservatively
     /// include unattributed return commitment, which only widens capacity. The account stays callable until maturity.
     /// At execution, the earliest available maturity is re-evaluated from the executing `currentEpoch` plus
-    /// `exitDelayEpochs`, and `maxDeferralEpochs` bounds displacement from that maturity: 0 accepts only that maturity
-    /// and `type(uint256).max` accepts any maturity. It therefore bounds displacement within the executing epoch
-    /// rather than pinning an absolute maturity on its own. The two bounds compose: because execution cannot occur
-    /// after `deadline`, the assigned maturity never exceeds the epoch containing `deadline` plus `exitDelayEpochs`
-    /// plus `maxDeferralEpochs`. Shortening `deadline` therefore tightens the absolute guarantee as well as limiting
-    /// mempool staleness. The deferral bound is unrelated to the `maxEpochs` scheduled-sunset configuration.
+    /// `exitDelayEpochs` during Normal, when that epoch's call outcome is still unknown. A request during PreCall,
+    /// Funding, or Closed adds one epoch. While another call can still open — outside shutdown and before the last
+    /// callable epoch's call window has passed — this makes the request span an epoch whose call outcome was unknown
+    /// when it was made; at the shutdown or sunset edge, `claimRemainingMargin` supplies the withdrawal path without
+    /// manufacturing call exposure. The phase boundary is deliberately conservative during PreCall before a call
+    /// opens: the holder is already bound to that epoch's unknown outcome, but still receives the bounded one-epoch
+    /// shift needed to cover call-free Funding uniformly. `maxDeferralEpochs` bounds displacement from that
+    /// phase-aware earliest maturity: 0 accepts only that maturity and `type(uint256).max` accepts any maturity. It
+    /// therefore bounds displacement within the executing epoch rather than pinning an absolute maturity on its own.
+    /// The two bounds compose: because execution cannot occur after `deadline`, the assigned maturity never exceeds
+    /// the epoch containing `deadline` plus `exitDelayEpochs`, the possible one-epoch phase adjustment, and
+    /// `maxDeferralEpochs`. Shortening `deadline` therefore tightens the absolute guarantee as well as limiting
+    /// mempool staleness. A bounded vault rejects an assigned maturity at or after `maxEpochs`; therefore its last
+    /// request boundary is the end of Normal in epoch `maxEpochs - 1 - exitDelayEpochs`. Configurations where
+    /// `minCommitmentEpochs + exitDelayEpochs >= maxEpochs` deliberately provide only terminal wind-down, not an
+    /// in-tenor exit request.
     ///
     /// An account whose commitment exceeds the entire per-epoch capacity uses the oversized-account escape clause
     /// only inside the `assigned < capacity` guard. It takes the first bucket with any remaining room and therefore
     /// cannot be guaranteed the earliest bucket. Consequently `maxDeferralEpochs == 0` is systematically most likely
     /// to revert for the largest positions, contrary to the natural intuition that they receive priority. Reverts if
     /// the wall-clock deadline has expired, an exit is already pending, the account holds pending margin, or it has
-    /// no active position; cap-raise sequences can still reach the 128-live-bucket limit and revert
+    /// no active position. Cap-raise sequences can still fill the 128-live-bucket list. If first-fit would then need
+    /// a new key, the request stays within the caller's deferral window and reuses the least-loaded eligible tracked
+    /// maturity (earliest on ties), but only when eligible scheduled commitment plus the account fits
+    /// `eligibleCount * capacity`. This is the only operative aggregate bound and constrains only narrow deferral
+    /// windows: admission is unconditional at `ceil(BPS / exitCapBps)` eligible keys (32 at the minimum cap ratio),
+    /// apart from base-unit flooring. The full-list fallback deliberately softens an individual bucket's capacity
+    /// without splitting the account. For eligible load `S`, eligible bucket count `N`, capacity `C`, and the
+    /// admitted account's actual commitment `A`, the aggregate gate is `S + A <= N * C`. Least-loaded selection
+    /// bounds the selected bucket's post-assignment load by `S / N + A <= C + A * (1 - 1 / N)`, so its overshoot is
+    /// strictly less than `A`; replay can make `A` exceed the live `userCommitmentCap`. The rejected
+    /// earliest-eligible alternative would retain only the aggregate bound and could concentrate an overshoot
+    /// approaching `(N - 1) * C` in one bucket. The fallback never tracks a 129th key and otherwise reverts
     /// `ExitCapacityReached`.
     /// @param maxDeferralEpochs Maximum accepted epochs past the earliest available maturity.
     /// @param deadline Wall-clock timestamp after which the exit request reverts.

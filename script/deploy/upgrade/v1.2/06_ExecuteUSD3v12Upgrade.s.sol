@@ -22,12 +22,14 @@ contract ExecuteUSD3v12Upgrade is Script, SafeHelper, USD3v12UpgradeBase {
     function run(bool send) external isBatch(SAFE_ADDRESS) isTimelock(_sevenDayTimelock()) {
         address sevenDayTimelock = timelock;
         address newImpl = _usd3Impl();
+        _requireCommitmentTimeDisabled();
 
         console2.log("=== Execute USD3 v1.2 Upgrade via 7-Day Timelock ===");
         console2.log("Safe address:", SAFE_ADDRESS);
         console2.log("7-day timelock:", sevenDayTimelock);
         console2.log("USD3 proxy:", USD3_PROXY);
         console2.log("New USD3 impl:", newImpl);
+        console2.log("PASS: USD3_COMMITMENT_TIME is zero");
         console2.log("Send to Safe:", send);
         console2.log("");
 

@@ -213,7 +213,12 @@ contract LCCRollTest is LCCBase {
         assertEq(vault.exitBucketMarginByMaturity(maturity), 100e18);
         assertEq(vault.exitBucketCommitmentByMaturity(maturity), 200e18);
 
-        vm.warp(START + EPOCH);
+        uint256 snapshot = vm.snapshotState();
+        _openCallAtEpoch(1, 50e18);
+        assertEq(vault.obligationOf(1, alice), 50e18);
+        assertTrue(vm.revertToStateAndDelete(snapshot), "liability branch restore failed");
+
+        vm.warp(START + maturity * EPOCH);
         vm.prank(alice);
         assertEq(vault.claimExitedMargin(alice), 100e18);
     }

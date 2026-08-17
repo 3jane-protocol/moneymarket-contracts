@@ -78,6 +78,15 @@ contract NotificationVaultTest is Setup {
         new NotificationVault(address(0));
     }
 
+    function test_initializeRejectsZeroCooldown() public {
+        NotificationVault implementation = new NotificationVault(address(usd3));
+        ProxyAdmin proxyAdmin = new ProxyAdmin(management);
+        bytes memory zeroCooldown = abi.encodeCall(NotificationVault.initialize, (management, keeper, 0, WINDOW));
+
+        vm.expectRevert(INotificationVault.InvalidCooldownConfig.selector);
+        new TransparentUpgradeableProxy(address(implementation), address(proxyAdmin), zeroCooldown);
+    }
+
     function test_initializeRejectsInvalidConfig() public {
         NotificationVault implementation = new NotificationVault(address(usd3));
         ProxyAdmin proxyAdmin = new ProxyAdmin(management);
@@ -303,7 +312,10 @@ contract NotificationVaultTest is Setup {
     }
 
     function test_zeroCooldownAllowsImmediateExitAndTransferWithLingeringCooldown() public {
-        NotificationVault zeroCooldownVault = _deployVault(0, WINDOW);
+        NotificationVault zeroCooldownVault = _deployVault(COOLDOWN, WINDOW);
+        vm.store(address(zeroCooldownVault), bytes32(uint256(50)), bytes32(uint256(WINDOW) << 64));
+        assertEq(zeroCooldownVault.cooldownDuration(), 0, "defensive zero-cooldown state setup failed");
+        assertEq(zeroCooldownVault.withdrawalWindow(), WINDOW, "withdrawal window changed");
         uint256 amount = 100e6;
 
         vm.startPrank(alice);
@@ -357,6 +369,60 @@ contract NotificationVaultTest is Setup {
 
         assertEq(ERC20(address(vault)).balanceOf(market), 0);
         assertEq(ERC20(address(vault)).balanceOf(bob), shares / 4);
+    }
+
+    function test_startCooldownRevertsWhileBypassed() public {
+        uint256 shares = _depositToVault(market, 100e6);
+
+        vm.prank(management);
+        vault.setCooldownBypass(market, true);
+
+        vm.prank(market);
+        vm.expectRevert(INotificationVault.CooldownBypassed.selector);
+        vault.startCooldown(shares);
+    }
+
+    function test_setCooldownBypassGrantClearsExistingCooldown() public {
+        uint256 shares = _depositToVault(alice, 100e6);
+
+        vm.prank(alice);
+        vault.startCooldown(shares);
+
+        vm.prank(management);
+        vault.setCooldownBypass(alice, true);
+
+        (uint256 cooldownEnd, uint256 windowEnd, uint256 cooldownShares) = vault.getCooldownStatus(alice);
+        assertEq(cooldownEnd, 0, "bypass grant retained the cooldown end");
+        assertEq(windowEnd, 0, "bypass grant retained the cooldown window");
+        assertEq(cooldownShares, 0, "bypass grant retained the cooldown ticket");
+    }
+
+    function test_revokedBypassCannotReuseStaleCooldownOnFreshShares() public {
+        vm.prank(management);
+        vault.setCooldownBypass(market, true);
+
+        uint256 shares = _depositToVault(market, 100e6);
+
+        vm.prank(market);
+        (bool cooldownStarted,) = address(vault).call(abi.encodeCall(vault.startCooldown, (shares)));
+
+        vm.prank(market);
+        ERC20(address(vault)).transfer(bob, shares);
+        assertEq(ERC20(address(vault)).balanceOf(market), 0);
+
+        vm.prank(management);
+        vault.setCooldownBypass(market, false);
+
+        skip(COOLDOWN + 1);
+        uint256 freshShares = _depositToVault(market, 100e6);
+
+        assertEq(vault.availableWithdrawLimit(market), 0, "stale cooldown quota re-armed against fresh shares");
+
+        vm.prank(market);
+        vm.expectRevert();
+        vault.redeem(freshShares, market, market);
+
+        assertFalse(cooldownStarted, "startCooldown succeeded while bypassed");
     }
 
     function test_setCooldownBypassOnlyManagement() public {

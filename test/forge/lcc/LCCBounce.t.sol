@@ -40,11 +40,13 @@ contract LCCBounceTest is LCCBase {
         vault.bounceCommitment(alice, 1);
     }
 
-    function testIncompleteReplayStillPrecedesExitInProgressGuard() public {
+    function testReplayInertMaturedExitReachesExitInProgressGuard() public {
         _createLaggingMaturedExitHistory(65);
         vm.warp(START + 65 * EPOCH);
 
-        vm.expectRevert(LCCErrorsLib.AccountMaterializationIncomplete.selector);
+        // A matured exit is replay-inert even with a stale cursor, so the round-5 fast path reaches the semantic
+        // exit guard without requiring repeated materialization calls.
+        vm.expectRevert(LCCErrorsLib.ExitInProgress.selector);
         vm.prank(bouncer);
         vault.bounceCommitment(alice, 1);
 

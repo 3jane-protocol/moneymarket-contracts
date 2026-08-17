@@ -53,6 +53,8 @@ library LCCConfigLib {
         // kick's casts from ever reverting inside sync.
         if (params.protocolCommitmentCap > type(uint128).max) revert LCCErrorsLib.InvalidParams();
         // Floor exitCapBps so full-cap exit demand plus the max temporal spread fits within the maturity-bucket cap.
+        // Together with LCCExitLib's 2 * MAX_EXIT_DELAY_EPOCHS maturity-key cap, this intentionally leaves reachable
+        // tracked scheduling room for full-list aggregate admission without raising the call-snapshot iteration cap.
         if (params.exitCapBps < MIN_EXIT_CAP_BPS || params.exitCapBps > BPS) {
             revert LCCErrorsLib.InvalidParams();
         }

@@ -23,6 +23,7 @@ contract ScheduleUSD3v12Upgrade is Script, SafeHelper, USD3v12UpgradeBase {
     function run(bool send) external isBatch(SAFE_ADDRESS) isTimelock(_sevenDayTimelock()) {
         address sevenDayTimelock = timelock;
         address newImpl = _usd3Impl();
+        _requireCommitmentTimeDisabled();
 
         address actualAdmin = address(uint160(uint256(vm.load(USD3_PROXY, ADMIN_SLOT))));
         require(actualAdmin == PROXY_ADMIN, "ProxyAdmin mismatch");
@@ -40,6 +41,7 @@ contract ScheduleUSD3v12Upgrade is Script, SafeHelper, USD3v12UpgradeBase {
         console2.log("USD3 proxy:", USD3_PROXY);
         console2.log("ProxyAdmin:", PROXY_ADMIN);
         console2.log("New USD3 impl:", newImpl);
+        console2.log("PASS: USD3_COMMITMENT_TIME is zero");
         console2.log("Send to Safe:", send);
         console2.log("");
 

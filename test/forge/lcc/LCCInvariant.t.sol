@@ -302,7 +302,8 @@ contract LCCInvariantHandler is Test {
         ) return;
 
         uint256 expectedMaturity = _expectedExitMaturity(account.activeCommitment);
-        uint256 earliestMaturity = invariantVault.currentEpoch() + invariantVault.epochConfig().exitDelayEpochs;
+        uint256 earliestMaturity = invariantVault.currentEpoch() + invariantVault.epochConfig().exitDelayEpochs
+            + (invariantVault.currentPhase() == ILCCVault.Phase.Normal ? 0 : 1);
         if (expectedMaturity - earliestMaturity > maxDeferralEpochs) {
             vm.prank(actor);
             try invariantVault.requestExit(maxDeferralEpochs, type(uint256).max) {
@@ -318,6 +319,8 @@ contract LCCInvariantHandler is Test {
         vm.prank(actor);
         try invariantVault.requestExit(maxDeferralEpochs, type(uint256).max) returns (uint256 maturity) {
             assertEq(maturity, expectedMaturity);
+            uint256 maxEpochs = invariantVault.epochConfig().maxEpochs;
+            if (maxEpochs != 0) assertLt(maturity, maxEpochs);
             ILCCVault.RiskConfig memory riskConfig = invariantVault.riskConfig();
             uint256 activeCommitment = invariantVault.totals().activeCommitment;
             uint256 capacity = Math.max(
@@ -327,7 +330,12 @@ contract LCCInvariantHandler is Test {
                 assertLe(invariantVault.exitBucketCommitmentByMaturity(maturity), capacity);
             }
         } catch (bytes memory reason) {
-            if (!_expectedRequestExitError(reason)) fail();
+            if (_revertSelector(reason) == LCCErrorsLib.VaultTerminal.selector) {
+                uint256 maxEpochs = invariantVault.epochConfig().maxEpochs;
+                assertTrue(maxEpochs != 0 && expectedMaturity >= maxEpochs);
+            } else if (!_expectedRequestExitError(reason)) {
+                fail();
+            }
         }
     }
 
@@ -964,7 +972,8 @@ contract LCCInvariantHandler is Test {
                 BPS
             )
         );
-        maturity = invariantVault.currentEpoch() + invariantVault.epochConfig().exitDelayEpochs;
+        maturity = invariantVault.currentEpoch() + invariantVault.epochConfig().exitDelayEpochs
+            + (invariantVault.currentPhase() == ILCCVault.Phase.Normal ? 0 : 1);
 
         while (true) {
             uint256 assigned = invariantVault.exitBucketCommitmentByMaturity(maturity);
@@ -992,9 +1001,9 @@ contract LCCInvariantHandler is Test {
     // _replayForUpdate: deposit, requestExit, and the claims. deposit adds the live-oracle read and the
     // activation/call-window lifecycle errors, CapExceeded, and InvalidAmount; requestExit adds InvalidAmount (a
     // synced default can zero its commitment after the stale guard). The handler predicts the first-fit maturity
-    // before every bounded exit:
-    // an insufficient fuzzed deferral must revert with ExitDeferralExceeded, while that selector is never accepted
-    // by this whitelist. The deadline is fixed at type(uint256).max, so DeadlineExpired is likewise never accepted.
+    // before every bounded exit: VaultTerminal is asserted against that maturity rather than accepted here, and an
+    // insufficient fuzzed deferral must revert with ExitDeferralExceeded. Both selectors are deliberately kept out
+    // of this whitelist. The deadline is fixed at type(uint256).max, so DeadlineExpired is likewise never accepted.
     // With eight actors holding at most one live exit each, the 128-bucket limit is unreachable and
     // ExitCapacityReached must not be accepted. Claims add NOTHING
     // beyond the base -- their preconditions make NoExitRequested/ExitNotMature/NothingToClaim unreachable, so
@@ -1042,6 +1051,83 @@ contract LCCInvariantHandler is Test {
         catch (bytes memory reason) {
             if (!_expectedMaterializeError(reason)) fail();
         }
+    }
+}
+
+/// @dev Generates a fresh exact-capacity exiter per action. Recomputing the protocol cap reproduces the cap-raise
+/// fragmentation sequence that can fill all 128 live maturity keys; subsequent actions must reuse tracked keys.
+contract LCCExitFragmentationHandler is Test {
+    uint256 internal constant BPS_ = 10_000;
+    uint256 internal constant EXIT_CAP_BPS = 313;
+    uint256 internal constant INITIAL_PROTOCOL_CAP = 32e18;
+
+    LCCVault internal immutable fragmentationVault;
+    LCCVaultFactory internal immutable fragmentationFactory;
+    LCCMockToken internal immutable fragmentationMargin;
+    address internal immutable fragmentationOwner;
+    uint256 internal actorNonce;
+
+    constructor(LCCVault vault_, LCCVaultFactory factory_, LCCMockToken margin_, address owner_) {
+        fragmentationVault = vault_;
+        fragmentationFactory = factory_;
+        fragmentationMargin = margin_;
+        fragmentationOwner = owner_;
+    }
+
+    function fragment() external {
+        uint256 activeCommitment = fragmentationVault.totals().activeCommitment;
+        uint256 protocolCap = Math.max(INITIAL_PROTOCOL_CAP, Math.ceilDiv(activeCommitment * BPS_, BPS_ - EXIT_CAP_BPS));
+        uint256 capacity = Math.mulDiv(protocolCap, EXIT_CAP_BPS, BPS_);
+        assertGe(protocolCap, activeCommitment + capacity);
+
+        vm.prank(fragmentationOwner);
+        fragmentationVault.setRiskCaps(protocolCap, type(uint128).max, EXIT_CAP_BPS, 0);
+
+        address actor = address(uint160(uint256(keccak256(abi.encode(address(this), ++actorNonce)))));
+        address[] memory depositor = new address[](1);
+        depositor[0] = actor;
+        vm.prank(fragmentationOwner);
+        fragmentationFactory.setDepositorsWhitelisted(depositor, true);
+        fragmentationMargin.mint(actor, capacity);
+        vm.startPrank(actor);
+        fragmentationMargin.approve(address(fragmentationVault), type(uint256).max);
+        fragmentationVault.deposit(capacity, actor, 1, type(uint256).max, true, type(uint256).max);
+        fragmentationVault.requestExit(type(uint256).max, type(uint256).max);
+        vm.stopPrank();
+    }
+}
+
+contract LCCExitListStatefulInvariantTest is LCCBase {
+    uint256 internal constant MAX_EXIT_MATURITY_BUCKETS = 128;
+    uint256 internal constant MAX_EXIT_DELAY_EPOCHS = 64;
+    uint256 internal constant EXIT_MATURITY_LIST_SLOT = 21;
+
+    LCCExitFragmentationHandler internal fragmentationHandler;
+
+    function setUp() public override {
+        super.setUp();
+        _assertLayoutSlot("exitMaturityList", EXIT_MATURITY_LIST_SLOT);
+
+        ILCCVault.VaultParams memory params = _params(address(oracle), 32e18, type(uint128).max, 313);
+        params.marginRatioBps = BPS;
+        params.exitDelayEpochs = MAX_EXIT_DELAY_EPOCHS;
+        _deployVaultWithParams(params);
+
+        fragmentationHandler = new LCCExitFragmentationHandler(vault, factory, margin, owner);
+        targetContract(address(fragmentationHandler));
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = LCCExitFragmentationHandler.fragment.selector;
+        targetSelector(FuzzSelector({addr: address(fragmentationHandler), selectors: selectors}));
+    }
+
+    function invariant_ExitMaturityListLengthNeverExceeds128() public view {
+        assertLe(uint256(vm.load(address(vault), bytes32(EXIT_MATURITY_LIST_SLOT))), MAX_EXIT_MATURITY_BUCKETS);
+    }
+
+    function afterInvariant() public view {
+        uint256 length = uint256(vm.load(address(vault), bytes32(EXIT_MATURITY_LIST_SLOT)));
+        assertGt(length, 0, "fragmentation handler was not exercised");
+        assertLe(length, MAX_EXIT_MATURITY_BUCKETS);
     }
 }
 

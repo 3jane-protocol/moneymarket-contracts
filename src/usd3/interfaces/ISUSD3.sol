@@ -15,32 +15,28 @@ interface ISUSD3 is IStrategy {
     event CooldownStarted(address indexed user, uint256 shares, uint256 timestamp);
     event CooldownCancelled(address indexed user);
     event WithdrawalCompleted(address indexed user, uint256 shares, uint256 assets);
-    event USD3StrategyUpdated(address newStrategy);
-    event WithdrawalWindowUpdated(uint256 newWindow);
 
     // Core functions
     function startCooldown(uint256 shares) external;
     function cancelCooldown() external;
-    function withdraw() external returns (uint256 assets);
 
     // View functions
     function getCooldownStatus(address user)
         external
         view
         returns (uint256 cooldownEnd, uint256 windowEnd, uint256 shares);
-    function cooldowns(address user) external view returns (UserCooldown memory);
+    function cooldowns(address user) external view returns (uint64 cooldownEnd, uint64 windowEnd, uint128 shares);
     function lockedUntil(address user) external view returns (uint256);
 
     // Parameters
+    /// @dev Reads the sUSD3 lock duration from ProtocolConfig.
     function lockDuration() external view returns (uint256);
+    /// @dev Reads the sUSD3 cooldown duration from ProtocolConfig.
     function cooldownDuration() external view returns (uint256);
+    /// @dev Reads the sUSD3 withdrawal window from ProtocolConfig.
     function withdrawalWindow() external view returns (uint256);
-    function usd3Strategy() external view returns (address);
     function morphoCredit() external view returns (address);
+    /// @dev Reads the maximum subordination ratio from ProtocolConfig.
     function maxSubordinationRatio() external view returns (uint256);
     function symbol() external pure returns (string memory);
-
-    // Management functions
-    function setUsd3Strategy(address _usd3Strategy) external;
-    function setWithdrawalWindow(uint256 _withdrawalWindow) external;
 }
