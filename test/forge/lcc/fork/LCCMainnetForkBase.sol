@@ -63,7 +63,7 @@ abstract contract LCCMainnetForkBase is Test, LCCMarginOracleConfigs {
         if (keccak256(bytes(vm.envOr("FOUNDRY_PROFILE", string("")))) != keccak256("fork")) return;
         string memory rpcUrl = vm.envOr("MAINNET_RPC_URL", string(""));
         if (bytes(rpcUrl).length == 0) rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
-        if (bytes(rpcUrl).length == 0) return;
+        require(bytes(rpcUrl).length != 0, "fork profile is active but neither MAINNET_RPC_URL nor ETH_RPC_URL is set");
         vm.createSelectFork(rpcUrl, FORK_BLOCK);
         forkEnabled = true;
     }

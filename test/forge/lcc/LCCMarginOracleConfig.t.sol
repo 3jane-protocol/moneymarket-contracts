@@ -3,6 +3,41 @@ pragma solidity 0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 import {LCCMarginOracleConfigs} from "../../../script/deploy/lcc/DeployLCCMarginOracles.s.sol";
+import {DeployLCCMarginDepositHelper} from "../../../script/deploy/lcc/DeployLCCMarginDepositHelper.s.sol";
+import {
+    AuthorizeLCCMarginDepositHelperSafe
+} from "../../../script/operations/AuthorizeLCCMarginDepositHelperSafe.s.sol";
+import {LCCMainnetForkBase} from "./fork/LCCMainnetForkBase.sol";
+
+contract DeployHelperScriptConstants is DeployLCCMarginDepositHelper {
+    function waEthUSDCConstant() external pure returns (address) {
+        return WA_ETH_USDC;
+    }
+
+    function waEthUSDTConstant() external pure returns (address) {
+        return WA_ETH_USDT;
+    }
+}
+
+contract AuthorizeHelperScriptConstants is AuthorizeLCCMarginDepositHelperSafe {
+    function waEthUSDCConstant() external pure returns (address) {
+        return WA_ETH_USDC;
+    }
+
+    function waEthUSDTConstant() external pure returns (address) {
+        return WA_ETH_USDT;
+    }
+}
+
+contract ForkBaseConstants is LCCMainnetForkBase {
+    function waEthUSDCConstant() external pure returns (address) {
+        return WA_ETH_USDC;
+    }
+
+    function waEthUSDTConstant() external pure returns (address) {
+        return WA_ETH_USDT;
+    }
+}
 
 contract LCCMarginOracleConfigTest is Test, LCCMarginOracleConfigs {
     struct ReferenceConfig {
@@ -60,6 +95,20 @@ contract LCCMarginOracleConfigTest is Test, LCCMarginOracleConfigs {
         assertEq(configs[1].predicted, 0x6e93B9C9a09aD1Fc1Dd5316b525BFFE1ec3a8b91);
         assertEq(configs[2].predicted, 0x0B3Bf61B5BCfcc939870Bfc91E915470eA0a6be3);
         assertEq(configs[3].predicted, 0x1B36b2c17b4092f8CBBef06fEEb2031f6Ed3F7F8);
+    }
+
+    function testHelperWrapTargetsMatchOracleBaseVaults() public {
+        OracleConfig[4] memory configs = oracleConfigs();
+        DeployHelperScriptConstants deployScript = new DeployHelperScriptConstants();
+        AuthorizeHelperScriptConstants authorizeScript = new AuthorizeHelperScriptConstants();
+        ForkBaseConstants forkBase = new ForkBaseConstants();
+
+        assertEq(deployScript.waEthUSDCConstant(), configs[0].baseVault);
+        assertEq(deployScript.waEthUSDTConstant(), configs[1].baseVault);
+        assertEq(authorizeScript.waEthUSDCConstant(), configs[0].baseVault);
+        assertEq(authorizeScript.waEthUSDTConstant(), configs[1].baseVault);
+        assertEq(forkBase.waEthUSDCConstant(), configs[0].baseVault);
+        assertEq(forkBase.waEthUSDTConstant(), configs[1].baseVault);
     }
 
     function testPinnedArithmeticMatchesFeedlessReferenceModel() public pure {

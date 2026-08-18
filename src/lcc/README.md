@@ -359,8 +359,11 @@ forwarded to the matching vault.
 
 Underlying-token paths respect the StataToken's finite `maxDeposit`; aToken paths use `depositATokens` and remain
 available when the Aave underlying supply cap leaves no deposit headroom. Integrators should approve only the selected
-input token and call the matching explicit entrypoint. The helper uses exact, per-call allowances and rejects balance
-deltas that could make a caller rely on tokens force-transferred to the helper.
+input token and call the matching explicit entrypoint. The helper uses exact, per-call allowances and never reads its
+own token balances: the vault deposit passes the share amount returned by `stata.deposit` / `stata.depositATokens`,
+and both the wrap leg and the vault leg are bracketed by exact `forceApprove(spender, amount)` /
+`forceApprove(spender, 0)` pairs, so the StataToken can pull at most `params.amountIn` and the vault at most the
+shares just minted. Tokens force-transferred to the helper are ignored and unspendable through it.
 
 ## 7. Capital calls and funding
 
