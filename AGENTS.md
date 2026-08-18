@@ -61,6 +61,7 @@ Use these scripts exactly as defined in `package.json`:
 - Core invariants: `yarn test:forge:invariant:core`
 - USD3 invariants: `yarn test:forge:invariant:usd3`
 - Fork tests: `yarn test:forge:fork`
+- LCC fork tests: `yarn test:forge:fork:lcc`
 - Fork upgrade regression tests (historical migration safety): `yarn test:forge:fork:upgrade`
 - Hardhat tests: `yarn test:hardhat`
 - Halmos checks: `yarn test:halmos`
@@ -75,6 +76,7 @@ GitHub Actions in `.github/workflows/`:
   - `core-invariant-fast` / `core-invariant-deep`
   - `usd3-invariant-fast` / `usd3-invariant-deep` (currently expected-failure gated)
   - `fork-tests` (schedule/manual or PR label `ci/run-fork-tests`)
+  - `lcc-fork-tests` (schedule/manual or PR label `ci/run-fork-tests`)
 - `formatting.yml`: lint/format checks
 - `hardhat.yml`: hardhat test job
 - `halmos.yml`: symbolic checks
@@ -161,9 +163,30 @@ beneficiary consent. A role holder can make floor-sized deposits that refresh a 
 `commitmentStartEpoch`, consume beneficiary cap headroom, and stage pending exposure that blocks both
 `requestExit` and `bounceCommitment`; credited margin is irrevocable and gives the payer no recovery right. Grant the
 role only to a dedicated adapter that verifies beneficiary authorization (binding at least nonce, deadline, vault,
-payer, asset and commitment bounds, and the pending-activation choice), or to a closed facility operator with a
-documented consent channel. Never grant it to a generic arbitrary-calldata router. Admitting such a router requires
+payer, asset and commitment bounds, and the pending-activation choice), to a closed facility operator with a
+documented consent channel, or to a self-service adapter whose only deposit paths hard-bind the beneficiary to
+`msg.sender` and expose no receiver, `onBehalfOf`, `depositFor`, owner, upgrade, rescue, or generic-call capability.
+That self-only shape structurally supplies consent through the beneficiary's own transaction and sets no precedent
+for delegated flows. Never grant the role to a generic arbitrary-calldata router. Admitting such a router requires
 the consent code fix first, through a factory consent registry or an in-protocol signature check.
+
+**ACCEPTED RISK — LCC feedless par treatment.** The four new margin oracles deliberately set every base and quote
+feed slot to the zero address, so they price only the ERC-4626 share-conversion rate. This is identity treatment for
+waEthUSDC, whose underlying is USDC, but assumes USDT, USDS, and GHO each equal one USDC for waEthUSDT, sUSDS, and
+sGHO. A depeg in any assumed-par asset is invisible to its oracle: deposits mint leverage-amplified commitment from
+the overstated margin value, and `openEpochCall` then freezes that value in the call-open price snapshot. GHO is the
+weakest case. This risk is accepted, not mitigated or resolved. The remedies are reactive: `bounceCommitment`
+(`src/lcc/LCCVault.sol:568-605`) or a commitment-fee reduction. Bounce itself reverts while an auction slot is
+pending (`LCCVault.sol:575`) and while a call is open but not slash-finalized (`LCCVault.sol:577`), so per-facility
+commitment caps must be sized against a full-depeg scenario rather than par. Any margin-oracle change is an M-02
+revalidation trigger.
+
+The structural reason this treatment is tolerable is limited: the LCC oracle sizes commitment relative to margin;
+it is not a settlement rate at which one asset can be withdrawn for another. The only site that touches an actual
+asset exchange is the auction fill cap, where `oracleCapMargin` is one ceiling among several in `fillAward`
+(`src/lcc/libraries/LCCAuctionLib.sol:150-154`), while the step-decay `offered` curve sets the price a filler actually
+pays. A genuine sustained depeg in USDT, USDS, or GHO re-arms the accepted exposure; a future change that makes the
+oracle determine an asset-for-asset settlement rate would separately re-arm the structural concern.
 
 **M-02 — LCC return-pool allocation under leverage dispersion.** The return pool is allocated to defaulters by slashed margin while the shortfall consuming it is commitment-driven, so an over-committed defaulter under-pays and the discrepancy lands on a lower-leverage co-defaulter. Accepted without a code fix, conditional on all of:
 
