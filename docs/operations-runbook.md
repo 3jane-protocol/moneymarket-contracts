@@ -250,10 +250,13 @@ re-pass the current protocol cap unchanged.
 
 **Hard rule.** Never grant `DEPOSIT_OPERATOR_ROLE` to a generic arbitrary-calldata router. The factory authenticates
 the payer contract, not the router's end user and not the beneficiary's consent. A generic router would let any user
-deposit for a whitelisted victim. Grant only to a dedicated adapter that verifies beneficiary authorization, or to a
-closed facility operator with a documented consent channel. A consent-verifying adapter must bind at least a nonce,
-deadline, vault, payer, asset and commitment bounds, and the `allowPendingActivation` choice. If a generic router must
-be admitted, implement the factory consent registry or in-protocol signature check first.
+deposit for a whitelisted victim. Grant only to a dedicated adapter that verifies beneficiary authorization, to a
+closed facility operator with a documented consent channel, or to a self-service adapter whose only deposit paths
+hard-bind the beneficiary to `msg.sender` and expose no receiver, `onBehalfOf`, `depositFor`, owner, upgrade, rescue,
+or generic-call capability. A consent-verifying adapter must bind at least a nonce, deadline, vault, payer, asset and
+commitment bounds, and the `allowPendingActivation` choice. A self-only adapter structurally supplies these choices
+through the beneficiary's own transaction and sets no precedent for any delegated flow. If a generic router must be
+admitted, implement the factory consent registry or in-protocol signature check first.
 
 **Trust consequences.** A role holder can refresh a beneficiary's `commitmentStartEpoch` with floor-sized deposits,
 consume the beneficiary's `userCommitmentCap` and the protocol cap, and stage pending exposure that blocks both
@@ -264,18 +267,23 @@ one-vault policy, and admissions module.
 
 Before granting the role:
 
-1. Verify the candidate is the approved consent-verifying adapter bytecode, or record the closed facility operator's
-   consent channel and accountable owner. Reject any target that forwards caller-selected arbitrary calldata.
+1. Verify the candidate is the approved consent-verifying adapter bytecode or approved self-only adapter bytecode,
+   or record the closed facility operator's consent channel and accountable owner. For a self-only adapter, verify
+   every deposit entrypoint hard-binds the beneficiary to `msg.sender` and that there is no receiver, `onBehalfOf`,
+   `depositFor`, owner, upgrade, rescue, or generic-call surface. Reject any target that forwards caller-selected
+   arbitrary calldata.
 2. Verify `factory.getRoleAdmin(factory.DEPOSIT_OPERATOR_ROLE()) == factory.OWNER_ROLE()` and that the Safe is the
    sole owner. Submit `grantRole` from the factory owner.
 3. Verify `factory.isDepositOperator(candidate)` is true. The view is for operations and integrations; enforcement
    occurs inside `authorizeDeposit`.
 
-Before every adapter-routed deposit, pre-check the beneficiary is nonzero and whitelisted, has no exit in progress,
+Before every delegated adapter-routed deposit, pre-check the beneficiary is nonzero and whitelisted, has no exit in progress,
 has no incompatible pending activation, and is eligible under the warm one-vault pointer and admissions module.
 Check beneficiary and protocol cap headroom, current oracle availability, commitment bounds, and deadline. Default
 `allowPendingActivation` to `false`; permit `true` only when the beneficiary's signed authorization explicitly chose
 pending activation. These pre-checks reduce failed transactions but do not replace the adapter's consent proof.
+This per-deposit operator pre-check list is not applicable to an approved self-service adapter: its beneficiary calls
+directly and supplies the vault, asset path, commitment bounds, pending-activation choice, and deadline in-band.
 
 ## LCC depositor bounce
 

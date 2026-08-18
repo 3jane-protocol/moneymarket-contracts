@@ -3,6 +3,7 @@ pragma solidity ^0.8.22;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {ITimelockController} from "../../src/interfaces/ITimelockController.sol";
+import {IOracle} from "../../src/interfaces/IOracle.sol";
 import {LCCVaultFactory} from "../../src/lcc/LCCVaultFactory.sol";
 import {ILCCVault} from "../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCDeploymentAcknowledgements} from "../utils/LCCDeploymentAcknowledgements.sol";
@@ -255,6 +256,8 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         require(bytes(config.facilityId).length != 0, "Facility ID not set");
         require(config.params.marginAsset != address(0), "Margin asset not set");
         require(config.params.marginOracle != address(0), "Margin oracle not set");
+        require(config.params.marginOracle.code.length > 0, "Margin oracle has no code");
+        require(IOracle(config.params.marginOracle).price() != 0, "Margin oracle price is zero");
         _requireHoldToMaturityAcknowledgement(config.params, config.acknowledgeHoldToMaturity);
         require(
             config.params.maxEpochs != 0 || config.acknowledgePerpetualTenor,

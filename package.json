@@ -30,6 +30,7 @@
     "test:forge:invariant:lcc:deep": "FOUNDRY_PROFILE=test FOUNDRY_INVARIANT_RUNS=256 FOUNDRY_INVARIANT_DEPTH=1024 forge test --match-contract 'LCC.*StatefulInvariantTest' --offline",
     "test:forge:integration": "FOUNDRY_MATCH_CONTRACT=IntegrationTest yarn test:forge",
     "test:forge:fork": "FOUNDRY_PROFILE=fork forge test --match-path 'test/forge/usd3/fork/**/*.t.sol' -vvv",
+    "test:forge:fork:lcc": "FOUNDRY_PROFILE=fork FOUNDRY_TEST=test/forge/lcc/fork FOUNDRY_EVM_VERSION=cancun forge test --match-path 'test/forge/lcc/fork/**/*.t.sol' -vvv",
     "test:forge:fork:upgrade": "FOUNDRY_PROFILE=fork forge test --match-contract USD3UpgradeForkTest -vvv",
     "test:forge:coverage": "FOUNDRY_PROFILE=test forge coverage --ir-minimum",
     "test:forge:snapshot": "FOUNDRY_PROFILE=test forge snapshot",

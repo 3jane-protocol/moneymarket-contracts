@@ -61,6 +61,7 @@ Use these scripts exactly as defined in `package.json`:
 - Core invariants: `yarn test:forge:invariant:core`
 - USD3 invariants: `yarn test:forge:invariant:usd3`
 - Fork tests: `yarn test:forge:fork`
+- LCC fork tests: `yarn test:forge:fork:lcc`
 - Fork upgrade regression tests (historical migration safety): `yarn test:forge:fork:upgrade`
 - Hardhat tests: `yarn test:hardhat`
 - Halmos checks: `yarn test:halmos`
@@ -75,6 +76,7 @@ GitHub Actions in `.github/workflows/`:
   - `core-invariant-fast` / `core-invariant-deep`
   - `usd3-invariant-fast` / `usd3-invariant-deep` (currently expected-failure gated)
   - `fork-tests` (schedule/manual or PR label `ci/run-fork-tests`)
+  - `lcc-fork-tests` (schedule/manual or PR label `ci/run-fork-tests`)
 - `formatting.yml`: lint/format checks
 - `hardhat.yml`: hardhat test job
 - `halmos.yml`: symbolic checks
@@ -88,7 +90,7 @@ Foundry CI jobs seed fuzz/invariant runs from base SHA or commit SHA for determi
 
 - Core contracts: `src/`
 - Core interfaces/libraries: `src/interfaces/`, `src/libraries/`
-- LCC vault module: `src/lcc/` (vault, factory, interface)
+- LCC vault module: `src/lcc/` (vault, factory, margin deposit helper, interfaces)
 - Mocks: `src/mocks/`
 - Forge tests: `test/forge/`
 - Hardhat tests: `test/hardhat/`
@@ -124,6 +126,7 @@ Targeted local command patterns for Jane changes:
 - Slashed margin backs a step-decay shortfall auction during the epoch's `Closed` phase (pricing math in the externally linked `src/lcc/libraries/LCCAuctionLib.sol`); the award curve reserves the configured treasury take, fills use the live oracle to cap `marginAwarded`, and completed settlement charges `slashFeeBps` on the greater of cumulative awards and cumulative fills' pro-rata first-step offer. Every auction-eligible epoch receives completed treatment after its full window, even if nobody touched the vault to open a record: zero fills send the whole gross pool to treasury. A shutdown strictly before `closedEnd` genuinely truncates the opportunity and returns the unawarded pool without a take; zero shortfall and disabled config are likewise non-eligible. The remaining return pool is converted to commitment at the validated nonzero price snapshotted at call open, so the conversion price is frozen but the amount converted is not. A missing snapshot is corruption/future-writer recovery: the live fallback is owner-gated. Price-failure tolerance is separate from the epoch-anchored cap exemption, and neither predicate contains the other: actual shutdown or terminal state sets tolerance, while the protocol-cap exemption uses `shutdownTruncated || lastCallableEpoch`. In particular, the last callable epoch disposed during its own Closed phase before terminal is cap-exempt but still price-intolerant; on a corrupt zero snapshot it re-bricks for a non-owner until terminal begins one epoch later. To preserve rather than sweep a missing-snapshot pool when the live oracle is also dead, the owner must call `setMarginOracle` first and then send any `synced` call; `shutdown()` alone is non-bricking but is not recovery. The unconditional overflow guard is an oracle-corruption sweep, not a dead branch. Call opening only rejects a zero price and stores the price and `marginAtCallOpen`; it never multiplies them or proves that the snapshot can value the margin without overflow. Even a full-`uint128` pool needs a selected price around `3.4e70` at the minimum valid margin ratio — roughly 34 orders of magnitude above an honest `ORACLE_PRICE_SCALE`-scaled price — so the guard is unreachable under the trusted-oracle assumption. On corrupt state, un-gating it trades a permanent brick of every `synced` entrypoint for a confiscating sweep of the whole selected pool, with the same `SlashSurplusDisposed(epoch, all, 0, 0)` shape as a legitimate zero-return disposal. Future changes must keep the guard after price selection, keep the subsequent `price == 0` sweep, and must not treat either as dead code.
 - LCC deployment topology: `LCCAuctionLib`, `LCCConfigLib`, and `LCCExitLib` are externally linked into a shared `LCCVault` implementation, an `UpgradeableBeacon` owned by 3Jane's existing 7-day timelock points at that implementation, and `LCCVaultFactory` deploys per-facility `BeaconProxy` instances with atomic initializer calldata. The implementation constructor fixes protocol-wide `notificationVault`, `usd3`, `fundingAsset`, and `treasury`; per-facility params live in proxy storage.
 - `src/lcc/LCCVaultFactory.sol`: non-upgradeable family authority, admission registry, and `BeaconProxy` deployer. Its deliberately unheld `DEFAULT_ADMIN_ROLE` makes two-step `transferOwnership`/`acceptOwnership` the sole `OWNER_ROLE` mutation path, and owner-role renunciation is blocked. `OWNER_ROLE` administers `LISTER_ROLE`, `BOUNCER_ROLE`, `GUARDIAN_ROLE`, and `DEPOSIT_OPERATOR_ROLE`. A payer distinct from the beneficiary must hold the deposit-operator role; the payer-role gate and beneficiary whitelist run on every deposit, while the one-vault policy and admissions module gate only new opens and reopens because same-vault top-ups with open exposure short-circuit first, exactly as for self-deposits. The payer-role check must remain before that short-circuit. Whitelist and prospective one-open-vault enforcement are independently owner-disableable; disabling the latter preserves warm `vaultOf` recording but makes no exclusivity claim. The optional admissions module is a narrow static decision hook; registry writes remain in the factory. The beacon is public, but non-factory proxies are unsupported and cannot pass the factory deposit gate.
+- `src/lcc/LCCMarginDepositHelper.sol`: stateless, non-upgradeable wrap-and-deposit adapter. Four explicit entrypoints wrap USDC, USDT, aEthUSDC, or aEthUSDT into the waEthUSDC/waEthUSDT StataTokenV2 margin assets (`src/lcc/interfaces/IStataTokenV2.sol`) and deposit the minted shares into a factory-registered vault in one transaction. The beneficiary is hard-bound to `msg.sender`, so the factory `DEPOSIT_OPERATOR_ROLE` it holds pays the vault but cannot credit anyone other than the transaction author; there is no delegated-deposit, arbitrary-call, rescue, ownership, or upgrade surface. `script/deploy/lcc/DeployLCCMarginDepositHelper.s.sol` deploys and verifies it without granting the role, `script/operations/AuthorizeLCCMarginDepositHelperSafe.s.sol` proposes the single role grant after a runtime code-hash match, and `script/deploy/lcc/DeployLCCMarginOracles.s.sol` creates the four feedless share-rate margin oracles whose waEthUSDC/waEthUSDT base vaults must equal the helper's wrap targets.
 - **Factory authority-view rule.** `isOwner`, `isGuardian`, `isBouncer`, and `isDepositOperator` must remain boolean-returning `external view` functions that read only the non-upgradeable factory's local AccessControl role storage. They must never call the admissions module or another external contract and must never loop. The first three STATICCALL-safe reads are the sole vault authority source and are live on emergency and settlement paths; boolean ABI decoding is the fail-closed guard against malformed captured-factory returns. `isDepositOperator` is integrator-facing only: production enforcement stays inside `authorizeDeposit`, and no settlement or emergency path may read the operator view or role.
 - **LCC registry invariants and accepted residuals.** `finalizedCallPrefix` must advance in the same transaction that writes `slashFinalized`; `isAccountClosed` is upgrade-frozen as `bounded replay complete && zero exposure`; and the vault's captured `factory` is written exactly once in `initialize` and must never acquire a setter. `initialize` must not call an `isVault`-gated factory function because factory registration happens only after proxy construction returns. Matured exit exposure remains open until `claimExitedMargin` clears it; an incomplete bounded replay conservatively reports open. Admission checks only the vault currently named by `vaultOf` and never scans the unbounded family list. Two deliberate owner-accepted registry residuals remain: disabling `oneVaultPolicyEnabled` permits multiple positions and re-enabling is prospective only; separately, a user who opened A then B while the policy was off can retain an open position in A while `vaultOf` names B, then close and reopen B after re-enabling because the named-vault check cannot see displaced A. These are bounded to users grandfathered by a policy-off window and are unreachable for a user whose entire history is under an enabled policy. Operators must reconcile multi-vault users offchain before re-enabling rather than add an unbounded loop of external bounded-replay calls to every deposit. The third accepted residual is linked-library authenticity: there is deliberately no onchain `extcodesize` guard because it catches only codeless links while wrong-but-code-bearing links still pass and must be caught by deployment bytecode verification. On an upgrade with existing exit state, a codeless `LCCExitLib` can silently skip the void snapshot/reduction calls, double-decrement maturity buckets after aggregate totals already fell, and brick sync. Verify every linked bytecode before implementation deployment or beacon upgrade.
 - Vaults must be on USD3's `supplyCapExempt` list for funding/fill deposits to bypass supply-cap headroom and first-time minimum deposits. A zero USD3 supply cap takes precedence over the exemption and blocks every deposit as an emergency pause.
@@ -161,9 +164,30 @@ beneficiary consent. A role holder can make floor-sized deposits that refresh a 
 `commitmentStartEpoch`, consume beneficiary cap headroom, and stage pending exposure that blocks both
 `requestExit` and `bounceCommitment`; credited margin is irrevocable and gives the payer no recovery right. Grant the
 role only to a dedicated adapter that verifies beneficiary authorization (binding at least nonce, deadline, vault,
-payer, asset and commitment bounds, and the pending-activation choice), or to a closed facility operator with a
-documented consent channel. Never grant it to a generic arbitrary-calldata router. Admitting such a router requires
+payer, asset and commitment bounds, and the pending-activation choice), to a closed facility operator with a
+documented consent channel, or to a self-service adapter whose only deposit paths hard-bind the beneficiary to
+`msg.sender` and expose no receiver, `onBehalfOf`, `depositFor`, owner, upgrade, rescue, or generic-call capability.
+That self-only shape structurally supplies consent through the beneficiary's own transaction and sets no precedent
+for delegated flows. Never grant the role to a generic arbitrary-calldata router. Admitting such a router requires
 the consent code fix first, through a factory consent registry or an in-protocol signature check.
+
+**ACCEPTED RISK — LCC feedless par treatment.** The four new margin oracles deliberately set every base and quote
+feed slot to the zero address, so they price only the ERC-4626 share-conversion rate. This is identity treatment for
+waEthUSDC, whose underlying is USDC, but assumes USDT, USDS, and GHO each equal one USDC for waEthUSDT, sUSDS, and
+sGHO. A depeg in any assumed-par asset is invisible to its oracle: deposits mint leverage-amplified commitment from
+the overstated margin value, and `openEpochCall` then freezes that value in the call-open price snapshot. GHO is the
+weakest case. This risk is accepted, not mitigated or resolved. The remedies are reactive: `bounceCommitment`
+(`src/lcc/LCCVault.sol:568-605`) or a commitment-fee reduction. Bounce itself reverts while an auction slot is
+pending (`LCCVault.sol:575`) and while a call is open but not slash-finalized (`LCCVault.sol:577`), so per-facility
+commitment caps must be sized against a full-depeg scenario rather than par. Any margin-oracle change is an M-02
+revalidation trigger.
+
+The structural reason this treatment is tolerable is limited: the LCC oracle sizes commitment relative to margin;
+it is not a settlement rate at which one asset can be withdrawn for another. The only site that touches an actual
+asset exchange is the auction fill cap, where `oracleCapMargin` is one ceiling among several in `fillAward`
+(`src/lcc/libraries/LCCAuctionLib.sol:150-154`), while the step-decay `offered` curve sets the price a filler actually
+pays. A genuine sustained depeg in USDT, USDS, or GHO re-arms the accepted exposure; a future change that makes the
+oracle determine an asset-for-asset settlement rate would separately re-arm the structural concern.
 
 **M-02 — LCC return-pool allocation under leverage dispersion.** The return pool is allocated to defaulters by slashed margin while the shortfall consuming it is commitment-driven, so an over-committed defaulter under-pays and the discrepancy lands on a lower-leverage co-defaulter. Accepted without a code fix, conditional on all of:
 

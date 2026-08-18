@@ -83,9 +83,10 @@ over the shared `LCCBase` harness.
   is a trusted instant-exit valve that bypasses `exitDelayEpochs`, `exitCapBps` bucket capacity, and
   `minCommitmentEpochs`.
 - **Deposit operator** — `DEPOSIT_OPERATOR_ROLE` payer allowed to fund margin irrevocably credited to another
-  beneficiary. Grant only to a consent-verifying adapter or a closed facility operator with a documented consent
-  channel, never to a generic arbitrary-calldata router; the role holder can otherwise refresh beneficiary lockups,
-  consume cap headroom, and stage pending deposits that block exits and bounce remediation.
+  beneficiary. Grant only to a consent-verifying adapter, a closed facility operator with a documented consent
+  channel, or a self-service adapter that hard-binds the beneficiary to `msg.sender` and has no delegated or generic
+  call surface; never grant it to a generic arbitrary-calldata router. The role holder can otherwise refresh
+  beneficiary lockups, consume cap headroom, and stage pending deposits that block exits and bounce remediation.
 - **Admissions module** — optional narrow view-only decision hook for first deposits and closed-account reopens. It
   cannot write factory registry or role state, and it does not re-check top-ups in the currently registered open vault.
 - **Margin oracle** — fully trusted. Returns a fresh `marginAsset`-to-`fundingAsset` price scaled by
@@ -101,6 +102,27 @@ Operational requirements: the `marginAsset` must be a standard ERC20 (fee-on-tra
 margin conservation), and each vault must be on USD3's `supplyCapExempt` list so funding and fill deposits bypass
 supply-cap headroom and first-time minimums. A zero USD3 supply cap takes precedence over that exemption and blocks
 all deposits as an emergency pause.
+
+### Accepted risk: feedless par treatment
+
+The four new margin oracles deliberately set every base and quote feed slot to the zero address and therefore price
+only the ERC-4626 share-conversion rate. For waEthUSDC this is identity treatment because the underlying is USDC. For
+waEthUSDT, sUSDS, and sGHO it is a genuine assumption that USDT, USDS, and GHO respectively equal one USDC. A depeg
+in any assumed-par asset is invisible to the oracle: deposits mint leverage-amplified commitment from the overstated
+margin value, and `openEpochCall` freezes that value into the call-open snapshot. GHO is the weakest case.
+
+This is an **ACCEPTED RISK**, not a mitigated or resolved one. The response is reactive: use `bounceCommitment`
+(`LCCVault.sol:568-605`) or reduce the commitment fee. Bounce reverts while an auction slot is pending
+(`LCCVault.sol:575`) and while a call is open but not slash-finalized (`LCCVault.sol:577`), so per-facility commitment
+caps must be sized against a full-depeg scenario rather than par. Every margin-oracle change is an M-02 revalidation
+trigger.
+
+The limited structural reason this treatment is tolerable is that the LCC oracle sizes commitment relative to
+margin; it is not a settlement rate at which one asset can be withdrawn for another. The only site touching an
+actual asset exchange is the auction fill cap: `oracleCapMargin` is one ceiling among several in `fillAward`
+(`libraries/LCCAuctionLib.sol:150-154`), while the step-decay `offered` curve sets the price the filler actually pays.
+A genuine sustained depeg in USDT, USDS, or GHO re-arms the accepted exposure. A future change that makes the oracle
+determine an asset-for-asset settlement rate would separately re-arm the structural concern.
 
 ### Factory-family authority and registry
 
@@ -324,6 +346,24 @@ return-pool re-credit advances it to the later of its current value and `callEpo
 that re-credited exposure can back a new call. This starts a fresh `minCommitmentEpochs` period without allowing a
 permissionless disposal delay to lengthen it; rounding-dropped credits leave the anchor unchanged. Funding of any
 kind never touches `commitmentStartEpoch`.
+
+### Static aToken deposit helper
+
+`LCCMarginDepositHelper` lets a user wrap USDC, aEthUSDC, USDT, or aEthUSDT into the corresponding StataTokenV2
+margin asset and deposit it atomically. Its four explicit entrypoints always pass `msg.sender` as the LCC beneficiary;
+there is no receiver, `onBehalfOf`, `depositFor`, owner, upgrade, rescue, or generic-call surface. The helper therefore
+needs the family-wide `DEPOSIT_OPERATOR_ROLE` because it pays the vault, but it cannot use that role to credit anyone
+other than the transaction author. Factory registration and the vault's expected margin asset are checked before any
+input token is pulled. User-supplied share and commitment bounds, pending-activation choice, and deadline are
+forwarded to the matching vault.
+
+Underlying-token paths respect the StataToken's finite `maxDeposit`; aToken paths use `depositATokens` and remain
+available when the Aave underlying supply cap leaves no deposit headroom. Integrators should approve only the selected
+input token and call the matching explicit entrypoint. The helper uses exact, per-call allowances and never reads its
+own token balances: the vault deposit passes the share amount returned by `stata.deposit` / `stata.depositATokens`,
+and both the wrap leg and the vault leg are bracketed by exact `forceApprove(spender, amount)` /
+`forceApprove(spender, 0)` pairs, so the StataToken can pull at most `params.amountIn` and the vault at most the
+shares just minted. Tokens force-transferred to the helper are ignored and unspendable through it.
 
 ## 7. Capital calls and funding
 
