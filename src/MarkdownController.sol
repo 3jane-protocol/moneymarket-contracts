@@ -15,7 +15,8 @@ import {Id, RepaymentStatus} from "./interfaces/IMorpho.sol";
 /// @custom:contact support@3jane.xyz
 /// @notice Controls markdown calculations and JANE token redistribution for borrowers in default
 /// @dev Markdowns are applied linearly based on time in default and a configurable duration
-/// @dev Dormant until the market's CreditLine names a markdown manager; nothing in this contract gates that. See
+/// @dev Two gates above this contract decide whether markdown applies, and neither lives here: the market's
+/// CreditLine must name a markdown manager, and the owner must enable markdown for the borrower. See
 /// MorphoCredit._updateBorrowerMarkdown for what an unset manager makes unreachable and what re-enabling requires.
 contract MarkdownController is IMarkdownController, Ownable {
     /// @notice WAD constant for percentage calculations (1e18 = 100%)
