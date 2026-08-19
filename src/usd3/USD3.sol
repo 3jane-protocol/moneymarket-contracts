@@ -213,7 +213,10 @@ contract USD3 is BaseHooksUpgradeable {
         return WAUSDC.convertToShares(maxDebtUSDC);
     }
 
-    /// @dev Effective deployment cap: min(maxOnCredit-based cap, subordination cap)
+    /// @dev Effective deployment cap: min(maxOnCredit-based cap, subordination cap). Below 100%, MAX_ON_CREDIT is an
+    /// honest-operation deployment and liquidity-buffer target, not an adversarially enforceable exposure boundary.
+    /// DEBT_CAP is the enforceable boundary: MorphoCredit borrow admission reads debt but never supply, so a temporary
+    /// deposit cannot increase the borrowable total by even one unit.
     function _effectiveDeployCapWaUSDC(uint256 totalWaUSDC) internal view returns (uint256) {
         uint256 maxOnCreditCap = (totalWaUSDC * maxOnCredit()) / 10_000;
         uint256 subCap = _subordinationDeployCapWaUSDC();
@@ -726,6 +729,9 @@ contract USD3 is BaseHooksUpgradeable {
      * @return Maximum deployment ratio in basis points (10000 = 100%)
      * @dev Returns the value from ProtocolConfig directly. If not configured in ProtocolConfig,
      *      it returns 0, effectively preventing deployment until explicitly configured.
+     * @dev Below 100%, this is an honest-operation deployment and liquidity-buffer target, not an adversarially
+     *      enforceable exposure boundary. DEBT_CAP is the enforceable boundary: MorphoCredit borrow admission reads
+     *      debt but never supply, so a temporary deposit cannot increase the borrowable total by even one unit.
      */
     function maxOnCredit() public view returns (uint256) {
         IProtocolConfig config = _protocolConfig();

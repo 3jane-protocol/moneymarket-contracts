@@ -703,6 +703,11 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /* MARKDOWN FUNCTIONS */
 
     /// @notice Update a borrower's markdown state and market total
+    /// @dev The markdown manager on the market's CreditLine is the sole markdown switch: while it is unset, this
+    /// function returns before touching state, so every downstream markdown effect is unreachable — not resolved,
+    /// because CreditLine.setMm restores all of them in one owner call. Before that call, remediate what the unset
+    /// manager currently masks: stale deposit pricing, withdrawal freezes, cure misattribution, tranche fee-share
+    /// sizing, and deployment accounting that excludes markdown.
     /// @param id Market ID
     /// @param borrower Borrower address
     function _updateBorrowerMarkdown(Id id, address borrower) internal {
@@ -840,6 +845,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Settle a borrower's account by writing off all remaining debt
     /// @dev Only callable by credit line contract
     /// @dev Should be called after any partial repayments have been made
+    /// @dev With the market's CreditLine markdown manager unset, the automatic JANE slash is skipped; recover it
+    /// manually per docs/operations-runbook.md, "Deferred JANE slash while markdown is disabled". See
+    /// _updateBorrowerMarkdown for what an unset manager makes unreachable and what re-enabling requires.
     /// @param marketParams The market parameters
     /// @param borrower The borrower whose account to settle
     /// @return writtenOffAssets Amount of assets written off

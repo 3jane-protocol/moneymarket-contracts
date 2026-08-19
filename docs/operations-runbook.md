@@ -75,6 +75,16 @@ unfunded at the deadline would be slashed for their entire remaining margin. If 
 affected facilities' effective clocks before their funding deadlines first, exactly as for an accidentally revoked
 exemption flag (see "Creating and authorizing an LCC vault").
 
+Below `10000`, `MAX_ON_CREDIT` is an honest-operation deployment and liquidity-buffer target, not an adversarially
+enforceable exposure boundary. If deposit headroom remains open, lower it only while simultaneously sizing
+`DEBT_CAP <= m × intended stable senior base`, where `m = MAX_ON_CREDIT / 10000`, and revalidate that bound whenever
+the intended stable base changes. Borrow admission enforces `DEBT_CAP` against total debt plus the requested assets
+without reading supply (`src/MorphoCredit.sol:585-587`), so a temporary deposit cannot increase the borrowable total.
+
+For an emergency stop that preserves exits, use the pair `MAX_ON_CREDIT = 0` and `DEBT_CAP = 0`: the first stops new
+USD3 deployment and the second stops new borrowing. Neither setting blocks USD3 or sUSD3 exits. This pair does not
+halt deposits; follow the zero-cap hazard above before considering `USD3_SUPPLY_CAP = 0` separately.
+
 If all new sUSD3 deposits must stop, first read the sUSD3 TokenizedStrategy `management()` and `emergencyAdmin()`
 addresses. Either can call `shutdownStrategy()`, which halts deposit/mint but is a one-way, irreversible strategy
 shutdown. Do not submit a nonexistent junior-cap key, and do not assume the ProtocolConfig emergency controller also
@@ -111,6 +121,28 @@ is restored.
 1. Treat prompt loss recognition as the control: `report()` closes both windows, and no code guard substitutes for it. When the "Loss exceeding junior backing" procedure applies, its report hold takes precedence and deliberately extends this window; record that decision.
 2. If the window overlaps a waUSDC pause, follow the junior-exit entry below on unpause: keeper `tend` before borrowing resumes.
 3. Do not reach for `USD3_SUPPLY_CAP = 0` as a stopgap deposit halt while any LCC facility has an open call; see the zero-cap hazard under "USD3 and sUSD3 admission controls" above.
+
+## Deferred JANE slash while markdown is disabled
+
+**Trigger.** A borrower is settled while its market's CreditLine markdown manager is unset. Settlement skips
+`slashJaneFull` when `CreditLine.mm()` is zero (`src/MorphoCredit.sol:882-886`), so the JANE slash is deferred rather
+than performed automatically.
+
+**Procedure.**
+
+1. Verify `Jane.transferable()` is false and record the current `Jane.markdownController` value.
+2. Have the JANE `OWNER_ROLE` point the controller slot at a purpose-built slasher, or a Safe adapter with the same
+   callable surface.
+3. From that address call `redistributeFromBorrower(borrower, amount)`, using the borrower's full current balance for
+   the settlement slash. The function calls `_transfer` directly (`src/jane/Jane.sol:129-133`), so the slash itself
+   bypasses ordinary transfer and freeze checks.
+4. Have the JANE owner restore the recorded controller and verify the slot.
+
+Every nonzero address placed in the controller slot, including a temporary or restored controller, must implement
+`isFrozen(address)`: every transfer that would otherwise be permitted calls that interface while the slot is nonzero
+(`src/jane/Jane.sol:142-154`). Do not call the one-way `setTransferable()` switch. Non-transferability is what
+prevents an ordinary settled borrower from moving JANE before the manual slash lands; once transfers are enabled,
+this deferred recovery cannot protect borrowers settled in the intervening window.
 
 ## Loss report landing during a waUSDC pause
 

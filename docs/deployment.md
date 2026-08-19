@@ -69,7 +69,8 @@ parameters timelock:
 
 | Control | Authoritative write path | Notes |
 |---|---|---|
-| Maximum USD3 deployment ratio | `ProtocolConfig.setConfig(MAX_ON_CREDIT, value)` | `USD3.maxOnCredit()` is read-only |
+| Maximum USD3 deployment ratio | `ProtocolConfig.setConfig(MAX_ON_CREDIT, value)` | `USD3.maxOnCredit()` is read-only; below 100%, coordinate it with `DEBT_CAP`, and pair both at zero for an exit-preserving emergency stop — see "USD3 and sUSD3 admission controls" in `docs/operations-runbook.md` |
+| MorphoCredit debt cap | `ProtocolConfig.setConfig(DEBT_CAP, value)` | Enforceable borrow-exposure cap; see the parameter coupling and exit-preserving emergency pair in "USD3 and sUSD3 admission controls" in `docs/operations-runbook.md` |
 | sUSD3 withdrawal window | `ProtocolConfig.setConfig(SUSD3_WITHDRAWAL_WINDOW, value)` | Getter falls back to 2 days when the key is zero |
 | USD3 supply cap | `ProtocolConfig.setConfig(USD3_SUPPLY_CAP, value)` | Emergency authority may only set it to zero; zero blocks even exempt receivers, so it can slash LCC funders mid-call — see the zero-cap hazard in `docs/operations-runbook.md` |
 | Stop all sUSD3 deposits | No reversible config key exists | One-way `sUSD3.shutdownStrategy()` is the only complete stop and requires current sUSD3 management or emergency admin |
