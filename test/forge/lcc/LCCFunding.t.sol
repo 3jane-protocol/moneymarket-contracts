@@ -145,6 +145,24 @@ contract LCCFundingTest is LCCBase {
         assertEq(vault.getAccount(alice).activeCommitment, 2e18 - 2);
     }
 
+    function testPushFundingClearsFullyDischargedExit() public {
+        _deposit(alice, 100e18);
+        vm.prank(alice);
+        vault.requestExit(type(uint256).max, type(uint256).max);
+        _openCall(200e18);
+
+        assertEq(_fundFor(carol, alice), 200e18);
+
+        ILCCVault.Account memory account = vault.getAccount(alice);
+        assertFalse(account.exitRequested);
+        assertTrue(account.exitClaimed);
+        assertFalse(account.exitMatured);
+        assertEq(account.exitMaturityEpoch, 0);
+        assertEq(account.exitBucketMargin, 0);
+        assertEq(account.exitBucketCommitment, 0);
+        assertTrue(vault.isAccountClosed(alice));
+    }
+
     function testDustTopUpDoesNotReduceAnotherAccountsShortfall() public {
         _deployAuctionVault();
         _seedUsd3(2, 1);

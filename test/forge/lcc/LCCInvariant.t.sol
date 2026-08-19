@@ -1267,6 +1267,16 @@ contract LCCStatefulInvariantTest is LCCBase {
         }
     }
 
+    function invariant_OpenExitMirrorsActiveExposure() public view {
+        for (uint256 i = 0; i < invariantActors.length; ++i) {
+            ILCCVault.Account memory account = vault.getAccount(invariantActors[i]);
+            if (!account.exitRequested || account.exitClaimed) continue;
+
+            assertEq(account.exitBucketMargin, account.activeMargin);
+            assertEq(account.exitBucketCommitment, account.activeCommitment);
+        }
+    }
+
     function invariant_OverCapExposureNeverGrows() public {
         if (!_materializeEveryoneForInvariant()) return;
         if (vault.shutdownState().active || _callWindowClosed(vault)) return;

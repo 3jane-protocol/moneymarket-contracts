@@ -693,6 +693,22 @@ contract LCCRegistryTest is LCCBase {
         assertEq(factory.vaultOf(alice), address(otherVault));
     }
 
+    function testLazyRepointAfterFullyFundedExitWithoutCleanup() public {
+        LCCVault otherVault = _newVault(_params(CAP, CAP));
+        _mintAndApprove(otherVault, alice, 0, 0);
+        _deposit(alice, 100e18);
+
+        vm.prank(alice);
+        vault.requestExit(type(uint256).max, type(uint256).max);
+        _openCall(200e18);
+        assertEq(_fund(alice), 200e18);
+
+        assertTrue(factory.oneVaultPolicyEnabled());
+        vm.prank(alice);
+        otherVault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max);
+        assertEq(factory.vaultOf(alice), address(otherVault));
+    }
+
     function testLazyRepointAfterShutdownRemainingMarginClaim() public {
         LCCVault otherVault = _newVault(_params(CAP, CAP));
         _mintAndApprove(otherVault, alice, 0, 0);
@@ -789,6 +805,22 @@ contract LCCRegistryTest is LCCBase {
         vm.prank(bouncer);
         vault.bounceCommitment(alice, commitment);
         assertTrue(vault.isAccountClosed(alice));
+
+        module.setAllowed(false);
+        vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.AdmissionsModuleRejected.selector, alice, address(vault)));
+        vm.prank(alice);
+        vault.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
+    }
+
+    function testAdmissionsModuleDenialAppliesWhenFullyFundedExiterReopensSameVault() public {
+        LCCAdmissionsModuleMock module = new LCCAdmissionsModuleMock();
+        factory.setAdmissionsModule(address(module));
+        _deposit(alice, 100e18);
+
+        vm.prank(alice);
+        vault.requestExit(type(uint256).max, type(uint256).max);
+        _openCall(200e18);
+        assertEq(_fund(alice), 200e18);
 
         module.setAllowed(false);
         vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.AdmissionsModuleRejected.selector, alice, address(vault)));

@@ -512,8 +512,8 @@ contract LCCVault is ILCCVault, Initializable, ReentrancyGuardTransient {
         if (!account.exitRequested || account.exitClaimed) revert LCCErrorsLib.NoExitRequested();
         if (_currentEpoch() < account.exitMaturityEpoch) revert LCCErrorsLib.ExitNotMature();
 
-        // A fully-funded exiter matures with nothing claimable; still clear the exit so the account is reusable
-        // (otherwise it stays exitRequested forever and can neither deposit nor re-exit).
+        // Funding clears fully discharged exits. A remaining exit reaches maturity with claimable margin; clear its
+        // metadata with the claim so the account is reusable.
         assets = account.claimableExitMargin;
         account.claimableExitMargin = 0;
         account.clearExit();
@@ -1419,8 +1419,9 @@ contract LCCVault is ILCCVault, Initializable, ReentrancyGuardTransient {
             ),
             false
         );
-        account.exitBucketMargin -= releasedMargin;
-        account.exitBucketCommitment -= obligationAmount;
+        account.exitBucketMargin = remainingMargin;
+        account.exitBucketCommitment = remainingCommitment;
+        if ((remainingCommitment | remainingMargin) == 0) account.clearExit();
     }
 
     function _addPending(Account memory account, uint256 margin, uint256 commitment, uint256 activationEpoch) internal {

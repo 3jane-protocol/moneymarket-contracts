@@ -344,9 +344,11 @@ that remain transferable.
 
 The registry moves lazily; no administrator deregisters users. To migrate from vault A to vault B, first reach a
 permanently closed account in A, then deposit into B. B's successful deposit calls the factory last, and the factory
-automatically re-points `vaultOf[user]` from A to B. A matured exiter is still open until the user calls
-`claimExitedMargin`, even when the claim amount is zero. Shutdown users likewise call `claimRemainingMargin`; an
-otherwise plain account whose entire active commitment was bounced is already eligible to re-point.
+automatically re-points `vaultOf[user]` from A to B. A matured exiter with nonzero claimable margin is still open
+until the user calls `claimExitedMargin`. An exiter whose full obligation was funded, discharging its remaining
+margin and commitment, is cleared at funding time and is already eligible to re-point. Shutdown users likewise call
+`claimRemainingMargin`; an otherwise plain account whose entire active commitment was bounced is already eligible
+to re-point.
 
 If A has more than 64 finalized calls beyond the user's stored cursor, the first B deposit is conservatively denied.
 Call `materializeAccount(user)` on A permissionlessly, in batches if needed, then retry B. A live auction can also

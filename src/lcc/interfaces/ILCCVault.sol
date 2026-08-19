@@ -220,7 +220,7 @@ interface ILCCVault {
     /// @param exitBucketCommitment This account's commitment contribution to its maturity bucket (fundingAsset).
     /// @param exitRequested True once a full-account exit has been requested.
     /// @param exitMaturityEpoch Epoch at which the requested exit matures (callable until then).
-    /// @param exitClaimed True once the matured exit margin has been claimed.
+    /// @param exitClaimed True once the exit has completed or been cleared.
     /// @param exitMatured True once the exit has matured (margin moved to `claimableExitMargin`).
     /// @param commitmentStartEpoch Later of the account's latest deposit activation epoch and one epoch after the
     /// call that produced its latest nonzero return-pool re-credit. The latter is the first epoch in which the

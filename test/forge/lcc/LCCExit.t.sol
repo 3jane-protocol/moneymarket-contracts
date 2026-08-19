@@ -51,19 +51,27 @@ contract LCCExitTest is LCCBase {
         uint256 obligation = _fund(alice);
         assertEq(obligation, 200e18);
 
-        vm.warp(START + EPOCH);
-        assertEq(vault.claimableExitedMargin(alice), 0);
-
-        // The exit still clears, so the account is reusable rather than bricked in exitRequested.
-        vm.prank(alice);
-        uint256 claimed = vault.claimExitedMargin(alice);
-        assertEq(claimed, 0);
-
         ILCCVault.Account memory account = vault.getAccount(alice);
         assertFalse(account.exitRequested);
+        assertTrue(account.exitClaimed);
+        assertFalse(account.exitMatured);
+        assertEq(account.exitMaturityEpoch, 0);
+        assertEq(account.exitBucketMargin, 0);
+        assertEq(account.exitBucketCommitment, 0);
+        assertEq(vault.exitBucketMarginByMaturity(maturity), 0);
+        assertEq(vault.exitBucketCommitmentByMaturity(maturity), 0);
+        assertEq(vault.claimableExitedMargin(alice), 0);
+        assertTrue(vault.isAccountClosed(alice));
+
+        vm.expectRevert(LCCErrorsLib.NoExitRequested.selector);
+        vm.prank(alice);
+        vault.claimExitedMargin(alice);
 
         _deposit(alice, 100e18);
-        assertEq(vault.getAccount(alice).activeMargin, 100e18);
+        account = vault.getAccount(alice);
+        assertEq(account.pendingMargin, 100e18);
+        assertEq(account.pendingCommitment, 200e18);
+        assertEq(account.pendingActivationEpoch, 1);
     }
 
     function testExitBlocksNewDepositsAndRemainsCallableUntilMaturity() public {
@@ -228,6 +236,13 @@ contract LCCExitTest is LCCBase {
         _openCall(100e18);
         _fund(alice);
 
+        ILCCVault.Account memory account = vault.getAccount(alice);
+        assertTrue(account.exitRequested);
+        assertFalse(account.exitClaimed);
+        assertEq(account.activeMargin, 50e18);
+        assertEq(account.activeCommitment, 100e18);
+        assertEq(account.exitBucketMargin, account.activeMargin);
+        assertEq(account.exitBucketCommitment, account.activeCommitment);
         assertEq(vault.exitBucketMarginByMaturity(1), 50e18);
         assertEq(vault.exitBucketCommitmentByMaturity(1), 100e18);
 
@@ -257,6 +272,24 @@ contract LCCExitTest is LCCBase {
         assertEq(vault.exitBucketCommitmentByMaturity(1), 0);
         assertEq(vault.exitBucketMarginByMaturity(2), 100e18);
         assertEq(vault.exitBucketCommitmentByMaturity(2), 200e18);
+    }
+
+    function testFullyFundedExiterRedepositsAndDefaultsAfterMissingLaterCall() public {
+        _deposit(alice, 100e18);
+        vm.prank(alice);
+        vault.requestExit(type(uint256).max, type(uint256).max);
+
+        _openCall(200e18);
+        assertEq(_fund(alice), 200e18);
+        _deposit(alice, 100e18);
+
+        _openCallAtEpoch(1, 200e18);
+        _finishFundingAtEpoch(1);
+        vault.finalizeEpochSlash(1);
+
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit LCCEventsLib.UserDefaulted(alice, 1, 100e18, 200e18);
+        _syncAs(alice);
     }
 
     function testExitRequestedAfterCallOpenRemainsLiableForOpenCall() public {

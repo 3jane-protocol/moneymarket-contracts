@@ -711,6 +711,7 @@ stateDiagram-v2
     Defaulted --> Active: return-pool recredit
     Active --> ExitRequested: requestExit
     ExitRequested --> ExitRequested: fundCall amortize - roll blocked
+    ExitRequested --> Claimed: fundCall discharges full obligation
     ExitRequested --> Defaulted: call unfunded before maturity
     ExitRequested --> Matured: maturity epoch reached
     Matured --> Claimed: claimExitedMargin
@@ -803,9 +804,9 @@ post-Normal request maturity = requestEpoch + exitDelayEpochs + 1 = 7 + 2 + 1 = 
 
 Either earliest maturity can move later when its bucket is full under first-fit assignment.
 
-`claimExitedMargin` pays the matured margin. A **fully-funded exiter** matures with nothing claimable but must
-still call `claimExitedMargin` to clear the exit and make the account reusable (`clearExit`); otherwise it stays
-`exitRequested` forever and can neither deposit nor re-exit.
+`claimExitedMargin` pays matured margin and clears the exit metadata. A **fully-funded exiter** is cleared
+automatically when funding discharges its remaining margin and commitment, so the account is immediately reusable
+without waiting for maturity or sending a zero-value claim.
 
 ## 10. Wind-down
 
@@ -968,7 +969,8 @@ lives in
 - **Bounded replay barrier.** Accounts more than `MAX_MATERIALIZE_STEPS = 64` finalized calls behind revert
   `AccountMaterializationIncomplete` until `materializeAccount` advances them.
 - **Exiters stay liable.** An exiting account remains callable and slashable until maturity; it may amortize but
-  cannot roll (`ExitInProgress`). A fully-funded exiter must still call `claimExitedMargin` to free the account.
+  cannot roll (`ExitInProgress`). Funding that fully discharges its remaining margin and commitment automatically
+  clears the exit; otherwise the exiter remains requested and callable until maturity.
 - **Cap changes do not unwind and retain the configured-cap floor.** `setRiskCaps` lowering caps below current
   utilization does not force existing positions or assigned exit buckets to unwind. Exit capacity is recomputed per
   request from aggregate live `activeCommitment`, deliberately introducing path dependence; it can decline as active
