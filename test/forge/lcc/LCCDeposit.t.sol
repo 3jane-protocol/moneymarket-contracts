@@ -86,6 +86,106 @@ contract LCCDepositTest is LCCBase {
         _deposit(alice, 101e18);
     }
 
+    function testFactoryCommitmentCapAcceptsExactBoundaryAndRejectsOneUnitMore() public {
+        ILCCVault.VaultParams memory params = _params(1_000e18, 1_000e18);
+        params.marginRatioBps = 10_000;
+        _deployVaultWithParams(params);
+        _seedPlannedDepositorCap(alice, 100e18);
+
+        assertEq(_deposit(alice, 100e18), 100e18);
+
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        _deposit(alice, 1);
+    }
+
+    function testFactoryAndVaultCommitmentCapsComposeAsMinimum() public {
+        ILCCVault.VaultParams memory vaultBoundParams = _params(1_000e18, 100e18);
+        vaultBoundParams.marginRatioBps = 10_000;
+        _deployVaultWithParams(vaultBoundParams);
+        _seedPlannedDepositorCap(alice, 200e18);
+
+        assertEq(_deposit(alice, 100e18), 100e18);
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        _deposit(alice, 1);
+
+        ILCCVault.VaultParams memory factoryBoundParams = _params(1_000e18, 200e18);
+        factoryBoundParams.marginRatioBps = 10_000;
+        _deployVaultWithParams(factoryBoundParams);
+        _seedPlannedDepositorCap(bob, 100e18);
+
+        assertEq(_deposit(bob, 100e18), 100e18);
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        _deposit(bob, 1);
+    }
+
+    function testFactoryCapIncludesPendingCommitment() public {
+        ILCCVault.VaultParams memory params = _params(1_000e18, 1_000e18);
+        params.marginRatioBps = 10_000;
+        _deployVaultWithParams(params);
+        _setDepositorCap(alice, 100e18);
+        vm.warp(START + NORMAL + PRE_CALL);
+
+        assertEq(_deposit(alice, 60e18), 60e18);
+        assertEq(vault.getAccount(alice).pendingCommitment, 60e18);
+
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        _deposit(alice, 40e18 + 1);
+        assertEq(vault.getAccount(alice).pendingCommitment, 60e18);
+    }
+
+    function testRevokeThenRaiseDefaultBlocksFreshAndTopUpUntilOverridesCleared() public {
+        _deposit(alice, 10e18);
+        _mintAndApprove(unlisted(), 10e18, 0);
+
+        address[] memory users = new address[](2);
+        uint128[] memory caps = new uint128[](2);
+        users[0] = alice;
+        users[1] = unlisted();
+        factory.setDepositorCaps(users, caps);
+        assertEq(factory.defaultDepositorCap(), 0);
+
+        factory.setDefaultDepositorCap(type(uint128).max);
+
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        _deposit(alice, 1);
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        _deposit(unlisted(), 1);
+
+        factory.clearDepositorCaps(users);
+        _deposit(alice, 1);
+        _deposit(unlisted(), 1);
+    }
+
+    function testLoweredFactoryCapIsProspectiveAndExitBounceClaimsRemainAvailable() public {
+        ILCCVault.VaultParams memory params = _params(1_000e18, 1_000e18);
+        params.marginRatioBps = 10_000;
+        _deployVaultWithParams(params);
+        uint256 aliceCommitment = _deposit(alice, 100e18);
+        uint256 bobCommitment = _deposit(bob, 50e18);
+
+        _setDepositorCap(alice, 0);
+        _setDepositorCap(bob, 0);
+
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        _deposit(alice, 1);
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        _deposit(bob, 1);
+
+        vm.prank(alice);
+        vault.requestExit(type(uint256).max, type(uint256).max);
+        vm.prank(bouncer);
+        vault.bounceCommitment(bob, bobCommitment);
+        assertTrue(vault.isAccountClosed(bob));
+
+        vm.warp(START + EPOCH);
+        vm.prank(alice);
+        assertEq(vault.claimExitedMargin(alice), aliceCommitment);
+        assertTrue(vault.isAccountClosed(alice));
+
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        _deposit(alice, 1);
+    }
+
     function testMinDepositEnforced() public {
         ILCCVault.VaultParams memory params = _params(CAP, CAP);
         params.minDepositAssets = 10e18;
@@ -215,7 +315,8 @@ contract LCCDepositTest is LCCBase {
     function testDelegatedDepositDebitsPayerAndCreditsOnlyBeneficiary() public {
         uint256 assets = 100e18;
         _mintAndApproveMarginPayer(address(vault), depositOperator, assets);
-        assertFalse(factory.isWhitelistedDepositor(depositOperator));
+        (bool payerCapSet,) = factory.depositorCap(depositOperator);
+        assertFalse(payerCapSet);
         uint256 payerBalanceBefore = margin.balanceOf(depositOperator);
 
         uint256 commitment = _depositFor(depositOperator, alice, assets);
@@ -276,8 +377,8 @@ contract LCCDepositTest is LCCBase {
         assertEq(vault.getAccount(alice).activeMargin, 10e18);
     }
 
-    function testZeroBeneficiaryRevertsEvenWhenWhitelistIsDisabled() public {
-        factory.setWhitelistEnabled(false);
+    function testZeroBeneficiaryRevertsWithNonzeroDefaultCap() public {
+        factory.setDefaultDepositorCap(type(uint128).max);
         _mintAndApproveMarginPayer(address(vault), depositOperator, 10e18);
 
         vm.expectRevert(LCCErrorsLib.ZeroAddress.selector);
@@ -287,8 +388,8 @@ contract LCCDepositTest is LCCBase {
         assertEq(vault.getAccount(address(0)).activeMargin, 0);
     }
 
-    function testZeroBeneficiaryRevertsEvenWhenWhitelistIsEnabled() public {
-        assertTrue(factory.whitelistEnabled());
+    function testZeroBeneficiaryRevertsWithZeroDefaultCap() public {
+        assertEq(factory.defaultDepositorCap(), 0);
         _mintAndApproveMarginPayer(address(vault), depositOperator, 10e18);
 
         vm.expectRevert(LCCErrorsLib.ZeroAddress.selector);
@@ -320,6 +421,23 @@ contract LCCDepositTest is LCCBase {
 
         assertEq(vault.getAccount(alice).activeCommitment, 200e18);
         assertEq(vault.getAccount(depositOperator).activeCommitment, 0);
+    }
+
+    function testDelegatedDepositConsumesBeneficiaryFactoryHeadroomAndRolelessPayerFailsFirst() public {
+        ILCCVault.VaultParams memory params = _params(1_000e18, 1_000e18);
+        params.marginRatioBps = 10_000;
+        _deployVaultWithParams(params);
+        _setDepositorCap(alice, 100e18);
+        _setDepositorCap(bob, 0);
+        _mintAndApproveMarginPayer(address(vault), depositOperator, 100e18 + 1);
+        _mintAndApproveMarginPayer(address(vault), stranger, 1);
+
+        assertEq(_depositFor(depositOperator, alice, 100e18), 100e18);
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        _depositFor(depositOperator, alice, 1);
+
+        vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.UnauthorizedDepositOperator.selector, stranger));
+        _depositFor(stranger, bob, 1);
     }
 
     function testDelegatedDepositsShareProtocolCapAcrossBeneficiaries() public {
@@ -395,11 +513,12 @@ contract LCCDepositTest is LCCBase {
         _depositFor(depositOperator, alice, 10e18);
     }
 
-    function testCooperativeRouterCanFundWhitelistedBeneficiaryWithoutPayerWhitelisting() public {
+    function testCooperativeRouterCanFundCappedBeneficiaryWithoutPayerCap() public {
         LCCDepositRouterMock router = new LCCDepositRouterMock(IERC20(address(margin)));
         factory.grantRole(factory.DEPOSIT_OPERATOR_ROLE(), address(router));
         _mintAndApproveMarginPayer(address(router), carol, 10e18);
-        assertFalse(factory.isWhitelistedDepositor(address(router)));
+        (bool payerCapSet,) = factory.depositorCap(address(router));
+        assertFalse(payerCapSet);
 
         vm.prank(carol);
         router.depositFor(vault, alice, 10e18, 1, type(uint256).max, false, type(uint256).max);
@@ -460,9 +579,7 @@ contract LCCDepositTest is LCCBase {
 
     function testArbitraryRouterCanCreditPathologicalContractBeneficiary() public {
         LCCPathologicalBeneficiary beneficiary = new LCCPathologicalBeneficiary();
-        address[] memory beneficiaries = new address[](1);
-        beneficiaries[0] = address(beneficiary);
-        factory.setDepositorsWhitelisted(beneficiaries, true);
+        _setDepositorCap(address(beneficiary), type(uint128).max);
         LCCArbitraryCallRouterMock router = _newArbitraryRouter(1);
 
         _arbitraryRouterDeposit(router, address(beneficiary), 1, false);
@@ -493,6 +610,19 @@ contract LCCDepositTest is LCCBase {
                 (assets, beneficiary, 1, type(uint256).max, allowPendingActivation, type(uint256).max)
             )
         );
+    }
+
+    /// @dev Seeds the approved in-place mapping encoding directly so root or member-offset drift breaks the headline
+    /// boundary tests independently of the setter implementation.
+    function _seedPlannedDepositorCap(address user, uint128 cap) internal {
+        bytes32 capSlot = keccak256(abi.encode(user, uint256(4)));
+        vm.store(address(factory), capSlot, bytes32((uint256(cap) << 8) | 1));
+        (bool storedSet, uint128 storedCap) = factory.depositorCap(user);
+        assertEq(abi.encode(storedSet, storedCap), abi.encode(true, cap), "depositorCap layout drift");
+    }
+
+    function unlisted() internal pure returns (address) {
+        return address(uint160(uint256(keccak256("deposit-unlisted"))));
     }
 }
 

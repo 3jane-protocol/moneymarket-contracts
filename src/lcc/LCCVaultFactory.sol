@@ -25,9 +25,14 @@ import {LCCErrorsLib} from "./libraries/LCCErrorsLib.sol";
 /// DEFAULT_ADMIN_ROLE. This preserves the single-owner invariant by making the two-step ownership functions the sole
 /// owner transition path.
 contract LCCVaultFactory is AccessControlEnumerable {
+    struct DepositorCap {
+        bool set;
+        uint128 cap;
+    }
+
     /// @notice Role identifier for the sole family owner.
     bytes32 public constant OWNER_ROLE = keccak256("OWNER_ROLE");
-    /// @notice Role identifier for accounts allowed to manage the depositor whitelist.
+    /// @notice Role identifier for accounts allowed to manage depositor commitment caps.
     bytes32 public constant LISTER_ROLE = keccak256("LISTER_ROLE");
     /// @notice Role identifier reserved for commitment bounce operations.
     bytes32 public constant BOUNCER_ROLE = keccak256("BOUNCER_ROLE");
@@ -42,10 +47,12 @@ contract LCCVaultFactory is AccessControlEnumerable {
     event OwnershipTransferStarted(address indexed previousOwner, address indexed pendingOwner);
     /// @notice Emitted when a pending owner accepts ownership.
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-    /// @notice Emitted for each depositor whitelist update.
-    event DepositorWhitelistUpdated(address indexed depositor, bool allowed);
-    /// @notice Emitted when the whitelist kill switch changes.
-    event WhitelistEnabledUpdated(bool enabled);
+    /// @notice Emitted when a depositor-specific commitment cap is set.
+    event DepositorCapUpdated(address indexed depositor, uint128 cap);
+    /// @notice Emitted when a depositor-specific commitment cap is cleared.
+    event DepositorCapCleared(address indexed depositor);
+    /// @notice Emitted when the fallback commitment cap changes.
+    event DefaultDepositorCapUpdated(uint128 cap);
     /// @notice Emitted when the one-vault-policy kill switch changes.
     event OneVaultPolicyEnabledUpdated(bool enabled);
     /// @notice Emitted when an admissions module is replaced.
@@ -61,19 +68,23 @@ contract LCCVaultFactory is AccessControlEnumerable {
     /// @dev Vaults capture this non-upgradeable factory once and must never gain a factory setter, so a swappable
     /// module is the only post-deployment path to change admission policy without redeploying the family.
     address public admissionsModule;
-    /// @notice Whether the global depositor whitelist is enforced.
-    bool public whitelistEnabled = true;
     /// @notice Whether deposits are prospectively limited to one open family vault.
     bool public oneVaultPolicyEnabled = true;
 
-    /// @notice Whether an address is approved to deposit into family vaults.
-    mapping(address => bool) public isWhitelistedDepositor;
+    /// @notice Depositor-specific commitment-cap overrides.
+    mapping(address => DepositorCap) public depositorCap;
     /// @notice Whether an address is a vault deployed by this factory.
     mapping(address => bool) public isVault;
     /// @notice Most recently authorized family vault for a depositor.
     mapping(address => address) public vaultOf;
 
     address[] internal vaultList;
+
+    /// @notice Fallback commitment cap for depositors without an explicit override.
+    /// @dev Zero denies every depositor that has no override, which is the enforced-allowlist mode. A nonzero value
+    /// admits unlisted depositors up to that size; `type(uint128).max` admits them without limit. An override set to
+    /// zero denies regardless of this value.
+    uint128 public defaultDepositorCap;
 
     /// @notice Deploys the factory and grants its single owner.
     /// @param owner_ Initial family owner.
@@ -148,18 +159,27 @@ contract LCCVaultFactory is AccessControlEnumerable {
         return hasRole(DEPOSIT_OPERATOR_ROLE, account);
     }
 
-    /// @notice Batch-updates the global depositor whitelist.
-    function setDepositorsWhitelisted(address[] calldata depositors, bool allowed) external onlyRole(LISTER_ROLE) {
+    /// @notice Batch-sets depositor-specific commitment caps.
+    function setDepositorCaps(address[] calldata depositors, uint128[] calldata caps) external onlyRole(LISTER_ROLE) {
+        if (depositors.length != caps.length) revert LCCErrorsLib.InvalidParams();
         for (uint256 i = 0; i < depositors.length; ++i) {
-            isWhitelistedDepositor[depositors[i]] = allowed;
-            emit DepositorWhitelistUpdated(depositors[i], allowed);
+            depositorCap[depositors[i]] = DepositorCap({set: true, cap: caps[i]});
+            emit DepositorCapUpdated(depositors[i], caps[i]);
         }
     }
 
-    /// @notice Enables or disables whitelist enforcement without clearing whitelist state.
-    function setWhitelistEnabled(bool enabled) external onlyRole(OWNER_ROLE) {
-        whitelistEnabled = enabled;
-        emit WhitelistEnabledUpdated(enabled);
+    /// @notice Clears depositor-specific caps so the depositors use the fallback cap.
+    function clearDepositorCaps(address[] calldata depositors) external onlyRole(LISTER_ROLE) {
+        for (uint256 i = 0; i < depositors.length; ++i) {
+            delete depositorCap[depositors[i]];
+            emit DepositorCapCleared(depositors[i]);
+        }
+    }
+
+    /// @notice Sets the fallback commitment cap for depositors without an explicit override.
+    function setDefaultDepositorCap(uint128 cap) external onlyRole(OWNER_ROLE) {
+        defaultDepositorCap = cap;
+        emit DefaultDepositorCapUpdated(cap);
     }
 
     /// @notice Enables or disables prospective one-open-vault enforcement without clearing warm registrations.
@@ -189,18 +209,20 @@ contract LCCVaultFactory is AccessControlEnumerable {
     /// The admissions module gates only new opens and reopens, not same-vault top-ups where `hadOpenExposure` is true.
     /// The payer-role gate runs before every other admission check, including the same-vault top-up short-circuit, so
     /// a roleless payer can never top-up an open account. That short-circuit means same-vault top-ups, self- or
-    /// operator-funded, bypass the admissions module while the payer-role and whitelist checks still run.
+    /// operator-funded, bypass the admissions module while the payer-role and depositor-cap checks still run.
     /// A `RegisteredElsewhere` caused by incomplete bounded replay has the permissionless remedy `materializeAccount`
     /// on the named vault.
-    function authorizeDeposit(address payer, address beneficiary, bool hadOpenExposure) external {
+    function authorizeDeposit(address payer, address beneficiary, bool hadOpenExposure, uint256 postDepositCommitment)
+        external
+    {
         if (!isVault[msg.sender]) revert LCCErrorsLib.NotVault();
         if (beneficiary == address(0)) revert LCCErrorsLib.ZeroAddress();
         if (payer != beneficiary && !hasRole(DEPOSIT_OPERATOR_ROLE, payer)) {
             revert LCCErrorsLib.UnauthorizedDepositOperator(payer);
         }
-        if (whitelistEnabled && !isWhitelistedDepositor[beneficiary]) {
-            revert LCCErrorsLib.NotWhitelistedDepositor();
-        }
+        DepositorCap memory configuredCap = depositorCap[beneficiary];
+        uint128 cap = configuredCap.set ? configuredCap.cap : defaultDepositorCap;
+        if (postDepositCommitment > cap) revert LCCErrorsLib.CapExceeded();
 
         address currentVault = vaultOf[beneficiary];
         if (currentVault == msg.sender && hadOpenExposure) return;

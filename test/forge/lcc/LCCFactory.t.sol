@@ -231,6 +231,25 @@ contract LCCFactoryTest is LCCBase {
         assertEq(factory.allVaults()[0], created);
     }
 
+    function testLegacyThreeArgumentVaultCannotAuthorizeAgainstFactory() public {
+        LCCLegacyThreeArgumentVault legacyImplementation = new LCCLegacyThreeArgumentVault();
+        UpgradeableBeacon legacyBeacon = new UpgradeableBeacon(address(legacyImplementation), factoryOwner);
+        LCCVaultFactory legacyFactory = new LCCVaultFactory(factoryOwner, address(legacyBeacon));
+        vm.startPrank(factoryOwner);
+        legacyFactory.grantRole(legacyFactory.LISTER_ROLE(), factoryOwner);
+        address[] memory users = new address[](1);
+        uint128[] memory caps = new uint128[](1);
+        users[0] = alice;
+        caps[0] = type(uint128).max;
+        legacyFactory.setDepositorCaps(users, caps);
+        address legacyVault = legacyFactory.createVault(_params(CAP, CAP));
+        vm.stopPrank();
+
+        assertTrue(legacyFactory.isVault(legacyVault));
+        vm.expectRevert();
+        LCCLegacyThreeArgumentVault(legacyVault).attemptLegacyAuthorize(alice);
+    }
+
     function testImplementationConstructorValidation() public {
         vm.expectRevert(LCCErrorsLib.ZeroAddress.selector);
         new LCCVault(address(0), treasury);
@@ -338,8 +357,10 @@ contract LCCFactoryTest is LCCBase {
         LCCVaultFactory mislinkedFactory = new LCCVaultFactory(owner, address(mislinkedBeacon));
         mislinkedFactory.grantRole(mislinkedFactory.LISTER_ROLE(), owner);
         address[] memory depositor = new address[](1);
+        uint128[] memory cap = new uint128[](1);
         depositor[0] = alice;
-        mislinkedFactory.setDepositorsWhitelisted(depositor, true);
+        cap[0] = type(uint128).max;
+        mislinkedFactory.setDepositorCaps(depositor, cap);
         mislinkedVault = LCCVault(mislinkedFactory.createVault(_params(CAP, CAP)));
     }
 
@@ -368,6 +389,25 @@ contract LCCFactoryTest is LCCBase {
             output[2 * i + 1] = table[uint8(value[i]) & 0x0f];
         }
         return string(output);
+    }
+}
+
+contract LCCLegacyThreeArgumentVault {
+    address internal factory;
+
+    function initialize(ILCCVault.VaultParams calldata) external {
+        require(factory == address(0), "ALREADY_INITIALIZED");
+        factory = msg.sender;
+    }
+
+    function attemptLegacyAuthorize(address user) external {
+        (bool ok, bytes memory result) =
+            factory.call(abi.encodeWithSignature("authorizeDeposit(address,address,bool)", user, user, false));
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 0x20), mload(result))
+            }
+        }
     }
 }
 

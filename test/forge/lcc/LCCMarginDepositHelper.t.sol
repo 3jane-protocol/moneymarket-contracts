@@ -260,18 +260,17 @@ contract LCCMarginDepositHelperTest is LCCBase {
         assertEq(waEthUSDC.totalSupply(), 0);
     }
 
-    function testBeneficiaryWhitelistAppliesAndHelperNeedsNoWhitelist() public {
-        assertFalse(factory.isWhitelistedDepositor(address(helper)));
+    function testBeneficiaryCapAppliesAndHelperNeedsNoCap() public {
+        (bool helperCapSet,) = factory.depositorCap(address(helper));
+        assertFalse(helperCapSet);
         vm.prank(alice);
         helper.depositUSDC(_paramsFor(usdcVault, 10e18));
 
-        address[] memory users = new address[](1);
-        users[0] = bob;
-        factory.setDepositorsWhitelisted(users, false);
+        _setDepositorCap(bob, 0);
         underlyingUSDC.mint(bob, 10e18);
         vm.prank(bob);
         underlyingUSDC.approve(address(helper), 10e18);
-        vm.expectRevert(LCCErrorsLib.NotWhitelistedDepositor.selector);
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
         vm.prank(bob);
         helper.depositUSDC(_paramsFor(usdcVault, 10e18));
     }
@@ -365,9 +364,7 @@ contract LCCMarginDepositHelperTest is LCCBase {
         underlyingUSDC.mint(address(helper), 100e18);
         waEthUSDC.mint(address(helper), 50e18);
         address fresh = makeAddr("fresh");
-        address[] memory users = new address[](1);
-        users[0] = fresh;
-        factory.setDepositorsWhitelisted(users, true);
+        _setDepositorCap(fresh, type(uint128).max);
         underlyingUSDC.mint(fresh, 10e18);
         vm.prank(fresh);
         underlyingUSDC.approve(address(helper), 10e18);

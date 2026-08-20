@@ -150,7 +150,7 @@ interface ILCCVaultFactoryLike {
     function createVault(VaultParams calldata params, bytes32 salt) external returns (address vault);
     function LISTER_ROLE() external view returns (bytes32);
     function grantRole(bytes32 role, address account) external;
-    function setDepositorsWhitelisted(address[] calldata depositors, bool allowed) external;
+    function setDepositorCaps(address[] calldata depositors, uint128[] calldata caps) external;
     function setOneVaultPolicyEnabled(bool enabled) external;
     function isOwner(address account) external view returns (bool);
 }
@@ -238,9 +238,13 @@ contract LCCRealStackFundingIntegrationTest is Setup {
         depositors[3] = filler;
         depositors[4] = seeder;
         depositors[5] = lccOwner;
+        uint128[] memory caps = new uint128[](depositors.length);
+        for (uint256 i = 0; i < caps.length; ++i) {
+            caps[i] = type(uint128).max;
+        }
         vm.startPrank(lccOwner);
         lccFactory.grantRole(lccFactory.LISTER_ROLE(), lccOwner);
-        lccFactory.setDepositorsWhitelisted(depositors, true);
+        lccFactory.setDepositorCaps(depositors, caps);
         vm.stopPrank();
 
         testProtocolConfig.setConfig(ProtocolConfigLib.USD3_SUPPLY_CAP, USD3_SUPPLY_CAP);

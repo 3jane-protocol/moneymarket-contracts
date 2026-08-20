@@ -215,6 +215,18 @@ Use `script/operations/CreateLCCVaultSafe.s.sol` with the same finalized JSON in
 5. After the Safe transaction executes on chain, run `verify(string)` with the deployment JSON. Archive its successful
    output with the manifest. `verify(address)` with the vault is the fallback when the JSON is unavailable, but
    `verify(string)` is authoritative because it also recomputes the expected address from the manifest.
+6. Before the first depositor transaction, have a `LISTER_ROLE` account call `setDepositorCaps` with the approved
+   beneficiary commitment limits. Caps are in funding-asset commitment units and apply to each vault's post-deposit
+   active-plus-pending total; equality is admitted, zero is an absolute denial, and `type(uint128).max` is unlimited.
+   The launch `defaultDepositorCap` is zero. Use `clearDepositorCaps` only to restore fallback to the live default;
+   never treat clearing as revocation if that default is nonzero.
+
+**Opening and closing the family.** `defaultDepositorCap` is the switch that the old whitelist flag used to be, and
+it sizes as well as admits. Zero — the launch value — is the enforced-allowlist mode: only depositors with an
+explicit cap are admitted. A nonzero value opens the family to unlisted depositors up to that size. `type(uint128).max`
+opens it without limit. Unlike the flag it replaces, opening the family does **not** re-admit anyone you revoked: an
+override explicitly set to zero denies at any default, and only `clearDepositorCaps` returns that address to
+fallback. Raising the default is an M-02 revalidation trigger, because it changes the admissible cohort.
 
 The two USD3 flags are continuing operating preconditions, not one-time deployment ceremony. Before approving any USD3
 management batch that touches either mapping, resolve whether the target is a factory-registered LCC vault. Never clear
@@ -282,7 +294,7 @@ re-pass the current protocol cap unchanged.
 
 **Hard rule.** Never grant `DEPOSIT_OPERATOR_ROLE` to a generic arbitrary-calldata router. The factory authenticates
 the payer contract, not the router's end user and not the beneficiary's consent. A generic router would let any user
-deposit for a whitelisted victim. Grant only to a dedicated adapter that verifies beneficiary authorization, to a
+deposit for a capped beneficiary. Grant only to a dedicated adapter that verifies beneficiary authorization, to a
 closed facility operator with a documented consent channel, or to a self-service adapter whose only deposit paths
 hard-bind the beneficiary to `msg.sender` and expose no receiver, `onBehalfOf`, `depositFor`, owner, upgrade, rescue,
 or generic-call capability. A consent-verifying adapter must bind at least a nonce, deadline, vault, payer, asset and
@@ -291,11 +303,13 @@ through the beneficiary's own transaction and sets no precedent for any delegate
 admitted, implement the factory consent registry or in-protocol signature check first.
 
 **Trust consequences.** A role holder can refresh a beneficiary's `commitmentStartEpoch` with floor-sized deposits,
-consume the beneficiary's `userCommitmentCap` and the protocol cap, and stage pending exposure that blocks both
-`requestExit` and the bouncer's `bounceCommitment`. Margin is irrevocably credited to the beneficiary; the payer has
-no recovery right. Revocation stops new delegated deposits but does not unwind credited active or pending exposure.
-The payer is intentionally not checked against the depositor whitelist; the beneficiary still passes the whitelist,
-one-vault policy, and admissions module.
+consume the beneficiary's factory-cap and vault `userCommitmentCap` headroom and the protocol cap, and stage pending
+exposure that blocks both `requestExit` and the bouncer's `bounceCommitment`. Margin is irrevocably credited to the
+beneficiary; the payer has no recovery right. Revocation stops new delegated deposits but does not unwind credited
+active or pending exposure. The payer is intentionally not checked against a depositor cap; the beneficiary is always
+checked against both the factory and vault caps, while new opens and reopens additionally pass the one-vault policy
+and admissions module. The payer-role check runs before the beneficiary factory cap, including on same-vault top-ups,
+so an unauthorized payer must fail first.
 
 Before granting the role:
 
@@ -309,9 +323,10 @@ Before granting the role:
 3. Verify `factory.isDepositOperator(candidate)` is true. The view is for operations and integrations; enforcement
    occurs inside `authorizeDeposit`.
 
-Before every delegated adapter-routed deposit, pre-check the beneficiary is nonzero and whitelisted, has no exit in progress,
-has no incompatible pending activation, and is eligible under the warm one-vault pointer and admissions module.
-Check beneficiary and protocol cap headroom, current oracle availability, commitment bounds, and deadline. Default
+Before every delegated adapter-routed deposit, pre-check the beneficiary is nonzero, resolve its explicit or default
+factory cap, include both active and pending commitment in the projected total, confirm it has no exit in progress or
+incompatible pending activation, and confirm eligibility under the warm one-vault pointer and admissions module.
+Check the vault beneficiary and protocol caps, current oracle availability, commitment bounds, and deadline. Default
 `allowPendingActivation` to `false`; permit `true` only when the beneficiary's signed authorization explicitly chose
 pending activation. These pre-checks reduce failed transactions but do not replace the adapter's consent proof.
 This per-deposit operator pre-check list is not applicable to an approved self-service adapter: its beneficiary calls
@@ -355,11 +370,18 @@ Call `materializeAccount(user)` on A permissionlessly, in batches if needed, the
 keep the closure replay incomplete until settlement.
 
 Disabling `oneVaultPolicyEnabled` is prospective-only: deposits may create multiple open positions and the outermost
-successful deposit remains the warm `vaultOf` pointer. Before re-enabling, inventory all such users, reconcile every
-multi-vault user offchain to one open position, and verify that no family vault is paused or shut with an unclaimable
-position. Admission checks only the vault named by the warm pointer: if A remains open while B is recorded, closing
+successful deposit remains the warm `vaultOf` pointer. The factory cap is enforced per vault during that interval,
+not against the family aggregate. Before re-enabling, inventory all such users, reconcile every multi-vault user
+offchain to one open position, verify each affected user's aggregate family commitment is at or below their resolved
+factory cap, and verify that no family vault is paused or shut with an unclaimable position. Admission checks only the
+vault named by the warm pointer: if A remains open while B is recorded, closing
 and reopening B after re-enablement does not discover A. Re-enabling does not close existing positions, and the latest
 warm pointer can top-up-block a healthy older position until the recorded vault closes.
+
+Lowering an explicit or default factory cap is prospective only. It blocks subsequent deposits, including top-ups,
+but does not unwind incumbent exposure or return-pool re-credits and must not block funding, exits, bounce, or claims.
+Treat every `setDepositorCaps`, `clearDepositorCaps`, or `setDefaultDepositorCap` change as an M-02 revalidation
+trigger before execution.
 
 ## LCC factory ownership rotation
 

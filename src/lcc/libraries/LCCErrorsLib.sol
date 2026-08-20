@@ -30,8 +30,6 @@ library LCCErrorsLib {
     error CannotRenounceOwnerRole();
     /// @notice Thrown when a deposit authorization caller is not a factory-registered vault.
     error NotVault();
-    /// @notice Thrown when whitelist enforcement rejects a depositor.
-    error NotWhitelistedDepositor();
     /// @notice Thrown when a depositor still has exposure in another family vault.
     error RegisteredElsewhere(address vault);
     /// @notice Thrown when a new call, deposit, or exit request is attempted after scheduled sunset, or would only

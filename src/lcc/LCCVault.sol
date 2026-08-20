@@ -439,7 +439,10 @@ contract LCCVault is ILCCVault, Initializable, ReentrancyGuardTransient {
         );
         // Registration-last means a reentrant inner deposit registers first. The outer frame's own authorization
         // then rejects the cross-vault position and reverts that outer deposit wholesale.
-        ILCCVaultFactory(factory).authorizeDeposit(msg.sender, onBehalfOf, hadOpenExposure);
+        ILCCVaultFactory(factory)
+            .authorizeDeposit(
+                msg.sender, onBehalfOf, hadOpenExposure, account.activeCommitment + account.pendingCommitment
+            );
     }
 
     /// @inheritdoc ILCCVault

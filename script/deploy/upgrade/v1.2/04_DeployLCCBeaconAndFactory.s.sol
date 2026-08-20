@@ -62,7 +62,7 @@ contract DeployLCCBeaconAndFactory is Script, LCCWiringCheck, SevenDayTimelockCh
             factory.getRoleAdmin(factory.DEPOSIT_OPERATOR_ROLE()) == factory.OWNER_ROLE(),
             "LCC deposit operator admin mismatch"
         );
-        require(factory.whitelistEnabled(), "LCC factory whitelist disabled at deploy");
+        require(factory.defaultDepositorCap() == 0, "LCC factory default depositor cap nonzero at deploy");
         require(factory.oneVaultPolicyEnabled(), "LCC factory one-vault policy disabled at deploy");
         require(factory.beacon() == beaconAddress, "LCC factory beacon mismatch");
         require(factory.numVaults() == 0, "LCC factory registry not empty");
@@ -76,7 +76,7 @@ contract DeployLCCBeaconAndFactory is Script, LCCWiringCheck, SevenDayTimelockCh
         console2.log("  2. Safe grants LISTER_ROLE, BOUNCER_ROLE, and GUARDIAN_ROLE");
         console2.log("  3. Grant DEPOSIT_OPERATOR_ROLE only to consent-verifying adapters or closed operators");
         console2.log("  4. Never grant DEPOSIT_OPERATOR_ROLE to a generic arbitrary-calldata router");
-        console2.log("  5. Safe sets the initial depositor whitelist and optional admissions module");
+        console2.log("  5. Safe sets the initial depositor caps and optional admissions module");
         console2.log("  6. Route all beacon upgrades through the 7-day timelock");
         console2.log("  7. After 06_ExecuteUSD3v12Upgrade.s.sol executes, create vaults with CreateLCCVaultSafe.s.sol");
 

@@ -28,8 +28,6 @@ import {LCCAuctionLib} from "../libraries/LCCAuctionLib.sol";
 /// Factory registry membership records owner-vetted provenance, not exclusive deployability: non-factory proxies can
 /// point at the public beacon and remain unregistered.
 interface ILCCVault {
-    /// @notice Thrown when whitelist enforcement rejects a depositor.
-    error NotWhitelistedDepositor();
     /// @notice Thrown when a depositor still has exposure in another family vault.
     error RegisteredElsewhere(address vault);
     /// @notice Thrown when an exit request would create more tracked maturity buckets than the vault supports.

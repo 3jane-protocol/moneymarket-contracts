@@ -53,9 +53,12 @@ contract LCCMarginDepositHelperForkTest is LCCMainnetForkBase {
         usdtVault = ILCCVault(factory.createVault(params, keccak256("fork-usdt")));
 
         address[] memory users = new address[](2);
+        uint128[] memory caps = new uint128[](2);
         users[0] = alice;
         users[1] = bob;
-        factory.setDepositorsWhitelisted(users, true);
+        caps[0] = type(uint128).max;
+        caps[1] = type(uint128).max;
+        factory.setDepositorCaps(users, caps);
 
         _fundUnderlyingAndAToken(alice, USDC, 400e6);
         _fundUnderlyingAndAToken(bob, USDT, 400e6);

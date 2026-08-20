@@ -94,15 +94,15 @@ those legacy declarations are callable.
 ## LCC Implementation Deployment
 
 The canonical `LCCVault` deployment artifact is compiled for Cancun with official solc `0.8.35`, via IR, 150
-optimizer runs, and no metadata bytecode hash. Its measured runtime is 24,254 bytes, 22 bytes below the internal
-ceiling and 322 bytes below EIP-170. The active-only bounce and family-authority monolith measured 24,703 bytes,
+optimizer runs, and no metadata bytecode hash. Its measured runtime is 24,268 bytes, 108 bytes below the internal
+ceiling and 308 bytes below EIP-170. The active-only bounce and family-authority monolith measured 24,703 bytes,
 127 bytes over EIP-170, so exit-exposure reconciliation and maturity assignment remain extracted into `LCCExitLib`
 at 150 runs.
 Because it uses `ReentrancyGuardTransient`, every deployment chain must support EIP-1153. Hardhat uses pinned stable
 solc-js `0.8.35` for its LCC compile/test artifact, which must not be deployed.
 
 Run `yarn build:forge:size` before approving an implementation release. In addition to building with sizes, the
-command checks the compiler, EVM target, optimizer, metadata, internal 24,276-byte ceiling, linked-library set, and
+command checks the compiler, EVM target, optimizer, metadata, internal 24,376-byte ceiling, linked-library set, and
 the recursively canonicalized build-profile storage layout and external ABI. It resolves both `LCCVault` and
 `NotificationVault` by their complete compiler settings, rejecting ambiguous or mismatched leftover artifacts with
 an explicit diagnostic before applying the release gates.
@@ -142,11 +142,15 @@ storage and does not change the vault layout or ABI. Auction state uses two word
 
 The release checker currently pins only the `LCCVault` external ABI, not `LCCVaultFactory`. The approved
 pre-deployment factory delta includes the prior `requireBouncer` to boolean `isBouncer` change, removal of
-`admissionsModuleVersion`, and two-argument `AdmissionsModuleUpdated`, plus this release's
-`DEPOSIT_OPERATOR_ROLE()` and `isDepositOperator(address)` views, three-argument
-`authorizeDeposit(address payer,address beneficiary,bool hadOpenExposure)`, and
-`UnauthorizedDepositOperator(address payer)` error. The vault ABI baseline intentionally changes only the `deposit`
-selector/input list and the `DepositCheckpointed` payer field/topic; its storage-layout baseline remains unchanged.
+`admissionsModuleVersion`, and two-argument `AdmissionsModuleUpdated`, plus `DEPOSIT_OPERATOR_ROLE()` and
+`isDepositOperator(address)`, `UnauthorizedDepositOperator(address payer)`, and this release's replacement of the
+whitelist with `DepositorCap { bool set; uint128 cap; }`, `depositorCap(address)`, `defaultDepositorCap()`,
+`setDepositorCaps(address[],uint128[])`, `clearDepositorCaps(address[])`, `setDefaultDepositorCap(uint128)`, and their
+three events. `authorizeDeposit` is now
+`authorizeDeposit(address payer,address beneficiary,bool hadOpenExposure,uint256 postDepositCommitment)`; the old
+three-argument selector, whitelist getters/setters, and whitelist events are removed. The vault storage-layout
+baseline remains unchanged; the vault ABI baseline intentionally drops only `NotWhitelistedDepositor()` from its
+error list.
 There is no deployed compatibility impact. After factory deployment, any further ABI or event-signature change must
 be treated as an explicit release decision rather than assumed to be covered by the vault ABI gate.
 

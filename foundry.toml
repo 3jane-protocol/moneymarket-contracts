@@ -15,12 +15,11 @@ fs_permissions = [
     { access = "read", path = "out/LCCExitLib.sol" },
     { access = "read", path = "out/LCCVaultFactory.sol" },
 ]
-# LCCVault pins optimizer_runs = 150 (24,254 B runtime after extracting exit accounting to LCCExitLib, leaving 22 B
-# below the 24,276 release ceiling and 322 B below EIP-170). The active-only monolith measured 24,703 B, so the
-# extraction remains necessary. The frozen USD3_old upgrade-test artifact pins optimizer_runs = 200 for a different
-# reason: it is the pre-cleanup implementation, and under the test profile (via-ir disabled) it hits solc "Stack too
-# deep" at higher runs, so the low pin is what lets it compile without via-ir. It is a test-only fixture (deployed only
-# inside the upgrade tests), so its runs are otherwise immaterial. USD3 itself fits at the repo default with a thin
+# LCCVault pins optimizer_runs = 150 (24,268 B runtime after extracting exit accounting to LCCExitLib, leaving 108 B
+# below the 24,376 release ceiling and 308 B below EIP-170). The active-only monolith measures 24,703 B, so the
+# extraction remains necessary. The frozen USD3_old upgrade-test artifact pins optimizer_runs = 200 because its test
+# profile disables via-ir and higher runs hit solc "Stack too deep"; the pin lets this test-only fixture compile without
+# via-ir. Its optimizer runs are otherwise immaterial. USD3 itself fits at the repo default with a thin
 # ~862 B margin (23,714 B measured at 999999 runs), so future features may need a lower pin or cleanup. Foundry produces
 # the canonical LCC deployment artifact with official solc 0.8.35; Hardhat uses pinned stable solc-js for compilation
 # but its output is non-canonical.

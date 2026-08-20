@@ -99,7 +99,7 @@ contract LCCProxyTest is LCCBase {
 
         LCCVaultFactory factory = new LCCVaultFactory(owner, address(beacon));
         vm.prank(owner);
-        factory.setWhitelistEnabled(false);
+        factory.setDefaultDepositorCap(type(uint128).max);
         vm.prank(owner);
         factory.setOneVaultPolicyEnabled(false);
         vm.startPrank(owner);

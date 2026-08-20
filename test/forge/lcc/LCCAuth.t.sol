@@ -32,7 +32,7 @@ contract LCCMalformedCapturedFactory is LCCCapturedFactoryDeployer {
 }
 
 contract LCCLyingCapturedFactory is LCCCapturedFactoryDeployer {
-    function authorizeDeposit(address, address, bool) external {}
+    function authorizeDeposit(address, address, bool, uint256) external {}
 
     function isOwner(address) external pure returns (bool) {
         return true;

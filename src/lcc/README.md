@@ -78,7 +78,7 @@ over the shared `LCCBase` harness.
   recovering owner-triggered sync must remain under one owner.
 - **Factory guardian** — `GUARDIAN_ROLE` circuit-breaker account. A guardian may pause any family vault but cannot
   unpause and cannot change configuration.
-- **Lister** — `LISTER_ROLE` account that batch-manages the family depositor whitelist.
+- **Lister** — `LISTER_ROLE` account that batch-sets or clears per-beneficiary factory commitment-cap overrides.
 - **Bouncer** — `BOUNCER_ROLE` account that may reduce active commitment and return its paired active margin. Bounce
   is a trusted instant-exit valve that bypasses `exitDelayEpochs`, `exitCapBps` bucket capacity, and
   `minCommitmentEpochs`.
@@ -115,7 +115,8 @@ This is an **ACCEPTED RISK**, not a mitigated or resolved one. The response is r
 (`LCCVault.sol:568-605`) or reduce the commitment fee. Bounce reverts while an auction slot is pending
 (`LCCVault.sol:575`) and while a call is open but not slash-finalized (`LCCVault.sol:577`), so per-facility commitment
 caps must be sized against a full-depeg scenario rather than par. Every margin-oracle change is an M-02 revalidation
-trigger.
+trigger. So are `setDepositorCaps`, `clearDepositorCaps`, and `setDefaultDepositorCap`: factory-cap changes are
+prospective admission changes and do not resize incumbent or return-credited exposure.
 
 The limited structural reason this treatment is tolerable is that the LCC oracle sizes commitment relative to
 margin; it is not a settlement rate at which one asset can be withdrawn for another. The only site touching an
@@ -141,18 +142,22 @@ local, constant-time `isDepositOperator` role view for integrators, while produc
 `authorizeDeposit` and no settlement path reads it. A family ownership rotation therefore changes authority and
 exceptional settlement recovery for every vault at once.
 
-Deposits are whitelisted and prospectively limited to one open family vault by default. Every beneficiary passes the
-same whitelist, one-vault, and admissions checks. A self-deposit needs no operator role; when payer and beneficiary
-differ, the payer must hold `DEPOSIT_OPERATOR_ROLE`, and that role check precedes the same-vault top-up short-circuit.
-The payer is deliberately not checked against the depositor whitelist. The factory records the beneficiary's last
-authorized vault in `vaultOf`; a deposit elsewhere can lazily repoint only after bounded replay completes and reports
-zero exposure. Admission checks only the vault currently named by `vaultOf`; it never scans the unbounded family list.
-An incomplete replay of that named vault is conservatively open, and a matured exit remains open until
-`claimExitedMargin`. The whitelist applies to every deposit. The optional admissions module applies to first deposits,
-reopens, and cross-pointer admissions, but a top-up in the currently registered open vault bypasses it. The owner may
-independently disable whitelist or one-vault enforcement. While the one-vault policy is off, last-deposit recording
-remains warm but no exclusivity invariant is claimed; under nested deposits, the outermost successful frame writes
-last. Re-enabling is prospective and does not close or repair positions opened during the disabled interval.
+Deposits are capped per beneficiary at the factory and prospectively limited to one open family vault by default.
+Every deposit reports the beneficiary's post-deposit active-plus-pending commitment. The factory reads the
+presence-separated override once and uses its `uint128 cap` when `set`, otherwise `defaultDepositorCap`; equality is
+allowed, explicit zero is an absolute denial that survives later default raises, and `type(uint128).max` is unlimited.
+Clearing an override restores fallback to the default. A self-deposit needs no operator role; when payer and
+beneficiary differ, the payer must hold `DEPOSIT_OPERATOR_ROLE`. That role check and the beneficiary cap check both
+precede the same-vault top-up short-circuit, so top-ups remain capped and a roleless payer fails first. The payer is
+deliberately never cap-checked. The factory records the beneficiary's last authorized vault in `vaultOf`; a deposit
+elsewhere can lazily repoint only after bounded replay completes and reports zero exposure. Admission checks only the
+vault currently named by `vaultOf`; it never scans the unbounded family list. An incomplete replay of that named vault
+is conservatively open, and a matured exit remains open until `claimExitedMargin`. The optional admissions module
+applies to first deposits, reopens, and cross-pointer admissions, but a top-up in the currently registered open vault
+bypasses it. While the one-vault policy is off, last-deposit recording remains warm but no exclusivity or family-wide
+aggregate-cap invariant is claimed: the same cap is enforced independently in each admitting vault, so `k` open
+vaults can hold up to `k × cap`. Under nested deposits, the outermost successful frame writes last. Re-enabling is
+prospective and does not close or repair positions opened during the disabled interval.
 
 There are two deliberate owner-accepted registry residuals. First, disabling the one-vault rule permits multiple open
 positions and re-enabling is prospective only. Second, a user who opened positions in A and then B while the policy
@@ -160,7 +165,8 @@ was off has `vaultOf` pointing at B even while A remains open. If the policy is 
 then reopens B, the named-vault check sees B as closed and does not discover the displaced position in A. Both are
 bounded to users grandfathered by a policy-off window and are unreachable when the user's entire deposit history
 occurred under an enabled policy. They are accepted in preference to an unbounded per-deposit scan that calls bounded
-replay on every family vault. Before re-enabling, reconcile all multi-vault users offchain and verify no family vault
+replay on every family vault. Before re-enabling, reconcile all multi-vault users offchain to one open position, verify
+each affected user's aggregate family commitment is at or below their resolved factory cap, and verify no family vault
 is paused or shut with unclaimable positions, because the latest recorded vault controls the named check and future
 top-ups. Registry migration never needs an admin clear: close in A, then the next successful deposit in B re-points
 automatically. Matured exiters must claim before the closure predicate can free their slot.
@@ -329,8 +335,10 @@ reads the oracle and derives `commitment = marginValue * BPS / marginRatioBps`. 
 beneficiary and need no operator role; a distinct payer must hold the factory's `DEPOSIT_OPERATOR_ROLE`. The caller
 supplies inclusive nonzero `minCommitment` / `maxCommitment` bounds, an `allowPendingActivation` opt-in, and a
 wall-clock `deadline`. Both caps are checked against active+pending totals: `protocolCommitmentCap` vault-wide and
-`userCommitmentCap` on the beneficiary account (`CapExceeded`). Factory authorization runs last, so a rejection is
-fail-late but atomically unwinds the margin pull, account writes, and event.
+`userCommitmentCap` on the beneficiary account (`CapExceeded`). Factory authorization then independently applies the
+beneficiary's resolved factory cap to that same post-deposit active-plus-pending total, so effective admission is the
+minimum of the two caps without computing or storing a combined cap. Factory authorization runs last, so a rejection
+is fail-late but atomically unwinds the margin pull, account writes, and event.
 
 Activation follows `_depositActivation`: **immediate** (credited to `activeMargin` / `activeCommitment` now) only
 when the phase is `Normal` and no call has opened for the current epoch; otherwise **pending** for epoch `e+1`,
@@ -631,7 +639,8 @@ M-01). The decision record, stated precisely:
   aggregate commitment never grows). An individual account exceeds its own slashed commitment only by absorbing
   co-defaulters' pro-rata share through the margin-keyed split above, bounded per epoch by the whole defaulter
   pool's slashed commitment; growth requires cohort composition change, not price appreciation alone. New deposits
-  remain blocked above the cap, so `userCommitmentCap` is a one-directional admission gate, not an exposure bound.
+  remain blocked above either the vault `userCommitmentCap` or resolved factory cap, so both are one-directional
+  admission gates, not exposure bounds. Exits, funding, bounce, and claims remain available above a lowered cap.
 
 **Price selection and cap wind-down.** The conversion step normally uses the validated oracle price frozen at call
 open and does not consult the live oracle, whether or not the epoch is exempt from the cap clamp. This freezes only
@@ -885,7 +894,7 @@ flowchart TD
 
 `LCCAuctionLib`, `LCCConfigLib`, and `LCCExitLib` are the three externally linked libraries in the shared `LCCVault` implementation. The canonical Forge
 artifact is compiled for Cancun with official solc `0.8.35`, via IR, and 150 optimizer runs; its measured runtime is
-24,254 bytes, 22 bytes below the 24,276-byte release ceiling and 322 bytes below EIP-170. The active-only monolith
+24,268 bytes, 108 bytes below the 24,376-byte release ceiling and 308 bytes below EIP-170. The active-only monolith
 measured 24,703 bytes, so the exit library remains required. The implementation uses `ReentrancyGuardTransient`, so every deployment
 chain must support EIP-1153; Hardhat uses pinned stable solc-js `0.8.35` for compile/test-only output. An
 `UpgradeableBeacon` owned by the 7-day timelock points at that implementation; the
@@ -897,7 +906,11 @@ factory's deposit gate; an EOA-initialized shell captures that codeless authorit
 Packed structs in `LCCTypesLib` are upgrade-frozen layout.
 The v2 fresh-family layout starts at `_clockConfig` slot 0, stores `factory` at slot 29, and retains a 49-slot
 `__gap` beginning at slot 30. Once deployed, new state must consume gap slots, `factory` must never gain a setter,
-and `isAccountClosed` semantics are upgrade-frozen. Integrators verify vault provenance through
+and `isAccountClosed` semantics are upgrade-frozen. Because the non-upgradeable factory enforces each beneficiary cap
+from the value supplied by the vault, every implementation calling `authorizeDeposit` must report the beneficiary's
+complete post-credit active-plus-pending commitment, computed after account replay and after crediting the current
+deposit; reporting only active commitment would silently bypass the non-upgradeable factory cap for pending exposure.
+Integrators verify vault provenance through
 `factory.isVault(vault)` rather than a vault-side getter or raw storage inspection.
 `LCCExitLib` anchors at `exitBucketByMaturity` and derives the next four exit-storage roots; their adjacency is
 upgrade-frozen even though the library has no storage of its own. All three linked libraries must be re-linked on

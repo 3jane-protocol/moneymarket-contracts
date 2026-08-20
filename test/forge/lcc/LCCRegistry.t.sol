@@ -49,7 +49,7 @@ contract LCCReentrantAdmissionsModule is ILCCAdmissionsModule {
         // The nested admission attempt must be contained by the factory's isVault gate. The outer decision remains
         // usable, proving a hostile module cannot turn its STATICCALL into a registry write or recursive admission.
         (bool reentered,) =
-            address(targetFactory).staticcall(abi.encodeCall(targetFactory.authorizeDeposit, (user, user, false)));
+            address(targetFactory).staticcall(abi.encodeCall(targetFactory.authorizeDeposit, (user, user, false, 0)));
         return !reentered;
     }
 }
@@ -283,28 +283,29 @@ contract LCCRegistryTest is LCCBase {
 
     function testAuthorizeDepositRejectsNonVaultCaller() public {
         vm.expectRevert(LCCErrorsLib.NotVault.selector);
-        factory.authorizeDeposit(alice, alice, false);
+        factory.authorizeDeposit(alice, alice, false, 0);
     }
 
-    function testWhitelistEnabledRejectsAndDisabledAllowsUnlistedDepositor() public {
+    function testDefaultZeroRejectsAndNonzeroDefaultAllowsUnsetDepositor() public {
         LCCVault target = _newVault(_params(CAP, CAP));
         margin.mint(unlisted, 10e18);
         vm.prank(unlisted);
         margin.approve(address(target), type(uint256).max);
 
-        vm.expectRevert(LCCErrorsLib.NotWhitelistedDepositor.selector);
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
         vm.prank(unlisted);
         target.deposit(10e18, unlisted, 1, type(uint256).max, true, type(uint256).max);
         assertEq(target.getAccount(unlisted).activeMargin, 0);
 
-        factory.setWhitelistEnabled(false);
+        factory.setDefaultDepositorCap(type(uint128).max);
         vm.prank(unlisted);
         target.deposit(10e18, unlisted, 1, type(uint256).max, true, type(uint256).max);
         assertEq(factory.vaultOf(unlisted), address(target));
     }
 
-    function testUnwhitelistedOperatorCanFundWhitelistedBeneficiary() public {
-        assertFalse(factory.isWhitelistedDepositor(depositOperator));
+    function testUncappedOperatorCanFundCappedBeneficiary() public {
+        (bool payerCapSet,) = factory.depositorCap(depositOperator);
+        assertFalse(payerCapSet);
         _mintAndApproveMarginPayer(address(vault), depositOperator, 10e18);
 
         _depositFor(depositOperator, alice, 10e18);
@@ -313,23 +314,25 @@ contract LCCRegistryTest is LCCBase {
         assertEq(factory.vaultOf(alice), address(vault));
     }
 
-    function testWhitelistedOperatorCannotFundUnwhitelistedBeneficiary() public {
+    function testCappedOperatorCannotFundZeroCapBeneficiary() public {
         factory.grantRole(factory.DEPOSIT_OPERATOR_ROLE(), stranger);
         _mintAndApproveMarginPayer(address(vault), stranger, 10e18);
-        assertTrue(factory.isWhitelistedDepositor(stranger));
-        assertFalse(factory.isWhitelistedDepositor(unlisted));
+        (bool payerCapSet, uint128 payerCap) = factory.depositorCap(stranger);
+        assertTrue(payerCapSet);
+        assertEq(payerCap, type(uint128).max);
+        _setDepositorCap(unlisted, 0);
 
-        vm.expectRevert(LCCErrorsLib.NotWhitelistedDepositor.selector);
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
         vm.prank(stranger);
         vault.deposit(10e18, unlisted, 1, type(uint256).max, true, type(uint256).max);
 
         assertEq(vault.getAccount(unlisted).activeMargin, 0);
     }
 
-    function testUnauthorizedPayerRevertsOnRoleGateBeforeWhitelistCheck() public {
-        assertTrue(factory.whitelistEnabled());
+    function testUnauthorizedPayerRevertsOnRoleGateBeforeCapCheck() public {
+        assertEq(factory.defaultDepositorCap(), 0);
         assertFalse(factory.isDepositOperator(stranger));
-        assertFalse(factory.isWhitelistedDepositor(unlisted));
+        _setDepositorCap(unlisted, 0);
         _mintAndApproveMarginPayer(address(vault), stranger, 10e18);
 
         vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.UnauthorizedDepositOperator.selector, stranger));
@@ -388,20 +391,123 @@ contract LCCRegistryTest is LCCBase {
         assertEq(vault.getAccount(alice).activeMargin, 10e18);
     }
 
-    function testListerRoleControlsBatchWhitelist() public {
+    function testListerRoleControlsBatchCapsAndClear() public {
         address[] memory depositors = new address[](1);
+        uint128[] memory caps = new uint128[](1);
         depositors[0] = unlisted;
+        caps[0] = 123;
         bytes32 listerRole = factory.LISTER_ROLE();
 
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, listerRole)
         );
         vm.prank(stranger);
-        factory.setDepositorsWhitelisted(depositors, true);
+        factory.setDepositorCaps(depositors, caps);
 
+        vm.expectEmit(true, false, false, true, address(factory));
+        emit LCCVaultFactory.DepositorCapUpdated(unlisted, 123);
         vm.prank(lister);
-        factory.setDepositorsWhitelisted(depositors, true);
-        assertTrue(factory.isWhitelistedDepositor(unlisted));
+        factory.setDepositorCaps(depositors, caps);
+        (bool capSet, uint128 cap) = factory.depositorCap(unlisted);
+        assertTrue(capSet);
+        assertEq(cap, 123);
+
+        vm.expectEmit(true, false, false, true, address(factory));
+        emit LCCVaultFactory.DepositorCapCleared(unlisted);
+        vm.prank(lister);
+        factory.clearDepositorCaps(depositors);
+        (capSet, cap) = factory.depositorCap(unlisted);
+        assertFalse(capSet);
+        assertEq(cap, 0);
+    }
+
+    function testBatchCapLengthMismatchRevertsAndDuplicateLastWriteWins() public {
+        address[] memory users = new address[](2);
+        uint128[] memory shortCaps = new uint128[](1);
+        users[0] = unlisted;
+        users[1] = unlisted;
+        shortCaps[0] = 1;
+
+        vm.expectRevert(LCCErrorsLib.InvalidParams.selector);
+        factory.setDepositorCaps(users, shortCaps);
+
+        uint128[] memory caps = new uint128[](2);
+        caps[0] = 10;
+        caps[1] = 20;
+        factory.setDepositorCaps(users, caps);
+        (bool capSet, uint128 cap) = factory.depositorCap(unlisted);
+        assertTrue(capSet);
+        assertEq(cap, 20);
+    }
+
+    function testDefaultCapOwnerRoleAndEvent() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, lister, factory.OWNER_ROLE()
+            )
+        );
+        vm.prank(lister);
+        factory.setDefaultDepositorCap(456);
+
+        vm.expectEmit(false, false, false, true, address(factory));
+        emit LCCVaultFactory.DefaultDepositorCapUpdated(456);
+        factory.setDefaultDepositorCap(456);
+        assertEq(factory.defaultDepositorCap(), 456);
+    }
+
+    function testDefaultCapAndOverrideMatrix() public {
+        ILCCVault.VaultParams memory params = _params(1_000e18, 1_000e18);
+        params.marginRatioBps = 10_000;
+        LCCVault target = _newVault(params);
+        address unsetUser = makeAddr("unset-cap-user");
+        address lowerOverride = makeAddr("lower-cap-user");
+        address higherOverride = makeAddr("higher-cap-user");
+        address deniedUser = makeAddr("zero-cap-user");
+        address unlimitedUser = makeAddr("unlimited-cap-user");
+
+        factory.setDefaultDepositorCap(50e18);
+        address[] memory users = new address[](4);
+        uint128[] memory caps = new uint128[](4);
+        users[0] = lowerOverride;
+        users[1] = higherOverride;
+        users[2] = deniedUser;
+        users[3] = unlimitedUser;
+        caps[0] = 20e18;
+        caps[1] = 60e18;
+        caps[2] = 0;
+        caps[3] = type(uint128).max;
+        factory.setDepositorCaps(users, caps);
+
+        _mintAndApproveMarginPayer(address(target), unsetUser, 50e18 + 1);
+        _mintAndApproveMarginPayer(address(target), lowerOverride, 20e18 + 1);
+        _mintAndApproveMarginPayer(address(target), higherOverride, 60e18 + 1);
+        _mintAndApproveMarginPayer(address(target), deniedUser, 1);
+        _mintAndApproveMarginPayer(address(target), unlimitedUser, 100e18);
+
+        vm.prank(unsetUser);
+        assertEq(target.deposit(50e18, unsetUser, 1, type(uint256).max, true, type(uint256).max), 50e18);
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        vm.prank(unsetUser);
+        target.deposit(1, unsetUser, 1, type(uint256).max, true, type(uint256).max);
+
+        vm.prank(lowerOverride);
+        assertEq(target.deposit(20e18, lowerOverride, 1, type(uint256).max, true, type(uint256).max), 20e18);
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        vm.prank(lowerOverride);
+        target.deposit(1, lowerOverride, 1, type(uint256).max, true, type(uint256).max);
+
+        vm.prank(higherOverride);
+        assertEq(target.deposit(60e18, higherOverride, 1, type(uint256).max, true, type(uint256).max), 60e18);
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        vm.prank(higherOverride);
+        target.deposit(1, higherOverride, 1, type(uint256).max, true, type(uint256).max);
+
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        vm.prank(deniedUser);
+        target.deposit(1, deniedUser, 1, type(uint256).max, true, type(uint256).max);
+
+        vm.prank(unlimitedUser);
+        assertEq(target.deposit(100e18, unlimitedUser, 1, type(uint256).max, true, type(uint256).max), 100e18);
     }
 
     function testTopUpInRegisteredVaultIsNoOpForRegistry() public {
@@ -443,6 +549,31 @@ contract LCCRegistryTest is LCCBase {
         vm.expectRevert(abi.encodeWithSelector(LCCErrorsLib.RegisteredElsewhere.selector, address(otherVault)));
         vm.prank(alice);
         vault.deposit(1e18, alice, 1, type(uint256).max, true, type(uint256).max);
+    }
+
+    function testPolicyOffFactoryCapIsPerVaultNotFamilyAggregate() public {
+        ILCCVault.VaultParams memory params = _params(100e18, 100e18);
+        params.marginRatioBps = 10_000;
+        _deployVaultWithParams(params);
+        LCCVault otherVault = _newVault(params);
+        _mintAndApprove(otherVault, alice, 0, 0);
+        _setDepositorCap(alice, 10e18);
+
+        assertEq(_deposit(alice, 10e18), 10e18);
+        factory.setOneVaultPolicyEnabled(false);
+        vm.prank(alice);
+        assertEq(otherVault.deposit(10e18, alice, 1, type(uint256).max, true, type(uint256).max), 10e18);
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        vm.prank(alice);
+        otherVault.deposit(1, alice, 1, type(uint256).max, true, type(uint256).max);
+
+        assertEq(vault.getAccount(alice).activeCommitment, 10e18);
+        assertEq(otherVault.getAccount(alice).activeCommitment, 10e18);
+        assertGt(
+            vault.getAccount(alice).activeCommitment + otherVault.getAccount(alice).activeCommitment,
+            10e18,
+            "factory cap is enforced independently per vault while policy is off"
+        );
     }
 
     function testClosingDisplacedVaultRestoresOneVaultPolicyConstraint() public {
@@ -851,7 +982,7 @@ contract LCCRegistryTest is LCCBase {
         factory.setAdmissionsModule(address(reentrantModule));
 
         assertEq(factory.admissionsModule(), address(reentrantModule));
-        assertTrue(factory.whitelistEnabled());
+        assertEq(factory.defaultDepositorCap(), 0);
         assertTrue(factory.oneVaultPolicyEnabled());
 
         _deposit(alice, 10e18);
@@ -892,9 +1023,7 @@ contract LCCRegistryTest is LCCBase {
         outerVault = _newVault(_params(CAP, CAP));
         probe = new LCCRegistryDepositReentryProbe(token, innerVault, outerVault, 10e18);
 
-        address[] memory depositors = new address[](1);
-        depositors[0] = address(probe);
-        factory.setDepositorsWhitelisted(depositors, true);
+        _setDepositorCap(address(probe), type(uint128).max);
         token.mint(address(probe), 20e18);
     }
 

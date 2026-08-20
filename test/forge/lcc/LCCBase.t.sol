@@ -238,17 +238,21 @@ contract LCCBase is Test, ILCCVaultFactory {
         factory.grantRole(factory.GUARDIAN_ROLE(), guardian);
         factory.grantRole(factory.DEPOSIT_OPERATOR_ROLE(), depositOperator);
 
-        address[] memory whitelisted = new address[](9);
-        whitelisted[0] = owner;
-        whitelisted[1] = alice;
-        whitelisted[2] = bob;
-        whitelisted[3] = carol;
-        whitelisted[4] = lister;
-        whitelisted[5] = bouncer;
-        whitelisted[6] = guardian;
-        whitelisted[7] = stranger;
-        whitelisted[8] = treasury;
-        factory.setDepositorsWhitelisted(whitelisted, true);
+        address[] memory depositors = new address[](9);
+        uint128[] memory caps = new uint128[](9);
+        depositors[0] = owner;
+        depositors[1] = alice;
+        depositors[2] = bob;
+        depositors[3] = carol;
+        depositors[4] = lister;
+        depositors[5] = bouncer;
+        depositors[6] = guardian;
+        depositors[7] = stranger;
+        depositors[8] = treasury;
+        for (uint256 i = 0; i < caps.length; ++i) {
+            caps[i] = type(uint128).max;
+        }
+        factory.setDepositorCaps(depositors, caps);
 
         vault = _newVault(_params(address(oracle), CAP, CAP, 2_000));
 
@@ -323,7 +327,7 @@ contract LCCBase is Test, ILCCVaultFactory {
         return LCCVault(address(new BeaconProxy(address(beacon), abi.encodeCall(ILCCVault.initialize, (params)))));
     }
 
-    function authorizeDeposit(address, address, bool) external override {}
+    function authorizeDeposit(address, address, bool, uint256) external override {}
 
     function isOwner(address account) external view override returns (bool) {
         return account == owner;
@@ -392,10 +396,9 @@ contract LCCBase is Test, ILCCVaultFactory {
     }
 
     function _mintAndApprove(LCCVault target, address user, uint256 marginAmount, uint256 usdcAmount) internal {
-        if (!factory.isWhitelistedDepositor(user)) {
-            address[] memory depositor = new address[](1);
-            depositor[0] = user;
-            factory.setDepositorsWhitelisted(depositor, true);
+        (bool capSet,) = factory.depositorCap(user);
+        if (!capSet) {
+            _setDepositorCap(user, type(uint128).max);
         }
         margin.mint(user, marginAmount);
         usdc.mint(user, usdcAmount);
@@ -410,6 +413,20 @@ contract LCCBase is Test, ILCCVaultFactory {
         margin.mint(payer, assets);
         vm.prank(payer);
         margin.approve(target, type(uint256).max);
+    }
+
+    function _setDepositorCap(address user, uint128 cap) internal {
+        address[] memory users = new address[](1);
+        uint128[] memory caps = new uint128[](1);
+        users[0] = user;
+        caps[0] = cap;
+        factory.setDepositorCaps(users, caps);
+    }
+
+    function _clearDepositorCap(address user) internal {
+        address[] memory users = new address[](1);
+        users[0] = user;
+        factory.clearDepositorCaps(users);
     }
 
     function _seedUsd3(uint256 assets, uint256 profit) internal {

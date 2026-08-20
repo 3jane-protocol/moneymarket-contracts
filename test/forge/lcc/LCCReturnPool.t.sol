@@ -110,6 +110,34 @@ contract LCCReturnPoolTest is LCCBase {
         assertEq(margin.balanceOf(alice) - balanceBefore, 120e18);
     }
 
+    function testReturnCreditCanExceedFactoryCapWithoutBrickingExitOrClaim() public {
+        _setupHeterogeneousReturnPool(300e18);
+        _setDepositorCap(alice, 150e18);
+        oracle.setPrice(ORACLE_PRICE_SCALE / 2);
+        assertEq(_deposit(alice, 70e18), 70e18);
+        _finishFunding();
+        vault.finalizeEpochSlash(0);
+
+        vault.materializeAccount(alice);
+        ILCCVault.Account memory account = vault.getAccount(alice);
+        assertEq(account.activeCommitment + account.pendingCommitment, 170e18);
+        (bool capSet, uint128 cap) = factory.depositorCap(alice);
+        assertTrue(capSet);
+        assertGt(account.activeCommitment + account.pendingCommitment, cap);
+        assertLe(account.activeCommitment + account.pendingCommitment, vault.riskConfig().userCommitmentCap);
+
+        vm.expectRevert(LCCErrorsLib.CapExceeded.selector);
+        _deposit(alice, 2);
+
+        vm.warp(START + EPOCH);
+        vm.prank(alice);
+        assertEq(vault.requestExit(type(uint256).max, type(uint256).max), 2);
+        vm.warp(START + 2 * EPOCH);
+        vm.prank(alice);
+        assertEq(vault.claimExitedMargin(alice), 120e18);
+        assertTrue(vault.isAccountClosed(alice));
+    }
+
     function testPendingExposureDoesNotReduceReturnCommitmentCredit() public {
         _setupHeterogeneousReturnPool(150e18);
         vm.prank(owner);

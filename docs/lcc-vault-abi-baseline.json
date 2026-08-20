@@ -1787,11 +1787,6 @@
       "inputs": []
     },
     {
-      "name": "NotWhitelistedDepositor",
-      "signature": "NotWhitelistedDepositor()",
-      "inputs": []
-    },
-    {
       "name": "NotWithdrawable",
       "signature": "NotWithdrawable()",
       "inputs": []

@@ -1085,9 +1085,11 @@ contract LCCExitFragmentationHandler is Test {
 
         address actor = address(uint160(uint256(keccak256(abi.encode(address(this), ++actorNonce)))));
         address[] memory depositor = new address[](1);
+        uint128[] memory depositorCap = new uint128[](1);
         depositor[0] = actor;
+        depositorCap[0] = type(uint128).max;
         vm.prank(fragmentationOwner);
-        fragmentationFactory.setDepositorsWhitelisted(depositor, true);
+        fragmentationFactory.setDepositorCaps(depositor, depositorCap);
         fragmentationMargin.mint(actor, capacity);
         vm.startPrank(actor);
         fragmentationMargin.approve(address(fragmentationVault), type(uint256).max);
@@ -1694,6 +1696,8 @@ contract LCCRegistryInvariantHandler is Test {
         address slot;
         bool slotOpen;
         bool targetOpen;
+        bool capAdmits;
+        bool vaultCapsAdmit;
         bool modelAdmits;
     }
 
@@ -1770,10 +1774,10 @@ contract LCCRegistryInvariantHandler is Test {
         _close(thirdVault, actorSeed);
     }
 
-    function toggleWhitelist() external recordSetCoverage {
-        bool enabled = invariantFactory.whitelistEnabled();
+    function toggleDefaultDepositorCap() external recordSetCoverage {
+        uint128 currentCap = invariantFactory.defaultDepositorCap();
         vm.prank(invariantOwner);
-        invariantFactory.setWhitelistEnabled(!enabled);
+        invariantFactory.setDefaultDepositorCap(currentCap == 0 ? type(uint128).max : 0);
     }
 
     function toggleOneVaultPolicy() external recordSetCoverage {
@@ -1813,8 +1817,8 @@ contract LCCRegistryInvariantHandler is Test {
         if (payerMode == PAYER_MODE_AUTHORIZED) payer = address(this);
         if (payerMode == PAYER_MODE_UNAUTHORIZED) payer = actors[(beneficiaryIndex + 1) % actors.length];
 
-        AdmissionPreState memory pre = _snapshotAdmission(beneficiary, target);
         uint256 amount = bound(amountSeed, 1, 10e18);
+        AdmissionPreState memory pre = _snapshotAdmission(beneficiary, target, amount);
 
         if (simulateUnauthorized) {
             require(pre.policyOn && !pre.modelAdmits, "NOT_UNAUTHORIZED_PRESTATE");
@@ -1829,17 +1833,25 @@ contract LCCRegistryInvariantHandler is Test {
         } catch (bytes memory reason) {
             bytes4 selector = _revertSelector(reason);
             if (payerMode == PAYER_MODE_UNAUTHORIZED) {
-                // The factory's payer-role gate runs before the whitelist and one-vault checks, so an unauthorized
+                // The factory's payer-role gate runs before the depositor-cap and one-vault checks, so an unauthorized
                 // payer that reaches the factory must revert with UnauthorizedDepositOperator; a later admission
-                // error means the gate ran too late. Vault-side reverts before the factory call stay acceptable.
-                if (
-                    selector == LCCErrorsLib.RegisteredElsewhere.selector
-                        || selector == LCCErrorsLib.NotWhitelistedDepositor.selector
-                ) admissionOracleHealthy = false;
-            } else if (
-                selector != LCCErrorsLib.RegisteredElsewhere.selector
-                    && selector != LCCErrorsLib.NotWhitelistedDepositor.selector
-            ) {
+                // error means the gate ran too late. A vault-side CapExceeded stays acceptable only when its pre-state
+                // caps lacked headroom; otherwise a rejecting factory cap is the only possible source.
+                if (selector == LCCErrorsLib.RegisteredElsewhere.selector) {
+                    admissionOracleHealthy = false;
+                } else if (selector == LCCErrorsLib.CapExceeded.selector) {
+                    if (pre.vaultCapsAdmit && !pre.capAdmits) admissionOracleHealthy = false;
+                    else if (pre.vaultCapsAdmit) fail();
+                } else if (selector != LCCErrorsLib.UnauthorizedDepositOperator.selector) {
+                    fail();
+                }
+            } else if (selector == LCCErrorsLib.CapExceeded.selector) {
+                if (pre.vaultCapsAdmit && pre.capAdmits) fail();
+            } else if (selector == LCCErrorsLib.RegisteredElsewhere.selector) {
+                if (simulateUnauthorized || !pre.policyOn || !pre.vaultCapsAdmit || !pre.capAdmits || pre.modelAdmits) {
+                    fail();
+                }
+            } else {
                 fail();
             }
         }
@@ -1860,17 +1872,38 @@ contract LCCRegistryInvariantHandler is Test {
         }
     }
 
-    function _snapshotAdmission(address actor, LCCVault target) internal view returns (AdmissionPreState memory pre) {
+    function _snapshotAdmission(address actor, LCCVault target, uint256 assets)
+        internal
+        view
+        returns (AdmissionPreState memory pre)
+    {
         pre.policyOn = invariantFactory.oneVaultPolicyEnabled();
         address preNamed = invariantFactory.vaultOf(actor);
         bool preNamedOpen = preNamed != address(0) && hasOpenExposure(preNamed, actor);
         pre.slot = slotVault[actor];
         pre.slotOpen = pre.slot != address(0) && hasOpenExposure(pre.slot, actor);
         pre.targetOpen = hasOpenExposure(address(target), actor);
-        pre.modelAdmits = preNamed == address(0) || preNamed == address(target) || !preNamedOpen;
+        (bool capSet, uint128 overrideCap) = invariantFactory.depositorCap(actor);
+        uint128 cap = capSet ? overrideCap : invariantFactory.defaultDepositorCap();
+        ILCCVault.Account memory account = target.getAccount(actor);
+        (, uint256 commitment) = LCCAuctionLib.valueAndCommitment(
+            assets, OracleMock(target.assetConfig().marginOracle).price(), target.epochConfig().marginRatioBps
+        );
+        pre.capAdmits = account.activeCommitment + account.pendingCommitment + commitment <= cap;
+        ILCCVault.Totals memory totals = target.totals();
+        ILCCVault.RiskConfig memory risk = target.riskConfig();
+        pre.vaultCapsAdmit = uint256(totals.activeMargin) + totals.pendingMargin + assets <= type(uint128).max
+            && uint256(totals.activeCommitment) + totals.pendingCommitment + commitment <= risk.protocolCommitmentCap
+            && uint256(account.activeCommitment) + account.pendingCommitment + commitment <= risk.userCommitmentCap;
+        pre.modelAdmits = pre.capAdmits && (preNamed == address(0) || preNamed == address(target) || !preNamedOpen);
     }
 
     function _recordSuccessfulDeposit(address actor, address target, AdmissionPreState memory pre) internal {
+        if (!pre.capAdmits) {
+            admissionOracleHealthy = false;
+            return;
+        }
+
         if (!pre.policyOn) {
             if (pre.slotOpen && pre.slot != target) grandfathered[actor][pre.slot] = true;
             grandfathered[actor][target] = false;
@@ -1975,9 +2008,9 @@ abstract contract LCCRegistryInvariantBase is LCCBase {
             vault.deposit(1e18, actor, 1, type(uint256).max, true, type(uint256).max);
         }
 
-        address[] memory dewhitelisted = new address[](1);
-        dewhitelisted[0] = registryActors[registryActors.length - 1];
-        factory.setDepositorsWhitelisted(dewhitelisted, false);
+        address[] memory defaultCapped = new address[](1);
+        defaultCapped[0] = registryActors[registryActors.length - 1];
+        factory.clearDepositorCaps(defaultCapped);
 
         registryHandler = new LCCRegistryInvariantHandler(
             factory, vault, secondRegistryVault, thirdRegistryVault, owner, bouncer, registryActors
@@ -1992,7 +2025,7 @@ abstract contract LCCRegistryInvariantBase is LCCBase {
         selectors[4] = LCCRegistryInvariantHandler.closeSecond.selector;
         selectors[5] = LCCRegistryInvariantHandler.closeThird.selector;
         if (_includeToggleHandlers()) {
-            selectors[6] = LCCRegistryInvariantHandler.toggleWhitelist.selector;
+            selectors[6] = LCCRegistryInvariantHandler.toggleDefaultDepositorCap.selector;
             selectors[7] = LCCRegistryInvariantHandler.toggleOneVaultPolicy.selector;
         }
         targetContract(address(registryHandler));
