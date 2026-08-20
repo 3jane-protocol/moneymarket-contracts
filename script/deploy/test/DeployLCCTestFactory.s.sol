@@ -12,9 +12,10 @@ import {SevenDayTimelockCheck} from "../../utils/SevenDayTimelockCheck.sol";
  * @title DeployLCCTestFactory
  * @notice Deploys an EOA-owned test factory that shares the canonical timelock-owned LCC beacon.
  * @dev The factory is intentionally separate from the production factory so test vaults never enter the production
- *      registry. Its depositor whitelist is disabled so the isolated vault is usable for public margin-deposit
- *      testing, while the one-vault policy remains enabled. Re-running with the same broadcaster, owner, beacon, and
- *      salt fails on the expected CREATE2 collision; use verify(address) to inspect the first deployment instead.
+ *      registry. Its default depositor cap is set to the maximum so the isolated vault is usable for public
+ *      margin-deposit testing under the vault-level caps alone, while the one-vault policy remains enabled.
+ *      Re-running with the same broadcaster, owner, beacon, and salt fails on the expected CREATE2 collision; use
+ *      verify(address) to inspect the first deployment instead.
  *
  *      Usage:
  *      FOUNDRY_PROFILE=script LCC_BEACON=<address> PRODUCTION_LCC_FACTORY=<address> TEST_OWNER=<address> forge script \
@@ -23,7 +24,7 @@ import {SevenDayTimelockCheck} from "../../utils/SevenDayTimelockCheck.sol";
 contract DeployLCCTestFactory is Script, LCCWiringCheck, SevenDayTimelockCheck {
     uint256 internal constant MAINNET_CHAIN_ID = 1;
     address internal constant USD3_PROXY = 0x056B269Eb1f75477a8666ae8C7fE01b64dD55eCc;
-    bytes32 internal constant TEST_FACTORY_SALT = bytes32("3JANE_LCC_TEST_FACTORY_V2");
+    bytes32 internal constant TEST_FACTORY_SALT = bytes32("3JANE_LCC_TEST_FACTORY_V3");
 
     function run() external returns (address factoryAddress) {
         (address beaconAddress, address productionFactoryAddress, address testOwner) = _deploymentContext();
@@ -37,7 +38,7 @@ contract DeployLCCTestFactory is Script, LCCWiringCheck, SevenDayTimelockCheck {
 
         _startExpectedBroadcast(testOwner);
         LCCVaultFactory factory = new LCCVaultFactory{salt: TEST_FACTORY_SALT}(testOwner, beaconAddress);
-        factory.setWhitelistEnabled(false);
+        factory.setDefaultDepositorCap(type(uint128).max);
         factoryAddress = address(factory);
         vm.stopBroadcast();
 
@@ -81,7 +82,7 @@ contract DeployLCCTestFactory is Script, LCCWiringCheck, SevenDayTimelockCheck {
 
         LCCVaultFactory productionFactory = LCCVaultFactory(productionFactoryAddress);
         require(productionFactory.beacon() == beaconAddress, "Production factory beacon mismatch");
-        require(productionFactory.whitelistEnabled(), "Production factory whitelist disabled");
+        require(productionFactory.defaultDepositorCap() == 0, "Production factory default depositor cap nonzero");
         require(productionFactory.oneVaultPolicyEnabled(), "Production factory one-vault policy disabled");
 
         UpgradeableBeacon beacon = UpgradeableBeacon(beaconAddress);
@@ -116,7 +117,7 @@ contract DeployLCCTestFactory is Script, LCCWiringCheck, SevenDayTimelockCheck {
             factory.getRoleAdmin(factory.DEPOSIT_OPERATOR_ROLE()) == factory.OWNER_ROLE(),
             "LCC deposit operator admin mismatch"
         );
-        require(!factory.whitelistEnabled(), "LCC test factory whitelist enabled");
+        require(factory.defaultDepositorCap() == type(uint128).max, "LCC test factory default depositor cap not open");
         require(factory.oneVaultPolicyEnabled(), "LCC test factory one-vault policy disabled");
         require(factory.admissionsModule() == address(0), "LCC test factory admissions module set");
         require(factory.beacon() == beaconAddress, "LCC test factory beacon mismatch");
