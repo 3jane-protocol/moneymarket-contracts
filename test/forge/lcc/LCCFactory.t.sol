@@ -44,6 +44,33 @@ contract LCCFactoryTest is LCCBase {
         assertEq(factory.numVaults(), 2);
     }
 
+    function testSharedBeaconTestFactoryKeepsActiveVaultOutOfProductionRegistry() public {
+        LCCVaultFactory productionFactory = new LCCVaultFactory(owner, address(beacon));
+        LCCVaultFactory testFactory = new LCCVaultFactory(factoryOwner, address(beacon));
+        ILCCVault.VaultParams memory params = _params(CAP, CAP);
+        params.startTimestamp = block.timestamp + 1 days;
+        bytes32 salt = keccak256("TEST_ONLY:shared-beacon-rehearsal");
+        address predicted = testFactory.predictVaultAddress(params, salt);
+
+        vm.prank(factoryOwner);
+        address created = testFactory.createVault(params, salt);
+
+        assertEq(created, predicted);
+        assertEq(testFactory.beacon(), productionFactory.beacon());
+        assertTrue(testFactory.isVault(created));
+        assertFalse(productionFactory.isVault(created));
+        assertEq(testFactory.numVaults(), 1);
+        assertEq(productionFactory.numVaults(), 0);
+        assertEq(address(uint160(uint256(vm.load(created, bytes32(uint256(29)))))), address(testFactory));
+        assertTrue(testFactory.isOwner(factoryOwner));
+        assertFalse(productionFactory.isOwner(factoryOwner));
+        assertEq(LCCVault(created).currentEpoch(), 0);
+        assertEq(uint256(LCCVault(created).currentPhase()), uint256(ILCCVault.Phase.Normal));
+        (bool paused,,) = LCCVault(created).pauseState();
+        assertFalse(paused);
+        assertFalse(LCCVault(created).shutdownState().active);
+    }
+
     function testFactoryDefaultSaltCollisionForcesExplicitSalt() public {
         LCCVaultFactory factory = new LCCVaultFactory(factoryOwner, address(beacon));
         ILCCVault.VaultParams memory params = _params(CAP, CAP);

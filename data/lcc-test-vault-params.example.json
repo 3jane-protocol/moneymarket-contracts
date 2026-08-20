@@ -1,0 +1,23 @@
+{
+  "auctionStepCount": 24,
+  "auctionStepDecayRateBps": 500,
+  "epochLength": 604800,
+  "exitCapBps": 2000,
+  "exitDelayEpochs": 1,
+  "facilityId": "TEST_ONLY:replace-with-unique-test-facility-id",
+  "fundingDuration": 86400,
+  "marginAsset": "0x0000000000000000000000000000000000000000",
+  "marginOracle": "0x0000000000000000000000000000000000000000",
+  "marginRatioBps": 5000,
+  "maxAuctionAwardBps": 10000,
+  "maxEpochs": 1,
+  "minCommitmentEpochs": 1,
+  "minDepositAssets": 0,
+  "normalDuration": 345600,
+  "preCallDuration": 86400,
+  "protocolCommitmentCap": 10000000000000,
+  "slashFeeBps": 1000,
+  "startTimestamp": 0,
+  "startTimestampNote": "MUST be at least MIN_START_LEAD_TIME seconds in the future before use",
+  "userCommitmentCap": 1000000000000
+}

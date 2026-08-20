@@ -43,7 +43,8 @@
     "lint:fix": "yarn lint:forge:fix && yarn lint:hardhat:fix",
     "lint:forge:fix": "forge fmt",
     "lint:hardhat:fix": "prettier --write test/hardhat",
-    "clean": "npx hardhat clean && forge clean"
+    "clean": "npx hardhat clean && forge clean",
+    "script:forge": "FOUNDRY_PROFILE=script forge script"
   },
   "dependencies": {
     "ethers": "^6.7.1",
