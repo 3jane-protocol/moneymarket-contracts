@@ -119,6 +119,25 @@ pre-enable items:
 4. Correct tranche fee-share sizing under markdown.
 5. Include markdown in deployment accounting.
 
+**Residual risk and operating note — impaired-interest recognition.** This is deliberately not a sixth gate item,
+because it cannot be closed. Base interest accrues on gross face debt, while the markdown applied to the market
+moves only when the borrower is touched (`_updateMarketMarkdown`, `src/MorphoCredit.sol:782`), so interest on
+already-impaired debt reports as USD3 profit through `_harvestAndReport` (`src/usd3/USD3.sol:329-338`, returning
+`nav()`, `:723-725`), unlocks to holders, and cannot be clawed back from anyone who exits before the next touch.
+Where markdown has been enabled for specific borrowers, pass those borrowers to `accruePremiumsForBorrowers` and
+`USD3.report()` in one bundle, with the borrower refresh executing **before** the report. The order is the
+substance, not a detail: if the report runs first, it recognizes the gross interest as profit and the later refresh
+leaves the markdown loss pending.
+
+This is best-effort, not a sufficient control. `accruePremiumsForBorrowers` refreshes only the addresses its
+caller passes (`src/MorphoCredit.sol:147-153`), so the ordered bundle removes ordering risk for the borrowers named and
+nothing more — it cannot prove discovery or prevent omission. Any borrower left out still has gross interest
+reported as profit before its markdown catches up. The set of enabled borrowers is owner-authored and
+reconstructible from our own events — `markdownEnabled` has exactly one writer, `setEnableMarkdown`, owner-gated,
+one borrower per call, emitting `MarkdownEnabledUpdated` (`src/MarkdownController.sol:84-87`) — which makes the
+sweep tractable, not complete. This remains accepted residual risk; this note alone does not make markdown
+activation safe.
+
 ### Other one-write configuration re-arms
 
 Treat each of these separately from markdown activation and require a live configuration read plus an explicit review
@@ -133,6 +152,58 @@ before the privileged write:
 - Setting `SUSD3_LOCK_DURATION` to a nonzero value takes one owner `ProtocolConfig.setConfig` write and causes successful
   deposits or mints to set `lockedUntil` (`src/ProtocolConfig.sol:47`, `src/ProtocolConfig.sol:80-86`,
   `src/usd3/sUSD3.sol:145-149`).
+- Setting `MIN_CREDIT_LINE` to a nonzero value takes one owner `ProtocolConfig.setConfig` write
+  (`src/ProtocolConfig.sol:80-86`) and disables emergency revocation: a zero-credit update reverts
+  `MinCreditLineExceeded` (`src/CreditLine.sol:150`) whenever the minimum is positive, which disables
+  `EmergencyController.emergencyRevokeCreditLine` (`src/EmergencyController.sol:81-102`) and the identical route in
+  `OperationalController` (`src/OperationalController.sol:88-108`). `MIN_CREDIT_LINE` must stay zero while emergency
+  revocation is a relied-on control. Replacing `CreditLine` itself is unreachable for the live market: it is
+  non-upgradeable, and `creditLine` is a field of `MarketParams` whose hash is the market id
+  (`src/libraries/MarketParamsLib.sol:16-19`), so a redeployed CreditLine is a different market. The credit line
+  itself, however, is stored as `position[id][borrower].collateral` inside MorphoCredit (`src/MorphoCredit.sol:359-367`,
+  written by `setCreditLine`, gated `onlyCreditLine`), and MorphoCredit is ProxyAdmin-managed behind the 7-day
+  timelock (`docs/deployment.md:15`), so a MorphoCredit implementation upgrade adding a narrowly authorized
+  revocation path that zeroes that collateral directly — without changing `MarketParams` or its id — remains an
+  available remedy if a permanent selective-revocation path is ever needed. `MIN_CREDIT_LINE` sits behind the 24h
+  params timelock, so zeroing it back is not an emergency path; the immediate fallback is
+  `setConfig(DEBT_CAP, 0)` (`src/EmergencyController.sol:70-72`), which is blunt rather than selective.
+- Setting `MIN_BORROW` to a nonzero value takes one owner `ProtocolConfig.setConfig` write and blocks terminal-dust
+  insurance repayment: `_beforeRepay` rejects a repayment leaving `0 < remaining < minBorrow`
+  (`src/MorphoCredit.sol:617-625`), which blocks `CreditLine.settle` from applying insurance cover immediately before
+  write-off (`src/CreditLine.sol:204-226`). `MIN_BORROW` must stay zero unless the settlement exemption ships first:
+  before setting it nonzero, exempt `msg.sender == marketParams.creditLine` from the remaining-debt minimum.
+
+## Before enabling the Morpho fee
+
+**Standing operating decision:** do not enable the MorphoCredit market fee, and do not set a fee recipient. This
+section is also the operator-facing record of the accepted fee-recipient risk: USD3 subtracts the ring fence from
+withdrawal capacity while MorphoCredit grants the fee recipient an independent exception, and that acceptance rests
+entirely on the fee staying zero. The recorded production values are a zero market `fee` and
+`MorphoCredit.feeRecipient()` of `address(0)`; take a live read of both before relying on this section.
+
+A nonzero market fee is the common precondition for both numbered items below, but which one it arms depends on who
+the recipient is, and the two arming conditions are mutually exclusive:
+
+- **Item 1 arms on a nonzero fee with a fee recipient that is not USD3.** `_beforeWithdraw` returns early for USD3
+  itself before the fee-recipient exception is reached (`src/MorphoCredit.sol:558`, then `:561`), so when
+  `feeRecipient` is USD3 the exception is never the operative path and the fee shares stay inside USD3's own
+  accounting. A non-USD3 recipient makes the `:561` exception live: that recipient withdraws its own fee shares and
+  pulls market cash that USD3 has reserved through `ringFencedLiquidity` (`src/usd3/USD3.sol:508`).
+- **Item 2 arms on a nonzero fee with the fee recipient set to USD3.** `expectedSupplyAssets`
+  (`src/libraries/periphery/MorphoBalancesLib.sol:90-104`) adds the fee shares that accrual mints to the projected
+  `totalSupplyShares` (`:54-56`) but reads the queried account's stored share balance (`:100`), so the denominator
+  is complete while the fee recipient's numerator is short: the fee recipient's own balance is understated and every
+  other account's is exact. While either write is missing, USD3's position read — item 2's concern — is exact.
+
+Any proposal to reverse this decision must first close and independently verify both items:
+
+1. The fee-recipient/ring-fence interaction above, on its own merits rather than on the fee-stays-zero commitment.
+2. A fee-recipient-aware position calculation in `suppliedWaUSDC` (`src/usd3/USD3.sol:717`). The shape of the fix:
+   when `feeRecipient()` is USD3 itself, add the projected fee shares — the difference between the expected and
+   stored total supply shares — to USD3's own share balance before converting shares to assets, instead of calling
+   `expectedSupplyAssets` directly; every import and `using` declaration this needs is already present in the file.
+   It is not shipped today because `suppliedWaUSDC` feeds `nav()` and therefore every live accounting path, and the
+   branch it would correct cannot execute while the fee and recipient stay unset.
 
 ## Helper seed for recurring junior top-ups
 
@@ -213,6 +284,26 @@ this deferred recovery cannot protect borrowers settled in the intervening windo
 1. Track junior exits that land during a wrapper pause; each one leaves a deferred pullback that nothing on-chain queues.
 2. On unpause, have a keeper call `tend` before borrowing resumes, exactly as for a paused loss report above.
 3. Confirm deployed waUSDC is back at or below the effective cap before closing the incident.
+
+## Servicing a borrower approaching Default
+
+**Trigger.** A borrower with a drawn line crosses into grace or delinquency and is heading for Default.
+
+**What happens on its own.** Nothing prices the loss in. While `markdownEnabled[borrower]` is false — the recorded
+production state — `calculateMarkdown` returns zero (`src/MarkdownController.sol:94-100`), so no touch can impair the
+debt: settlement is the first accounting event that records the principal loss, and USD3's `_pendingLoss` predicate
+(`src/usd3/USD3.sol:185-187`) only trips after it. Between publicly observable Default and settlement, USD3 entry and
+exit both price at par. The same window opens regardless of the borrower flag if the markdown manager is ever set to
+zero, since `_updateBorrowerMarkdown` then returns before consulting the controller (see "Before enabling markdown").
+
+1. Monitor borrowers crossing grace and delinquency; repayment status is derivable on chain by anyone, so treat the
+   crossing as the start of the window rather than as advance private notice.
+2. Minimise the interval between Default and settlement.
+3. Submit the settlement (`CreditLine.settle`, `src/CreditLine.sol:204-226`) together with `USD3.report()` and
+   `sUSD3.report()` as one private bundle, so no entry or exit lands between the write-down and its recognition.
+4. If a delay is unavoidable, use the existing USD3 supply-cap and redemption-floor controls to narrow entry and
+   exit at par — after first confirming no open LCC call depends on USD3 deposits; see the zero-cap hazard under
+   "USD3 and sUSD3 admission controls".
 
 ## Settlement near the supply share-price floor
 
