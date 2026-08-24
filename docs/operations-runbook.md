@@ -90,6 +90,50 @@ addresses. Either can call `shutdownStrategy()`, which halts deposit/mint but is
 shutdown. Do not submit a nonexistent junior-cap key, and do not assume the ProtocolConfig emergency controller also
 holds either sUSD3 strategy role without a live read.
 
+## Before enabling markdown
+
+Begin with a live read of `CreditLine.mm()`. The recorded production value is nonzero, so the zero-manager early return
+in `_updateBorrowerMarkdown` does not apply; the remaining activation gate is the per-borrower flag controlled by
+`MarkdownController.setEnableMarkdown` (`src/MorphoCredit.sol:714-715`, `src/MarkdownController.sol:81-87`,
+`audit-round3/onchain-evidence.md:66-78`). Read that flag for every proposed borrower rather than treating the manager
+address as the active safety control.
+
+A future change may set `mm` to the zero address. Treat markdown activation as a two-step sequence if and only if the
+live read confirms that change has happened: the CreditLine owner must first set a nonzero manager with `setMm`, and
+the MarkdownController owner must then enable the borrower (`src/CreditLine.sol:85-94`,
+`src/MarkdownController.sol:81-87`). While `mm` remains nonzero, borrower enablement is the single remaining write.
+
+**Standing operating decision:** do not activate the markdown module, and do not post non-empty repayment obligations
+on chain. Posting obligations is an owner-or-OZD action and is what supplies the delinquency/default state consumed by
+markdown (`src/CreditLine.sol:163-179`, `src/MorphoCredit.sol:515-539`). Cycle closure is not covered by this decision
+and must continue on schedule: call `closeCycleAndPostObligations` with empty borrower arrays, the shape
+`test/forge/BaseTest.sol` uses at setup. A missed close freezes the market — `_isMarketFrozen`
+(`src/MorphoCredit.sol:830-842`) returns true once `block.timestamp >= lastCycleEnd + cycleDuration`, and both
+`_beforeBorrow` (`src/MorphoCredit.sol:576`) and `_beforeRepay` (`:610`) then revert `MarketFrozen()`, so borrowers
+cannot even repay. Any proposal to reverse this decision must first close and independently verify all five
+pre-enable items:
+
+1. Correct stale deposit pricing.
+2. Remove withdrawal freezes caused by markdown accounting.
+3. Correct cure attribution.
+4. Correct tranche fee-share sizing under markdown.
+5. Include markdown in deployment accounting.
+
+### Other one-write configuration re-arms
+
+Treat each of these separately from markdown activation and require a live configuration read plus an explicit review
+before the privileged write:
+
+- Issuing a third-party credit line through `setCreditLines` takes one owner-or-OZD write, not an owner-only write
+  (`src/CreditLine.sol:118-130`). The `_afterBorrow` premium-accrual timestamp correction in
+  `src/MorphoCredit.sol:633-636` must be live before issuing it.
+- Setting `MIN_SUSD3_BACKING_RATIO` to a nonzero value takes one owner `ProtocolConfig.setConfig` write and restores the
+  junior-backing deployment constraint; the recorded production value is zero (`src/ProtocolConfig.sol:80-86`,
+  `src/usd3/USD3.sol:193-213`, `audit-round3/onchain-evidence.md:44`).
+- Setting `SUSD3_LOCK_DURATION` to a nonzero value takes one owner `ProtocolConfig.setConfig` write and causes successful
+  deposits or mints to set `lockedUntil` (`src/ProtocolConfig.sol:47`, `src/ProtocolConfig.sol:80-86`,
+  `src/usd3/sUSD3.sol:145-149`).
+
 ## Helper seed for recurring junior top-ups
 
 The one-transaction Helper hop deposits USDC into USD3 with the Helper as the immediate USD3 receiver, then deposits
@@ -124,9 +168,11 @@ is restored.
 
 ## Deferred JANE slash while markdown is disabled
 
-**Trigger.** A borrower is settled while its market's CreditLine markdown manager is unset. Settlement skips
-`slashJaneFull` when `CreditLine.mm()` is zero (`src/MorphoCredit.sol:882-886`), so the JANE slash is deferred rather
-than performed automatically.
+**Trigger.** A borrower is settled while `markdownEnabled[borrower]` is false in the MarkdownController — the
+recorded production state for every borrower. Settlement reaches `slashJaneFull` whenever `CreditLine.mm()` is
+nonzero, but the slash returns zero on the disabled borrower flag (`src/MorphoCredit.sol:883-886`,
+`src/MarkdownController.sol:191`); a zero manager would also skip the call. Either way the JANE slash is deferred
+rather than performed automatically.
 
 **Procedure.**
 
@@ -167,6 +213,41 @@ this deferred recovery cannot protect borrowers settled in the intervening windo
 1. Track junior exits that land during a wrapper pause; each one leaves a deferred pullback that nothing on-chain queues.
 2. On unpause, have a keeper call `tend` before borrowing resumes, exactly as for a paused loss report above.
 3. Confirm deployed waUSDC is back at or below the effective cap before closing the incident.
+
+## Settlement near the supply share-price floor
+
+**Trigger.** A retirement or loss settlement is proposed while the MorphoCredit market is near its minimum supply
+share price. The floor in supply-asset units is
+`(totalSupplyShares + VIRTUAL_SHARES - 1) / 1e15`; the ratio is fixed by
+`SUPPLY_SHARE_PRICE_FLOOR_RATIO` (`src/MorphoCredit.sol:98-99`, `src/MorphoCredit.sol:942-944`).
+
+`marketInWindDown == false` does not by itself show that recapitalization is safe. It only shows that an earlier floor
+clamp has not left the latch set; new lending remains open until the raw assets fall below the computed floor or the
+latch is set (`src/MorphoCredit.sol:947-953`). A deposit made at a depressed share price can increase supply shares and
+therefore raise the floor before the next settlement.
+
+Before every settlement, take and archive one state-consistent snapshot containing:
+
+1. `totalSupplyAssets`.
+2. `totalSupplyShares`.
+3. The floor computed from those shares with the formula above.
+4. The net loss being settled.
+5. Supply received since the last material loss.
+
+Once retirement settlements begin, complete all remaining settlements without an intervening recapitalizing supply.
+Do not infer safety from the unlatching state or from deposit admission remaining open.
+
+For each settlement, reproduce `_applySettlement`'s values before execution: `protectedAssets` is the lesser of the
+computed floor and pre-settlement supply assets, and pre-clamp `remainingAssets` is supply assets minus the net loss,
+floored at zero (`src/MorphoCredit.sol:918-931`). Whenever `remainingAssets <= protectedAssets` makes the clamp fire,
+compute and record `protectedAssets - remainingAssets` using that pre-clamp value. No code deducts this amount from USD3
+NAV: MorphoCredit stores `protectedAssets`, and USD3 reads the resulting supply balance through `suppliedWaUSDC()` into
+`nav()` (`src/usd3/USD3.sol:713-724`).
+
+Do not clear the wind-down latch merely because the reopening ratio is later satisfied. `clearMarketWindDown` checks
+only share-price recovery and does not reconcile any recorded clamp difference (`src/MorphoCredit.sol:128-141`). Keep
+the market closed until the settlement record, the unreflected amount, and the downstream USD3 NAV treatment have been
+explicitly reconciled.
 
 ## Tend trigger latched after a report in market wind-down
 
