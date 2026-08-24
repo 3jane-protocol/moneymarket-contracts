@@ -3,10 +3,10 @@ pragma solidity ^0.8.22;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {ITimelockController} from "../../src/interfaces/ITimelockController.sol";
-import {IOracle} from "../../src/interfaces/IOracle.sol";
 import {LCCVaultFactory} from "../../src/lcc/LCCVaultFactory.sol";
 import {ILCCVault} from "../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCDeploymentAcknowledgements} from "../utils/LCCDeploymentAcknowledgements.sol";
+import {LCCMarginOracleValidation} from "../utils/LCCMarginOracleValidation.sol";
 import {LCCWiringCheck} from "../utils/LCCWiringCheck.sol";
 import {SafeHelper} from "../utils/SafeHelper.sol";
 import {TimelockHelper} from "../utils/TimelockHelper.sol";
@@ -52,10 +52,19 @@ interface IOwnableView {
  *      mainnet RPC URL for each phase. The JSON `facilityId` must be durable, governance-assigned, and recorded in the
  *      deployment manifest.
  */
-contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringCheck, LCCDeploymentAcknowledgements {
+contract CreateLCCVaultSafe is
+    Script,
+    SafeHelper,
+    TimelockHelper,
+    LCCWiringCheck,
+    LCCDeploymentAcknowledgements,
+    LCCMarginOracleValidation
+{
     struct DeploymentConfig {
         ILCCVault.VaultParams params;
         string facilityId;
+        uint256 minMarginOraclePrice;
+        uint256 maxMarginOraclePrice;
         bool acknowledgeHoldToMaturity;
         bool acknowledgePerpetualTenor;
         bool acknowledgeFullAuctionAward;
@@ -82,7 +91,7 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         address safeAddress = vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE);
         LCCVaultFactory factory = _factory();
         IUSD3Registry usd3 = IUSD3Registry(USD3_PROXY);
-        DeploymentConfig memory config = _parseDeploymentConfig(jsonPath);
+        DeploymentConfig memory config = _parseAndValidateDeploymentConfig(jsonPath);
         (bytes32 salt, address vault) = _validateAndPredict(factory, usd3, config, safeAddress);
         _requireFutureStart(config);
 
@@ -143,7 +152,7 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         address safeAddress = vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE);
         LCCVaultFactory factory = _factory();
         IUSD3Registry usd3 = IUSD3Registry(USD3_PROXY);
-        DeploymentConfig memory config = _parseDeploymentConfig(jsonPath);
+        DeploymentConfig memory config = _parseAndValidateDeploymentConfig(jsonPath);
         (bytes32 salt, address vault) = _validateAndPredict(factory, usd3, config, safeAddress);
         _requireFutureStart(config);
 
@@ -187,7 +196,7 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         address safeAddress = vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE);
         LCCVaultFactory factory = _factory();
         IUSD3Registry usd3 = IUSD3Registry(USD3_PROXY);
-        DeploymentConfig memory config = _parseDeploymentConfig(jsonPath);
+        DeploymentConfig memory config = _parseAndValidateDeploymentConfig(jsonPath);
         (bytes32 salt, address vault) = _validateAndPredict(factory, usd3, config, safeAddress);
         _requireFutureStart(config);
 
@@ -219,7 +228,7 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         address safeAddress = vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE);
         LCCVaultFactory factory = _factory();
         IUSD3Registry usd3 = IUSD3Registry(USD3_PROXY);
-        DeploymentConfig memory config = _parseDeploymentConfig(jsonPath);
+        DeploymentConfig memory config = _parseAndValidateDeploymentConfig(jsonPath);
         (bytes32 salt, address vault) = _validateAndPredict(factory, usd3, config, safeAddress);
 
         console2.log("=== Verify Deployed LCC Vault ===");
@@ -237,6 +246,9 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         console2.log("=== Verify Deployed LCC Vault ===");
         console2.log("Vault:", vault);
         _requireDeployedVault(factory, usd3, vault);
+        ILCCVault.AssetConfig memory assets = ILCCVault(vault).assetConfig();
+        _requireMarginOracleBinding(assets.marginAsset, assets.marginOracle);
+        // Configured price bounds are not recoverable from vault state, so verify(string) remains authoritative.
         console2.log("PASS: provenance, wiring, supply-cap exemption, and ring-fence conduit");
     }
 
@@ -247,6 +259,15 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         return LCCVaultFactory(factoryAddress);
     }
 
+    function _requireConfiguredMarginOracle(DeploymentConfig memory config) internal view {
+        _requireMarginOracle(
+            config.params.marginAsset,
+            config.params.marginOracle,
+            config.minMarginOraclePrice,
+            config.maxMarginOraclePrice
+        );
+    }
+
     function _validateAndPredict(
         LCCVaultFactory factory,
         IUSD3Registry usd3,
@@ -255,9 +276,6 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
     ) internal view returns (bytes32 salt, address vault) {
         require(bytes(config.facilityId).length != 0, "Facility ID not set");
         require(config.params.marginAsset != address(0), "Margin asset not set");
-        require(config.params.marginOracle != address(0), "Margin oracle not set");
-        require(config.params.marginOracle.code.length > 0, "Margin oracle has no code");
-        require(IOracle(config.params.marginOracle).price() != 0, "Margin oracle price is zero");
         _requireHoldToMaturityAcknowledgement(config.params, config.acknowledgeHoldToMaturity);
         require(
             config.params.maxEpochs != 0 || config.acknowledgePerpetualTenor,
@@ -380,6 +398,8 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         config.acknowledgeHoldToMaturity = vm.parseJsonBool(json, ".acknowledgeHoldToMaturity");
         config.acknowledgePerpetualTenor = vm.parseJsonBool(json, ".acknowledgePerpetualTenor");
         config.acknowledgeFullAuctionAward = vm.parseJsonBool(json, ".acknowledgeFullAuctionAward");
+        config.minMarginOraclePrice = vm.parseJsonUint(json, ".minMarginOraclePrice");
+        config.maxMarginOraclePrice = vm.parseJsonUint(json, ".maxMarginOraclePrice");
 
         ILCCVault.VaultParams memory params;
         params.marginAsset = vm.parseJsonAddress(json, ".marginAsset");
@@ -402,6 +422,15 @@ contract CreateLCCVaultSafe is Script, SafeHelper, TimelockHelper, LCCWiringChec
         params.maxAuctionAwardBps = vm.parseJsonUint(json, ".maxAuctionAwardBps");
         params.slashFeeBps = vm.parseJsonUint(json, ".slashFeeBps");
         config.params = params;
+    }
+
+    function _parseAndValidateDeploymentConfig(string memory jsonPath)
+        internal
+        view
+        returns (DeploymentConfig memory config)
+    {
+        config = _parseDeploymentConfig(jsonPath);
+        _requireConfiguredMarginOracle(config);
     }
 
     function _baseFeeOkay() private view returns (bool) {
