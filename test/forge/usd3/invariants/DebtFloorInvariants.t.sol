@@ -3,16 +3,12 @@ pragma solidity ^0.8.18;
 
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {Setup} from "../utils/Setup.sol";
-import {USD3} from "../../../../src/usd3/USD3.sol";
+import {USD3, IWaUSDC} from "../../../../src/usd3/USD3.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {
-    TransparentUpgradeableProxy
-} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {DebtFloorHandler} from "./DebtFloorHandler.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -25,6 +21,7 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
     sUSD3 public susd3Strategy;
     MockProtocolConfig public protocolConfig;
     DebtFloorHandler public handler;
+    address public conduit;
 
     function setUp() public override {
         super.setUp();
@@ -32,17 +29,7 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         usd3Strategy = USD3(address(strategy));
         protocolConfig = MockProtocolConfig(MorphoCredit(address(usd3Strategy.morphoCredit())).protocolConfig());
 
-        sUSD3 susd3Implementation = new sUSD3();
-        ProxyAdmin susd3ProxyAdmin = new ProxyAdmin(management);
-        TransparentUpgradeableProxy susd3Proxy = new TransparentUpgradeableProxy(
-            address(susd3Implementation),
-            address(susd3ProxyAdmin),
-            abi.encodeCall(sUSD3.initialize, (address(usd3Strategy), management, keeper))
-        );
-        susd3Strategy = sUSD3(address(susd3Proxy));
-
-        vm.prank(management);
-        usd3Strategy.setSUSD3(address(susd3Strategy));
+        susd3Strategy = setUpSUSD3();
 
         // Configure floor/cap environment.
         setMaxOnCredit(8000);
@@ -70,8 +57,20 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         for (uint256 i = 1; i < handlerActors.length; ++i) {
             handlerActors[i] = address(uint160(uint256(keccak256(abi.encode("debt-floor-actor", i - 1)))));
         }
+        conduit = makeAddr("debt-floor-conduit");
+        vm.startPrank(management);
+        usd3Strategy.setRingFenceConduit(conduit, true);
+        usd3Strategy.setSupplyCapExempt(conduit, true);
+        vm.stopPrank();
+
         handler = new DebtFloorHandler(
-            address(usd3Strategy), address(susd3Strategy), address(underlyingAsset), keeper, handlerActors
+            address(usd3Strategy),
+            address(susd3Strategy),
+            address(underlyingAsset),
+            keeper,
+            management,
+            conduit,
+            handlerActors
         );
         _configureTargets();
 
@@ -84,7 +83,7 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
     function _configureTargets() internal {
         targetContract(address(handler));
 
-        bytes4[] memory selectors = new bytes4[](8);
+        bytes4[] memory selectors = new bytes4[](10);
         selectors[0] = DebtFloorHandler.depositUSD3.selector;
         selectors[1] = DebtFloorHandler.withdrawUSD3.selector;
         selectors[2] = DebtFloorHandler.depositSUSD3.selector;
@@ -93,6 +92,8 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         selectors[5] = DebtFloorHandler.withdrawSUSD3.selector;
         selectors[6] = DebtFloorHandler.reportUSD3.selector;
         selectors[7] = DebtFloorHandler.skipTime.selector;
+        selectors[8] = DebtFloorHandler.conduitDeposit.selector;
+        selectors[9] = DebtFloorHandler.managementRelease.selector;
 
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
@@ -110,11 +111,12 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
 
     function invariant_depositLimitTracksSubordinationCap() public view {
         uint256 capUsdc = susd3Strategy.getSubordinatedDebtCapInUSDC();
-        uint256 holdingsUsdc = ITokenizedStrategy(address(usd3Strategy))
-            .convertToAssets(IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)));
+        uint256 susd3Usd3Balance = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        uint256 holdingsUsdc = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(susd3Usd3Balance);
 
         uint256 expectedLimit;
-        if (capUsdc > holdingsUsdc) {
+        if (susd3Usd3Balance + 2 >= ITokenizedStrategy(address(susd3Strategy)).totalAssets() && capUsdc > holdingsUsdc)
+        {
             expectedLimit = ITokenizedStrategy(address(usd3Strategy)).convertToShares(capUsdc - holdingsUsdc);
         }
 
@@ -157,6 +159,24 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
         }
     }
 
+    function invariant_ringFencedLiquidityMatchesGhostAccounting() public view {
+        assertEq(
+            usd3Strategy.ringFencedLiquidity(), handler.sumFenced() - handler.sumReleased(), "ring fence ghost mismatch"
+        );
+    }
+
+    function invariant_availableWithdrawLimitDoesNotExceedRawLiquidityMinusFence() public view {
+        if (ITokenizedStrategy(address(usd3Strategy)).isShutdown()) return;
+
+        uint256 rawLiquidity = _rawUsd3Liquidity();
+        uint256 fence = usd3Strategy.ringFencedLiquidity();
+        uint256 cappedLiquidity = rawLiquidity > fence ? rawLiquidity - fence : 0;
+
+        assertLe(
+            usd3Strategy.availableWithdrawLimit(address(0)), cappedLiquidity, "withdraw limit exceeds fenced liquidity"
+        );
+    }
+
     function invariant_handlersAreEffective() public view {
         if (handler.attemptedDepositUSD3() > 16 && _anyActorCanDepositUSD3()) {
             assertGt(handler.successfulDepositUSD3(), 0, "usd3 deposit handler no-op");
@@ -175,6 +195,14 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
 
         if (handler.attemptedSkipTime() > 8) {
             assertGt(handler.successfulSkipTime(), 0, "time never advances");
+        }
+
+        if (handler.attemptedConduitDeposit() > 16 && usd3Strategy.availableDepositLimit(conduit) > 0) {
+            assertGt(handler.successfulConduitDeposit(), 0, "conduit deposits are no-op");
+        }
+
+        if (handler.attemptedManagementRelease() > 16 && handler.sumFenced() > 0) {
+            assertGt(handler.successfulManagementRelease(), 0, "ring fence releases are no-op");
         }
 
         if (handler.attemptedStartCooldown() > 48) {
@@ -203,5 +231,23 @@ contract DebtFloorInvariantsTest is StdInvariant, Setup {
             }
         }
         return false;
+    }
+
+    function _rawUsd3Liquidity() internal view returns (uint256) {
+        IWaUSDC waUSDC = usd3Strategy.WAUSDC();
+        uint256 idleAsset = IERC20(address(underlyingAsset)).balanceOf(address(usd3Strategy));
+        uint256 localWaUSDC = usd3Strategy.balanceOfWaUSDC();
+        uint256 suppliedWaUSDC = usd3Strategy.suppliedWaUSDC();
+        (,,, uint256 waUSDCLiquidity) = usd3Strategy.getMarketLiquidity();
+
+        uint256 totalRedeemableWaUSDC =
+            localWaUSDC + (suppliedWaUSDC < waUSDCLiquidity ? suppliedWaUSDC : waUSDCLiquidity);
+        if (totalRedeemableWaUSDC == 0) return idleAsset;
+
+        uint256 globalRedeemableWaUSDC =
+            waUSDC.convertToShares(waUSDC.POOL().getVirtualUnderlyingBalance(waUSDC.asset()));
+        if (totalRedeemableWaUSDC > globalRedeemableWaUSDC) totalRedeemableWaUSDC = globalRedeemableWaUSDC;
+
+        return idleAsset + waUSDC.convertToAssets(totalRedeemableWaUSDC);
     }
 }

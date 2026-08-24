@@ -17,19 +17,17 @@ USD3 and sUSD3 are tokenized yield strategies built on Yearn V3's architecture f
 
 - Direct USDC deposits from users (not waUSDC)
 - Automatic internal wrapping of USDC to waUSDC for MorphoCredit deployment
-- Configurable commitment periods (locally managed by governance)
-- Dynamic deployment ratio to MorphoCredit (0-100% via locally managed `maxOnCredit`)
+- Dynamic deployment ratio to MorphoCredit (0-100% via ProtocolConfig's `MAX_ON_CREDIT`)
 - Local waUSDC buffer for gas-efficient withdrawals
 - Protected from losses through sUSD3 first-loss absorption
-- Whitelist support for permissioned access (locally managed)
+- Supply-cap exemptions for protocol-controlled deposit receivers
 - Emergency withdrawal capabilities
-- One-time migration path from waUSDC-based to USDC-based implementation via `reinitialize()` (completed)
 
 #### sUSD3 Strategy
 
 - Accepts USD3 tokens to provide subordinate capital
 - Configurable lock period for stability (via ProtocolConfig; 0 disables new locks)
-- Configurable cooldown period (via ProtocolConfig, default 7 days) + withdrawal window (local, default 2 days)
+- Configurable cooldown period and withdrawal window via ProtocolConfig (a zero withdrawal-window value defaults to 2 days)
 - Partial cooldown support for better UX
 - First-loss absorption protects USD3 holders
 - Maximum subordination ratio enforcement (via ProtocolConfig, default 15%)
@@ -50,7 +48,6 @@ The USD3 strategy now handles USDC directly from users while maintaining compati
 The protocol implements multiple risk controls:
 
 - **Subordination Ratio**: sUSD3 holdings limited by configurable ratio (via ProtocolConfig)
-- **Commitment Periods**: Prevent deposit/withdrawal gaming
 - **Lock & Cooldown**: Ensure stable liquidity for lending
 - **Loss Absorption**: sUSD3 bears losses first, protecting USD3 holders
 - **Dynamic Parameters**: Key risk parameters centrally managed via ProtocolConfig, operational parameters locally managed
@@ -62,26 +59,24 @@ The protocol implements multiple risk controls:
 
 The waUSDC -> USDC migration has already been completed. The sequence below is kept for historical/audit context and regression testing.
 
-For the original migration, the process was:
-
-1. **Deploy New Implementation**: Deploy the new USD3 contract that accepts USDC
-2. **Upgrade Proxy**: Point the proxy to the new implementation
-3. **Reinitialize**: Call `reinitialize()` to switch the asset from waUSDC to USDC
-4. **Critical**: Execute as atomic multisig batch with `report()` to prevent user losses
-
-**Historical critical requirement**: The upgrade had to be executed as an atomic multisig batch transaction:
+The executed migration was an atomic multisig batch (the runbook of record is in `AGENTS.md`):
 
 ```solidity
-// Multisig Batch Transaction
+// Multisig Batch Transaction (executed)
 1. strategy.setPerformanceFee(0)              // Prevent fee distribution
 2. strategy.setProfitMaxUnlockTime(0)         // Ensure immediate profit availability
-3. strategy.report()                           // Update totalAssets to correct USDC value
-4. strategy.syncTrancheShare()                 // Restore performance fee to sUSD3
-5. strategy.setProfitMaxUnlockTime(previous)  // Restore profit unlock schedule
+3. strategy.report()                          // Update totalAssets pre-switch
+4. proxyAdmin.upgrade(proxy, newImpl)         // Point the proxy at the USDC implementation
+5. strategy.reinitialize()                    // Switch the strategy asset from waUSDC to USDC
+6. strategy.report()                          // Update totalAssets at the USDC basis
+7. strategy.syncTrancheShare()                // Restore performance fee to sUSD3
+8. strategy.setProfitMaxUnlockTime(previous)  // Restore profit unlock schedule
 ```
 
-See `test/forge/usd3/integration/USD3UpgradeMultisigBatch.t.sol` and
-`test/forge/usd3/fork/USD3UpgradeForkTest.t.sol` for regression coverage.
+The historical `reinitialize()` hook has since been removed from the implementation (its reinitializer
+version is consumed on the live proxy). `test/forge/usd3/integration/USD3UpgradeMultisigBatch.t.sol` and
+`test/forge/usd3/fork/USD3UpgradeForkTest.t.sol` cover the CURRENT pending upgrade (frozen v2 logic to the
+cleaned implementation), not this completed migration.
 
 ## Installation
 
@@ -225,10 +220,11 @@ function _harvestAndReport() internal override returns (uint256)
 
 Both strategies use hooks for additional logic:
 
-- `_preDepositHook`: Track commitment/lock periods
-- `_postWithdrawHook`: Update cooldown states
-- `availableDepositLimit`: Enforce subordination ratio
-- `availableWithdrawLimit`: Enforce time restrictions
+- `_preDepositHook`: USD3 enforces first-time minimum deposits; sUSD3 enforces its deposit gates
+- `_postWithdrawHook`: sUSD3 clears cooldown state (USD3 has no post-withdraw hook)
+- `availableDepositLimit`: USD3 enforces the supply cap; sUSD3 enforces the subordination ratio
+- `availableWithdrawLimit`: USD3 enforces liquidity, the NAV guard, and the redemption floor; sUSD3 enforces
+  its cooldown and subordination backing
 
 ## Testing Structure
 
@@ -236,14 +232,10 @@ Both strategies use hooks for additional logic:
 test/forge/usd3/
 ├── unit/                   # Unit tests
 │   ├── WaUSDCWrappingTest.t.sol
-│   ├── ReinitializeTest.t.sol
 │   └── LocalBufferTest.t.sol
 ├── integration/            # Integration tests
 │   ├── USD3MorphoIntegration.t.sol
-│   ├── USD3SimplifiedUpgradeTest.t.sol
 │   └── USD3UpgradeMultisigBatch.t.sol
-├── fuzz/                   # Fuzz tests
-│   └── USD3UpgradeFuzzTest.t.sol
 ├── fork/                   # Mainnet fork tests (opt-in)
 │   ├── MainnetForkBase.t.sol
 │   └── USD3UpgradeForkTest.t.sol
@@ -266,32 +258,30 @@ test/forge/usd3/
 
 ### ProtocolConfig Integration
 
-Centrally managed parameters (with defaults):
+| Parameter | Change mechanism | Authority |
+| --- | --- | --- |
+| sUSD3 maximum subordination ratio | `ProtocolConfig.setConfig(TRANCHE_RATIO, value)`; a zero value falls back to 15% | ProtocolConfig owner |
+| sUSD3 lock duration | `ProtocolConfig.setConfig(SUSD3_LOCK_DURATION, value)`; zero disables new locks | ProtocolConfig owner |
+| sUSD3 cooldown period | `ProtocolConfig.setConfig(SUSD3_COOLDOWN_PERIOD, value)`; zero disables the cooldown requirement | ProtocolConfig owner |
+| USD3 interest distribution share to sUSD3 | Set `TRANCHE_SHARE_VARIANT` in ProtocolConfig, then call `USD3.syncTrancheShare()`; USD3 management can also call the inherited `setPerformanceFee` for values up to 50% | ProtocolConfig owner sets the configured value; USD3 keeper or management applies it via `syncTrancheShare`; USD3 management controls `setPerformanceFee` |
+| USD3 maximum deployment ratio | `ProtocolConfig.setConfig(MAX_ON_CREDIT, value)`; there is no local `setMaxOnCredit` | ProtocolConfig owner; the ProtocolConfig emergency admin can only set it to zero via `setEmergencyConfig` |
+| USD3 supply-cap exemptions | `USD3.setSupplyCapExempt(account, exempt)` | USD3 strategy management |
+| sUSD3 withdrawal window | `ProtocolConfig.setConfig(SUSD3_WITHDRAWAL_WINDOW, value)`; a zero value reads as the 2-day fallback | ProtocolConfig owner |
 
-- **sUSD3 Parameters**:
-  - Subordination ratio (default 15%)
-  - Lock duration (0 disables new locks)
-  - Cooldown period (default 7 days)
-  - Interest distribution share
-
-Locally managed parameters:
-
-- **USD3 Parameters**:
-  - Commitment period (setMinCommitmentTime)
-  - Max deployment ratio (setMaxOnCredit)
-  - Whitelist settings
-- **sUSD3 Parameters**:
-  - Withdrawal window duration (setWithdrawalWindow)
+For an incident deployment stop, the ProtocolConfig owner (or its emergency admin through `setEmergencyConfig`)
+sets `MAX_ON_CREDIT` to zero. The new value immediately prevents USD3 from deploying additional senior capital to
+MorphoCredit. A USD3 keeper or strategy management should then call `tend()` (or `report()`, which tends after the
+report) to withdraw available deployed waUSDC toward the zero target; MorphoCredit liquidity can limit the pullback.
 
 ## Security Considerations
 
 - Contracts are upgradeable - ensure proper access controls
 - Emergency admin can shutdown strategies
-- Whitelist enforcement available for both strategies
+- sUSD3 depositor allowlist enforcement for controlled third-party deposits
 - Reentrancy protection on all external calls
 - Careful handling of USDC/waUSDC wrapping to prevent precision loss
 - Comprehensive test coverage including invariant and fuzz testing
-- Atomic multisig batch required for safe upgrades
+- Upgrade batches must preserve proxy storage layout
 
 ## License
 

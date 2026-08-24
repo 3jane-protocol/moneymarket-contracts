@@ -85,9 +85,6 @@ contract DebtBasedSubordinationLimitsTest is Setup {
         usd3Strategy.deposit(INITIAL_USD3_DEPOSIT, alice);
         vm.stopPrank();
 
-        // Clear commitment period for Alice
-        vm.warp(block.timestamp + 1 days);
-
         // Trigger report to deploy funds to MorphoCredit
         vm.prank(keeper);
         ITokenizedStrategy(address(usd3Strategy)).report();

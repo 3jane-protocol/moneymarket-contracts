@@ -253,6 +253,153 @@ contract SubordinationDeployCapTest is Setup {
         helper.borrow(marketParams, 100_000e6, 0, borrower, borrower);
     }
 
+    function test_susd3WithdrawSucceedsWhileWaUSDCPausedAndDefersPullback() public {
+        _setupSUSD3ExitRebalanceScenario();
+
+        uint256 suppliedBefore = usd3Strategy.suppliedWaUSDC();
+        uint256 capBefore = _effectiveDeployCapWaUSDC();
+        uint256 usd3BalanceBefore = strategy.balanceOf(address(susd3Strategy));
+        uint256 bobUsd3Before = strategy.balanceOf(bob);
+        uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
+
+        assertApproxEqAbs(suppliedBefore, capBefore, 2, "pre-withdraw deployment should sit at cap");
+        assertGt(withdrawLimit, 0, "sUSD3 should have debt-floor withdrawal capacity");
+
+        waUSDC.setPaused(true);
+
+        vm.prank(bob);
+        susd3Strategy.withdraw(withdrawLimit, bob, bob);
+
+        assertEq(usd3Strategy.suppliedWaUSDC(), suppliedBefore, "paused exit should defer the blocked pullback");
+        assertLt(strategy.balanceOf(address(susd3Strategy)), usd3BalanceBefore, "paused exit should reduce backing");
+        assertEq(strategy.balanceOf(bob), bobUsd3Before + withdrawLimit, "paused exit should return USD3 to the junior");
+    }
+
+    function test_composed_pausedReportThenSUSD3WithdrawSucceedsAndDefersPullback() public {
+        _setupSUSD3ExitRebalanceScenario();
+
+        uint256 suppliedBefore = usd3Strategy.suppliedWaUSDC();
+        uint256 usd3BackingBefore = strategy.balanceOf(address(susd3Strategy));
+        uint256 idleUSDC = 100;
+        deal(address(asset), address(strategy), idleUSDC);
+
+        waUSDC.setSharePrice(990_000);
+        uint256 expectedNav = usd3Strategy.nav();
+        assertLt(expectedNav, strategy.totalAssets(), "share-price loss setup failed");
+
+        waUSDC.setPaused(true);
+        vm.prank(keeper);
+        (, uint256 loss) = ITokenizedStrategy(address(strategy)).report();
+
+        assertGt(loss, 0, "paused report should realize the wrapper loss");
+        assertEq(strategy.totalAssets(), expectedNav, "paused report should rebase totalAssets to NAV");
+        assertLt(
+            strategy.balanceOf(address(susd3Strategy)), usd3BackingBefore, "paused report should burn sUSD3 backing"
+        );
+        assertEq(usd3Strategy.suppliedWaUSDC(), suppliedBefore, "paused report tend must not move deployed waUSDC");
+        assertEq(asset.balanceOf(address(strategy)), idleUSDC, "paused report must leave loose USDC unwrapped");
+        assertTrue(waUSDC.paused(), "wrapper must remain paused through the composed scenario");
+
+        vm.prank(keeper);
+        ITokenizedStrategy(address(susd3Strategy)).report();
+        uint256 withdrawLimit = susd3Strategy.availableWithdrawLimit(bob);
+        assertGt(withdrawLimit, 0, "sUSD3 accounting sync should restore an actionable exit");
+
+        uint256 bobSharesBefore = ITokenizedStrategy(address(susd3Strategy)).balanceOf(bob);
+        uint256 usd3BackingAfterReport = strategy.balanceOf(address(susd3Strategy));
+        vm.prank(bob);
+        susd3Strategy.withdraw(withdrawLimit, bob, bob);
+
+        assertEq(usd3Strategy.suppliedWaUSDC(), suppliedBefore, "paused exit should defer the blocked pullback");
+        assertLt(
+            strategy.balanceOf(address(susd3Strategy)), usd3BackingAfterReport, "paused exit should reduce backing"
+        );
+        assertLt(
+            ITokenizedStrategy(address(susd3Strategy)).balanceOf(bob), bobSharesBefore, "paused exit should burn shares"
+        );
+    }
+
+    function test_pendingLossGateBlocksSupplyIntoStaleSubordinationCap() public {
+        protocolConfig.setConfig(ProtocolConfigLib.TRANCHE_RATIO, 10_000);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_LOCK_DURATION, 0);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_COOLDOWN_PERIOD, 0);
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
+        setMaxOnCredit(10_000);
+
+        vm.prank(alice);
+        strategy.deposit(1_000_000e6, alice);
+
+        createMarketDebt(borrower, 300_000e6);
+
+        vm.prank(bob);
+        strategy.deposit(600_000e6, bob);
+        _depositToSUSD3(bob, strategy.balanceOf(bob));
+
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 10_000);
+
+        vm.prank(keeper);
+        ITokenizedStrategy(address(strategy)).tend();
+
+        MarketParams memory params = usd3Strategy.marketParams();
+        MorphoCredit morpho = MorphoCredit(address(usd3Strategy.morphoCredit()));
+        vm.prank(params.creditLine);
+        morpho.settleAccount(params, borrower);
+
+        assertFalse(
+            morpho.marketInWindDown(usd3Strategy.marketId()), "market must accept supplies so only the gate can block"
+        );
+        assertTrue(usd3Strategy.nav() + 2 < strategy.totalAssets(), "settlement must leave a pending loss");
+
+        uint256 suppliedBefore = usd3Strategy.suppliedWaUSDC();
+        uint256 localBefore = usd3Strategy.balanceOfWaUSDC();
+        uint256 staleCap = _effectiveDeployCapWaUSDC();
+        uint256 liveSubCapWaUSDC = waUSDC.convertToShares(
+            (strategy.balanceOf(address(susd3Strategy)) * usd3Strategy.nav()) / strategy.totalSupply()
+        );
+
+        assertGt(staleCap, liveSubCapWaUSDC, "pending loss must inflate the stale subordination cap");
+        assertGt(staleCap, suppliedBefore, "inflated cap must leave apparent supply headroom");
+        assertGt(localBefore, 0, "scenario requires supplyable local waUSDC");
+
+        (bool shouldTend,) = usd3Strategy.tendTrigger();
+        assertFalse(shouldTend, "pending loss must suppress the supply-side keeper signal");
+
+        vm.recordLogs();
+        vm.prank(keeper);
+        ITokenizedStrategy(address(strategy)).tend();
+
+        assertEq(usd3Strategy.suppliedWaUSDC(), suppliedBefore, "pending-loss tend must not supply into the stale cap");
+        assertEq(usd3Strategy.balanceOfWaUSDC(), localBefore, "pending-loss tend must leave local waUSDC untouched");
+        Vm.Log[] memory tendLogs = vm.getRecordedLogs();
+        for (uint256 i; i < tendLogs.length; ++i) {
+            assertTrue(
+                tendLogs[i].topics[0] != keccak256("RebalanceDeferred(uint256)"),
+                "skip must come from the pending-loss gate, not a market rejection"
+            );
+        }
+
+        address charlie = makeAddr("charlie");
+        deal(address(underlyingAsset), charlie, 200_000e6);
+        vm.prank(charlie);
+        asset.approve(address(strategy), type(uint256).max);
+        vm.prank(charlie);
+        strategy.deposit(200_000e6, charlie);
+
+        assertEq(
+            usd3Strategy.suppliedWaUSDC(), suppliedBefore, "pending-loss deposit must not supply into the stale cap"
+        );
+        assertEq(usd3Strategy.balanceOfWaUSDC(), localBefore + 200_000e6, "pending-loss deposit must stay local");
+
+        vm.prank(keeper);
+        (, uint256 loss) = ITokenizedStrategy(address(strategy)).report();
+
+        assertGt(loss, 0, "report must recognize the settlement loss");
+        assertEq(strategy.totalAssets(), usd3Strategy.nav(), "report must rebase stored assets to NAV");
+        uint256 capAfterReport = _effectiveDeployCapWaUSDC();
+        assertLt(capAfterReport, staleCap, "recognition must deflate the subordination cap");
+        assertLe(usd3Strategy.suppliedWaUSDC(), capAfterReport + 2, "post-report deployment must respect the live cap");
+    }
+
     function test_susd3WithdrawDoesNotTendAfterUsd3Shutdown() public {
         _setupSUSD3ExitRebalanceScenario();
 

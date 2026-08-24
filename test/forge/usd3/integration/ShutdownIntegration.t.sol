@@ -49,24 +49,11 @@ contract ShutdownIntegrationTest is Setup {
         susd3Strategy = sUSD3(address(susd3Proxy));
 
         // Link strategies
-        // Set commitment period via protocol config
-        address morphoAddress = address(usd3Strategy.morphoCredit());
-        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
-        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
-
-        // Configure restrictions
         vm.prank(management);
         usd3Strategy.setSUSD3(address(susd3Strategy));
 
-        // Set config as the owner (test contract in this case)
-        MockProtocolConfig(protocolConfigAddress).setConfig(USD3_COMMITMENT_TIME, 7 days);
-
         vm.startPrank(management);
         usd3Strategy.setMinDeposit(100e6);
-        usd3Strategy.setWhitelistEnabled(true);
-        usd3Strategy.setWhitelist(alice, true);
-        usd3Strategy.setWhitelist(bob, true);
-        usd3Strategy.setWhitelist(charlie, true);
         // Emergency admin is already set on usd3Strategy in parent setUp
         // Set emergency admin on sUSD3 for shutdown tests
         ITokenizedStrategy(address(susd3Strategy)).setEmergencyAdmin(emergencyAdmin);
@@ -94,9 +81,6 @@ contract ShutdownIntegrationTest is Setup {
         underlyingAsset.approve(address(usd3Strategy), 2000e6);
         usd3Strategy.deposit(2000e6, bob);
         vm.stopPrank();
-
-        // Skip commitment for USD3
-        skip(7 days);
 
         // Alice stakes USD3 into sUSD3
         vm.startPrank(alice);
@@ -161,8 +145,6 @@ contract ShutdownIntegrationTest is Setup {
         }
 
         // Some users also deposit into sUSD3
-        skip(7 days); // Past USD3 commitment
-
         // Alice deposits USD3 into sUSD3
         vm.startPrank(alice);
         uint256 aliceUsd3 = IERC20(address(usd3Strategy)).balanceOf(alice);
@@ -208,28 +190,26 @@ contract ShutdownIntegrationTest is Setup {
     }
 
     /**
-     * @notice Test whitelist + minimum deposit + shutdown interaction
-     * @dev Complex scenario with multiple restrictions during shutdown
+     * @notice Test minimum deposit + shutdown interaction
+     * @dev Scenario with live deposit restrictions during shutdown
      */
-    function test_triple_restriction_shutdown() public {
-        // Dave is not whitelisted
+    function test_minimum_deposit_restriction_shutdown() public {
         address dave = makeAddr("dave");
         deal(address(underlyingAsset), dave, 10000e6);
 
-        // Alice deposits (whitelisted, meets minimum)
+        // Alice deposits above the minimum
         vm.startPrank(alice);
         underlyingAsset.approve(address(usd3Strategy), 200e6);
         usd3Strategy.deposit(200e6, alice);
         vm.stopPrank();
 
-        // Dave cannot deposit (not whitelisted)
+        // Dave can deposit above the minimum
         vm.startPrank(dave);
         underlyingAsset.approve(address(usd3Strategy), 200e6);
-        vm.expectRevert("ERC4626: deposit more than max");
         usd3Strategy.deposit(200e6, dave);
         vm.stopPrank();
 
-        // Bob tries to deposit below minimum (whitelisted)
+        // Bob tries to deposit below minimum
         vm.startPrank(bob);
         underlyingAsset.approve(address(usd3Strategy), 50e6);
         vm.expectRevert(bytes("<min"));
@@ -240,8 +220,7 @@ contract ShutdownIntegrationTest is Setup {
         vm.prank(emergencyAdmin);
         ITokenizedStrategy(address(usd3Strategy)).shutdownStrategy();
 
-        // During shutdown:
-        // - Alice can withdraw immediately (bypasses commitment)
+        // During shutdown Alice can withdraw immediately
         vm.startPrank(alice);
         uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
         // Approve for redeem
@@ -250,13 +229,13 @@ contract ShutdownIntegrationTest is Setup {
         assertGt(aliceWithdrawn, 0, "Alice withdraws during shutdown");
         vm.stopPrank();
 
-        // - Dave still cannot deposit (shutdown prevents all deposits)
+        // Dave cannot deposit while shutdown prevents all deposits
         vm.startPrank(dave);
         vm.expectRevert("ERC4626: deposit more than max");
         usd3Strategy.deposit(200e6, dave);
         vm.stopPrank();
 
-        // - Bob still cannot deposit (shutdown prevents all deposits)
+        // Bob cannot deposit while shutdown prevents all deposits
         vm.startPrank(bob);
         vm.expectRevert("ERC4626: deposit more than max");
         usd3Strategy.deposit(100e6, bob);
@@ -282,9 +261,6 @@ contract ShutdownIntegrationTest is Setup {
         uint256 shares2 = usd3Strategy.deposit(10e6, alice);
         assertGt(shares2, 0, "Small subsequent deposit allowed");
 
-        // Skip commitment period
-        skip(7 days);
-
         // Partial withdrawal (check limits first)
         uint256 partialShares = shares1 / 2;
         uint256 maxRedeemableNow = ITokenizedStrategy(address(usd3Strategy)).maxRedeem(alice);
@@ -301,7 +277,6 @@ contract ShutdownIntegrationTest is Setup {
         assertGt(shares3, 0, "Small deposit after partial withdrawal");
 
         // Full withdrawal (or max allowed due to subordination)
-        skip(7 days); // New commitment from recent deposit
         uint256 remainingShares = IERC20(address(usd3Strategy)).balanceOf(alice);
 
         // Check max redeemable in case of subordination limits
@@ -340,13 +315,13 @@ contract ShutdownIntegrationTest is Setup {
     function test_complex_shutdown_scenario() public {
         // Setup: Multiple users with different positions
 
-        // Alice: USD3 only, in commitment period
+        // Alice: USD3 only
         vm.startPrank(alice);
         underlyingAsset.approve(address(usd3Strategy), 1000e6);
         usd3Strategy.deposit(1000e6, alice);
         vm.stopPrank();
 
-        // Bob: USD3 + sUSD3, past commitment
+        // Bob: USD3 + sUSD3
         vm.startPrank(bob);
         underlyingAsset.approve(address(usd3Strategy), 2000e6);
         usd3Strategy.deposit(2000e6, bob);
@@ -357,8 +332,6 @@ contract ShutdownIntegrationTest is Setup {
         underlyingAsset.approve(address(usd3Strategy), 1500e6);
         usd3Strategy.deposit(1500e6, charlie);
         vm.stopPrank();
-
-        skip(7 days); // Past USD3 commitment
 
         // Bob deposits into sUSD3
         vm.startPrank(bob);
@@ -403,13 +376,13 @@ contract ShutdownIntegrationTest is Setup {
 
         // All users should be able to withdraw immediately
 
-        // Alice (was in commitment period)
+        // Alice
         vm.startPrank(alice);
         uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
         // Approve for redeem
         IERC20(address(usd3Strategy)).approve(address(usd3Strategy), aliceShares);
         uint256 aliceWithdrawn = usd3Strategy.redeem(aliceShares, alice, alice);
-        assertGt(aliceWithdrawn, 0, "Alice withdraws despite commitment");
+        assertGt(aliceWithdrawn, 0, "Alice withdraws during shutdown");
         vm.stopPrank();
 
         // Bob (was in lock period for sUSD3)
@@ -454,8 +427,6 @@ contract ShutdownIntegrationTest is Setup {
         underlyingAsset.approve(address(usd3Strategy), 2000e6);
         usd3Strategy.deposit(2000e6, alice);
         vm.stopPrank();
-
-        skip(7 days); // Past commitment
 
         vm.startPrank(alice);
         uint256 aliceUsd3 = IERC20(address(usd3Strategy)).balanceOf(alice);

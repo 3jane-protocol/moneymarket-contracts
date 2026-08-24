@@ -96,15 +96,10 @@ contract USD3Coverage is Setup {
     }
 
     /**
-     * @notice Test zero address initialization protection
-     * @dev Verifies that USD3 cannot be initialized with zero addresses
+     * @notice Test that sUSD3 cannot be reset once configured
+     * @dev setSUSD3 reverts on any second call (including a zero address), leaving the original in place
      */
-    function test_zeroAddressInitialization() public {
-        // This test is not applicable because USD3.initialize requires MarketParams
-        // and the validation happens in BaseStrategy initialization
-        // The TokenizedStrategy will revert on zero addresses for management/keeper
-
-        // Test that sUSD3 cannot be changed once set (it's already set in setUp)
+    function test_setSUSD3_cannotBeReset() public {
         vm.prank(management);
         vm.expectRevert();
         usd3Strategy.setSUSD3(address(0));

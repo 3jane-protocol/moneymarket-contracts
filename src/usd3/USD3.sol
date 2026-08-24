@@ -2,7 +2,7 @@
 pragma solidity 0.8.22;
 
 import {BaseHooksUpgradeable} from "./base/BaseHooksUpgradeable.sol";
-import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {IMorpho, IMorphoCredit, MarketParams, Id} from "../interfaces/IMorpho.sol";
 import {MorphoLib} from "../libraries/periphery/MorphoLib.sol";
@@ -10,7 +10,7 @@ import {MorphoBalancesLib} from "../libraries/periphery/MorphoBalancesLib.sol";
 import {SharesMathLib} from "../libraries/SharesMathLib.sol";
 import {IERC4626} from "../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Pausable} from "../../lib/openzeppelin/contracts/utils/Pausable.sol";
-import {TokenizedStrategyStorageLib, ERC20} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
+import {TokenizedStrategyStorageLib} from "@periphery/libraries/TokenizedStrategyStorageLib.sol";
 import {IProtocolConfig} from "../interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "../libraries/ProtocolConfigLib.sol";
 
@@ -28,16 +28,15 @@ interface IWaUSDC is IERC4626 {
  * @notice Senior tranche strategy for USDC-based lending on 3Jane's credit markets
  * @dev Implements Yearn V3 tokenized strategy pattern for unsecured lending via MorphoCredit.
  * Deploys USDC capital to 3Jane's modified Morpho Blue markets that use credit-based
- * underwriting instead of collateral. Features first-loss protection through sUSD3
- * subordinate tranche absorption.
+ * underwriting instead of collateral. Its loss waterfall uses strategy-owned locked-profit shares
+ * before sUSD3 subordinate capital, then exposes USD3 holders to any residual loss.
  *
  * Key features:
- * - Senior tranche with first-loss protection from sUSD3 holders
+ * - Senior tranche whose current principal and PPS are buffered first by locked profit, then by sUSD3 holdings
  * - Configurable deployment ratio to credit markets (maxOnCredit)
  * - Automatic yield distribution to sUSD3 via performance fees
  * - Loss absorption through direct share burning of sUSD3 holdings
- * - Commitment period enforcement for deposits
- * - Optional whitelist for controlled access
+ * - Supply-cap exemptions for protocol-controlled deposit receivers
  * - Dynamic fee adjustment via ProtocolConfig integration
  *
  * Yield Distribution Mechanism:
@@ -47,13 +46,16 @@ interface IWaUSDC is IERC4626 {
  * - Keeper-controlled updates ensure protocol-wide consistency
  *
  * Loss Absorption Mechanism:
- * - When losses occur, sUSD3 shares are burned first (subordination)
- * - Direct storage manipulation used to burn shares without asset transfers
- * - USD3 holders protected up to total sUSD3 holdings
- * - Losses exceeding sUSD3 balance shared proportionally among USD3 holders
+ * - TokenizedStrategy first burns strategy-owned locked-profit shares remaining from prior profitable reports
+ * - USD3 burns sUSD3-held USD3 shares only for the loss remaining after that locked-profit burn
+ * - Current USD3 principal and PPS remain protected while locked profit covers the loss, but cash-collected profit
+ *   that would otherwise unlock to USD3 holders is consumed before junior principal
+ * - Direct storage manipulation burns the required sUSD3-held shares without asset transfers, capped by its balance
+ * - Losses exceeding both outstanding locked profit and sUSD3's USD3 balance reduce USD3 holders proportionally
+ * - Both loss-to-share conversions round down; at high PPS, a loss worth less than one base share can burn nothing
+ *   from either buffer and still reduce senior PPS
  */
 contract USD3 is BaseHooksUpgradeable {
-    using SafeERC20 for IERC20;
     using MorphoLib for IMorpho;
     using MorphoBalancesLib for IMorpho;
     using SharesMathLib for uint256;
@@ -83,99 +85,42 @@ contract USD3 is BaseHooksUpgradeable {
     /// @dev Used for loss absorption and yield distribution
     address public sUSD3;
 
-    /// @notice Whether whitelist is enforced for deposits
-    bool public whitelistEnabled;
+    bool private __deprecated_whitelistEnabled;
 
-    /// @notice Whitelist status for addresses
-    mapping(address => bool) public whitelist;
+    mapping(address => bool) private __deprecated_whitelist;
 
-    /// @notice Whitelist of depositors allowed to 3rd party deposit
-    mapping(address => bool) public depositorWhitelist;
+    mapping(address => bool) private __deprecated_depositorWhitelist;
 
     /// @notice Minimum deposit amount required
     uint256 public minDeposit;
 
-    /// @notice Timestamp of last deposit for each user
-    /// @dev Used to enforce commitment periods
-    mapping(address => uint256) public depositTimestamp;
+    mapping(address => uint256) private __deprecated_depositTimestamp;
+
+    /// @notice Receivers whose self-deposits bypass USD3 supply-cap headroom and first-time minimum-deposit checks.
+    mapping(address => bool) public supplyCapExempt;
+
+    /// @notice Conduits whose self-deposits add to the ring-fenced liquidity accumulator.
+    mapping(address => bool) public ringFenceConduit;
+
+    /// @notice Fenced capital-call cash in USDC asset units.
+    uint256 public ringFencedLiquidity;
 
     /*//////////////////////////////////////////////////////////////
                             EVENTS
     //////////////////////////////////////////////////////////////*/
     event SUSD3StrategyUpdated(address oldStrategy, address newStrategy);
-    event WhitelistUpdated(address indexed user, bool allowed);
-    event DepositorWhitelistUpdated(address indexed depositor, bool allowed);
+    event SupplyCapExemptUpdated(address indexed account, bool exempt);
+    event RingFenceConduitUpdated(address indexed conduit, bool enabled);
+    event RingFencedLiquidityIncreased(address indexed conduit, uint256 assets, uint256 newTotal);
+    event RingFenceReleased(uint256 assets, uint256 newTotal);
     event MinDepositUpdated(uint256 newMinDeposit);
     event TrancheShareSynced(uint256 trancheShare);
+    event RebalanceDeferred(uint256 waUSDCAmount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
-
-    /**
-     * @notice Initialize the USD3 strategy
-     * @param _morphoCredit Address of the MorphoCredit lending contract
-     * @param _marketId Market ID for the lending market
-     * @param _management Management address for the strategy
-     * @param _keeper Keeper address for automated operations
-     */
-    function initialize(address _morphoCredit, Id _marketId, address _management, address _keeper)
-        external
-        initializer
-    {
-        require(_morphoCredit != address(0), "!morpho");
-
-        morphoCredit = IMorpho(_morphoCredit);
-        marketId = _marketId;
-
-        // Get and cache market params
-        MarketParams memory params = morphoCredit.idToMarketParams(_marketId);
-        require(params.loanToken != address(0), "Invalid market");
-        _marketParams = params;
-
-        // Initialize BaseStrategy with management as temporary performanceFeeRecipient
-        // It will be updated to sUSD3 address after sUSD3 is deployed
-        __BaseStrategy_init(params.loanToken, "USD3", _management, _management, _keeper);
-
-        // Approve Morpho
-        IERC20(asset).forceApprove(address(morphoCredit), type(uint256).max);
-    }
-
-    /**
-     * @notice Legacy v2 migration hook that switched the strategy asset from waUSDC to USDC.
-     * @dev This function was used during the one-time migration from the previous USD3 implementation.
-     *      The migration is complete and this reinitializer is already consumed in production.
-     *      Historical migration sequence:
-     *      1. Set performance fee to 0 (via setPerformanceFee)
-     *      2. Set profit unlock time to 0 (via setProfitMaxUnlockTime)
-     *      3. Call report() on OLD implementation to finalize state before upgrade
-     *      4. Upgrade proxy to new implementation
-     *      5. Call reinitialize() to switch the underlying asset
-     *      6. Call report() on NEW implementation to update totalAssets with new asset
-     *      7. Call syncTrancheShare() to restore performance fees
-     *      8. Restore profit unlock time to previous value
-     *      This ensures totalAssets reflects the true USDC value before users can withdraw.
-     *      Without both report() calls, users would lose value as totalAssets would not
-     *      account for waUSDC appreciation or the asset switch.
-     */
-    function reinitialize() external reinitializer(2) {
-        address usdc = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-        asset = ERC20(usdc);
-        TokenizedStrategyStorageLib.StrategyData storage strategyData = TokenizedStrategyStorageLib.getStrategyStorage();
-        strategyData.asset = ERC20(usdc);
-        IERC20(usdc).forceApprove(address(WAUSDC), type(uint256).max);
-    }
-
-    // /**
-    //  * @notice Legacy restart hook for the completed v3 emergency restart.
-    //  * @dev This reinitializer was consumed in production during the controlled
-    //  *      ProxyAdmin.upgradeAndCall restart flow and is retained only for
-    //  *      deployed implementation compatibility.
-    //  */
-    // function restartStrategy() external reinitializer(3) {
-    //     TokenizedStrategyStorageLib.getStrategyStorage().shutdown = false;
-    // }
 
     /*//////////////////////////////////////////////////////////////
                         EXTERNAL VIEW FUNCTIONS
@@ -235,6 +180,12 @@ contract USD3 is BaseHooksUpgradeable {
         return IProtocolConfig(IMorphoCredit(address(morphoCredit)).protocolConfig());
     }
 
+    /// @dev Whether live NAV reflects a loss that has not yet been recognized by report(). Exact on every path:
+    /// deposit-path callers run after TokenizedStrategy has added the deposit to totalAssets.
+    function _pendingLoss() internal view returns (bool) {
+        return nav() + 2 < TokenizedStrategy.totalAssets();
+    }
+
     /*//////////////////////////////////////////////////////////////
                     INTERNAL STRATEGY FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -262,20 +213,55 @@ contract USD3 is BaseHooksUpgradeable {
         return WAUSDC.convertToShares(maxDebtUSDC);
     }
 
-    /// @dev Effective deployment cap: min(maxOnCredit-based cap, subordination cap)
+    /// @dev Effective deployment cap: min(maxOnCredit-based cap, subordination cap). Below 100%, MAX_ON_CREDIT is an
+    /// honest-operation deployment and liquidity-buffer target, not an adversarially enforceable exposure boundary.
+    /// DEBT_CAP is the enforceable boundary: MorphoCredit borrow admission reads debt but never supply, so a temporary
+    /// deposit cannot increase the borrowable total by even one unit.
     function _effectiveDeployCapWaUSDC(uint256 totalWaUSDC) internal view returns (uint256) {
         uint256 maxOnCreditCap = (totalWaUSDC * maxOnCredit()) / 10_000;
         uint256 subCap = _subordinationDeployCapWaUSDC();
         return Math.min(maxOnCreditCap, subCap);
     }
 
-    /// @dev Deploy funds to MorphoCredit market respecting maxOnCredit ratio and subordination cap
-    /// @param _amount Amount of asset to deploy
-    function _deployFunds(uint256 _amount) internal override {
-        if (_amount == 0) return;
+    /// @dev Wraps idle USDC into waUSDC via a fallible whole-share mint. Skips (leaving USDC idle,
+    /// counted at face by nav) when paused, below one share, or — on the deposit/tend path
+    /// (enforceSlack) — when the mint's ≤1-unit rounding cost is not covered by realized-but-unreported
+    /// interest, so deposit spam cannot walk totalAssets past nav()+2 and freeze withdrawals.
+    function _wrapUSDC(uint256 amount, bool enforceSlack) private {
+        if (amount == 0 || Pausable(address(WAUSDC)).paused()) return;
+        uint256 shares = WAUSDC.previewDeposit(amount);
+        uint256 maxShares = WAUSDC.maxMint(address(this));
+        if (shares > maxShares) shares = maxShares;
+        if (shares == 0) return;
+        if (enforceSlack) {
+            uint256 aggregate = suppliedWaUSDC() + balanceOfWaUSDC();
+            uint256 baseValue = WAUSDC.convertToAssets(aggregate);
+            uint256 cost = WAUSDC.previewMint(shares);
+            uint256 gain = WAUSDC.convertToAssets(aggregate + shares) - baseValue;
+            if (cost > gain) {
+                uint256 navNow = baseValue + asset.balanceOf(address(this));
+                if (TokenizedStrategy.totalAssets() + (cost - gain) > navNow) return;
+            }
+        }
+        try WAUSDC.mint(shares, address(this)) {} catch {}
+    }
 
-        // Wrap USDC to waUSDC
-        _amount = WAUSDC.deposit(_amount, address(this));
+    /// @dev Deploy funds to MorphoCredit market respecting maxOnCredit ratio and subordination cap
+    /// @dev TokenizedStrategy calls this before adding the current deposit to totalAssets, so deployment is deferred
+    /// to the post-deposit hook where the pending-loss predicate needs no deposit compensation.
+    function _deployFunds(uint256) internal override {}
+
+    /// @dev Deploys loose funds after TokenizedStrategy has accounted for the current deposit or mint.
+    function _deployDepositedFunds() private {
+        uint256 amount = asset.balanceOf(address(this));
+        if (amount == 0) return;
+
+        _wrapUSDC(amount, true);
+
+        // A paused wrapper blocks every waUSDC transfer, not just mint and burn, so supplying to Morpho would
+        // revert and take the deposit with it. Hold the funds locally instead; a later tend or report deploys
+        // them once the pause lifts. Mirrors the guard in _applyDeployCap.
+        if (Pausable(address(WAUSDC)).paused()) return;
 
         uint256 maxOnCreditRatio = maxOnCredit();
         if (maxOnCreditRatio == 0) {
@@ -347,6 +333,8 @@ contract USD3 is BaseHooksUpgradeable {
 
         morphoCredit.accrueInterest(params);
 
+        if (!TokenizedStrategy.isShutdown()) _wrapUSDC(asset.balanceOf(address(this)), false);
+
         return nav();
     }
 
@@ -356,11 +344,8 @@ contract USD3 is BaseHooksUpgradeable {
         if (TokenizedStrategy.isShutdown()) {
             return;
         }
-
         // First wrap any idle USDC to waUSDC
-        if (_totalIdle > 0) {
-            WAUSDC.deposit(_totalIdle, address(this));
-        }
+        _wrapUSDC(_totalIdle, true);
 
         _applyDeployCap(true);
     }
@@ -370,6 +355,8 @@ contract USD3 is BaseHooksUpgradeable {
     /// deployment from local waUSDC only when supplying is permitted.
     /// @param allowSupply Whether deploying additional local waUSDC is allowed
     function _applyDeployCap(bool allowSupply) private {
+        if (Pausable(address(WAUSDC)).paused()) return;
+
         // Calculate based on waUSDC amounts
         uint256 deployedWaUSDC = suppliedWaUSDC();
         uint256 localWaUSDC = balanceOfWaUSDC();
@@ -393,6 +380,7 @@ contract USD3 is BaseHooksUpgradeable {
         if (TokenizedStrategy.isShutdown()) {
             return false;
         }
+        if (Pausable(address(WAUSDC)).paused()) return false;
 
         uint256 deployed = suppliedWaUSDC();
         uint256 localWaUSDC = balanceOfWaUSDC();
@@ -410,20 +398,25 @@ contract USD3 is BaseHooksUpgradeable {
         if (deployed > target) {
             return (deployed - target) > threshold;
         }
-        if (target > deployed && localWaUSDC > 0) {
+        if (target > deployed && localWaUSDC > 0 && !_pendingLoss()) {
             return (target - deployed) > threshold;
         }
         return false;
     }
 
-    /// @dev Helper function to supply waUSDC to MorphoCredit
+    /// @dev Helper function to supply waUSDC to MorphoCredit. Skips silently under a pending loss (report() owns
+    /// recognition); a supply the market rejects is deferred to a later tend or report and surfaced by the event.
     /// @param amount Amount of waUSDC to supply
     /// @return supplied Actual amount supplied (for consistency with withdraw helper)
     function _supplyToMorpho(uint256 amount) internal returns (uint256 supplied) {
-        if (amount == 0) return 0;
+        if (amount == 0 || _pendingLoss()) return 0;
 
-        morphoCredit.supply(_marketParams, amount, 0, address(this), "");
-        return amount;
+        try morphoCredit.supply(_marketParams, amount, 0, address(this), "") returns (uint256, uint256) {
+            return amount;
+        } catch {
+            emit RebalanceDeferred(amount);
+            return 0;
+        }
     }
 
     /// @dev Helper function to withdraw waUSDC from MorphoCredit
@@ -462,14 +455,25 @@ contract USD3 is BaseHooksUpgradeable {
                     PUBLIC VIEW FUNCTIONS (OVERRIDES)
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Returns available withdraw limit, enforcing commitment time
-    /// @param _owner Address to check limit for
+    /// @notice Returns the withdrawable assets for an owner after liquidity and floor checks.
+    /// @dev The bps floor is a scaling/rate knob applied to then-current total assets, so repeated redemptions drain
+    /// geometrically toward the nominal floor. The nominal floor is the hard ring-fence and should be set alongside
+    /// the bps floor whenever a fixed asset amount must remain reserved.
     /// @return Maximum amount that can be withdrawn
-    function availableWithdrawLimit(address _owner) public view override returns (uint256) {
+    function availableWithdrawLimit(address) public view override returns (uint256) {
         // Get available liquidity first
         uint256 idleAsset = asset.balanceOf(address(this));
+        uint256 totalAssets = TokenizedStrategy.totalAssets();
 
-        if (nav() + 2 < TokenizedStrategy.totalAssets()) {
+        // Loss-waterfall guard: while nav trails totalAssets, an unrealized loss is pending, so halt withdrawals until
+        // report() applies the locked-profit-then-sUSD3 waterfall rather than paying exiting senior holders at a stale
+        // price. The +2 tolerance absorbs the <=1-unit waUSDC wrap/unwrap rounding drift. Deposit-side drift is
+        // gated at the source in _wrapUSDC (enforceSlack); the withdraw-side redeem can still nudge the gap past +2,
+        // but that halt is transient and liveness-only: nav() converts at the live waUSDC rate, so accruing interest
+        // lifts nav() back over totalAssets on its own, and report() re-bases totalAssets to nav definitively. No
+        // funds are at risk, so the residual withdraw-side drift is accepted rather than tracked in mutable state
+        // under this guard.
+        if (_pendingLoss()) {
             return 0;
         }
 
@@ -495,35 +499,29 @@ contract USD3 is BaseHooksUpgradeable {
 
         uint256 availableLiquidity = idleAsset + WAUSDC.convertToAssets(availableWaUSDC);
 
-        // During shutdown, bypass all checks
+        // During shutdown, bypass the going-concern redemption constraints below.
         if (TokenizedStrategy.isShutdown()) {
             return availableLiquidity;
         }
 
-        // Check commitment time
-        uint256 commitTime = minCommitmentTime();
-        if (commitTime > 0) {
-            uint256 depositTime = depositTimestamp[_owner];
-            if (depositTime > 0 && block.timestamp < depositTime + commitTime) {
-                return 0; // Commitment period not met
-            }
-        }
+        // The fence reserves realized cash liquidity; nominal and bps floors reserve against totalAssets below.
+        availableLiquidity = Math.saturatingSub(availableLiquidity, ringFencedLiquidity);
 
-        return availableLiquidity;
+        IProtocolConfig config = _protocolConfig();
+        uint256 nominalFloor = config.config(ProtocolConfigLib.USD3_REDEMPTION_FLOOR);
+        uint256 floorBps = config.config(ProtocolConfigLib.USD3_REDEMPTION_FLOOR_BPS);
+        if (floorBps > MAX_BPS) floorBps = MAX_BPS;
+        uint256 bpsFloor = totalAssets.mulDiv(floorBps, MAX_BPS);
+        uint256 floor = Math.max(nominalFloor, bpsFloor);
+
+        return Math.min(availableLiquidity, Math.saturatingSub(totalAssets, floor));
     }
 
-    /// @dev Returns available deposit limit, enforcing whitelist and supply cap
+    /// @dev Returns available deposit limit, enforcing borrower restrictions and supply cap
     /// @param _owner Address to check limit for
     /// @return Maximum amount that can be deposited
     function availableDepositLimit(address _owner) public view override returns (uint256) {
-        // Check whitelist if enabled
-        if (whitelistEnabled && !whitelist[_owner]) {
-            return 0;
-        }
-
-        uint256 maxDeposit = WAUSDC.maxDeposit(address(this));
-
-        if (Pausable(address(WAUSDC)).paused() || maxDeposit == 0) {
+        if (!supplyCapExempt[_owner] && Pausable(address(WAUSDC)).paused()) {
             return 0;
         }
 
@@ -536,22 +534,39 @@ contract USD3 is BaseHooksUpgradeable {
         if (cap == 0) {
             return 0;
         }
-        if (cap == type(uint256).max) {
-            return maxDeposit;
+        if (supplyCapExempt[_owner] || cap == type(uint256).max) {
+            return type(uint256).max;
         }
 
         uint256 currentTotalAssets = TokenizedStrategy.totalAssets();
         if (cap <= currentTotalAssets) {
             return 0;
         }
-        return Math.min(cap - currentTotalAssets, maxDeposit);
+
+        uint256 headroom = cap - currentTotalAssets;
+        uint256 maxShares = TokenizedStrategy.convertToShares(headroom);
+        if (maxShares == 0) {
+            // Zero-share headroom is unexecutable for every receiver.
+            return 0;
+        }
+
+        uint256 minimum = minDeposit;
+        if (minimum == 0 || TokenizedStrategy.balanceOf(_owner) != 0) {
+            return headroom;
+        }
+        if (headroom < minimum || TokenizedStrategy.previewMint(maxShares) < minimum) {
+            // Deliberately under-advertise one executable maxDeposit value for fresh receivers in this narrow
+            // band instead of advertising a maxMint value that reverts.
+            return 0;
+        }
+        return headroom;
     }
 
     /*//////////////////////////////////////////////////////////////
                         HOOKS IMPLEMENTATION
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Pre-deposit hook to enforce minimum deposit and track commitment time
+    /// @dev Requires exempt receivers to self-deposit and enforces the first-time minimum for non-exempt receivers.
     function _preDepositHook(uint256 assets, uint256 shares, address receiver) internal override {
         if (assets == 0 && shares > 0) {
             assets = TokenizedStrategy.previewMint(shares);
@@ -562,31 +577,25 @@ contract USD3 is BaseHooksUpgradeable {
             assets = asset.balanceOf(msg.sender);
         }
 
+        bool exempt = supplyCapExempt[receiver];
+        require(!exempt || msg.sender == receiver, "!self");
+
         // Enforce minimum deposit only for first-time depositors
         uint256 currentBalance = TokenizedStrategy.balanceOf(receiver);
-        if (currentBalance == 0) {
+        if (currentBalance == 0 && !exempt) {
             require(assets >= minDeposit, "<min");
-        }
-
-        // Prevent commitment bypass and griefing attacks
-        if (minCommitmentTime() > 0) {
-            // Only allow self-deposits or whitelisted depositors
-            require(msg.sender == receiver || depositorWhitelist[msg.sender], "!allowed");
-
-            // Always extend commitment for valid deposits
-            depositTimestamp[receiver] = block.timestamp;
         }
     }
 
-    /// @dev Post-withdraw hook to clear commitment on full exit
-    function _postWithdrawHook(uint256 assets, uint256 shares, address receiver, address owner, uint256 maxLoss)
-        internal
-        override
-    {
-        // Clear commitment timestamp if user fully exited
-        if (TokenizedStrategy.balanceOf(owner) == 0) {
-            delete depositTimestamp[owner];
+    /// @dev Accumulates ring-fenced liquidity for conduit self-deposits.
+    function _postDepositHook(uint256 assets, uint256 shares, address receiver) internal override {
+        if (msg.sender == receiver && ringFenceConduit[receiver]) {
+            if (assets == type(uint256).max) assets = TokenizedStrategy.convertToAssets(shares);
+            ringFencedLiquidity += assets;
+            emit RingFencedLiquidityIncreased(receiver, assets, ringFencedLiquidity);
         }
+
+        _deployDepositedFunds();
     }
 
     /**
@@ -632,25 +641,6 @@ contract USD3 is BaseHooksUpgradeable {
         }
 
         _tend(asset.balanceOf(address(this)));
-    }
-
-    /**
-     * @notice Prevent transfers during commitment period
-     * @dev Override from BaseHooksUpgradeable to enforce commitment
-     * @param from Address transferring shares
-     * @param to Address receiving shares
-     * @param amount Amount of shares being transferred
-     */
-    function _preTransferHook(address from, address to, uint256 amount) internal override {
-        // Allow minting (from == 0) and burning (to == 0)
-        if (from == address(0) || to == address(0)) return;
-
-        // Allow transfers to/from sUSD3 (staking and withdrawals)
-        if (to == sUSD3 || from == sUSD3) return;
-
-        // Check commitment period
-        uint256 commitmentEnd = depositTimestamp[from] + minCommitmentTime();
-        require(block.timestamp >= commitmentEnd || depositTimestamp[from] == 0, "!transfer");
     }
 
     /// @dev Post-transfer hook that rebalances deployment after sUSD3 unstakes.
@@ -739,19 +729,13 @@ contract USD3 is BaseHooksUpgradeable {
      * @return Maximum deployment ratio in basis points (10000 = 100%)
      * @dev Returns the value from ProtocolConfig directly. If not configured in ProtocolConfig,
      *      it returns 0, effectively preventing deployment until explicitly configured.
+     * @dev Below 100%, this is an honest-operation deployment and liquidity-buffer target, not an adversarially
+     *      enforceable exposure boundary. DEBT_CAP is the enforceable boundary: MorphoCredit borrow admission reads
+     *      debt but never supply, so a temporary deposit cannot increase the borrowable total by even one unit.
      */
     function maxOnCredit() public view returns (uint256) {
         IProtocolConfig config = _protocolConfig();
         return config.getMaxOnCredit();
-    }
-
-    /**
-     * @notice Get the minimum commitment time from ProtocolConfig
-     * @return Minimum commitment time in seconds
-     */
-    function minCommitmentTime() public view returns (uint256) {
-        IProtocolConfig config = _protocolConfig();
-        return config.getUsd3CommitmentTime();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -776,31 +760,46 @@ contract USD3 is BaseHooksUpgradeable {
     }
 
     /**
-     * @notice Enable or disable whitelist requirement
-     * @param _enabled True to enable whitelist, false to disable
+     * @notice Update supply-cap and first-time minimum-deposit exemption status for a receiver.
+     * @dev An exempt receiver may only be deposited to by itself. A third party depositing directly to that exempt
+     * receiver reverts. Helper is the USD3 receiver only on its hop path, and its user-level limit check still applies
+     * the supply cap and borrower restriction before the deposit. Exempting Helper therefore bypasses only the
+     * receiver-level first-time minimum for that path; it does not affect the non-hop path, whose receiver is the user.
+     * @dev Pair this flag operationally with `ringFenceConduit`. When both flags are set, every accepted deposit is a
+     * self-deposit and receives ring-fence credit. Revoking this exemption while leaving the conduit flag set permits
+     * third-party deposits that receive no ring-fence credit. LCC deployment grants both flags atomically; revoke them
+     * atomically as well.
+     * @param _account Receiver address to update.
+     * @param _exempt True to require self-deposits that bypass supply-cap headroom and first-time minimum-deposit
+     * checks; false to allow third-party deposits and apply the ordinary checks.
      */
-    function setWhitelistEnabled(bool _enabled) external onlyManagement {
-        whitelistEnabled = _enabled;
+    function setSupplyCapExempt(address _account, bool _exempt) external onlyManagement {
+        supplyCapExempt[_account] = _exempt;
+        emit SupplyCapExemptUpdated(_account, _exempt);
     }
 
     /**
-     * @notice Update whitelist status for an address
-     * @param _user Address to update
-     * @param _allowed True to whitelist, false to remove from whitelist
+     * @notice Update whether a conduit self-deposit adds to ring-fenced liquidity.
+     * @dev Pair this flag operationally with `supplyCapExempt`. When both flags are set, every accepted deposit is a
+     * self-deposit and receives ring-fence credit. Revoking the exemption while leaving this conduit flag set permits
+     * third-party deposits that receive no ring-fence credit. LCC deployment grants both flags atomically; revoke them
+     * atomically as well.
+     * @param _conduit Receiver address to update.
+     * @param _enabled True to accumulate self-deposits into the ring fence, false to disable accumulation.
      */
-    function setWhitelist(address _user, bool _allowed) external onlyManagement {
-        whitelist[_user] = _allowed;
-        emit WhitelistUpdated(_user, _allowed);
+    function setRingFenceConduit(address _conduit, bool _enabled) external onlyManagement {
+        ringFenceConduit[_conduit] = _enabled;
+        emit RingFenceConduitUpdated(_conduit, _enabled);
     }
 
     /**
-     * @notice Update depositor whitelist status for an address
-     * @param _depositor Address to update
-     * @param _allowed True to allow extending commitments, false to disallow
+     * @notice Release ring-fenced liquidity back into the withdrawable liquidity calculation.
+     * @param _assets Amount of fenced liquidity to release, in USDC asset units.
      */
-    function setDepositorWhitelist(address _depositor, bool _allowed) external onlyManagement {
-        depositorWhitelist[_depositor] = _allowed;
-        emit DepositorWhitelistUpdated(_depositor, _allowed);
+    function releaseRingFence(uint256 _assets) external onlyManagement {
+        require(_assets <= ringFencedLiquidity, "!fence");
+        ringFencedLiquidity -= _assets;
+        emit RingFenceReleased(_assets, ringFencedLiquidity);
     }
 
     /**
@@ -810,6 +809,13 @@ contract USD3 is BaseHooksUpgradeable {
     function setMinDeposit(uint256 _minDeposit) external onlyManagement {
         minDeposit = _minDeposit;
         emit MinDepositUpdated(_minDeposit);
+    }
+
+    /// @notice Set the profit unlock time without releasing locked profit ahead of an unreported loss.
+    /// @dev Nonzero updates retain the TokenizedStrategy implementation's behavior.
+    function setProfitMaxUnlockTime(uint256 _profitMaxUnlockTime) external onlyManagement {
+        require(_profitMaxUnlockTime != 0 || !_pendingLoss(), "!loss");
+        _delegateCall(msg.data);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -834,6 +840,9 @@ contract USD3 is BaseHooksUpgradeable {
      * @dev Only callable by keepers to ensure controlled updates
      */
     function syncTrancheShare() external onlyKeepers {
+        // Deliberately does not report: operators should report immediately before changing the tranche share variant.
+        // This keeps loss recognition and junior-share burning separate; any repricing is operator-managed.
+
         // Get the protocol config through MorphoCredit
         IProtocolConfig config = _protocolConfig();
 
@@ -871,5 +880,5 @@ contract USD3 is BaseHooksUpgradeable {
      * variables without shifting down storage in the inheritance chain.
      * See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
      */
-    uint256[40] private __gap;
+    uint256[37] private __gap;
 }
