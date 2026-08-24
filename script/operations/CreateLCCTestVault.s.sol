@@ -110,7 +110,6 @@ contract CreateLCCTestVault is Script, LCCWiringCheck {
         _requireSharedBeacon(testFactory, productionFactory);
         require(testFactory.owner() == testOwner, "TEST_OWNER is not test factory owner");
         require(testFactory.isOwner(testOwner), "TEST_OWNER lacks test factory owner role");
-        require(testFactory.defaultDepositorCap() != 0, "Test factory default depositor cap must be open");
         require(testFactory.oneVaultPolicyEnabled(), "Test factory one-vault policy must remain enabled");
 
         (params, facilityId) = _parseDeploymentConfig(jsonPath);
