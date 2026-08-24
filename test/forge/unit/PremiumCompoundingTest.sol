@@ -202,6 +202,118 @@ contract PremiumCompoundingTest is BaseTest {
         assertLt(finalDebt, currentDebt + unclampedPremium, "elapsed time must be clamped to MAX_ELAPSED_TIME");
     }
 
+    function testBorrowRestampsClockAfterThirdPartyRepayToDust() public {
+        configurableIrm.setApr(0);
+
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
+
+        uint256 premiumRate = uint256(0.1e18) / 365 days;
+        vm.prank(address(creditLine));
+        creditLine.setCreditLine(id, BORROWER, 10_000e18, uint128(premiumRate));
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1e18, 0, BORROWER, BORROWER);
+
+        loanToken.setBalance(REPAYER, 1e18);
+        vm.prank(REPAYER);
+        morpho.repay(marketParams, 1e18 - 1, 0, BORROWER, "");
+        assertEq(_currentBorrowerDebt(), 1, "third-party repay must leave dust debt");
+
+        (uint128 accrualClockBeforeDustPeriod,,) = morphoCredit.borrowerPremium(id, BORROWER);
+        vm.warp(block.timestamp + 20 days);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+
+        (uint128 accrualClockAfterDustAccrual,,) = morphoCredit.borrowerPremium(id, BORROWER);
+        assertEq(
+            accrualClockAfterDustAccrual,
+            accrualClockBeforeDustPeriod,
+            "below-threshold dust accrual must leave the clock unchanged"
+        );
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1_000e18, 0, BORROWER, BORROWER);
+        uint256 debtAfterBorrow = _currentBorrowerDebt();
+
+        uint256 postBorrowPeriod = 1 days;
+        vm.warp(block.timestamp + postBorrowPeriod);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+
+        uint256 expectedPremium = debtAfterBorrow.wMulDown(premiumRate.wTaylorCompounded(postBorrowPeriod));
+        assertApproxEqAbs(
+            _currentBorrowerDebt(),
+            debtAfterBorrow + expectedPremium,
+            2,
+            "new principal premium must cover only the post-borrow interval"
+        );
+    }
+
+    function testBorrowChargesPendingPremiumBeforeRestampingClock() public {
+        configurableIrm.setApr(0);
+
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
+
+        uint256 premiumRate = uint256(0.1e18) / 365 days;
+        vm.prank(address(creditLine));
+        creditLine.setCreditLine(id, BORROWER, 10_000e18, uint128(premiumRate));
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1_000e18, 0, BORROWER, BORROWER);
+
+        uint256 pendingPeriod = 2 days;
+        vm.warp(block.timestamp + pendingPeriod);
+        uint256 debtBeforeBorrow = _currentBorrowerDebt();
+        uint256 pendingPremium = debtBeforeBorrow.wMulDown(premiumRate.wTaylorCompounded(pendingPeriod));
+        assertGt(pendingPremium, 0, "pending premium must be chargeable");
+
+        uint256 additionalPrincipal = 100e18;
+        uint256 borrowTime = block.timestamp;
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, additionalPrincipal, 0, BORROWER, BORROWER);
+
+        assertApproxEqAbs(
+            _currentBorrowerDebt(),
+            debtBeforeBorrow + pendingPremium + additionalPrincipal,
+            2,
+            "borrow must charge pending premium before adding principal"
+        );
+        (uint128 accrualClock,,) = morphoCredit.borrowerPremium(id, BORROWER);
+        assertEq(accrualClock, borrowTime, "borrow must restamp the clock after charging pending premium");
+    }
+
+    function testBorrowTimestampChangeDoesNotAlterInitialPenaltyFromCycleEnd() public {
+        configurableIrm.setApr(0);
+
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
+
+        uint256 borrowAmount = 1_000e18;
+        vm.prank(address(creditLine));
+        creditLine.setCreditLine(id, BORROWER, 10_000e18, 0);
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
+
+        _createPastObligation(BORROWER, 1_000, borrowAmount);
+        vm.warp(block.timestamp + 7 days);
+
+        (uint128 cycleId,, uint128 endingBalance, RepaymentStatus status) = _getRepaymentDetails(id, BORROWER);
+        assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "borrower must be delinquent");
+
+        uint256 debtBeforePenalty = _currentBorrowerDebt();
+        uint256 penaltyPrincipal = debtBeforePenalty > endingBalance ? debtBeforePenalty : endingBalance;
+        uint256 cycleEnd = morphoCredit.paymentCycle(id, cycleId);
+        uint256 expectedPenalty =
+            penaltyPrincipal.wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(block.timestamp - cycleEnd));
+
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+
+        assertApproxEqAbs(
+            _currentBorrowerDebt(), debtBeforePenalty + expectedPenalty, 2, "initial penalty must accrue from cycle end"
+        );
+    }
+
     // Anti-griefing guard: spamming accruePremiumsForBorrowers every few seconds must not suppress
     // premium yield. Two properties make this hold, and this test breaks if either is lost:
     // 1. Sub-threshold accruals (totalPremium < MIN_PREMIUM_THRESHOLD) return before the

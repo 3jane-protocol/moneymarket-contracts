@@ -632,6 +632,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc Morpho
     function _afterBorrow(MarketParams memory, Id id, address onBehalf) internal virtual override {
         _snapshotBorrowerPosition(id, onBehalf);
+        borrowerPremium[id][onBehalf].lastAccrualTime = uint128(block.timestamp);
     }
 
     /// @inheritdoc Morpho
