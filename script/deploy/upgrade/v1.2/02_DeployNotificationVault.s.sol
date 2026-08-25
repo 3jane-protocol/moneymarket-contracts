@@ -7,6 +7,7 @@ import {
     ProxyAdmin,
     TransparentUpgradeableProxy
 } from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ITimelockController} from "../../../../src/interfaces/ITimelockController.sol";
 import {NotificationVault} from "../../../../src/usd3/NotificationVault.sol";
 import {SevenDayTimelockCheck} from "../../../utils/SevenDayTimelockCheck.sol";
 
@@ -24,7 +25,9 @@ import {SevenDayTimelockCheck} from "../../../utils/SevenDayTimelockCheck.sol";
  */
 contract DeployNotificationVault is Script, SevenDayTimelockCheck {
     address internal constant USD3_PROXY = 0x056B269Eb1f75477a8666ae8C7fE01b64dD55eCc;
-    address internal constant SAFE_ADDRESS = 0x33333333Bd7045F1A601A1E289D7AB21036fB5EF;
+    /// @dev 24-hour parameters timelock; USD3 and sUSD3 management already resolve here, and USD3l follows them.
+    address internal constant PARAMS_TIMELOCK = 0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2;
+    uint256 internal constant PARAMS_TIMELOCK_DELAY = 1 days;
 
     bytes32 internal constant ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
 
@@ -33,6 +36,11 @@ contract DeployNotificationVault is Script, SevenDayTimelockCheck {
         require(sevenDayTimelock != address(0), "SEVEN_DAY_TIMELOCK not set");
         require(sevenDayTimelock.code.length > 0, "SEVEN_DAY_TIMELOCK has no code");
         _requireSevenDayTimelock(sevenDayTimelock);
+        require(PARAMS_TIMELOCK.code.length > 0, "Parameters timelock has no code");
+        require(
+            ITimelockController(PARAMS_TIMELOCK).getMinDelay() == PARAMS_TIMELOCK_DELAY,
+            "Parameters timelock delay is not 24 hours"
+        );
 
         address keeper = vm.envAddress("NV_KEEPER");
         require(keeper != address(0), "NV_KEEPER not set");
@@ -47,7 +55,7 @@ contract DeployNotificationVault is Script, SevenDayTimelockCheck {
 
         console2.log("=== Deploying v1.2 NotificationVault ===");
         console2.log("USD3 proxy:", USD3_PROXY);
-        console2.log("Management (Safe):", SAFE_ADDRESS);
+        console2.log("Management (24-hour parameters timelock):", PARAMS_TIMELOCK);
         console2.log("Keeper:", keeper);
         console2.log("ProxyAdmin owner (7-day timelock):", sevenDayTimelock);
         console2.log("");
@@ -63,7 +71,7 @@ contract DeployNotificationVault is Script, SevenDayTimelockCheck {
         nvImpl = address(implementation);
 
         bytes memory initData = abi.encodeCall(
-            NotificationVault.initialize, (SAFE_ADDRESS, keeper, uint64(cooldownDuration), uint64(withdrawalWindow))
+            NotificationVault.initialize, (PARAMS_TIMELOCK, keeper, uint64(cooldownDuration), uint64(withdrawalWindow))
         );
         nvProxy = address(new TransparentUpgradeableProxy{salt: "3jane"}(nvImpl, sevenDayTimelock, initData));
 
