@@ -48,6 +48,10 @@ interface IOwnableView {
  *      3. --sig "run(string,bool)" data/lcc-vault-params.json false
  *      4. --sig "verify(string)" data/lcc-vault-params.json
  *
+ *      Deferred order, when the vault must exist before the USD3 v1.2 upgrade: create with
+ *      --sig "runDeferringPrerequisites(string,bool)" and check with --sig "verifyRegistration(string)", then run
+ *      steps 1, 2, and 4 once the upgrade is live. No capital call may open until step 4 passes.
+ *
  *      Use FOUNDRY_PROFILE=script, WALLET_TYPE and the corresponding Safe proposer credential, LCC_FACTORY, and a
  *      mainnet RPC URL for each phase. The JSON `facilityId` must be durable, governance-assigned, and recorded in the
  *      deployment manifest.
@@ -93,10 +97,7 @@ contract CreateLCCVaultSafe is
         IUSD3Registry usd3 = IUSD3Registry(USD3_PROXY);
         DeploymentConfig memory config = _parseAndValidateDeploymentConfig(jsonPath);
         (bytes32 salt, address vault) = _validateAndPredict(factory, usd3, config, safeAddress);
-        _requireFutureStart(config);
-
-        require(vault.code.length == 0, "Predicted LCC vault already deployed");
-        require(!factory.isVault(vault), "Predicted LCC vault already registered");
+        _requireFreshOrRegistered(factory, config, vault);
 
         console2.log("=== Schedule LCC USD3 Prerequisites ===");
         _logDeployment(jsonPath, safeAddress, factory, usd3, config, salt, vault, send);
@@ -154,10 +155,7 @@ contract CreateLCCVaultSafe is
         IUSD3Registry usd3 = IUSD3Registry(USD3_PROXY);
         DeploymentConfig memory config = _parseAndValidateDeploymentConfig(jsonPath);
         (bytes32 salt, address vault) = _validateAndPredict(factory, usd3, config, safeAddress);
-        _requireFutureStart(config);
-
-        require(vault.code.length == 0, "Predicted LCC vault already deployed");
-        require(!factory.isVault(vault), "Predicted LCC vault already registered");
+        _requireFreshOrRegistered(factory, config, vault);
 
         console2.log("=== Execute LCC USD3 Prerequisites ===");
         _logDeployment(jsonPath, safeAddress, factory, usd3, config, salt, vault, send);
@@ -221,6 +219,64 @@ contract CreateLCCVaultSafe is
 
     function run(string memory jsonPath) external {
         this.run(jsonPath, false);
+    }
+
+    /// @notice Create the vault before its USD3 permissions exist, deferring the prerequisite phases until after the
+    ///         USD3 v1.2 upgrade. The owner must not open a capital call until `verify(string)` passes: funding routes
+    ///         through USD3 and fails without the supply-cap exemption, which would slash compelled funders.
+    function runDeferringPrerequisites(string memory jsonPath, bool send)
+        external
+        isBatch(vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE))
+    {
+        require(_baseFeeOkay(), "Base fee too high");
+
+        address safeAddress = vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE);
+        LCCVaultFactory factory = _factory();
+        IUSD3Registry usd3 = IUSD3Registry(USD3_PROXY);
+        DeploymentConfig memory config = _parseAndValidateDeploymentConfig(jsonPath);
+        (bytes32 salt, address vault) = _validateAndPredict(factory, usd3, config, safeAddress);
+        _requireFutureStart(config);
+
+        require(vault.code.length == 0, "Predicted LCC vault already deployed");
+        require(!factory.isVault(vault), "Predicted LCC vault already registered");
+
+        console2.log("=== Create LCC Vault via Safe, USD3 Prerequisites Deferred ===");
+        _logDeployment(jsonPath, safeAddress, factory, usd3, config, salt, vault, send);
+        console2.log(
+            "WARNING: no USD3 permissions are granted; do not open a capital call before verify(string) passes"
+        );
+
+        bytes memory createReturndata =
+            addToBatch(address(factory), abi.encodeCall(ILCCVaultFactoryCreate2.createVault, (config.params, salt)));
+        address simulatedVault = abi.decode(createReturndata, (address));
+        require(simulatedVault == vault, "Simulated vault address mismatch");
+        _requireRegisteredVault(factory, vault);
+        _requireSingleCallBatch("LCC creation must be one Safe call");
+
+        _executeSafeBatch(send);
+        console2.log(
+            "Next: after the USD3 v1.2 upgrade, run schedulePrerequisites and executePrerequisites, then verify"
+        );
+    }
+
+    /// @notice Verify factory provenance and wiring for a vault whose USD3 permissions are still deferred.
+    function verifyRegistration(string memory jsonPath) external view {
+        address safeAddress = vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE);
+        LCCVaultFactory factory = _factory();
+        IUSD3Registry usd3 = IUSD3Registry(USD3_PROXY);
+        DeploymentConfig memory config = _parseAndValidateDeploymentConfig(jsonPath);
+        (bytes32 salt, address vault) = _validateAndPredict(factory, usd3, config, safeAddress);
+
+        console2.log("=== Verify Registered LCC Vault (USD3 permissions deferred) ===");
+        console2.log("CREATE2 salt:", vm.toString(salt));
+        console2.log("Predicted vault:", vault);
+        _requireRegisteredVault(factory, vault);
+        console2.log("PASS: provenance and wiring");
+        console2.log(
+            _permissionsLiveTolerant(vault)
+                ? "USD3 permissions: live"
+                : "USD3 permissions: NOT live; no capital call may open before they are"
+        );
     }
 
     /// @notice Verify the predicted vault address, factory provenance, wiring, and both USD3 permissions.
@@ -306,15 +362,72 @@ contract CreateLCCVaultSafe is
     }
 
     function _requireDeployedVault(LCCVaultFactory factory, IUSD3Registry usd3, address vault) internal view {
-        require(vault != address(0) && vault.code.length > 0, "LCC vault is not deployed");
-        require(factory.isVault(vault), "LCC vault is not factory registered");
-        _requireLCCWiring(vault, USD3_PROXY);
+        _requireRegisteredVault(factory, vault);
         require(usd3.supplyCapExempt(vault), "LCC vault supply-cap exemption missing");
         require(usd3.ringFenceConduit(vault), "LCC vault ring-fence conduit missing");
     }
 
+    function _requireRegisteredVault(LCCVaultFactory factory, address vault) internal view {
+        require(vault != address(0) && vault.code.length > 0, "LCC vault is not deployed");
+        require(factory.isVault(vault), "LCC vault is not factory registered");
+        _requireLCCWiring(vault, USD3_PROXY);
+    }
+
+    /// @dev The prerequisite phases run either before creation (predicted address, future start) or after a deferred
+    ///      creation (registered vault, start may already have passed).
+    function _requireFreshOrRegistered(LCCVaultFactory factory, DeploymentConfig memory config, address vault)
+        internal
+        view
+    {
+        if (vault.code.length == 0) {
+            require(!factory.isVault(vault), "Predicted LCC vault already registered");
+            _requireFutureStart(config);
+        } else {
+            _requireRegisteredVault(factory, vault);
+        }
+    }
+
     function _permissionsLive(IUSD3Registry usd3, address vault) internal view returns (bool) {
         return usd3.supplyCapExempt(vault) && usd3.ringFenceConduit(vault);
+    }
+
+    /// @dev Reads both flags without reverting when the USD3 v1.2 registry is not live yet.
+    function _permissionsLiveTolerant(address vault) internal view returns (bool) {
+        (bool exemptOk, bytes memory exemptData) =
+            USD3_PROXY.staticcall(abi.encodeCall(IUSD3Registry.supplyCapExempt, (vault)));
+        (bool conduitOk, bytes memory conduitData) =
+            USD3_PROXY.staticcall(abi.encodeCall(IUSD3Registry.ringFenceConduit, (vault)));
+        return exemptOk && exemptData.length == 32 && abi.decode(exemptData, (bool)) && conduitOk
+            && conduitData.length == 32 && abi.decode(conduitData, (bool));
+    }
+
+    function _logParams(DeploymentConfig memory config) internal pure {
+        ILCCVault.VaultParams memory p = config.params;
+        uint256 closedWindow = p.epochLength - p.normalDuration - p.preCallDuration - p.fundingDuration;
+        console2.log("--- Facility parameters ---");
+        console2.log("Margin asset:", p.marginAsset);
+        console2.log("Margin oracle:", p.marginOracle);
+        console2.log("Oracle price bounds (min, max):", config.minMarginOraclePrice, config.maxMarginOraclePrice);
+        console2.log("Start timestamp:", p.startTimestamp);
+        console2.log("Max epochs (0 = perpetual):", p.maxEpochs);
+        console2.log("Epoch length (s, days):", p.epochLength, p.epochLength / 1 days);
+        console2.log("  Normal (s, days):", p.normalDuration, p.normalDuration / 1 days);
+        console2.log("  PreCall (s, days):", p.preCallDuration, p.preCallDuration / 1 days);
+        console2.log("  Funding (s, days):", p.fundingDuration, p.fundingDuration / 1 days);
+        console2.log("  Closed / auction (s, days):", closedWindow, closedWindow / 1 days);
+        console2.log("Margin ratio (bps):", p.marginRatioBps);
+        console2.log("Standby leverage (x, hundredths):", BPS * 100 / p.marginRatioBps);
+        console2.log("Protocol commitment cap (funding units):", p.protocolCommitmentCap);
+        console2.log("User commitment cap (funding units):", p.userCommitmentCap);
+        console2.log("Min deposit (margin units):", p.minDepositAssets);
+        console2.log("Exit cap (bps):", p.exitCapBps);
+        console2.log("Exit delay (epochs):", p.exitDelayEpochs);
+        console2.log("Min commitment (epochs):", p.minCommitmentEpochs);
+        console2.log("Auction steps:", p.auctionStepCount);
+        if (p.auctionStepCount != 0) console2.log("Auction step duration (s):", closedWindow / p.auctionStepCount);
+        console2.log("Auction decay (bps per step):", p.auctionStepDecayRateBps);
+        console2.log("Max auction award (bps):", p.maxAuctionAwardBps);
+        console2.log("Slash fee (bps):", p.slashFeeBps);
     }
 
     function _requireSafeProposer(address safeAddress) internal view {
@@ -378,7 +491,13 @@ contract CreateLCCVaultSafe is
         console2.log("Beacon timelock:", BEACON_TIMELOCK);
         console2.log("LCC factory:", address(factory));
         console2.log("USD3 proxy:", USD3_PROXY);
-        console2.log("Current ring-fenced liquidity:", usd3.ringFencedLiquidity());
+        (bool registryLive, bytes memory liveData) =
+            USD3_PROXY.staticcall(abi.encodeCall(IUSD3Registry.ringFencedLiquidity, ()));
+        if (registryLive && liveData.length == 32) {
+            console2.log("Current ring-fenced liquidity:", abi.decode(liveData, (uint256)));
+        } else {
+            console2.log("USD3 v1.2 registry not live; ring-fenced liquidity unavailable");
+        }
         console2.log("Facility ID:", config.facilityId);
         console2.log("JSON file:", jsonPath);
         console2.log("CREATE2 salt:", vm.toString(salt));
@@ -390,6 +509,7 @@ contract CreateLCCVaultSafe is
         console2.log("Full-pool auction award:", config.params.maxAuctionAwardBps == BPS);
         console2.log("Full-auction-award acknowledgement:", config.acknowledgeFullAuctionAward);
         console2.log("Send to Safe:", send);
+        _logParams(config);
     }
 
     function _parseDeploymentConfig(string memory jsonPath) internal view returns (DeploymentConfig memory config) {
