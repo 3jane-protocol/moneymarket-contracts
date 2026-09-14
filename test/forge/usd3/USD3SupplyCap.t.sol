@@ -6,6 +6,7 @@ import {Setup, ERC20, IUSD3} from "./utils/Setup.sol";
 import {USD3} from "../../../src/usd3/USD3.sol";
 import {MockProtocolConfig} from "./mocks/MockProtocolConfig.sol";
 import {IMorphoCredit} from "../../../src/interfaces/IMorpho.sol";
+import {ProtocolConfigLib} from "../../../src/libraries/ProtocolConfigLib.sol";
 
 /**
  * @title USD3SupplyCapTest
@@ -27,6 +28,7 @@ contract USD3SupplyCapTest is Setup {
     uint256 constant SMALL_AMOUNT = 100e6; // 100 USDC
     uint256 constant MEDIUM_AMOUNT = 100_000e6; // 100K USDC
     uint256 constant LARGE_AMOUNT = 500_000e6; // 500K USDC
+    uint256 constant BPS = 10_000;
 
     // Storage key for USD3_SUPPLY_CAP in MockProtocolConfig
     bytes32 private constant USD3_SUPPLY_CAP = keccak256("USD3_SUPPLY_CAP");
@@ -69,9 +71,34 @@ contract USD3SupplyCapTest is Setup {
     }
 
     function _setSupplyCap(uint256 cap) internal {
+        _setConfig(USD3_SUPPLY_CAP, cap);
+    }
+
+    function _setMinDeposit(uint256 minimum) internal {
+        vm.prank(management);
+        usd3Strategy.setMinDeposit(minimum);
+    }
+
+    function _setConfig(bytes32 key, uint256 value) internal {
         address owner = protocolConfig.owner();
         vm.prank(owner);
-        protocolConfig.setConfig(USD3_SUPPLY_CAP, cap);
+        protocolConfig.setConfig(key, value);
+    }
+
+    function _setNonUnitPps(uint256 initialAssets, uint256 profit) internal {
+        _setMinDeposit(0);
+
+        vm.startPrank(management);
+        strategy.setPerformanceFee(0);
+        strategy.setProfitMaxUnlockTime(0);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        strategy.deposit(initialAssets, alice);
+        airdrop(underlyingAsset, address(strategy), profit);
+
+        vm.prank(keeper);
+        strategy.report();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -81,17 +108,14 @@ contract USD3SupplyCapTest is Setup {
     function test_supplyCap_unlimitedByDefault() public {
         // Default cap is unlimited (type(uint256).max)
         assertEq(protocolConfig.config(USD3_SUPPLY_CAP), type(uint256).max, "Default cap should be unlimited");
-        uint256 expectedLimit = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
-        assertEq(usd3Strategy.availableDepositLimit(alice), expectedLimit, "Should allow unlimited deposits");
+        assertEq(usd3Strategy.availableDepositLimit(alice), type(uint256).max, "Should allow unlimited deposits");
 
         // Can deposit large amounts
         vm.prank(whale);
         uint256 shares = strategy.deposit(10_000_000e6, whale);
         assertGt(shares, 0, "Should receive shares");
 
-        // Still unlimited (bounded only by maxDeposit)
-        uint256 expectedLimitAfter = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
-        assertEq(usd3Strategy.availableDepositLimit(alice), expectedLimitAfter, "Should still allow unlimited deposits");
+        assertEq(usd3Strategy.availableDepositLimit(alice), type(uint256).max, "Should still allow unlimited deposits");
     }
 
     function test_supplyCap_zeroCapStopsDeposits() public {
@@ -142,6 +166,147 @@ contract USD3SupplyCapTest is Setup {
         vm.prank(bob);
         vm.expectRevert();
         strategy.deposit(1, bob);
+    }
+
+    function test_supplyCap_exemptReceiverBypassesSupplyCapHeadroom() public {
+        _setSupplyCap(TEST_CAP);
+
+        vm.prank(alice);
+        strategy.deposit(TEST_CAP, alice);
+
+        assertEq(usd3Strategy.availableDepositLimit(bob), 0, "non-exempt should be capped");
+
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        assertEq(usd3Strategy.availableDepositLimit(bob), type(uint256).max, "exempt should bypass supply cap headroom");
+
+        vm.prank(bob);
+        strategy.deposit(SMALL_AMOUNT, bob);
+
+        assertEq(strategy.totalAssets(), TEST_CAP + SMALL_AMOUNT, "exempt deposit may exceed cap");
+    }
+
+    function test_supplyCap_exemptReceiverDepositsWithoutWrapperHeadroomAndTendWrapsLater() public {
+        _setSupplyCap(TEST_CAP);
+
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        waUSDC.setReserveFrozen(true);
+        assertEq(waUSDC.maxDeposit(address(usd3Strategy)), 0, "wrapper deposit headroom setup failed");
+        assertEq(waUSDC.maxMint(address(usd3Strategy)), 0, "wrapper mint headroom setup failed");
+        assertEq(usd3Strategy.availableDepositLimit(bob), type(uint256).max, "wrapper headroom leaked into admission");
+
+        uint256 totalAssetsBefore = strategy.totalAssets();
+        uint256 navBefore = usd3Strategy.nav();
+
+        vm.prank(bob);
+        uint256 shares = strategy.deposit(SMALL_AMOUNT, bob);
+
+        assertGt(shares, 0, "zero wrapper headroom must not reject USD3 custody");
+        assertEq(strategy.totalAssets() - totalAssetsBefore, SMALL_AMOUNT, "tracked assets did not increase");
+        assertEq(usd3Strategy.nav() - navBefore, SMALL_AMOUNT, "NAV did not count idle USDC at face");
+        assertEq(strategy.totalAssets(), usd3Strategy.nav(), "deferring the wrap moved the withdrawal guard");
+        assertEq(underlyingAsset.balanceOf(address(strategy)), SMALL_AMOUNT, "deposit should remain idle");
+        assertEq(usd3Strategy.balanceOfWaUSDC(), 0, "zero headroom must not mint waUSDC");
+        assertEq(usd3Strategy.suppliedWaUSDC(), 0, "idle USDC must not be deployed directly");
+
+        waUSDC.setReserveFrozen(false);
+
+        vm.prank(keeper);
+        strategy.tend();
+
+        assertEq(underlyingAsset.balanceOf(address(strategy)), 0, "tend did not wrap deferred USDC");
+        assertGt(usd3Strategy.suppliedWaUSDC(), 0, "tend did not deploy wrapped USDC");
+        assertEq(strategy.totalAssets(), totalAssetsBefore + SMALL_AMOUNT, "tend changed tracked assets");
+        assertEq(usd3Strategy.nav(), navBefore + SMALL_AMOUNT, "tend changed NAV");
+        assertEq(strategy.totalAssets(), usd3Strategy.nav(), "tend moved the withdrawal guard");
+    }
+
+    function test_supplyCap_thirdPartyDepositToExemptReceiverReverts() public {
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("!self"));
+        strategy.deposit(SMALL_AMOUNT, bob);
+    }
+
+    function test_supplyCap_thirdPartyDepositToNonExemptReceiverSucceeds() public {
+        assertFalse(usd3Strategy.supplyCapExempt(bob), "receiver is non-exempt");
+        assertEq(strategy.balanceOf(bob), 0, "receiver starts without shares");
+
+        vm.prank(alice);
+        uint256 shares = strategy.deposit(SMALL_AMOUNT, bob);
+
+        assertGt(shares, 0, "deposit mints shares");
+        assertEq(strategy.balanceOf(bob), shares, "receiver gets the shares");
+    }
+
+    function test_supplyCap_thirdPartyMintToExemptReceiverReverts() public {
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("!self"));
+        strategy.mint(SMALL_AMOUNT, bob);
+    }
+
+    function test_supplyCap_zeroCapBlocksExemptReceiver() public {
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        _setSupplyCap(0);
+
+        assertEq(usd3Strategy.availableDepositLimit(bob), 0, "emergency pause applies to exempt receivers");
+        vm.prank(bob);
+        vm.expectRevert();
+        strategy.deposit(SMALL_AMOUNT, bob);
+    }
+
+    function test_supplyCapExemptBypassesFirstTimeMinDeposit() public {
+        vm.prank(management);
+        usd3Strategy.setMinDeposit(1_000e6);
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        vm.prank(bob);
+        uint256 shares = strategy.deposit(SMALL_AMOUNT, bob);
+
+        assertGt(shares, 0, "exempt receiver can deposit below first-time minimum");
+        assertEq(strategy.balanceOf(bob), shares);
+    }
+
+    function test_supplyCap_thirdPartySubMinimumFirstDepositToExemptReceiverReverts() public {
+        vm.prank(management);
+        usd3Strategy.setMinDeposit(1_000e6);
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        assertEq(strategy.balanceOf(bob), 0, "receiver starts without shares");
+        vm.prank(alice);
+        vm.expectRevert(bytes("!self"));
+        strategy.deposit(SMALL_AMOUNT, bob);
+    }
+
+    function test_nonExemptReceiverStillEnforcesFirstTimeMinDeposit() public {
+        vm.prank(management);
+        usd3Strategy.setMinDeposit(1_000e6);
+
+        vm.prank(bob);
+        vm.expectRevert(bytes("<min"));
+        strategy.deposit(SMALL_AMOUNT, bob);
+    }
+
+    function test_setSupplyCapExempt_onlyManagement() public {
+        vm.expectRevert();
+        vm.prank(alice);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+        assertTrue(usd3Strategy.supplyCapExempt(bob));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -304,6 +469,53 @@ contract USD3SupplyCapTest is Setup {
         assertEq(usd3Strategy.availableDepositLimit(bob), expectedCapacity, "Should have capacity after withdrawal");
     }
 
+    /*//////////////////////////////////////////////////////////////
+                    REDEMPTION FLOOR TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_redemptionFloor_nominalLimitsWithdraws() public {
+        vm.prank(alice);
+        strategy.deposit(LARGE_AMOUNT, alice);
+
+        _setConfig(ProtocolConfigLib.USD3_REDEMPTION_FLOOR, 100_000e6);
+
+        assertEq(usd3Strategy.availableWithdrawLimit(alice), LARGE_AMOUNT - 100_000e6);
+    }
+
+    function test_redemptionFloor_bpsAndNominalUseMax() public {
+        vm.prank(alice);
+        strategy.deposit(LARGE_AMOUNT, alice);
+
+        _setConfig(ProtocolConfigLib.USD3_REDEMPTION_FLOOR, 100_000e6);
+        _setConfig(ProtocolConfigLib.USD3_REDEMPTION_FLOOR_BPS, 3_000);
+
+        uint256 expectedFloor = LARGE_AMOUNT * 3_000 / BPS;
+        assertEq(expectedFloor, 150_000e6);
+        assertEq(usd3Strategy.availableWithdrawLimit(alice), LARGE_AMOUNT - expectedFloor);
+    }
+
+    function test_redemptionFloor_bpsAboveMaxClampsToMaxBps() public {
+        vm.prank(alice);
+        strategy.deposit(LARGE_AMOUNT, alice);
+
+        _setConfig(ProtocolConfigLib.USD3_REDEMPTION_FLOOR_BPS, BPS + 1);
+
+        assertEq(usd3Strategy.availableWithdrawLimit(alice), 0);
+    }
+
+    function test_redemptionFloor_shutdownBypassesFloor() public {
+        vm.prank(alice);
+        strategy.deposit(LARGE_AMOUNT, alice);
+
+        _setConfig(ProtocolConfigLib.USD3_REDEMPTION_FLOOR, LARGE_AMOUNT);
+        assertEq(usd3Strategy.availableWithdrawLimit(alice), 0, "floor should block before shutdown");
+
+        vm.prank(emergencyAdmin);
+        strategy.shutdownStrategy();
+
+        assertEq(usd3Strategy.availableWithdrawLimit(alice), LARGE_AMOUNT, "shutdown bypasses redemption floor");
+    }
+
     function test_supplyCap_removeCapAfterDeposits() public {
         _setSupplyCap(TEST_CAP);
 
@@ -314,66 +526,13 @@ contract USD3SupplyCapTest is Setup {
         // Remove cap by setting sentinel value
         _setSupplyCap(type(uint256).max);
 
-        uint256 expectedLimit = usd3Strategy.WAUSDC().maxDeposit(address(usd3Strategy));
-        assertEq(
-            usd3Strategy.availableDepositLimit(bob), expectedLimit, "Should be back to unlimited (bounded by vault)"
-        );
+        assertEq(usd3Strategy.availableDepositLimit(bob), type(uint256).max, "Should be back to unlimited admission");
 
-        uint256 depositAmount = expectedLimit > 10_000_000e6 ? 10_000_000e6 : expectedLimit;
-        if (depositAmount == 0) depositAmount = SMALL_AMOUNT;
+        uint256 depositAmount = 10_000_000e6;
 
         vm.prank(bob);
         strategy.deposit(depositAmount, bob);
         assertEq(strategy.totalAssets(), TEST_CAP + depositAmount, "Should exceed previous cap");
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                    WHITELIST INTEGRATION TESTS
-    //////////////////////////////////////////////////////////////*/
-
-    function test_supplyCap_withWhitelistEnabled() public {
-        _setSupplyCap(TEST_CAP);
-
-        // Enable whitelist and add alice
-        vm.prank(management);
-        usd3Strategy.setWhitelistEnabled(true);
-        vm.prank(management);
-        usd3Strategy.setWhitelist(alice, true);
-
-        // Alice can deposit up to cap
-        assertEq(usd3Strategy.availableDepositLimit(alice), TEST_CAP, "Alice should see cap");
-
-        // Bob not whitelisted, should see 0
-        assertEq(usd3Strategy.availableDepositLimit(bob), 0, "Bob should see 0 (not whitelisted)");
-
-        // Alice deposits
-        vm.prank(alice);
-        strategy.deposit(LARGE_AMOUNT, alice);
-
-        // Add bob to whitelist
-        vm.prank(management);
-        usd3Strategy.setWhitelist(bob, true);
-
-        // Bob should see remaining capacity
-        assertEq(usd3Strategy.availableDepositLimit(bob), TEST_CAP - LARGE_AMOUNT, "Bob should see remaining capacity");
-    }
-
-    function test_supplyCap_whitelistPriorityOverCap() public {
-        _setSupplyCap(TEST_CAP);
-
-        // Enable whitelist but don't add anyone
-        vm.prank(management);
-        usd3Strategy.setWhitelistEnabled(true);
-
-        // Even with capacity, non-whitelisted users see 0
-        assertEq(usd3Strategy.availableDepositLimit(alice), 0, "Should be 0 due to whitelist");
-
-        // Add alice
-        vm.prank(management);
-        usd3Strategy.setWhitelist(alice, true);
-
-        // Now alice sees the cap
-        assertEq(usd3Strategy.availableDepositLimit(alice), TEST_CAP, "Alice should see cap after whitelisting");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -413,6 +572,224 @@ contract USD3SupplyCapTest is Setup {
         strategy.mint(maxMintShares, alice);
 
         assertEq(strategy.maxMint(bob), 0, "Should have no mint capacity at cap");
+    }
+
+    function test_maxDepositAndMaxMintZeroSubMinimumHeadroomForFreshReceiver() public {
+        uint256 minimum = 100e6;
+        uint256 fragment = minimum - 1;
+        _setMinDeposit(minimum);
+
+        vm.prank(alice);
+        strategy.deposit(minimum, alice);
+        _setSupplyCap(strategy.totalAssets() + fragment);
+
+        assertEq(strategy.balanceOf(bob), 0, "receiver must be fresh");
+        assertEq(strategy.maxDeposit(bob), 0, "sub-minimum headroom is not executable");
+        assertEq(strategy.maxMint(bob), 0, "maxMint must inherit the zero limit");
+    }
+
+    function test_existingHolderCanConsumeSubMinimumHeadroom() public {
+        uint256 minimum = 100e6;
+        uint256 fragment = minimum - 1;
+        _setMinDeposit(minimum);
+
+        vm.prank(bob);
+        strategy.deposit(minimum, bob);
+        _setSupplyCap(strategy.totalAssets() + fragment);
+
+        assertGt(strategy.balanceOf(bob), 0, "receiver must already hold shares");
+        assertEq(strategy.maxDeposit(bob), fragment, "existing holder should see the raw fragment");
+
+        vm.prank(bob);
+        strategy.deposit(fragment, bob);
+        assertEq(strategy.maxDeposit(bob), 0, "existing holder should consume the fragment");
+    }
+
+    function test_headroomEqualToMinDepositRemainsExecutable() public {
+        uint256 minimum = 100e6;
+        _setMinDeposit(minimum);
+
+        vm.prank(alice);
+        strategy.deposit(minimum, alice);
+        _setSupplyCap(strategy.totalAssets() + minimum);
+
+        assertEq(strategy.balanceOf(bob), 0, "receiver must be fresh");
+        assertEq(strategy.maxDeposit(bob), minimum, "minimum-sized headroom should remain advertised");
+
+        vm.prank(bob);
+        strategy.deposit(minimum, bob);
+        assertEq(strategy.maxDeposit(charlie), 0, "minimum-sized headroom should be consumable");
+    }
+
+    function test_maxMintReturnsZeroWhenExactMinimumHeadroomRoundsBelowMinimum() public {
+        uint256 initialAssets = 800_000_000_000;
+        uint256 reportedAssets = 818_000_000_021;
+        uint256 minimum = 1_000_000_000;
+        _setNonUnitPps(initialAssets, reportedAssets - initialAssets);
+
+        assertEq(strategy.totalSupply(), initialAssets, "effective supply fixture mismatch");
+        assertEq(strategy.totalAssets(), reportedAssets, "total assets fixture mismatch");
+
+        _setMinDeposit(minimum);
+        _setSupplyCap(reportedAssets + minimum);
+
+        assertEq(strategy.maxDeposit(bob), 0, "shared deposit limit must reject the mint-rounding band");
+        uint256 roundedShares = strategy.convertToShares(minimum);
+        assertEq(roundedShares, 977_995_109, "counterexample share amount changed");
+        assertEq(strategy.previewMint(roundedShares), minimum - 1, "counterexample mint cost changed");
+        assertEq(strategy.maxMint(bob), 0, "maxMint must derive from the shared zero asset limit");
+    }
+
+    function test_existingHolderZeroShareHeadroomIsNotAdvertisedAtNonUnitPps() public {
+        _setNonUnitPps(1_000e6, 1_000e6);
+
+        vm.prank(alice);
+        strategy.transfer(bob, 1);
+        _setSupplyCap(strategy.totalAssets() + 1);
+
+        assertGt(strategy.balanceOf(bob), 0, "receiver must already hold shares");
+        assertEq(strategy.convertToShares(1), 0, "fixture must round one asset unit to zero shares");
+
+        uint256 advertised = strategy.maxDeposit(bob);
+        if (advertised != 0) {
+            vm.prank(bob);
+            strategy.deposit(advertised, bob);
+        }
+        assertEq(advertised, 0, "zero-share headroom is not executable for an existing holder");
+    }
+
+    function test_freshReceiverZeroShareHeadroomWithZeroMinimumIsNotAdvertisedAtNonUnitPps() public {
+        _setNonUnitPps(1_000e6, 1_000e6);
+        _setMinDeposit(0);
+        _setSupplyCap(strategy.totalAssets() + 1);
+
+        assertEq(strategy.balanceOf(bob), 0, "receiver must be fresh");
+        assertEq(strategy.convertToShares(1), 0, "fixture must round one asset unit to zero shares");
+
+        uint256 advertised = strategy.maxDeposit(bob);
+        if (advertised != 0) {
+            vm.prank(bob);
+            strategy.deposit(advertised, bob);
+        }
+        assertEq(advertised, 0, "zero-share headroom is not executable with a zero minimum");
+    }
+
+    function test_zeroMinDepositPreservesRawCapHeadroom() public {
+        _setMinDeposit(0);
+
+        vm.prank(alice);
+        strategy.deposit(SMALL_AMOUNT, alice);
+        _setSupplyCap(strategy.totalAssets() + 1);
+
+        assertEq(strategy.balanceOf(bob), 0, "receiver must be fresh");
+        assertEq(strategy.maxDeposit(bob), 1, "zero minimum should expose executable headroom");
+
+        vm.prank(bob);
+        strategy.deposit(1, bob);
+        assertEq(strategy.maxDeposit(charlie), 0, "raw fragment should be consumable");
+    }
+
+    function test_exemptReceiverStillSeesUnlimitedLimitWithSubMinimumHeadroom() public {
+        uint256 minimum = 100e6;
+        _setMinDeposit(minimum);
+
+        vm.prank(alice);
+        strategy.deposit(minimum, alice);
+        _setSupplyCap(strategy.totalAssets() + minimum - 1);
+
+        vm.prank(management);
+        usd3Strategy.setSupplyCapExempt(bob, true);
+
+        assertEq(strategy.balanceOf(bob), 0, "receiver must be fresh");
+        assertEq(strategy.maxDeposit(bob), type(uint256).max, "exempt maxDeposit must remain unlimited");
+        assertEq(strategy.maxMint(bob), type(uint256).max, "exempt maxMint must remain unlimited");
+    }
+
+    function test_subMinimumHeadroomPreservesPausedBorrowerAndZeroCapPrecedence() public {
+        vm.prank(alice);
+        strategy.deposit(1_000e6, alice);
+
+        uint256 minimum = 100e6;
+        _setMinDeposit(minimum);
+        _setSupplyCap(strategy.totalAssets() + minimum - 1);
+
+        waUSDC.setPaused(true);
+        assertEq(strategy.maxDeposit(bob), 0, "wrapper pause must take precedence");
+        waUSDC.setPaused(false);
+
+        createMarketDebt(bob, 100e6);
+        _setSupplyCap(strategy.totalAssets() + minimum - 1);
+        assertEq(strategy.maxDeposit(bob), 0, "borrower restriction must take precedence");
+
+        _setSupplyCap(0);
+        assertEq(strategy.maxDeposit(bob), 0, "zero cap must take precedence");
+    }
+
+    function testFuzz_nonzeroMaxDepositCanBeDepositedVerbatim(
+        uint96 initialAssetsSeed,
+        uint96 profitSeed,
+        uint96 headroomSeed,
+        uint96 minimumSeed,
+        bool existingHolder
+    ) public {
+        uint256 initialAssets = bound(uint256(initialAssetsSeed), 1e6, 5_000_000e6);
+        uint256 profit = bound(uint256(profitSeed), 1, 5_000_000e6);
+        uint256 headroom = bound(uint256(headroomSeed), 1, 5_000_000e6);
+        uint256 minimum = bound(uint256(minimumSeed), 0, 5_000_000e6);
+        _setNonUnitPps(initialAssets, profit);
+
+        if (existingHolder) {
+            vm.prank(alice);
+            strategy.transfer(bob, 1);
+        }
+        _setMinDeposit(minimum);
+        _setSupplyCap(strategy.totalAssets() + headroom);
+
+        uint256 advertised = strategy.maxDeposit(bob);
+        if (advertised == 0) return;
+
+        uint256 assetsBefore = strategy.totalAssets();
+        vm.prank(bob);
+        uint256 shares = strategy.deposit(advertised, bob);
+
+        assertGt(shares, 0, "nonzero maximum must mint shares");
+        assertEq(strategy.totalAssets(), assetsBefore + advertised, "deposit must consume the advertised maximum");
+    }
+
+    function testFuzz_nonzeroMaxMintCanBeMintedVerbatim(
+        uint96 initialAssetsSeed,
+        uint96 profitSeed,
+        uint96 minimumSeed,
+        uint8 headroomDeltaSeed,
+        bool existingHolder
+    ) public {
+        uint256 initialAssets = bound(uint256(initialAssetsSeed), 1e6, 5_000_000e6);
+        uint256 profit = bound(uint256(profitSeed), 1, 5_000_000e6);
+        uint256 minimum = bound(uint256(minimumSeed), 1, 5_000_000e6);
+        uint256 headroom = minimum + bound(uint256(headroomDeltaSeed), 0, 2);
+        _setNonUnitPps(initialAssets, profit);
+
+        if (existingHolder) {
+            vm.prank(alice);
+            strategy.transfer(bob, 1);
+        }
+        _setMinDeposit(minimum);
+        _setSupplyCap(strategy.totalAssets() + headroom);
+
+        uint256 advertised = strategy.maxMint(bob);
+        if (advertised == 0) return;
+
+        uint256 expectedAssets = strategy.previewMint(advertised);
+        if (!existingHolder) {
+            assertGe(expectedAssets, minimum, "nonzero maximum must clear the first-deposit minimum");
+        }
+
+        uint256 assetsBefore = strategy.totalAssets();
+        vm.prank(bob);
+        uint256 assets = strategy.mint(advertised, bob);
+
+        assertEq(assets, expectedAssets, "mint must charge its previewed asset amount");
+        assertEq(strategy.totalAssets(), assetsBefore + assets, "mint must consume the advertised maximum");
     }
 
     function test_mint_respectsCap() public {

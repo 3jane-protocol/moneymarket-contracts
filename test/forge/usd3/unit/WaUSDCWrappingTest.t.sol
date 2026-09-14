@@ -28,6 +28,30 @@ contract WaUSDCWrappingTest is Setup {
         airdrop(asset, bob, 10000e6);
     }
 
+    function test_initializeUsesUSDCAndSetsStandingAllowances() public {
+        assertEq(ITokenizedStrategy(address(usd3Strategy)).asset(), address(underlyingAsset), "asset should be USDC");
+        assertEq(asset.allowance(address(usd3Strategy), address(waUSDC)), type(uint256).max, "USDC allowance to waUSDC");
+        assertEq(
+            IERC20(address(waUSDC)).allowance(address(usd3Strategy), address(usd3Strategy.morphoCredit())),
+            type(uint256).max,
+            "waUSDC allowance to Morpho"
+        );
+
+        uint256 depositAmount = 1000e6;
+        uint256 usdcBefore = asset.balanceOf(alice);
+
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), depositAmount);
+        uint256 shares = ITokenizedStrategy(address(usd3Strategy)).deposit(depositAmount, alice);
+        ITokenizedStrategy(address(usd3Strategy)).approve(address(usd3Strategy), shares);
+        uint256 withdrawn = ITokenizedStrategy(address(usd3Strategy)).redeem(shares, alice, alice);
+        vm.stopPrank();
+
+        assertEq(withdrawn, depositAmount, "round-trip withdrawal");
+        assertEq(asset.balanceOf(alice), usdcBefore, "USDC returned to user");
+        assertEq(waUSDC.balanceOf(alice), 0, "user should not receive waUSDC");
+    }
+
     function test_depositWrapsUSDCToWaUSDC() public {
         uint256 depositAmount = 1000e6;
 

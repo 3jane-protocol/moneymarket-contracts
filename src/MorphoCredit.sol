@@ -76,10 +76,14 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     mapping(Id => mapping(address => RepaymentObligation)) public repaymentObligation;
 
     /// @notice Markdown state for tracking defaulted debt value reduction
-    mapping(Id => mapping(address => MarkdownState)) public markdownState;
+    /// @dev The default-entry latch packs into the same slot; the external getter exposes only the applied markdown.
+    mapping(Id => mapping(address => MarkdownState)) internal _markdownState;
 
-    /// @dev Storage gap for future upgrades (14 slots).
-    uint256[14] private __gap;
+    /// @inheritdoc IMorphoCredit
+    mapping(Id => bool) public marketInWindDown;
+
+    /// @dev Storage gap for future upgrades (13 slots).
+    uint256[13] private __gap;
 
     /* CONSTANTS */
 
@@ -90,6 +94,9 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @notice Maximum basis points (100%)
     uint256 internal constant MAX_BPS = 10000;
+
+    /// @notice Maximum supply shares, including virtual shares, per unit of supply assets.
+    uint256 internal constant SUPPLY_SHARE_PRICE_FLOOR_RATIO = 1e15;
 
     /* INITIALIZER */
 
@@ -118,6 +125,22 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         usd3 = newUsd3;
     }
 
+    /// @inheritdoc IMorphoCredit
+    function clearMarketWindDown(Id id) external onlyOwner {
+        if (!marketInWindDown[id]) revert ErrorsLib.AlreadySet();
+        Market storage m = market[id];
+        if (
+            uint256(m.totalSupplyShares) + SharesMathLib.VIRTUAL_SHARES
+                > (uint256(m.totalSupplyAssets) + 1) * (SUPPLY_SHARE_PRICE_FLOOR_RATIO / 2)
+        ) {
+            revert ErrorsLib.SupplySharePriceBelowFloor();
+        }
+
+        delete marketInWindDown[id];
+
+        emit EventsLib.MarketWindDownCleared(id);
+    }
+
     /* EXTERNAL FUNCTIONS - PREMIUM MANAGEMENT */
 
     /// @inheritdoc IMorphoCredit
@@ -138,40 +161,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     }
 
     /* INTERNAL FUNCTIONS - PREMIUM CALCULATIONS */
-
-    /// @dev Calculates the premium amount to be added based on observed base rate growth
-    /// @param borrowAssetsAtLastAccrual The borrower's assets at last premium accrual
-    /// @param borrowAssetsCurrent The borrower's current assets (including base interest)
-    /// @param premiumRate The borrower's premium rate per second (scaled by WAD)
-    /// @param elapsed Time elapsed since last accrual
-    /// @return premiumAmount The premium amount to add
-    function _calculateBorrowerPremiumAmount(
-        uint256 borrowAssetsAtLastAccrual,
-        uint256 borrowAssetsCurrent,
-        uint256 premiumRate,
-        uint256 elapsed
-    ) internal pure returns (uint256 premiumAmount) {
-        // Prevent division by zero
-        if (borrowAssetsAtLastAccrual == 0 || elapsed == 0) return 0;
-
-        // Calculate the actual base growth
-        uint256 baseGrowthActual;
-        uint256 baseRatePerSecond;
-        if (borrowAssetsCurrent > borrowAssetsAtLastAccrual) {
-            baseGrowthActual = borrowAssetsCurrent - borrowAssetsAtLastAccrual;
-            baseRatePerSecond = borrowAssetsCurrent.wDivUp(borrowAssetsAtLastAccrual).wInverseTaylorCompounded(elapsed);
-        }
-
-        // Combine base rate with premium rate (both per-second)
-        uint256 combinedRate = baseRatePerSecond + premiumRate;
-
-        // Calculate compound growth using wTaylorCompounded
-        uint256 totalGrowth = combinedRate.wTaylorCompounded(elapsed);
-        uint256 totalGrowthAmount = borrowAssetsAtLastAccrual.wMulDown(totalGrowth);
-
-        // Premium amount is the difference between total growth and actual base growth
-        premiumAmount = totalGrowthAmount > baseGrowthActual ? totalGrowthAmount - baseGrowthActual : 0;
-    }
 
     /// @dev Calculate ongoing premium and penalty rate if already past grace period
     /// @return premiumAmount The calculated premium amount (including penalty if applicable)
@@ -202,9 +191,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             }
         }
 
-        premiumAmount = _calculateBorrowerPremiumAmount(
-            premium.borrowAssetsAtLastAccrual, borrowAssetsCurrent, totalPremiumRate, elapsed
-        );
+        premiumAmount = borrowAssetsCurrent.wMulDown(totalPremiumRate.wTaylorCompounded(elapsed));
     }
 
     /// @dev Calculate initial penalty when first transitioning into penalty period
@@ -217,7 +204,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @dev Penalty calculation logic:
     /// 1. Only applies if status is Delinquent or Default
     /// 2. Only for first accrual after grace period ends (lastAccrualTime <= cycleEndDate + gracePeriod)
-    /// 3. Uses ending balance from obligation as the principal
+    /// 3. Uses the greater of current debt plus premium and the obligation's ending balance as the principal
     /// 4. Calculates penalty from cycle end date to now
     /// 5. Adds basePremiumAmount to current assets for accurate compounding
     function _calculateInitialPenalty(
@@ -244,9 +231,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         if (elapsed > MAX_ELAPSED_TIME) {
             elapsed = MAX_ELAPSED_TIME;
         }
-        penaltyAmount = _calculateBorrowerPremiumAmount(
-            obligation.endingBalance, borrowAssetsCurrent + basePremiumAmount, terms.irp, elapsed
-        );
+        uint256 currentDebtWithPremium = borrowAssetsCurrent + basePremiumAmount;
+        uint256 penaltyPrincipal =
+            currentDebtWithPremium > obligation.endingBalance ? currentDebtWithPremium : obligation.endingBalance;
+        penaltyAmount = penaltyPrincipal.wMulDown(terms.irp.wTaylorCompounded(elapsed));
     }
 
     /// @dev Update position and market with premium shares
@@ -329,7 +317,6 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// - Captures the current borrow amount after all accruals
     /// - Updates borrowAssetsAtLastAccrual to this new value
     /// - Ensures next premium calculation starts from correct base
-    /// - Only updates if borrower has a premium rate set
     /// @dev Called after every borrow, repay, or liquidation to maintain accuracy
     function _snapshotBorrowerPosition(Id id, address borrower) internal {
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
@@ -398,8 +385,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         BorrowerPremium memory premium = borrowerPremium[id][borrower];
         uint128 oldRate = premium.rate;
 
-        // Set the new rate
+        // Set the new rate and reset the accrual clock so the new rate applies
+        // only from this point; premium under the old rate was accrued above.
         premium.rate = newRate;
+        if (borrowShares > 0) premium.lastAccrualTime = uint128(block.timestamp);
         borrowerPremium[id][borrower] = premium;
 
         // Take snapshot after setting the new rate if there are borrow shares
@@ -559,6 +548,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         override
     {
         if (msg.sender != usd3) revert ErrorsLib.NotUsd3();
+        _requireNewLendingAllowed(id);
         if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
     }
 
@@ -581,6 +571,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         override
     {
         if (msg.sender != helper) revert ErrorsLib.NotHelper();
+        _requireNewLendingAllowed(id);
         if (IProtocolConfig(protocolConfig).getIsPaused() > 0) revert ErrorsLib.Paused();
         if (_isMarketFrozen(id)) revert ErrorsLib.MarketFrozen();
 
@@ -641,6 +632,7 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @inheritdoc Morpho
     function _afterBorrow(MarketParams memory, Id id, address onBehalf) internal virtual override {
         _snapshotBorrowerPosition(id, onBehalf);
+        borrowerPremium[id][onBehalf].lastAccrualTime = uint128(block.timestamp);
     }
 
     /// @inheritdoc Morpho
@@ -712,24 +704,34 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /* MARKDOWN FUNCTIONS */
 
     /// @notice Update a borrower's markdown state and market total
+    /// @dev Markdown effects require both a nonzero manager from the market's CreditLine and borrower enablement in the
+    /// configured MarkdownController. A zero manager returns before touching state. See docs/operations-runbook.md,
+    /// "Before enabling markdown", for the activation procedure and operating preconditions.
     /// @param id Market ID
     /// @param borrower Borrower address
     function _updateBorrowerMarkdown(Id id, address borrower) internal {
         address manager = ICreditLine(idToMarketParams[id].creditLine).mm();
         if (manager == address(0)) return; // No markdown manager set
 
-        uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
+        MarkdownState storage state = _markdownState[id][borrower];
+        uint256 lastMarkdown = state.lastCalculatedMarkdown;
         (RepaymentStatus status, uint256 statusStartTime) = getRepaymentStatus(id, borrower);
 
-        // Check if in default and emit status change events
+        // Check if in default and emit status change events. The latch keeps default entry observable when the
+        // supply-share floor truncates the whole markdown increase; state written before the latch existed is
+        // inferred from a nonzero applied markdown.
         bool isInDefault = status == RepaymentStatus.Default && statusStartTime > 0;
-        bool wasInDefault = lastMarkdown > 0;
+        bool wasInDefault = state.inDefault != 0 || lastMarkdown > 0;
 
-        if (isInDefault && !wasInDefault) {
-            IMarkdownController(manager).resetBorrowerState(borrower);
-            emit EventsLib.DefaultStarted(id, borrower, statusStartTime);
-        } else if (!isInDefault && wasInDefault) {
-            emit EventsLib.DefaultCleared(id, borrower);
+        if (isInDefault != wasInDefault) {
+            if (isInDefault) {
+                state.inDefault = 1;
+                IMarkdownController(manager).resetBorrowerState(borrower);
+                emit EventsLib.DefaultStarted(id, borrower, statusStartTime);
+            } else {
+                state.inDefault = 0;
+                emit EventsLib.DefaultCleared(id, borrower);
+            }
         }
 
         // Calculate new markdown
@@ -751,39 +753,55 @@ contract MorphoCredit is Morpho, IMorphoCredit {
         }
 
         if (newMarkdown != lastMarkdown) {
-            // Update borrower state
-            markdownState[id][borrower].lastCalculatedMarkdown = uint128(newMarkdown);
+            // Update market totals - use a separate function to avoid stack issues.
+            // Store only what the market actually absorbed so a later decrease restores exactly
+            // what was deducted for this borrower and never consumes other borrowers' markdown.
+            uint256 appliedMarkdown = _updateMarketMarkdown(id, lastMarkdown, newMarkdown);
 
-            // Update market totals - use a separate function to avoid stack issues
-            _updateMarketMarkdown(id, int256(newMarkdown) - int256(lastMarkdown));
+            if (appliedMarkdown < newMarkdown) {
+                emit EventsLib.MarkdownTruncated(id, borrower, newMarkdown, appliedMarkdown);
+            }
+            if (appliedMarkdown != lastMarkdown) {
+                state.lastCalculatedMarkdown = uint128(appliedMarkdown);
 
-            emit EventsLib.BorrowerMarkdownUpdated(id, borrower, lastMarkdown, newMarkdown);
+                emit EventsLib.BorrowerMarkdownUpdated(id, borrower, lastMarkdown, appliedMarkdown);
+            }
         }
+    }
+
+    /// @inheritdoc IMorphoCredit
+    function markdownState(Id id, address borrower) external view returns (uint128) {
+        return _markdownState[id][borrower].lastCalculatedMarkdown;
     }
 
     /// @notice Update market totals for markdown changes
     /// @param id Market ID
-    /// @param markdownDelta Change in markdown (positive = increase, negative = decrease)
-    function _updateMarketMarkdown(Id id, int256 markdownDelta) internal {
-        if (markdownDelta == 0) return;
+    /// @param lastMarkdown Markdown currently applied to the market for the borrower
+    /// @param newMarkdown Requested markdown for the borrower
+    /// @return Markdown applied to the market for the borrower after clamping
+    function _updateMarketMarkdown(Id id, uint256 lastMarkdown, uint256 newMarkdown) internal returns (uint256) {
+        Market storage m = market[id];
 
-        Market memory m = market[id];
-
-        if (markdownDelta > 0) {
+        if (newMarkdown > lastMarkdown) {
             // Markdown increasing (borrower deeper in default)
-            uint256 increase = uint256(markdownDelta);
+            uint256 increase = newMarkdown - lastMarkdown;
+            uint256 totalSupplyAssets = m.totalSupplyAssets;
+            uint256 minAssets = _minSupplyAssets(m.totalSupplyShares);
+            uint256 available = totalSupplyAssets > minAssets ? totalSupplyAssets - minAssets : 0;
 
-            // Cap at available supply to avoid underflow
-            if (increase > m.totalSupplyAssets) {
-                increase = m.totalSupplyAssets;
+            // Preserve the minimum supply share price and wind down if the markdown reaches the floor.
+            if (increase >= available) {
+                increase = available;
+                marketInWindDown[id] = true;
             }
 
             // Apply the reduction to supply and record what was marked down
-            m.totalSupplyAssets = (m.totalSupplyAssets - increase).toUint128();
+            m.totalSupplyAssets = uint128(totalSupplyAssets - increase);
             m.totalMarkdownAmount = (m.totalMarkdownAmount + increase).toUint128();
+            return lastMarkdown + increase;
         } else {
             // Markdown decreasing (borrower repaying/recovering)
-            uint256 decrease = uint256(-markdownDelta);
+            uint256 decrease = lastMarkdown - newMarkdown;
 
             // Cap at previously marked down amount to avoid creating phantom supply
             if (decrease > m.totalMarkdownAmount) {
@@ -793,9 +811,8 @@ contract MorphoCredit is Morpho, IMorphoCredit {
             // Restore the supply and reduce the tracked markdown amount
             m.totalSupplyAssets = (m.totalSupplyAssets + decrease).toUint128();
             m.totalMarkdownAmount = (m.totalMarkdownAmount - decrease).toUint128();
+            return lastMarkdown - decrease;
         }
-
-        market[id] = m;
     }
 
     /// @notice Get borrower's current borrow assets
@@ -827,6 +844,10 @@ contract MorphoCredit is Morpho, IMorphoCredit {
     /// @notice Settle a borrower's account by writing off all remaining debt
     /// @dev Only callable by credit line contract
     /// @dev Should be called after any partial repayments have been made
+    /// @dev The automatic JANE slash requires both a nonzero markdown manager on the market's CreditLine and
+    /// borrower enablement in the MarkdownController (src/MarkdownController.sol:191); it is skipped whenever either
+    /// is absent — under the current configuration the borrower flag, not the manager. Recover a skipped slash
+    /// manually per docs/operations-runbook.md, "Deferred JANE slash while markdown is disabled".
     /// @param marketParams The market parameters
     /// @param borrower The borrower whose account to settle
     /// @return writtenOffAssets Amount of assets written off
@@ -872,35 +893,62 @@ contract MorphoCredit is Morpho, IMorphoCredit {
 
     /// @notice Apply settlement to storage
     function _applySettlement(Id id, address borrower, uint256 writtenOffShares, uint256 writtenOffAssets) internal {
-        uint256 lastMarkdown = markdownState[id][borrower].lastCalculatedMarkdown;
+        uint256 lastMarkdown = _markdownState[id][borrower].lastCalculatedMarkdown;
+        Market storage m = market[id];
 
         // Clear borrower position and related state
         position[id][borrower].borrowShares = 0;
         position[id][borrower].collateral = 0;
-        delete markdownState[id][borrower];
+        delete _markdownState[id][borrower];
         delete repaymentObligation[id][borrower];
         delete borrowerPremium[id][borrower];
 
         // Update borrow totals
-        market[id].totalBorrowShares = (market[id].totalBorrowShares - writtenOffShares).toUint128();
-        market[id].totalBorrowAssets = (market[id].totalBorrowAssets - writtenOffAssets).toUint128();
+        m.totalBorrowShares = (m.totalBorrowShares - writtenOffShares).toUint128();
+        m.totalBorrowAssets = (m.totalBorrowAssets - writtenOffAssets).toUint128();
 
-        // Apply net supply adjustment
-        uint128 totalSupplyAssets = market[id].totalSupplyAssets;
-        int256 netAdjustment = int256(lastMarkdown) - int256(writtenOffAssets);
-        if (netAdjustment > 0) {
-            market[id].totalSupplyAssets = (totalSupplyAssets + uint256(netAdjustment)).toUint128();
-        } else if (netAdjustment < 0) {
-            uint256 loss = uint256(-netAdjustment);
-            if (totalSupplyAssets < loss) revert ErrorsLib.InsufficientLiquidity();
-            market[id].totalSupplyAssets = (totalSupplyAssets - loss).toUint128();
+        // Apply net supply adjustment. Only the loss direction is applied: when the written-off amount exceeds the
+        // markdown already deducted, the excess is taken from supply assets. The opposite case, where the recorded
+        // markdown exceeds the amount ultimately written off, does not credit the difference back. That case needs
+        // markdown state to go stale, which requires the markdown manager to be unset after a markdown was recorded,
+        // since every repay path otherwise refreshes and re-caps it against current debt. Where it does occur the
+        // repaid value stays in the market without being attributed to supply assets, so suppliers see it as a
+        // permanent reduction rather than a recovery.
+        uint256 totalSupplyAssets = m.totalSupplyAssets;
+        if (writtenOffAssets > lastMarkdown) {
+            uint256 loss = writtenOffAssets - lastMarkdown;
+
+            uint256 minAssets = _minSupplyAssets(m.totalSupplyShares);
+            uint256 protectedAssets = minAssets < totalSupplyAssets ? minAssets : totalSupplyAssets;
+            uint256 remainingAssets = totalSupplyAssets > loss ? totalSupplyAssets - loss : 0;
+
+            if (remainingAssets <= protectedAssets) {
+                remainingAssets = protectedAssets;
+                marketInWindDown[id] = true;
+            }
+
+            m.totalSupplyAssets = uint128(remainingAssets);
         }
 
         // Update markdown total
         if (lastMarkdown > 0) {
-            uint128 totalMarkdownAmount = market[id].totalMarkdownAmount;
-            market[id].totalMarkdownAmount =
+            uint128 totalMarkdownAmount = m.totalMarkdownAmount;
+            m.totalMarkdownAmount =
                 totalMarkdownAmount > lastMarkdown ? (totalMarkdownAmount - lastMarkdown).toUint128() : 0;
         }
+    }
+
+    /// @notice Minimum assets required by the supply share-price invariant.
+    function _minSupplyAssets(uint256 totalSupplyShares) internal pure returns (uint256) {
+        return (totalSupplyShares + SharesMathLib.VIRTUAL_SHARES - 1) / SUPPLY_SHARE_PRICE_FLOOR_RATIO;
+    }
+
+    /// @notice Reverts if the market cannot accept new supply or borrowing.
+    function _requireNewLendingAllowed(Id id) internal view {
+        Market storage m = market[id];
+        if (m.totalSupplyAssets < _minSupplyAssets(m.totalSupplyShares)) {
+            revert ErrorsLib.SupplySharePriceBelowFloor();
+        }
+        if (marketInWindDown[id]) revert ErrorsLib.MarketInWindDown();
     }
 }

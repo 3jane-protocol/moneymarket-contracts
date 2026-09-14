@@ -27,17 +27,12 @@ import {ProxyAdmin} from "../../../lib/openzeppelin/contracts/proxy/transparent/
 // Mock contracts for dependencies with price per share functionality
 contract USD3Mock is IERC4626 {
     uint256 public pricePerShare = 1e18; // Default 1:1 ratio
-    ERC20Mock public underlying; // USDC after reinitialize, waUSDC before
-    bool public isReinitalized = false; // Track if reinitialize() has been called
+    ERC20Mock public underlying;
 
     // ERC20 state
     uint256 public totalSupply;
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
-
-    // Whitelist functionality for USD3
-    mapping(address => bool) public whitelist;
-    bool public whitelistEnabled = false;
 
     function setUnderlying(address _underlying) external {
         underlying = ERC20Mock(_underlying);
@@ -45,20 +40,6 @@ contract USD3Mock is IERC4626 {
 
     function setPricePerShare(uint256 _pricePerShare) external {
         pricePerShare = _pricePerShare;
-    }
-
-    // Simulate reinitialize() - switch to accepting USDC directly
-    function reinitialize() external {
-        isReinitalized = true;
-    }
-
-    // Whitelist management functions
-    function setWhitelist(address user, bool allowed) external {
-        whitelist[user] = allowed;
-    }
-
-    function setWhitelistEnabled(bool enabled) external {
-        whitelistEnabled = enabled;
     }
 
     // Add availableDepositLimit function for Helper contract
@@ -71,7 +52,7 @@ contract USD3Mock is IERC4626 {
         uint256 shares = (assets * 1e18) / pricePerShare;
         _mint(receiver, shares);
 
-        // Transfer underlying assets (USDC after reinitialize, waUSDC before)
+        // Transfer underlying assets.
         if (address(underlying) != address(0)) {
             underlying.transferFrom(msg.sender, address(this), assets);
         }
@@ -90,7 +71,7 @@ contract USD3Mock is IERC4626 {
         uint256 assets = (shares * pricePerShare) / 1e18;
         _burn(owner, shares);
 
-        // Transfer underlying assets (waUSDC) to receiver
+        // Transfer underlying assets to receiver.
         if (address(underlying) != address(0)) {
             underlying.transfer(receiver, assets);
         }
@@ -605,14 +586,9 @@ contract HelperTest is BaseTest {
         sUsd3 = new USD3Mock();
         morphoMock = new MorphoMock();
 
-        // Configure USD3Mock to use USDC directly after reinitialize
-        usd3.setUnderlying(address(usdc)); // Start with USDC for post-reinitialize behavior
-        usd3.reinitialize(); // Mark as reinitialized
+        // Configure USD3Mock to use USDC directly.
+        usd3.setUnderlying(address(usdc));
         sUsd3.setUnderlying(address(usd3));
-
-        // Whitelist the user for USD3
-        usd3.setWhitelist(user, true);
-        usd3.setWhitelist(address(helper), true); // Also whitelist helper for intermediate deposits
 
         // Configure MorphoMock with tokens
         morphoMock.setTokens(address(waUsdc), address(usdc));
@@ -679,7 +655,7 @@ contract HelperTest is BaseTest {
         console.log("=== SIMPLE DEPOSIT ===");
         console.log("Initial USDC balance:", initialUSDCBalance);
 
-        // Step 1: Deposit without hop (USDC -> USD3 directly after reinitialize)
+        // Step 1: Deposit without hop (USDC -> USD3 directly)
         vm.startPrank(user);
         uint256 shares = helper.deposit(DEPOSIT_AMOUNT, user, false);
         vm.stopPrank();
@@ -709,10 +685,10 @@ contract HelperTest is BaseTest {
     }
 
     function test_DepositWithHop() public {
-        // Test deposit with hop=true (USDC -> USD3 -> sUSD3 after reinitialize)
+        // Test deposit with hop=true (USDC -> USD3 -> sUSD3)
         uint256 initialUSDCBalance = usdc.balanceOf(user);
 
-        // Give USDC some balance to USD3 mock for deposits (since it now accepts USDC directly)
+        // Give USDC some balance to USD3 mock for deposits.
         usdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 10);
         // Give USD3 some balance to sUSD3 mock for deposits
         usd3.setBalance(address(sUsd3), DEPOSIT_AMOUNT * 10);
@@ -739,17 +715,17 @@ contract HelperTest is BaseTest {
 
     function test_RedeemFromSUSD3() public {
         // First deposit with hop to get sUSD3
-        usdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 10); // USD3 now uses USDC directly
+        usdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 10);
         usd3.setBalance(address(sUsd3), DEPOSIT_AMOUNT * 10);
 
         vm.startPrank(user);
         uint256 sUsd3Shares = helper.deposit(DEPOSIT_AMOUNT, user, true);
         vm.stopPrank();
 
-        // Now test redemption: sUSD3 -> USD3 -> USDC (direct after reinitialize)
+        // Now test redemption: sUSD3 -> USD3 -> USDC.
         // Give mocks necessary balances for redemption
         usd3.setBalance(address(sUsd3), DEPOSIT_AMOUNT * 10); // sUSD3 needs USD3 to redeem
-        usdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 10); // USD3 needs USDC to redeem directly
+        usdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 10);
 
         // First, user needs to convert sUSD3 back to USD3
         vm.startPrank(user);
@@ -781,7 +757,7 @@ contract HelperTest is BaseTest {
         sUsd3.setPricePerShare(1.02e18); // 2% premium
 
         // Give sufficient balances for conversions
-        usdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 20); // USD3 now uses USDC directly
+        usdc.setBalance(address(usd3), DEPOSIT_AMOUNT * 20);
         usd3.setBalance(address(sUsd3), DEPOSIT_AMOUNT * 20);
 
         uint256 initialUSDCBalance = usdc.balanceOf(user);
@@ -790,7 +766,7 @@ contract HelperTest is BaseTest {
         uint256 shares = helper.deposit(DEPOSIT_AMOUNT, user, true);
         vm.stopPrank();
 
-        // Calculate expected shares through conversions (no waUSDC step after reinitialize)
+        // Calculate expected shares through USDC-native conversions.
         // USDC -> USD3: 1000e6 / 1.05 = 952.38e6 USD3 shares
         uint256 expectedUSD3Shares = (DEPOSIT_AMOUNT * 1e18) / 1.05e18;
         // USD3 -> sUSD3: 952.38e6 / 1.02 = 933.71e6 sUSD3 shares
@@ -860,7 +836,7 @@ contract HelperTest is BaseTest {
         usdc.setBalance(user, amount * 2);
 
         // Give mocks sufficient balances
-        usdc.setBalance(address(usd3), amount * 10); // USD3 now uses USDC directly
+        usdc.setBalance(address(usd3), amount * 10);
         usd3.setBalance(address(sUsd3), amount * 10);
 
         uint256 initialBalance = usdc.balanceOf(user);

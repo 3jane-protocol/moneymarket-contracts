@@ -30,3 +30,4 @@ emv-*-certora*
 
 # Local foundry install artifact (submodules are source of truth).
 foundry.lock
+.playwright-mcp/

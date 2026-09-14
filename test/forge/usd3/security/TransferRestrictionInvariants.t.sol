@@ -3,18 +3,11 @@ pragma solidity ^0.8.18;
 
 import {Setup} from "../utils/Setup.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
-import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
-import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
-import {
-    TransparentUpgradeableProxy
-} from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {Math} from "../../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {Test} from "forge-std/Test.sol";
-import {console2} from "forge-std/console2.sol";
 
 /**
  * @title TransferRestrictionInvariants
@@ -30,35 +23,7 @@ contract TransferRestrictionInvariants is Setup {
         super.setUp();
 
         usd3Strategy = USD3(address(strategy));
-
-        // Deploy sUSD3 implementation with proxy
-        sUSD3 susd3Implementation = new sUSD3();
-
-        // Deploy proxy admin
-        address proxyAdminOwner = makeAddr("ProxyAdminOwner");
-        ProxyAdmin susd3ProxyAdmin = new ProxyAdmin(proxyAdminOwner);
-
-        // Deploy proxy with initialization
-        bytes memory susd3InitData =
-            abi.encodeWithSelector(sUSD3.initialize.selector, address(usd3Strategy), management, keeper);
-
-        TransparentUpgradeableProxy susd3Proxy =
-            new TransparentUpgradeableProxy(address(susd3Implementation), address(susd3ProxyAdmin), susd3InitData);
-
-        susd3Strategy = sUSD3(address(susd3Proxy));
-
-        // Link strategies
-        // Set commitment period via protocol config
-        address morphoAddress = address(usd3Strategy.morphoCredit());
-        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
-        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
-
-        // Configure commitment and lock periods
-        vm.prank(management);
-        usd3Strategy.setSUSD3(address(susd3Strategy));
-
-        // Set config as the owner (test contract in this case)
-        MockProtocolConfig(protocolConfigAddress).setConfig(USD3_COMMITMENT_TIME, 7 days);
+        susd3Strategy = setUpSUSD3();
 
         vm.prank(management);
         usd3Strategy.setMinDeposit(100e6);
@@ -74,38 +39,6 @@ contract TransferRestrictionInvariants is Setup {
     }
 
     // Core Invariants
-
-    function invariant_commitment_period_consistency() public {
-        // If a user has a deposit timestamp, they either:
-        // 1. Have USD3 balance and are in or past commitment, or
-        // 2. Have no balance (fully withdrawn)
-
-        address[] memory users = handler.getUsers();
-        for (uint256 i = 0; i < users.length; i++) {
-            address user = users[i];
-            uint256 balance = IERC20(address(usd3Strategy)).balanceOf(user);
-            uint256 depositTime = usd3Strategy.depositTimestamp(user);
-
-            if (balance > 0 && depositTime > 0) {
-                // User has balance and deposit timestamp
-                // They should not be able to transfer if still in commitment
-                if (block.timestamp < depositTime + 7 days) {
-                    // Try to transfer (should fail)
-                    vm.prank(user);
-                    try IERC20(address(usd3Strategy)).transfer(address(1), 1) {
-                        // Transfer succeeded when it shouldn't have
-                        assertTrue(false, "Transfer succeeded during commitment");
-                    } catch {
-                        // Expected behavior
-                    }
-                }
-            } else if (balance == 0 && depositTime > 0) {
-                // This is acceptable - user withdrew everything
-                // But timestamp should ideally be cleared
-                // This is a design choice, not a hard invariant
-            }
-        }
-    }
 
     function invariant_lock_period_enforcement() public {
         // If a user has sUSD3 balance and lockedUntil > block.timestamp,
@@ -159,16 +92,11 @@ contract TransferRestrictionInvariants is Setup {
         assertEq(totalSupply, sumBalances, "Total supply doesn't match sum of balances");
     }
 
-    function invariant_subordination_ratio_maintained() public {
-        // sUSD3's USD3 holdings should never exceed 15% of total USD3 supply
-
-        uint256 usd3TotalSupply = IERC20(address(usd3Strategy)).totalSupply();
-        uint256 susd3Holdings = IERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
-
-        if (usd3TotalSupply > 0) {
-            uint256 ratio = (susd3Holdings * 10000) / usd3TotalSupply;
-            assertLe(ratio, 1500, "Subordination ratio exceeded 15%");
-        }
+    function invariant_subordination_enforced_at_deposit() public {
+        // The protocol caps sUSD3 deposits at the subordinated-debt cap (tranche share of max(actual debt,
+        // DEBT_CAP) in USDC terms) when they enter; holdings may drift past the cap afterwards as debt or
+        // config move, so the invariant binds at deposit time only.
+        assertFalse(handler.subordinationBreachedOnDeposit(), "sUSD3 deposit breached subordinated-debt cap");
     }
 
     function invariant_no_shares_lost() public {
@@ -190,41 +118,12 @@ contract TransferRestrictionInvariants is Setup {
     }
 
     function invariant_transfer_restrictions_hold() public {
-        // This is a meta-invariant that checks our restriction logic
-        // Users in commitment/lock/cooldown should have appropriate restrictions
+        // Meta-invariant: users under the sUSD3 lock have transfer restrictions enforced.
 
         address[] memory users = handler.getUsers();
         for (uint256 i = 0; i < users.length; i++) {
             address user = users[i];
 
-            // Check USD3 restrictions
-            uint256 usd3Balance = IERC20(address(usd3Strategy)).balanceOf(user);
-            uint256 depositTime = usd3Strategy.depositTimestamp(user);
-
-            if (usd3Balance > 0 && depositTime > 0) {
-                bool inCommitment = block.timestamp < depositTime + 7 days;
-
-                if (inCommitment) {
-                    // Should not be able to transfer to regular addresses
-                    vm.prank(user);
-                    try IERC20(address(usd3Strategy)).transfer(address(0x123), 1) {
-                        assertTrue(false, "USD3 transfer during commitment should fail");
-                    } catch {
-                        // Expected
-                    }
-
-                    // But should be able to transfer to sUSD3
-                    vm.prank(user);
-                    try IERC20(address(usd3Strategy)).transfer(address(susd3Strategy), 0) {
-                    // Zero transfer to sUSD3 should work
-                    }
-                    catch {
-                        assertTrue(false, "USD3 transfer to sUSD3 should work during commitment");
-                    }
-                }
-            }
-
-            // Check sUSD3 restrictions
             uint256 susd3Balance = IERC20(address(susd3Strategy)).balanceOf(user);
             uint256 lockedUntil = susd3Strategy.lockedUntil(user);
 
@@ -253,6 +152,8 @@ contract TransferRestrictionHandler is Test {
 
     address[] public users;
     mapping(address => bool) public isUser;
+    address internal currentUser;
+    bool public subordinationBreachedOnDeposit;
 
     uint256 public depositCount;
     uint256 public withdrawCount;
@@ -270,9 +171,9 @@ contract TransferRestrictionHandler is Test {
             deal(address(usdc), newUser, 10000e6);
         }
 
-        // Select random user
-        address user = users[seed % users.length];
-        vm.startPrank(user);
+        // Select random user; handler calls to the strategies are pranked as this user.
+        currentUser = users[seed % users.length];
+        vm.startPrank(currentUser);
         _;
         vm.stopPrank();
     }
@@ -287,7 +188,7 @@ contract TransferRestrictionHandler is Test {
         amount = bound(amount, 100e6, 10000e6); // Reasonable deposit range
 
         // Get user after modifier ensures users array is not empty
-        address user = msg.sender; // useRandomUser sets msg.sender via vm.startPrank
+        address user = currentUser;
         uint256 userBalance = usdc.balanceOf(user);
         if (userBalance < amount) {
             // Fund user if needed
@@ -298,13 +199,13 @@ contract TransferRestrictionHandler is Test {
         try usd3.deposit(amount, user) {
             depositCount++;
         } catch {
-            // Deposit might fail due to various reasons (whitelist, etc.)
+            // Deposit might fail due to supply-cap or minimum-deposit limits
         }
     }
 
     function withdraw(uint256 seed, uint256 amount) public useRandomUser(seed) {
         // Get user after modifier ensures users array is not empty
-        address user = msg.sender; // useRandomUser sets msg.sender via vm.startPrank
+        address user = currentUser;
         uint256 balance = IERC20(address(usd3)).balanceOf(user);
 
         if (balance > 0) {
@@ -313,14 +214,14 @@ contract TransferRestrictionHandler is Test {
             try usd3.withdraw(amount, user, user) {
                 withdrawCount++;
             } catch {
-                // Withdraw might fail due to commitment period
+                // Withdraw might fail due to liquidity limits or the redemption floor
             }
         }
     }
 
     function transfer(uint256 seed, uint256 amount, uint256 recipientSeed) public useRandomUser(seed) {
         // Get sender after modifier ensures users array is not empty
-        address sender = msg.sender; // useRandomUser sets msg.sender via vm.startPrank
+        address sender = currentUser;
 
         // Ensure we have at least 2 users
         if (users.length < 2) {
@@ -333,7 +234,8 @@ contract TransferRestrictionHandler is Test {
 
         address recipient = users[recipientSeed % users.length];
         if (recipient == sender && users.length > 1) {
-            recipient = users[(recipientSeed + 1) % users.length];
+            uint256 nextIndex = (recipientSeed % users.length + 1) % users.length;
+            recipient = users[nextIndex];
         }
 
         uint256 balance = IERC20(address(usd3)).balanceOf(sender);
@@ -343,14 +245,14 @@ contract TransferRestrictionHandler is Test {
             try IERC20(address(usd3)).transfer(recipient, amount) {
                 transferCount++;
             } catch {
-                // Transfer might fail due to commitment period
+                // Transfer might fail due to borrower-restriction transfer gates
             }
         }
     }
 
     function depositSUSD3(uint256 seed, uint256 amount) public useRandomUser(seed) {
         // Get user after modifier ensures users array is not empty
-        address user = msg.sender; // useRandomUser sets msg.sender via vm.startPrank
+        address user = currentUser;
         uint256 usd3Balance = IERC20(address(usd3)).balanceOf(user);
 
         if (usd3Balance > 0) {
@@ -361,9 +263,15 @@ contract TransferRestrictionHandler is Test {
             if (amount > 0) {
                 IERC20(address(usd3)).approve(address(susd3), amount);
                 try susd3.deposit(amount, user) {
-                // Success
-                }
-                    catch {
+                    // The protocol enforces the subordinated-debt cap at deposit time; record any breach
+                    // beyond share/asset conversion rounding.
+                    uint256 capUSDC = susd3.getSubordinatedDebtCapInUSDC();
+                    uint256 holdingsUSDC = ITokenizedStrategy(address(usd3))
+                        .convertToAssets(IERC20(address(usd3)).balanceOf(address(susd3)));
+                    if (holdingsUSDC > capUSDC + 2) {
+                        subordinationBreachedOnDeposit = true;
+                    }
+                } catch {
                     // Might fail due to subordination ratio
                 }
             }
@@ -372,7 +280,7 @@ contract TransferRestrictionHandler is Test {
 
     function startCooldown(uint256 seed, uint256 amount) public useRandomUser(seed) {
         // Get user after modifier ensures users array is not empty
-        address user = msg.sender; // useRandomUser sets msg.sender via vm.startPrank
+        address user = currentUser;
         uint256 balance = IERC20(address(susd3)).balanceOf(user);
 
         if (balance > 0) {

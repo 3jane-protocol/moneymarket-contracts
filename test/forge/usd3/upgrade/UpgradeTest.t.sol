@@ -33,6 +33,10 @@ contract UpgradeTest is Setup {
     // Test amounts
     uint256 public constant DEPOSIT_AMOUNT = 100_000e6;
 
+    // USD3 appends ring-fence state at storage slots 64 and 65 after the frozen upgrade layout.
+    uint256 internal constant RING_FENCE_CONDUIT_SLOT = 64;
+    uint256 internal constant RING_FENCED_LIQUIDITY_SLOT = 65;
+
     function setUp() public override {
         // Call parent setup which properly initializes everything including USD3 strategy
         super.setUp();
@@ -364,6 +368,27 @@ contract UpgradeTest is Setup {
         assertTrue(
             susd3StrategyAddr == address(0) || susd3StrategyAddr != address(0),
             "sUSD3 strategy reference should be valid"
+        );
+
+        assertFalse(usd3Strategy.ringFenceConduit(alice), "ring-fence conduit defaults false");
+        assertEq(usd3Strategy.ringFencedLiquidity(), 0, "ring-fenced liquidity defaults zero");
+
+        vm.prank(management);
+        usd3Strategy.setRingFenceConduit(alice, true);
+
+        bytes32 ringFenceConduitSlot = keccak256(abi.encode(alice, RING_FENCE_CONDUIT_SLOT));
+        assertEq(uint256(vm.load(address(usd3Strategy), ringFenceConduitSlot)), 1, "ringFenceConduit slot");
+        assertFalse(usd3Strategy.supplyCapExempt(alice), "supplyCapExempt slot unchanged");
+
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 1e6);
+        usd3Strategy.deposit(1e6, alice);
+        vm.stopPrank();
+
+        assertEq(
+            uint256(vm.load(address(usd3Strategy), bytes32(RING_FENCED_LIQUIDITY_SLOT))),
+            1e6,
+            "ringFencedLiquidity slot"
         );
     }
 

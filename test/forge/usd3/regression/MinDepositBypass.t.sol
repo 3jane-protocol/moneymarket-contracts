@@ -152,9 +152,6 @@ contract MinDepositBypassTest is Setup {
         asset.approve(address(usd3Strategy), MIN_DEPOSIT);
         usd3Strategy.deposit(MIN_DEPOSIT, alice);
 
-        // Clear the commitment period for alice
-        vm.warp(block.timestamp + 1 days);
-
         // Now alice should be able to deposit any amount, even 1 wei
         deal(address(asset), alice, 1);
         asset.approve(address(usd3Strategy), 1);

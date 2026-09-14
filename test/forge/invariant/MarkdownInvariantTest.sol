@@ -239,16 +239,23 @@ contract MarkdownInvariantTest is BaseTest {
         }
     }
 
-    /// @notice Invariant: Total market markdown equals sum of individual markdowns
+    /// @notice Invariant: Total market markdown equals sum of individual applied markdowns
     function invariant_TotalMarkdownConsistency() public {
         updateAllMarkdowns();
 
         Market memory market = morpho.market(id);
         uint256 marketTotalMarkdown = market.totalMarkdownAmount;
-        uint256 calculatedTotal = totalCalculatedMarkdown;
 
-        // Allow small difference for rounding
-        assertApproxEqAbs(marketTotalMarkdown, calculatedTotal, 100, "Total markdown mismatch");
+        // The market total must match the sum of the per-borrower applied markdowns exactly; the floor can
+        // truncate what is applied below what the manager requested, so the requested sum is only an upper bound.
+        uint256 appliedTotal;
+        for (uint256 i = 0; i < borrowers.length; i++) {
+            appliedTotal += morphoCredit.markdownState(id, borrowers[i]);
+        }
+
+        assertEq(marketTotalMarkdown, appliedTotal, "Total markdown mismatch");
+        // Small tolerance for rounding between the handler's recomputed borrow assets and the contract's.
+        assertLe(marketTotalMarkdown, totalCalculatedMarkdown + 100, "Applied markdown exceeds requested");
     }
 
     /// @notice Invariant: Markdown only applies to enabled borrowers

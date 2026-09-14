@@ -3,8 +3,6 @@ pragma solidity ^0.8.18;
 
 import {Setup} from "../utils/Setup.sol";
 import {USD3} from "../../../../src/usd3/USD3.sol";
-import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
-import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ITokenizedStrategy} from "@tokenized-strategy/interfaces/ITokenizedStrategy.sol";
@@ -50,23 +48,11 @@ contract ShutdownSecurityTest is Setup {
         susd3Strategy = sUSD3(address(susd3Proxy));
 
         // Link strategies
-        // Set commitment period via protocol config
-        address morphoAddress = address(usd3Strategy.morphoCredit());
-        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
-        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
-
-        // Configure restrictions
         vm.prank(management);
         usd3Strategy.setSUSD3(address(susd3Strategy));
 
-        // Set config as the owner (test contract in this case)
-        MockProtocolConfig(protocolConfigAddress).setConfig(USD3_COMMITMENT_TIME, 7 days);
-
         vm.startPrank(management);
         usd3Strategy.setMinDeposit(100e6);
-        usd3Strategy.setWhitelistEnabled(true);
-        usd3Strategy.setWhitelist(alice, true);
-        usd3Strategy.setWhitelist(bob, true);
         vm.stopPrank();
 
         // Setup test users with USDC
@@ -81,16 +67,11 @@ contract ShutdownSecurityTest is Setup {
      * @dev Verifies that rapidly toggling shutdown doesn't create vulnerability
      */
     function test_shutdown_state_manipulation_attack() public {
-        // Alice deposits with commitment period
+        // Alice deposits
         vm.startPrank(alice);
         underlyingAsset.approve(address(usd3Strategy), 1000e6);
         usd3Strategy.deposit(1000e6, alice);
         vm.stopPrank();
-
-        // Cannot withdraw due to commitment
-        vm.prank(alice);
-        vm.expectRevert();
-        usd3Strategy.withdraw(500e6, alice, alice);
 
         // Emergency admin shuts down
         vm.prank(emergencyAdmin);
@@ -170,9 +151,6 @@ contract ShutdownSecurityTest is Setup {
         usd3Strategy.deposit(1000e6, bob);
         vm.stopPrank();
 
-        // Skip commitment period
-        skip(7 days);
-
         // Most funds are deployed to Morpho (simulated by having low idle balance)
         // In real scenario, funds would be lent out
         uint256 totalAssets = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
@@ -216,9 +194,6 @@ contract ShutdownSecurityTest is Setup {
         uint256 aliceShares = usd3Strategy.deposit(1000e6, alice);
         vm.stopPrank();
 
-        // Skip commitment
-        skip(7 days);
-
         // Simulate a loss scenario (would happen via markdown in production)
         // For this test, we'll check that max loss is still enforced
 
@@ -255,23 +230,12 @@ contract ShutdownSecurityTest is Setup {
      * @dev User deposits minimum, withdraws all, then tries to deposit below minimum
      */
     function test_double_deposit_attack() public {
-        // Not whitelisted, so add to whitelist first
-        // Set commitment period via protocol config
-        address morphoAddress = address(usd3Strategy.morphoCredit());
-        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
-        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
-        vm.prank(management);
-        usd3Strategy.setWhitelist(attacker, true);
-
         // Attacker deposits minimum
         vm.startPrank(attacker);
         underlyingAsset.approve(address(usd3Strategy), 1000e6);
         uint256 shares = usd3Strategy.deposit(100e6, attacker);
         vm.stopPrank();
         assertGt(shares, 0, "Should receive shares");
-
-        // Skip commitment period
-        skip(7 days);
 
         // Try to withdraw everything (respecting limits)
         vm.startPrank(attacker);
@@ -316,10 +280,6 @@ contract ShutdownSecurityTest is Setup {
      */
     function test_fee_extraction_during_shutdown() public {
         // Set performance fee
-        // Set commitment period via protocol config
-        address morphoAddress = address(usd3Strategy.morphoCredit());
-        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
-        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
         vm.prank(management);
         ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(1000); // 10%
 
@@ -369,23 +329,12 @@ contract ShutdownSecurityTest is Setup {
         users[1] = bob;
         users[2] = charlie;
 
-        // Charlie needs whitelist
-        // Set commitment period via protocol config
-        address morphoAddress = address(usd3Strategy.morphoCredit());
-        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
-        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
-        vm.prank(management);
-        usd3Strategy.setWhitelist(charlie, true);
-
         for (uint256 i = 0; i < users.length; i++) {
             vm.startPrank(users[i]);
             underlyingAsset.approve(address(usd3Strategy), 1000e6);
             usd3Strategy.deposit(1000e6, users[i]);
             vm.stopPrank();
         }
-
-        // Skip commitment
-        skip(7 days);
 
         // Emergency shutdown
         vm.prank(emergencyAdmin);
@@ -428,10 +377,6 @@ contract ShutdownSecurityTest is Setup {
      */
     function test_shutdown_with_pending_performance_fees() public {
         // Set performance fee
-        // Set commitment period via protocol config
-        address morphoAddress = address(usd3Strategy.morphoCredit());
-        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
-        bytes32 USD3_COMMITMENT_TIME = keccak256("USD3_COMMITMENT_TIME");
         vm.prank(management);
         ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(1000); // 10%
 
@@ -454,8 +399,6 @@ contract ShutdownSecurityTest is Setup {
         ITokenizedStrategy(address(usd3Strategy)).shutdownStrategy();
 
         // Alice should be able to withdraw despite pending fees
-        skip(7 days); // Past commitment
-
         vm.startPrank(alice);
         uint256 aliceShares = IERC20(address(usd3Strategy)).balanceOf(alice);
         // Approve for redeem

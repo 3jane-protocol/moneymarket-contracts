@@ -147,7 +147,10 @@ contract InvariantsTest is StdInvariant, Setup {
         uint256 holdingsUsdc = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(susd3Usd3Balance);
 
         uint256 expectedLimit;
-        if (debtCapUsdc > holdingsUsdc) {
+        if (
+            susd3Usd3Balance + 2 >= ITokenizedStrategy(address(susd3Strategy)).totalAssets()
+                && debtCapUsdc > holdingsUsdc
+        ) {
             expectedLimit = ITokenizedStrategy(address(usd3Strategy)).convertToShares(debtCapUsdc - holdingsUsdc);
         }
 
@@ -217,7 +220,10 @@ contract InvariantsTest is StdInvariant, Setup {
         uint256 holdingsUsdc = ITokenizedStrategy(address(usd3Strategy))
             .convertToAssets(ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)));
 
-        if (handler.attemptedDepositSUSD3() > 32 && capUsdc > holdingsUsdc) {
+        if (
+            handler.attemptedDepositSUSD3() > 32 && capUsdc > holdingsUsdc
+                && susd3Strategy.availableDepositLimit(actors[0]) > 0
+        ) {
             assertGt(handler.successfulDepositSUSD3(), 0, "susd3 deposits are no-op");
         }
 

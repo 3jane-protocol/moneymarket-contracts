@@ -9,8 +9,8 @@ import {MarketParams} from "./IMorpho.sol";
 /// @author Morpho Labs
 /// @custom:contact security@morpho.org
 /// @notice Helper contract to simplify interactions with 3Jane's token ecosystem and Morpho protocol
-/// @dev This contract handles token conversions for USD3 (post-reinitialize) and MorphoCredit operations
-/// @dev After USD3's reinitialize(), the flow is: USDC → USD3 (→ sUSD3 if hop=true)
+/// @dev This contract handles token conversions for USD3 and MorphoCredit operations
+/// @dev USD3 accepts USDC directly, so the flow is: USDC → USD3 (→ sUSD3 if hop=true)
 /// @dev MorphoCredit still uses waUSDC, so borrow/repay operations handle the USDC ↔ waUSDC conversion
 interface IHelper {
     event DepositReferred(address indexed depositor, uint256 amount, bytes32 code);
@@ -20,7 +20,7 @@ interface IHelper {
     /// @return The address of the Morpho contract
     function MORPHO() external view returns (address);
 
-    /// @notice The USD3 token address (ERC4626 vault, accepts USDC directly after reinitialize)
+    /// @notice The USD3 token address (ERC4626 vault, accepts USDC directly)
     /// @return The address of the USD3 token
     function USD3() external view returns (address);
 
@@ -37,7 +37,7 @@ interface IHelper {
     function WAUSDC() external view returns (address);
 
     /// @notice Deposits USDC into USD3 (and optionally sUSD3)
-    /// @dev After USD3's reinitialize(), flow is: USDC → USD3 (→ sUSD3 if hop=true)
+    /// @dev Flow is: USDC → USD3 (→ sUSD3 if hop=true)
     /// @dev USD3 handles USDC directly and manages waUSDC wrapping internally
     /// @param assets The amount of USDC to deposit
     /// @param receiver The address that will receive the USD3/sUSD3 shares
@@ -55,7 +55,7 @@ interface IHelper {
     function deposit(uint256 assets, address receiver, bool hop, bytes32 referral) external returns (uint256);
 
     /// @notice Redeems USD3 shares back to USDC
-    /// @dev After USD3's reinitialize(), USD3 returns USDC directly
+    /// @dev USD3 returns USDC directly
     /// @dev Caller must have approved Helper for USD3 spending
     /// @param shares The amount of USD3 shares to redeem
     /// @param receiver The address that will receive the USDC

@@ -248,6 +248,13 @@ contract sUSD3 is BaseHooksUpgradeable {
     /// @param _owner Address to check limit for
     /// @return Maximum deposit amount allowed
     function availableDepositLimit(address _owner) public view override returns (uint256) {
+        uint256 currentUSD3Holdings = asset.balanceOf(address(this));
+
+        // Harden non-atomic reporting paths where USD3 burns this balance before sUSD3 reports the loss.
+        if (currentUSD3Holdings + 2 < TokenizedStrategy.totalAssets()) {
+            return 0;
+        }
+
         // Get the subordinated debt cap in USDC terms
         uint256 subordinatedDebtCapUSDC = getSubordinatedDebtCapInUSDC();
 
@@ -256,7 +263,6 @@ contract sUSD3 is BaseHooksUpgradeable {
             return 0;
         }
 
-        uint256 currentUSD3Holdings = asset.balanceOf(address(this));
         uint256 currentHoldingsUSDC = IStrategy(address(asset)).convertToAssets(currentUSD3Holdings);
 
         if (currentHoldingsUSDC >= subordinatedDebtCapUSDC) {
