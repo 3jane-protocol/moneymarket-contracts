@@ -12,7 +12,7 @@ import {USD3v12UpgradeBase} from "./USD3v12UpgradeBase.s.sol";
  *      helpers.
  *
  *      Usage:
- *      FOUNDRY_PROFILE=script USD3_IMPL=<address> SEVEN_DAY_TIMELOCK=<address> WALLET_TYPE=local \
+ *      FOUNDRY_PROFILE=script USD3_IMPL=<address> SUSD3_IMPL=<address> SEVEN_DAY_TIMELOCK=<address> WALLET_TYPE=local \
  *        SAFE_PROPOSER_PRIVATE_KEY=<private-key> forge script \
  *        script/deploy/upgrade/v1.2/06_ExecuteUSD3v12Upgrade.s.sol \
  *        --sig "run(bool)" false --rpc-url mainnet
@@ -22,6 +22,7 @@ contract ExecuteUSD3v12Upgrade is Script, SafeHelper, USD3v12UpgradeBase {
     function run(bool send) external isBatch(SAFE_ADDRESS) isTimelock(_sevenDayTimelock()) {
         address sevenDayTimelock = timelock;
         address newImpl = _usd3Impl();
+        address newSusd3Impl = _susd3Impl();
         _requireCommitmentTimeDisabled();
 
         console2.log("=== Execute USD3 v1.2 Upgrade via 7-Day Timelock ===");
@@ -29,12 +30,14 @@ contract ExecuteUSD3v12Upgrade is Script, SafeHelper, USD3v12UpgradeBase {
         console2.log("7-day timelock:", sevenDayTimelock);
         console2.log("USD3 proxy:", USD3_PROXY);
         console2.log("New USD3 impl:", newImpl);
+        console2.log("sUSD3 proxy:", SUSD3_PROXY);
+        console2.log("New sUSD3 impl:", newSusd3Impl);
         console2.log("PASS: USD3_COMMITMENT_TIME is zero");
         console2.log("Send to Safe:", send);
         console2.log("");
 
         (address[] memory targets, uint256[] memory values, bytes[] memory datas, bytes32 salt, bytes32 predecessor) =
-            _buildOperation(newImpl);
+            _buildOperation(newImpl, newSusd3Impl);
 
         bytes32 operationId = calculateBatchOperationId(targets, values, datas, predecessor, salt);
 
@@ -72,14 +75,16 @@ contract ExecuteUSD3v12Upgrade is Script, SafeHelper, USD3v12UpgradeBase {
     function checkStatus() external view {
         address sevenDayTimelock = _sevenDayTimelock();
         address newImpl = _usd3Impl();
+        address newSusd3Impl = _susd3Impl();
 
         console2.log("=== USD3 v1.2 Upgrade Operation Status ===");
         console2.log("7-day timelock:", sevenDayTimelock);
         console2.log("New USD3 impl:", newImpl);
+        console2.log("New sUSD3 impl:", newSusd3Impl);
         console2.log("");
 
         (address[] memory targets, uint256[] memory values, bytes[] memory datas, bytes32 salt, bytes32 predecessor) =
-            _buildOperation(newImpl);
+            _buildOperation(newImpl, newSusd3Impl);
 
         bytes32 operationId = calculateBatchOperationId(targets, values, datas, predecessor, salt);
 
@@ -100,6 +105,15 @@ contract ExecuteUSD3v12Upgrade is Script, SafeHelper, USD3v12UpgradeBase {
         bool implementationOk = currentImpl == expectedImpl;
         console2.log("USD3 proxy implementation slot:", currentImpl);
         console2.log(implementationOk ? "PASS: implementation slot matches" : "FAIL: implementation slot mismatch");
+
+        address expectedSusd3Impl = _susd3Impl();
+        address currentSusd3Impl = address(uint160(uint256(vm.load(SUSD3_PROXY, IMPLEMENTATION_SLOT))));
+        console2.log("sUSD3 proxy implementation slot:", currentSusd3Impl);
+        console2.log(
+            currentSusd3Impl == expectedSusd3Impl
+                ? "PASS: sUSD3 implementation slot matches"
+                : "FAIL: sUSD3 implementation slot mismatch"
+        );
 
         (bool ringFenceCallOk, bytes memory ringFenceData) =
             USD3_PROXY.staticcall(abi.encodeWithSignature("ringFencedLiquidity()"));

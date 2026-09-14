@@ -13,7 +13,7 @@ import {USD3v12UpgradeBase} from "./USD3v12UpgradeBase.s.sol";
  *      requires no reinitializer.
  *
  *      Usage:
- *      FOUNDRY_PROFILE=script USD3_IMPL=<address> SEVEN_DAY_TIMELOCK=<address> WALLET_TYPE=local \
+ *      FOUNDRY_PROFILE=script USD3_IMPL=<address> SUSD3_IMPL=<address> SEVEN_DAY_TIMELOCK=<address> WALLET_TYPE=local \
  *        SAFE_PROPOSER_PRIVATE_KEY=<private-key> forge script \
  *        script/deploy/upgrade/v1.2/05_ScheduleUSD3v12Upgrade.s.sol \
  *        --sig "run(bool)" false --rpc-url mainnet
@@ -23,10 +23,13 @@ contract ScheduleUSD3v12Upgrade is Script, SafeHelper, USD3v12UpgradeBase {
     function run(bool send) external isBatch(SAFE_ADDRESS) isTimelock(_sevenDayTimelock()) {
         address sevenDayTimelock = timelock;
         address newImpl = _usd3Impl();
+        address newSusd3Impl = _susd3Impl();
         _requireCommitmentTimeDisabled();
 
         address actualAdmin = address(uint160(uint256(vm.load(USD3_PROXY, ADMIN_SLOT))));
         require(actualAdmin == PROXY_ADMIN, "ProxyAdmin mismatch");
+        address actualSusd3Admin = address(uint160(uint256(vm.load(SUSD3_PROXY, ADMIN_SLOT))));
+        require(actualSusd3Admin == SUSD3_PROXY_ADMIN, "sUSD3 ProxyAdmin mismatch");
 
         bytes32 proposerRole = ITimelockController(sevenDayTimelock).PROPOSER_ROLE();
         (bool roleReadOk, bytes memory roleData) =
@@ -41,6 +44,9 @@ contract ScheduleUSD3v12Upgrade is Script, SafeHelper, USD3v12UpgradeBase {
         console2.log("USD3 proxy:", USD3_PROXY);
         console2.log("ProxyAdmin:", PROXY_ADMIN);
         console2.log("New USD3 impl:", newImpl);
+        console2.log("sUSD3 proxy:", SUSD3_PROXY);
+        console2.log("sUSD3 ProxyAdmin:", SUSD3_PROXY_ADMIN);
+        console2.log("New sUSD3 impl:", newSusd3Impl);
         console2.log("PASS: USD3_COMMITMENT_TIME is zero");
         console2.log("Send to Safe:", send);
         console2.log("");
@@ -50,12 +56,13 @@ contract ScheduleUSD3v12Upgrade is Script, SafeHelper, USD3v12UpgradeBase {
         console2.log("");
 
         (address[] memory targets, uint256[] memory values, bytes[] memory datas, bytes32 salt, bytes32 predecessor) =
-            _buildOperation(newImpl);
+            _buildOperation(newImpl, newSusd3Impl);
 
         bytes32 operationId = calculateBatchOperationId(targets, values, datas, predecessor, salt);
 
         console2.log("Operation details:");
-        console2.log("  Target[0] (ProxyAdmin.upgradeAndCall):", targets[0]);
+        console2.log("  Target[0] (USD3 ProxyAdmin.upgradeAndCall):", targets[0]);
+        console2.log("  Target[1] (sUSD3 ProxyAdmin.upgradeAndCall):", targets[1]);
         console2.log("  Salt:", vm.toString(salt));
         console2.log("  Operation ID:", vm.toString(operationId));
         console2.log("");
@@ -91,6 +98,7 @@ contract ScheduleUSD3v12Upgrade is Script, SafeHelper, USD3v12UpgradeBase {
             console2.log("2. Wait 7 days after scheduling");
             console2.log("3. Run 06_ExecuteUSD3v12Upgrade.s.sol with:");
             console2.log("   USD3_IMPL=%s", newImpl);
+            console2.log("   SUSD3_IMPL=%s", newSusd3Impl);
             console2.log("   SEVEN_DAY_TIMELOCK=%s", sevenDayTimelock);
         } else {
             console2.log("Simulation mode - not sending to Safe");
