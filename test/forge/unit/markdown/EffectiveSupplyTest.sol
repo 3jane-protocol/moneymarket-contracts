@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
 import {MorphoCreditLib} from "../../../../src/libraries/periphery/MorphoCreditLib.sol";
+import {MorphoCreditBalancesLib} from "../../../../src/libraries/periphery/MorphoCreditBalancesLib.sol";
 import {MarkdownManagerMock} from "../../../../src/mocks/MarkdownManagerMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
@@ -234,21 +235,22 @@ contract EffectiveSupplyTest is BaseTest {
         // but increased by interest, so it won't go to zero
         assertTrue(market.totalSupplyAssets > 0, "Supply should still be positive due to interest");
 
-        // With extreme markdown, totalBorrowAssets may exceed totalSupplyAssets
-        // This creates insufficient liquidity for withdrawals
+        // Even with extreme markdown where totalBorrowAssets > totalSupplyAssets,
+        // withdrawals should still work because actual tokens remain in the contract.
+        // The liquidity check now adds markdown back to reflect actual available funds.
+
+        // Verify markdown has reduced totalSupplyAssets below totalBorrowAssets
         if (market.totalBorrowAssets > market.totalSupplyAssets) {
-            // Try to withdraw - should revert
-            vm.prank(SUPPLIER);
-            vm.expectRevert(ErrorsLib.InsufficientLiquidity.selector);
-            morpho.withdraw(marketParams, 100e18, 0, SUPPLIER, SUPPLIER);
-        } else {
-            // Normal withdrawal should work
-            vm.prank(SUPPLIER);
-            (uint256 withdrawnAssets, uint256 withdrawnShares) =
-                morpho.withdraw(marketParams, 100e18, 0, SUPPLIER, SUPPLIER);
-            assertEq(withdrawnAssets, 100e18, "Should withdraw requested amount");
-            assertTrue(withdrawnShares > 0, "Should burn shares");
+            // This would have caused a revert in the old implementation,
+            // but with the fix, withdrawals work because actual USDC is still present
         }
+
+        // Withdrawal should work even with extreme markdown
+        vm.prank(SUPPLIER);
+        (uint256 withdrawnAssets, uint256 withdrawnShares) =
+            morpho.withdraw(marketParams, 100e18, 0, SUPPLIER, SUPPLIER);
+        assertEq(withdrawnAssets, 100e18, "Should withdraw even with extreme markdown");
+        assertTrue(withdrawnShares > 0, "Should burn shares");
     }
 
     /// @notice Test new supply diluted by existing markdowns
