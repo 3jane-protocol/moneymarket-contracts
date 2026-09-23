@@ -2,6 +2,10 @@
 pragma solidity ^0.8.22;
 
 import {Script, console2} from "forge-std/Script.sol";
+import {
+    ITransparentUpgradeableProxy,
+    ProxyAdmin
+} from "../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ITimelockController} from "../../src/interfaces/ITimelockController.sol";
 import {LCCVaultFactory} from "../../src/lcc/LCCVaultFactory.sol";
 import {ILCCVault} from "../../src/lcc/interfaces/ILCCVault.sol";
@@ -50,7 +54,9 @@ interface IOwnableView {
  *
  *      Deferred order, when the vault must exist before the USD3 v1.2 upgrade: create with
  *      --sig "runDeferringPrerequisites(string,bool)" and check with --sig "verifyRegistration(string)", then run
- *      steps 1, 2, and 4 once the upgrade is live. No capital call may open until step 4 passes.
+ *      steps 1, 2, and 4 once the upgrade is live. No capital call may open until step 4 passes. Step 1 may run
+ *      before the upgrade executes by setting USD3_IMPL to the pending implementation, so that both timelock
+ *      operations become executable together; step 2 still requires the upgrade to have executed.
  *
  *      Use FOUNDRY_PROFILE=script, WALLET_TYPE and the corresponding Safe proposer credential, LCC_FACTORY, and a
  *      mainnet RPC URL for each phase. The JSON `facilityId` must be durable, governance-assigned, and recorded in the
@@ -75,6 +81,7 @@ contract CreateLCCVaultSafe is
     }
 
     address internal constant USD3_PROXY = 0x056B269Eb1f75477a8666ae8C7fE01b64dD55eCc;
+    address internal constant USD3_PROXY_ADMIN = 0x41C838664a9C64905537fF410333B9f5964cC596;
     address internal constant DEFAULT_SAFE = 0x33333333Bd7045F1A601A1E289D7AB21036fB5EF;
     address internal constant PARAMS_TIMELOCK = 0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2;
     address internal constant BEACON_TIMELOCK = 0x3D3C41419Ab401cd25055E8f9421D7D96d887885;
@@ -102,7 +109,7 @@ contract CreateLCCVaultSafe is
         console2.log("=== Schedule LCC USD3 Prerequisites ===");
         _logDeployment(jsonPath, safeAddress, factory, usd3, config, salt, vault, send);
 
-        if (_permissionsLive(usd3, vault)) {
+        if (_permissionsLiveTolerant(vault)) {
             console2.log("Prerequisite permissions are already live; do not schedule them again");
             return;
         }
@@ -132,7 +139,7 @@ contract CreateLCCVaultSafe is
             "Prerequisite operation already executed; use a fresh attempt nonce"
         );
 
-        simulateExecution(PARAMS_TIMELOCK, targets, values, datas);
+        _simulatePrerequisites(targets, values, datas, vault);
         bytes memory scheduleCalldata =
             encodeScheduleBatch(targets, values, datas, predecessor, operationSalt, PARAMS_TIMELOCK_DELAY);
         addToBatch(PARAMS_TIMELOCK, scheduleCalldata);
@@ -394,6 +401,35 @@ contract CreateLCCVaultSafe is
 
     function _permissionsLive(IUSD3Registry usd3, address vault) internal view returns (bool) {
         return usd3.supplyCapExempt(vault) && usd3.ringFenceConduit(vault);
+    }
+
+    /// @dev Proves the scheduled writes succeed at execution time. The timelock records an operation without
+    ///      validating its calldata, so the prerequisites may be scheduled before the USD3 v1.2 upgrade executes; in
+    ///      that case the live proxy lacks the registry selectors and the simulation first applies the pending
+    ///      implementation named by `USD3_IMPL`. Every effect is discarded through the state snapshot.
+    function _simulatePrerequisites(
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory datas,
+        address vault
+    ) internal {
+        uint256 snapshot = vm.snapshotState();
+        if (!_registryLive()) {
+            address pendingImpl = vm.envAddress("USD3_IMPL");
+            require(pendingImpl.code.length > 0, "USD3_IMPL has no code");
+            console2.log("USD3 v1.2 registry not live; simulating against pending implementation", pendingImpl);
+            vm.prank(BEACON_TIMELOCK);
+            ProxyAdmin(USD3_PROXY_ADMIN).upgradeAndCall(ITransparentUpgradeableProxy(USD3_PROXY), pendingImpl, "");
+            require(_registryLive(), "Pending USD3 implementation lacks the v1.2 registry");
+        }
+        simulateExecution(PARAMS_TIMELOCK, targets, values, datas);
+        require(_permissionsLive(IUSD3Registry(USD3_PROXY), vault), "Simulated prerequisite permissions missing");
+        vm.revertToState(snapshot);
+    }
+
+    function _registryLive() internal view returns (bool) {
+        (bool ok, bytes memory data) = USD3_PROXY.staticcall(abi.encodeCall(IUSD3Registry.ringFencedLiquidity, ()));
+        return ok && data.length == 32;
     }
 
     /// @dev Reads both flags without reverting when the USD3 v1.2 registry is not live yet.
