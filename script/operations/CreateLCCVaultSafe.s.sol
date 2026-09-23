@@ -197,6 +197,7 @@ contract CreateLCCVaultSafe is
         DeploymentConfig memory config = _parseAndValidateDeploymentConfig(jsonPath);
         (bytes32 salt, address vault) = _validateAndPredict(factory, usd3, config, safeAddress);
         _requireFutureStart(config);
+        require(factory.owner() == safeAddress, "Safe is not LCC factory owner");
 
         require(vault.code.length == 0, "Predicted LCC vault already deployed");
         require(!factory.isVault(vault), "Predicted LCC vault already registered");
@@ -236,6 +237,7 @@ contract CreateLCCVaultSafe is
         DeploymentConfig memory config = _parseAndValidateDeploymentConfig(jsonPath);
         (bytes32 salt, address vault) = _validateAndPredict(factory, usd3, config, safeAddress);
         _requireFutureStart(config);
+        require(factory.owner() == safeAddress, "Safe is not LCC factory owner");
 
         require(vault.code.length == 0, "Predicted LCC vault already deployed");
         require(!factory.isVault(vault), "Predicted LCC vault already registered");
@@ -342,7 +344,10 @@ contract CreateLCCVaultSafe is
             "Full auction award requires explicit acknowledgement"
         );
 
-        require(factory.owner() == safeAddress, "Safe is not LCC factory owner");
+        require(
+            factory.owner() == safeAddress || factory.owner() == PARAMS_TIMELOCK,
+            "LCC factory owner is neither the Safe nor the parameters timelock"
+        );
         address beacon = factory.beacon();
         require(beacon.code.length > 0, "LCC beacon has no code");
         require(IOwnableView(beacon).owner() == BEACON_TIMELOCK, "LCC beacon owner is not expected 7-day timelock");
