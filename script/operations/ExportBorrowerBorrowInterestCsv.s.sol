@@ -4,7 +4,8 @@ pragma solidity 0.8.22;
 import {Script, console2} from "forge-std/Script.sol";
 
 /// @title Export Borrower Borrow/Interest CSV
-/// @notice Exports a borrower's MorphoCredit borrow, base interest, and premium accrual history.
+/// @notice Exports a borrower's MorphoCredit history in waUSDC and historical USDC units.
+/// @dev Includes helper proceeds and waUSDC growth on outstanding principal.
 contract ExportBorrowerBorrowInterestCsv is Script {
     function run() external {
         string[] memory cmd = new string[](2);

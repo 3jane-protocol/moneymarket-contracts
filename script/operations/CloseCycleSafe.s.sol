@@ -15,7 +15,7 @@ import {CycleObligationDataLib} from "../utils/CycleObligationDataLib.sol";
 ///
 ///      Usage (timelock flow):
 ///      1. Schedule: forge script ... -s "schedule(string,uint256,bool)" repayments.json <endDate> true
-///      2. Wait for timelock delay (24 hours)
+///      2. Wait for the timelock delay (24 hours) and the cycle end date
 ///      3. Execute: forge script ... -s "execute(string,uint256,bool)" repayments.json <endDate> true
 contract CloseCycleSafe is Script, SafeHelper, TimelockHelper {
     using CycleObligationDataLib for *;
@@ -226,10 +226,13 @@ contract CloseCycleSafe is Script, SafeHelper, TimelockHelper {
             return;
         }
 
-        // Simulate execution at future timestamp (after timelock delay)
+        // Simulate when both the timelock operation is ready and the cycle can be closed.
         uint256 minDelay = getMinDelay(TIMELOCK);
         uint256 savedTimestamp = block.timestamp;
-        vm.warp(block.timestamp + minDelay);
+        uint256 simulationTimestamp = savedTimestamp + minDelay;
+        if (simulationTimestamp < endDate) simulationTimestamp = endDate;
+        console2.log("Simulating execution at:", simulationTimestamp);
+        vm.warp(simulationTimestamp);
         simulateExecution(TIMELOCK, targets, values, datas);
         vm.warp(savedTimestamp);
         console2.log("");
@@ -255,7 +258,9 @@ contract CloseCycleSafe is Script, SafeHelper, TimelockHelper {
             console2.log("");
             console2.log("Next steps:");
             console2.log("1. Multisig signers must approve and execute the schedule transaction");
-            console2.log("2. Wait %d seconds (%d hours) after scheduling", minDelay, minDelay / 3600);
+            console2.log(
+                "2. Wait %d seconds (%d hours) after scheduling and until the end date", minDelay, minDelay / 3600
+            );
             console2.log("3. Run execute() with the SAME parameters");
         } else {
             console2.log("Simulation mode - not sending to Safe");
