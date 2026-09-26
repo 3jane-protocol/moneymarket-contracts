@@ -7,7 +7,7 @@ import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.
 /**
  * @title MainnetForkBase
  * @notice Base contract for mainnet fork tests with opt-in mechanism
- * @dev Fork tests are skipped unless ETH_RPC_URL environment variable is set
+ * @dev Fork tests are skipped unless MAINNET_RPC_URL or ETH_RPC_URL is set
  */
 abstract contract MainnetForkBase is Test {
     // Mainnet addresses
@@ -18,16 +18,19 @@ abstract contract MainnetForkBase is Test {
 
     // Fork configuration
     uint256 public mainnetFork;
-    uint256 constant FORK_BLOCK = 23400200; // Fixed block for reproducibility
+    // Fixed block for reproducibility; must postdate the completed waUSDC -> USDC migration so the proxy
+    // already reports asset() == USDC. Getters added by the pending upgrade (e.g. supplyCapExempt) do not
+    // exist on the deployed implementation and are only readable after the in-test upgrade.
+    uint256 constant FORK_BLOCK = 25484000;
 
     // Test state
     bool public isForkTest;
 
     /**
-     * @dev Modifier to skip tests when ETH_RPC_URL is not set
+     * @dev Modifier to skip tests when no mainnet RPC URL is set
      */
     modifier requiresFork() {
-        string memory rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
+        string memory rpcUrl = _mainnetRpcUrl();
         if (bytes(rpcUrl).length == 0) {
             vm.skip(true);
             return;
@@ -36,10 +39,10 @@ abstract contract MainnetForkBase is Test {
     }
 
     /**
-     * @dev Sets up the fork if ETH_RPC_URL is provided
+     * @dev Sets up the fork if a mainnet RPC URL is provided
      */
     function setUp() public virtual {
-        string memory rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
+        string memory rpcUrl = _mainnetRpcUrl();
 
         if (bytes(rpcUrl).length == 0) {
             // Skip all fork tests if no RPC URL provided
@@ -120,5 +123,13 @@ abstract contract MainnetForkBase is Test {
      */
     function advanceBlocks(uint256 blocksToAdvance) internal {
         vm.roll(block.number + blocksToAdvance);
+    }
+
+    function _mainnetRpcUrl() internal view returns (string memory) {
+        string memory rpcUrl = vm.envOr("MAINNET_RPC_URL", string(""));
+        if (bytes(rpcUrl).length == 0) {
+            rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
+        }
+        return rpcUrl;
     }
 }

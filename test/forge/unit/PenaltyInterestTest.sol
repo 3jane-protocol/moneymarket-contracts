@@ -156,9 +156,7 @@ contract PenaltyInterestTest is BaseTest {
         uint256 borrowAssetsAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
         uint256 actualIncrease = borrowAssetsAfter - borrowAssetsBefore;
 
-        // Should include base rate + premium + penalty on ending balance
-        // The actual increase includes base rate + premium on current balance + penalty on ending balance
-        // So we just verify that there's a significant increase beyond normal accrual
+        // Initial IRP is anchored at cycle end and uses current debt plus premium, floored by ending balance.
         uint256 normalRate = (BASE_RATE_PER_SECOND + PREMIUM_RATE_PER_SECOND).wTaylorCompounded(1 days);
         uint256 normalIncrease = normalRate > WAD ? borrowAssetsBefore.wMulDown(normalRate - WAD) : 0;
         assertGt(actualIncrease, normalIncrease); // Should be more than just normal accrual
@@ -183,7 +181,7 @@ contract PenaltyInterestTest is BaseTest {
         // Trigger accrual through supply operation since Alice has outstanding repayment
         _triggerBorrowerAccrual(ALICE);
 
-        // Verify penalty accrued (we can't predict exact amount due to compound calculations)
+        // Verify the transition applied premium and IRP and advanced the accrual checkpoint.
         uint256 borrowAssetsAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
         assertGt(borrowAssetsAfter, 10000e18); // Should be more than initial borrow
 
@@ -195,7 +193,7 @@ contract PenaltyInterestTest is BaseTest {
 
     // ============ Penalty Calculation Tests ============
 
-    function testPenaltyInterest_UsesEndingBalance() public {
+    function testPenaltyInterest_UsesEndingBalanceFloor() public {
         // Borrow initial amount
         deal(address(loanToken), ALICE, 5000e18);
         vm.prank(ALICE);
@@ -204,23 +202,28 @@ contract PenaltyInterestTest is BaseTest {
         // Create obligation with different ending balance using helper
         _createPastObligation(ALICE, 1000, 20000e18); // 10% repayment, higher ending balance
 
-        uint256 borrowAssetsBefore = morpho.expectedBorrowAssets(marketParams, ALICE);
+        // The helper posts a cycle ending one day ago; seven more days moves one day beyond grace.
+        vm.warp(block.timestamp + 7 days);
+        morpho.accrueInterest(marketParams);
+        (uint256 borrowAssetsCurrent, uint256 expectedBasePremium, uint256 expectedPenalty, uint256 penaltyPrincipal) =
+            _expectedInitialPremiumAndPenalty(ALICE);
+        assertEq(penaltyPrincipal, 20000e18, "ending balance must floor the IRP principal");
 
-        // Trigger penalty accrual
-        vm.warp(block.timestamp + 1 days);
-        vm.prank(ALICE);
-        _triggerAccrual();
-
-        // Penalty should be calculated on ending balance (20000e18), not current balance
-        // Penalty calculation happens internally in the contract
-        // We can't calculate exact expected penalty without knowing the exact cycle end date from helper
-
+        uint256 totalSupplyBefore = morpho.market(id).totalSupplyAssets;
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
         uint256 borrowAssetsAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
-        uint256 actualIncrease = borrowAssetsAfter - borrowAssetsBefore;
-
-        // Verify penalty is significant (can't predict exact amount due to compound calculations)
-        // The penalty on 20000e18 should be much more than on 5000e18
-        assertGt(actualIncrease, 1); // Just verify there's some increase
+        uint256 expectedTotalPremium = expectedBasePremium + expectedPenalty;
+        assertApproxEqAbs(
+            borrowAssetsAfter - borrowAssetsCurrent,
+            expectedTotalPremium,
+            2,
+            "ending-balance floor must determine exact initial IRP"
+        );
+        assertEq(
+            morpho.market(id).totalSupplyAssets - totalSupplyBefore,
+            expectedTotalPremium,
+            "lenders must receive exact floored IRP"
+        );
     }
 
     function testPenaltyInterest_CompoundsWithBasePremium() public {
@@ -232,29 +235,32 @@ contract PenaltyInterestTest is BaseTest {
         // Create delinquent obligation using helper
         _createPastObligation(ALICE, 1000, 10000e18); // 10% repayment
 
-        // Get initial premium details
         (uint128 lastAccrualBefore,,) = IMorphoCredit(address(morpho)).borrowerPremium(id, ALICE);
-        uint256 borrowSharesBefore = morpho.position(id, ALICE).borrowShares;
 
-        // Forward time significantly
         _continueMarketCycles(id, block.timestamp + 10 days);
+        morpho.accrueInterest(marketParams);
+        (uint256 borrowAssetsCurrent, uint256 expectedBasePremium, uint256 expectedPenalty, uint256 penaltyPrincipal) =
+            _expectedInitialPremiumAndPenalty(ALICE);
+        assertEq(
+            penaltyPrincipal,
+            borrowAssetsCurrent + expectedBasePremium,
+            "base premium must cross-compound under initial IRP"
+        );
 
-        // Trigger accrual through supply operation
-        _triggerBorrowerAccrual(ALICE);
-
-        // Get updated state
+        uint256 totalSupplyBefore = morpho.market(id).totalSupplyAssets;
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
         (uint128 lastAccrualAfter,,) = IMorphoCredit(address(morpho)).borrowerPremium(id, ALICE);
-        uint256 borrowSharesAfter = morpho.position(id, ALICE).borrowShares;
-
-        // Last accrual time should have been updated
         assertGt(lastAccrualAfter, lastAccrualBefore);
 
-        // Total borrow shares should increase (premium added as shares)
-        assertGt(borrowSharesAfter, borrowSharesBefore);
-
-        // But borrow assets should increase due to accrued interest
         uint256 borrowAssetsAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
-        assertGt(borrowAssetsAfter, 10000e18);
+        uint256 expectedTotalPremium = expectedBasePremium + expectedPenalty;
+        assertApproxEqAbs(
+            borrowAssetsAfter - borrowAssetsCurrent,
+            expectedTotalPremium,
+            2,
+            "initial IRP must cross-compound the base premium"
+        );
+        assertEq(morpho.market(id).totalSupplyAssets - totalSupplyBefore, expectedTotalPremium);
     }
 
     // ============ Multiple Obligations Tests ============
@@ -284,7 +290,7 @@ contract PenaltyInterestTest is BaseTest {
         // Both cycles should contribute to penalty
         // First cycle: 15 + 2 - 7 = 10 days of penalty
         // Second cycle: 8 + 2 - 7 = 3 days of penalty
-        // But we use the ending balance from the latest obligation
+        // The latest obligation supplies the cycle anchor and the floor for the initial IRP principal.
 
         uint256 borrowAssetsAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
         uint256 actualIncrease = borrowAssetsAfter - borrowAssetsBefore;
@@ -379,7 +385,6 @@ contract PenaltyInterestTest is BaseTest {
         // - Obligation cycleEndDate will be Day 60 (when borrow happened)
 
         // Setup: Borrow initial amount at day 60
-        uint256 borrowTime = block.timestamp;
         deal(address(loanToken), ALICE, 10000e18);
         vm.prank(ALICE);
         morpho.borrow(marketParams, 10000e18, 0, ALICE, ALICE);
@@ -419,7 +424,7 @@ contract PenaltyInterestTest is BaseTest {
         // Interest components (all APR rates):
         //   - Base rate: 10% APR = 0.1/365 per day
         //   - Premium rate: 2% APR = 0.02/365 per day
-        //   - Penalty rate: 10% APR on ending balance (10000e18)
+        //   - Initial penalty rate: 10% APR on current debt plus premium, floored by 10000e18
         //
         // Penalty calculation:
         //   Penalty applies for 8 days of delinquency
@@ -450,10 +455,9 @@ contract PenaltyInterestTest is BaseTest {
         emit log_named_uint("Day 3 increase", day3Increase);
         emit log_named_uint("Day 5 increase", day5Increase);
         emit log_named_uint("Total increase", actualTotalIncrease);
-        emit log_named_uint("Expected penalty on ending balance", expectedTotalPenalty);
+        emit log_named_uint("Reference penalty on ending-balance floor", expectedTotalPenalty);
 
-        // Since penalty is on ending balance (10000e18) and we have base+premium on current balance,
-        // the increases include both effects. Just verify the pattern is correct.
+        // The first accrual uses the cycle-anchored initial IRP; later accruals fold IRP into the ongoing rate.
 
         // The key insight: each accrual should properly calculate incremental penalty
         // not just the duration since last accrual
@@ -480,9 +484,8 @@ contract PenaltyInterestTest is BaseTest {
 
     // ============ Edge Cases ============
 
-    function testPenaltyInterest_ZeroEndingBalance() public {
+    function testPenaltyInterest_ZeroEndingBalanceWithoutAmountDueAccruesOnlyPremium() public {
         // Borrow at current time
-        uint256 borrowTime = block.timestamp;
         deal(address(loanToken), ALICE, 10000e18);
         vm.prank(ALICE);
         morpho.borrow(marketParams, 10000e18, 0, ALICE, ALICE);
@@ -493,18 +496,25 @@ contract PenaltyInterestTest is BaseTest {
         // Create obligation with zero ending balance
         _createPastObligation(ALICE, 1000, 0); // 10% repayment with zero ending balance
 
-        uint256 borrowAssetsBefore = morpho.expectedBorrowAssets(marketParams, ALICE);
+        // The helper posts a cycle ending one day ago; seven more days moves one day beyond grace.
+        _continueMarketCycles(id, block.timestamp + 7 days);
+        morpho.accrueInterest(marketParams);
+        (RepaymentStatus status,) = MorphoCreditLib.getRepaymentStatus(IMorphoCredit(address(morpho)), id, ALICE);
+        assertEq(uint256(status), uint256(RepaymentStatus.Current), "zero amount due remains current");
 
-        // Forward time and trigger accrual
-        _continueMarketCycles(id, block.timestamp + 1 days);
-        vm.prank(ALICE);
-        _triggerAccrual();
+        uint256 borrowAssetsCurrent = morpho.expectedBorrowAssets(marketParams, ALICE);
+        (uint128 lastAccrualTime, uint128 premiumRate,) = IMorphoCredit(address(morpho)).borrowerPremium(id, ALICE);
+        uint256 premiumDuration = block.timestamp - lastAccrualTime;
+        uint256 expectedPremium = borrowAssetsCurrent.wMulDown(uint256(premiumRate).wTaylorCompounded(premiumDuration));
 
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(ALICE));
         uint256 borrowAssetsAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
-
-        // Should have no penalty (0 * rate = 0)
-        // Only base + premium on actual balance
-        assertLe(borrowAssetsAfter - borrowAssetsBefore, borrowAssetsBefore * 1 / 1000); // Max 0.1% for normal accrual
+        assertApproxEqAbs(
+            borrowAssetsAfter - borrowAssetsCurrent,
+            expectedPremium,
+            2,
+            "current borrower must accrue only premium on current debt"
+        );
     }
 
     function testPenaltyInterest_TransitionToDefault() public {
@@ -551,5 +561,27 @@ contract PenaltyInterestTest is BaseTest {
 
         uint256 borrowAssetsAfter = morpho.expectedBorrowAssets(marketParams, ALICE);
         assertGt(borrowAssetsAfter, borrowAssetsBefore);
+    }
+
+    function _expectedInitialPremiumAndPenalty(address borrower)
+        internal
+        view
+        returns (uint256 currentDebt, uint256 basePremium, uint256 penalty, uint256 penaltyPrincipal)
+    {
+        currentDebt = morpho.expectedBorrowAssets(marketParams, borrower);
+        (uint128 lastAccrualTime, uint128 premiumRate,) = IMorphoCredit(address(morpho)).borrowerPremium(id, borrower);
+
+        uint256 premiumDuration = block.timestamp - lastAccrualTime;
+        if (premiumDuration > 365 days) premiumDuration = 365 days;
+        basePremium = currentDebt.wMulDown(uint256(premiumRate).wTaylorCompounded(premiumDuration));
+
+        (uint128 cycleId,, uint128 endingBalance) = IMorphoCredit(address(morpho)).repaymentObligation(id, borrower);
+        uint256 cycleEndDate = IMorphoCredit(address(morpho)).paymentCycle(id, cycleId);
+        uint256 penaltyDuration = block.timestamp - cycleEndDate;
+        if (penaltyDuration > 365 days) penaltyDuration = 365 days;
+
+        uint256 currentDebtWithPremium = currentDebt + basePremium;
+        penaltyPrincipal = currentDebtWithPremium > endingBalance ? currentDebtWithPremium : endingBalance;
+        penalty = penaltyPrincipal.wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(penaltyDuration));
     }
 }

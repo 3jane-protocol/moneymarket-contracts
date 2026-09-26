@@ -164,19 +164,24 @@ contract WaUSDCPauseEIP4626ComplianceTest is Setup {
                     AAVE RESERVE PAUSE SIMULATION
     //////////////////////////////////////////////////////////////*/
 
-    function test_waUSDC_aave_reserve_paused() public view {
-        // When Aave reserve is paused (not contract), maxDeposit returns 0
-        // but MockWaUSDC.paused() returns false
+    function test_waUSDC_aave_reserve_paused() public {
+        mockWaUSDC.setAaveReservePaused(true);
 
-        // We can't easily simulate Aave reserve pause in MockWaUSDC
-        // but the logic in USD3 checks WAUSDC.maxDeposit() == 0
-        // This is already handled by the maxDeposit check in availableDepositLimit
+        assertFalse(mockWaUSDC.paused(), "wrapper itself must remain unpaused");
+        assertGt(mockWaUSDC.maxMint(address(strategy)), 0, "reserve pause mode must not zero maxMint");
+        assertGt(mockWaUSDC.maxDeposit(address(strategy)), 0, "reserve pause mode must not zero maxDeposit");
+        assertGt(mockWaUSDC.previewDeposit(SMALL_AMOUNT), 0, "deposit must reach a nonzero-share mint attempt");
 
-        // This test documents the behavior:
-        // - Contract pause: Pausable(WAUSDC).paused() == true
-        // - Reserve pause: WAUSDC.maxDeposit() == 0
-        // Both are checked in availableDepositLimit
+        vm.prank(alice);
+        uint256 shares = strategy.deposit(SMALL_AMOUNT, alice);
 
-        assertTrue(true, "Reserve pause handled via maxDeposit check");
+        assertGt(shares, 0, "strategy deposit should succeed through the fallible mint");
+        assertEq(underlyingAsset.balanceOf(address(strategy)), SMALL_AMOUNT, "failed waUSDC mint must leave USDC idle");
+        assertEq(mockWaUSDC.balanceOf(address(strategy)), 0, "failed waUSDC mint must not create wrapper shares");
+
+        uint256 mintShares = mockWaUSDC.previewDeposit(SMALL_AMOUNT);
+        vm.prank(address(strategy));
+        vm.expectRevert(MockWaUSDC.AaveReservePaused.selector);
+        mockWaUSDC.mint(mintShares, address(strategy));
     }
 }

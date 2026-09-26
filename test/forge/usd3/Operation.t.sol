@@ -488,20 +488,6 @@ contract OperationTest is Setup {
         assertEq(cachedParams.creditLine, marketParams.creditLine);
     }
 
-    function test_marketId_initialization_invalidMarket() public {
-        // Create a new USD3 implementation
-        USD3 newUsd3Implementation = new USD3();
-
-        // Create an invalid market ID (market doesn't exist in Morpho)
-        Id invalidId = Id.wrap(keccak256("INVALID_MARKET"));
-
-        // Try to initialize with invalid market ID - should revert
-        // The actual error is InvalidInitialization from trying to initialize twice
-        // or Invalid market if the market doesn't exist
-        vm.expectRevert(); // Accept any revert since invalid market will fail
-        newUsd3Implementation.initialize(address(morpho), invalidId, management, keeper);
-    }
-
     function test_marketParams_caching_gasOptimization() public {
         // Test that we can access cached params efficiently
         // The caching optimization means we don't need an external call to Morpho

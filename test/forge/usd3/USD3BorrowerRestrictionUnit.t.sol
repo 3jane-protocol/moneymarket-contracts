@@ -75,10 +75,6 @@ contract USD3BorrowerRestrictionUnitTest is Test {
         // Set helper's limit to max (since it's the one depositing to USD3 in hop)
         mockUSD3.setAvailableDepositLimit(address(helper), type(uint256).max);
 
-        // Whitelist both for hop test
-        mockUSD3.setWhitelist(alice, true);
-        mockUSD3.setWhitelist(borrower, true);
-
         // Borrower as receiver should fail to deposit with hop
         // Helper now blocks third-party deposits before USD3's borrower check
         vm.prank(alice); // Alice sends funds but borrower is receiver
@@ -110,15 +106,10 @@ contract USD3BorrowerRestrictionUnitTest is Test {
 // Mock USD3 contract
 contract MockUSD3 {
     mapping(address => uint256) public availableDepositLimit;
-    mapping(address => bool) public whitelist;
     mapping(address => mapping(address => uint256)) public allowance;
 
     function setAvailableDepositLimit(address user, uint256 limit) external {
         availableDepositLimit[user] = limit;
-    }
-
-    function setWhitelist(address user, bool status) external {
-        whitelist[user] = status;
     }
 
     function deposit(uint256 assets, address receiver) external returns (uint256) {

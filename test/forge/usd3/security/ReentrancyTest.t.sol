@@ -83,9 +83,6 @@ contract ReentrancyTest is Setup {
         vm.prank(alice);
         IERC20(address(usd3Strategy)).transfer(address(attacker), 100e6);
 
-        // Wait for commitment period
-        skip(7 days);
-
         // Attacker tries to exploit withdraw reentrancy
         // TokenizedStrategy is safe due to state changes before external calls
         attacker.attackWithdraw(50e6);
@@ -116,9 +113,6 @@ contract ReentrancyTest is Setup {
         // Transfer shares to attacker
         vm.prank(alice);
         IERC20(address(usd3Strategy)).transfer(address(attacker), 100e6);
-
-        // Wait for commitment period
-        skip(7 days);
 
         // Attacker tries to exploit redeem reentrancy
         // Safe due to state updates before external calls
@@ -167,9 +161,6 @@ contract ReentrancyTest is Setup {
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), 2000e6);
         usd3Strategy.deposit(2000e6, alice);
-
-        // Skip commitment period for USD3
-        skip(7 days);
 
         // Alice deposits USD3 into sUSD3 (respecting subordination)
         IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 300e6);

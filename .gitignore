@@ -55,3 +55,4 @@ foundry.lock
 
 # Local agent worktrees
 .claude/worktrees/
+.playwright-mcp/
