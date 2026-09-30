@@ -4,35 +4,45 @@ pragma solidity ^0.8.22;
 import {Script, console2} from "forge-std/Script.sol";
 
 import {IERC20} from "../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {MarkdownController} from "../../src/MarkdownController.sol";
+import {Id, IMorpho, Position} from "../../src/interfaces/IMorpho.sol";
 import {ITimelockController} from "../../src/interfaces/ITimelockController.sol";
 import {Jane} from "../../src/jane/Jane.sol";
 import {RewardsDistributor} from "../../src/jane/RewardsDistributor.sol";
 import {SafeHelper} from "../utils/SafeHelper.sol";
 import {TimelockHelper} from "../utils/TimelockHelper.sol";
 
-interface IJaneAccessControl {
-    function grantRole(bytes32 role, address account) external;
-    function revokeRole(bytes32 role, address account) external;
-}
-
 /// @title RecoverBorrowerJaneTimelock
 /// @notice Recovers a settled borrower's JANE through the 24-hour parameters timelock. One timelock batch temporarily
 ///         makes the timelock the markdown controller, redistributes the requested JANE to RewardsDistributor,
 ///         restores the production controller, sweeps the JANE, forwards it to the recipient when needed, and removes
 ///         the timelock's temporary transfer role.
-/// @dev The operation never enables general transfers. Its amount is fixed when scheduled, so re-read the borrower's
-///      live balance before execution. After recovery, freeze the borrower's cumulative merkle allocation at their
-///      claimed amount in the next root: RewardsDistributor uses mint-on-claim distribution.
+/// @dev The operation never enables general transfers. Before scheduling, make live an allocation-freezing root that
+///      fixes the borrower's cumulative allocation at their claimed amount, and keep that allocation frozen in every
+///      later root. With markdown disabled for the borrower and RewardsDistributor checked as JANE's sole minter,
+///      reward claims are the only way the borrower's balance can change during the 24-hour delay; the live root
+///      removes that path and keeps the scheduled full-balance amount equal to the borrower's balance at execution.
+///      The script checks only that the borrower has no debt and no credit line on the market. That state also holds
+///      for accounts that were never settled, so before scheduling the operator must confirm the borrower's
+///      AccountSettled event from MorphoCredit, emitted via CreditLine.settle. The borrower address is the one input
+///      the script cannot validate.
+///
+///      While this operation is pending, no other timelock operation that changes JANE's markdown controller or moves
+///      JANE into RewardsDistributor may execute. This batch restores the hard-coded controller and sweeps the
+///      distributor's full JANE balance.
 ///
 ///      Usage:
-///      1. Record the borrower and recipient balances, then run
-///         --sig "schedule(address,uint256,address,uint256,bool)" <borrower> <amount> <recipient> 0 false
-///         (then repeat with `true` to propose the Safe transaction).
-///      2. After 24 hours, re-read the borrower balance and run
-///         --sig "execute(address,uint256,address,uint256,bool)" <borrower> <amount> <recipient> 0 false
-///         (then repeat with `true` to propose the Safe transaction).
-///      3. After Safe execution, run
-///         --sig "verify(address,address,uint256)" <borrower> <recipient> <recipientBalanceBefore>.
+///      1. Make the allocation-freezing root live, then run
+///         --sig "schedule(address,uint256,address,uint256,bool)" <borrower> 0 <recipient> 0 false
+///         to schedule the borrower's full live balance. A nonzero amount schedules that explicit amount instead.
+///         Repeat with `true` to propose the Safe transaction. The amount printed by the `send=true` run is
+///         authoritative for execute because the zero sentinel is resolved from the live balance on every run.
+///      2. After 24 hours, confirm the borrower balance is unchanged and run
+///         --sig "execute(address,uint256,address,uint256,bool)" <borrower> <printedAmount> <recipient> 0 false
+///         (then repeat with `true` to propose the Safe transaction). Execute never accepts the zero sentinel.
+///      3. Record the recipient balance immediately before the Safe executes the proposal. After Safe execution, run
+///         --sig "verify(address,uint256,address,uint256,uint256)" <borrower> <printedAmount> <recipient> 0
+///         <recipientBalanceBefore>.
 ///      Use FOUNDRY_PROFILE=script, WALLET_TYPE and the Safe proposer credential, and a mainnet RPC. SAFE_ADDRESS may
 ///      override the default proposer Safe. Use a fresh attempt nonce to intentionally schedule the same recovery
 ///      parameters again.
@@ -42,10 +52,12 @@ contract RecoverBorrowerJaneTimelock is Script, SafeHelper, TimelockHelper {
     address internal constant ORIGINAL_CONTROLLER = 0xF0eaE71092F3c9411A9EAb8F81E7d91D29726214;
     address internal constant PARAMS_TIMELOCK = 0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2;
     address internal constant DEFAULT_SAFE = 0x33333333Bd7045F1A601A1E289D7AB21036fB5EF;
+    address internal constant MORPHO_CREDIT = 0xDe6e08ac208088cc62812Ba30608D852c6B0EcBc;
 
     uint256 internal constant PARAMS_TIMELOCK_DELAY = 1 days;
     bytes32 internal constant TRANSFER_ROLE = keccak256("TRANSFER_ROLE");
     bytes32 internal constant SALT_DOMAIN = bytes32("3JANE_JANE_BORROWER_RECOVERY_V1");
+    Id internal constant MARKET_ID = Id.wrap(0xc2c3e4b656f4b82649c8adbe82b3284c85cc7dc57c6dc8df6ca3dad7d2740d75);
 
     function schedule(address borrower, uint256 amount, address recipient, uint256 attempt, bool send)
         external
@@ -53,10 +65,13 @@ contract RecoverBorrowerJaneTimelock is Script, SafeHelper, TimelockHelper {
         isTimelock(PARAMS_TIMELOCK)
     {
         address safe = vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE);
+        bool fullBalanceSentinel = amount == 0;
+        amount = _resolveScheduleAmount(borrower, amount);
         (uint256 borrowerBalanceBefore, uint256 recipientBalanceBefore) =
             _requirePreconditions(borrower, amount, recipient, safe);
 
         console2.log("=== Schedule Settled-Borrower JANE Recovery ===");
+        _logScheduledAmount(borrower, amount, recipient, attempt, fullBalanceSentinel);
         _logHeader(borrower, amount, recipient, borrowerBalanceBefore, recipientBalanceBefore, attempt, send);
 
         (address[] memory targets, uint256[] memory values, bytes[] memory datas, bytes32 salt) =
@@ -81,7 +96,7 @@ contract RecoverBorrowerJaneTimelock is Script, SafeHelper, TimelockHelper {
         );
         _requireSingleCall();
         _send(send);
-        console2.log("Next: after 24 hours, re-read the borrower balance and execute with the same parameters");
+        console2.log("Next: after 24 hours, execute with the exact printed amount and the same other parameters");
     }
 
     function execute(address borrower, uint256 amount, address recipient, uint256 attempt, bool send)
@@ -89,6 +104,10 @@ contract RecoverBorrowerJaneTimelock is Script, SafeHelper, TimelockHelper {
         isBatch(vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE))
         isTimelock(PARAMS_TIMELOCK)
     {
+        require(
+            amount != 0,
+            "execute requires the explicit amount printed by schedule; the amount is part of the operation ID"
+        );
         address safe = vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE);
         (uint256 borrowerBalanceBefore, uint256 recipientBalanceBefore) =
             _requirePreconditions(borrower, amount, recipient, safe);
@@ -106,32 +125,48 @@ contract RecoverBorrowerJaneTimelock is Script, SafeHelper, TimelockHelper {
         requireOperationReady(PARAMS_TIMELOCK, operationId);
 
         bytes memory executeCalldata = encodeExecuteBatch(targets, values, datas, bytes32(0), salt);
-        _simulateExecuteBatch(
-            safe, executeCalldata, borrower, amount, recipient, borrowerBalanceBefore, recipientBalanceBefore
-        );
         addToBatch(PARAMS_TIMELOCK, executeCalldata);
         _requirePostState(borrower, amount, recipient, borrowerBalanceBefore, recipientBalanceBefore);
         _requireSingleCall();
         _send(send);
     }
 
-    /// @notice Checks the durable recovery invariants and reports the borrower balance and recipient balance change.
+    /// @notice Checks the executed operation, exact recipient balance change, and durable recovery invariants.
     /// @param borrower The borrower whose JANE was recovered.
+    /// @param amount The explicit amount printed by the authoritative `send=true` schedule run.
     /// @param recipient The recipient selected in the executed operation.
-    /// @param recipientBalanceBefore The recipient's JANE balance recorded immediately before execution.
-    function verify(address borrower, address recipient, uint256 recipientBalanceBefore) external view {
+    /// @param attempt The attempt nonce used to schedule and execute the operation.
+    /// @param recipientBalanceBefore The recipient's JANE balance recorded immediately before Safe execution.
+    function verify(
+        address borrower,
+        uint256 amount,
+        address recipient,
+        uint256 attempt,
+        uint256 recipientBalanceBefore
+    ) external view {
         require(borrower != address(0), "borrower is zero");
         require(recipient != address(0), "recipient is zero");
         require(borrower != recipient, "recipient cannot be borrower");
         require(recipient != REWARDS_DISTRIBUTOR, "recipient cannot be distributor");
+        require(amount != 0, "amount is zero");
         _requireCoreTopology();
+
+        (address[] memory targets, uint256[] memory values, bytes[] memory datas, bytes32 salt) =
+            _operation(borrower, amount, recipient, attempt);
+        bytes32 operationId = calculateBatchOperationId(targets, values, datas, bytes32(0), salt);
+        require(
+            getOperationState(PARAMS_TIMELOCK, operationId) == ITimelockController.OperationState.Done,
+            "batch operation is not done"
+        );
 
         Jane jane = Jane(JANE);
         uint256 borrowerBalance = jane.balanceOf(borrower);
         uint256 recipientBalance = jane.balanceOf(recipient);
-        require(recipientBalance > recipientBalanceBefore, "recipient balance did not increase");
+        require(recipientBalance == recipientBalanceBefore + amount, "recipient balance increase mismatch");
         _requireDurableState(jane);
 
+        console2.log("Operation ID:", vm.toString(operationId));
+        console2.log("Operation salt:", vm.toString(salt));
         console2.log("Borrower:", borrower);
         console2.log("Borrower live JANE balance:", borrowerBalance);
         console2.log("Recipient:", recipient);
@@ -156,8 +191,19 @@ contract RecoverBorrowerJaneTimelock is Script, SafeHelper, TimelockHelper {
         Jane jane = Jane(JANE);
         require(!jane.transferable(), "JANE transfers are enabled");
         require(jane.markdownController() == ORIGINAL_CONTROLLER, "unexpected markdown controller");
+        require(!MarkdownController(ORIGINAL_CONTROLLER).markdownEnabled(borrower), "borrower markdown is enabled");
+        bytes32 minterRole = jane.MINTER_ROLE();
+        require(
+            jane.getRoleMemberCount(minterRole) == 1 && jane.getRoleMember(minterRole, 0) == REWARDS_DISTRIBUTOR,
+            "RewardsDistributor is not the sole JANE minter"
+        );
         require(jane.getRoleMemberCount(TRANSFER_ROLE) == 0, "TRANSFER_ROLE is not empty");
         require(jane.balanceOf(REWARDS_DISTRIBUTOR) == 0, "distributor JANE balance is not zero");
+
+        Position memory position = IMorpho(MORPHO_CREDIT).position(MARKET_ID, borrower);
+        require(
+            position.borrowShares == 0 && position.collateral == 0, "borrower has outstanding debt or a credit line"
+        );
 
         borrowerBalance = jane.balanceOf(borrower);
         recipientBalance = jane.balanceOf(recipient);
@@ -169,6 +215,42 @@ contract RecoverBorrowerJaneTimelock is Script, SafeHelper, TimelockHelper {
             console2.log("Borrower JANE remaining after recovery:", borrowerBalance - amount);
             console2.log("!!! THE REMAINDER STAYS WITH THE BORROWER !!!");
         }
+    }
+
+    function _resolveScheduleAmount(address borrower, uint256 amount) internal view returns (uint256) {
+        if (amount != 0) return amount;
+        require(borrower != address(0), "borrower is zero");
+        uint256 liveBalance = Jane(JANE).balanceOf(borrower);
+        require(liveBalance != 0, "zero sentinel resolved to an empty borrower JANE balance");
+        return liveBalance;
+    }
+
+    function _logScheduledAmount(
+        address borrower,
+        uint256 amount,
+        address recipient,
+        uint256 attempt,
+        bool fullBalanceSentinel
+    ) internal view {
+        if (fullBalanceSentinel) console2.log("ZERO SENTINEL RESOLVED TO THE FULL LIVE JANE BALANCE");
+        console2.log("============================================================");
+        console2.log("EXECUTE MUST USE THIS EXACT AMOUNT:", amount);
+        console2.log("The amount is part of the operation ID; execute cannot use zero.");
+        console2.log("Ready-to-copy execute command arguments:");
+        console2.log(
+            string.concat(
+                '--sig "execute(address,uint256,address,uint256,bool)" ',
+                vm.toString(borrower),
+                " ",
+                vm.toString(amount),
+                " ",
+                vm.toString(recipient),
+                " ",
+                vm.toString(attempt),
+                " false"
+            )
+        );
+        console2.log("============================================================");
     }
 
     function _requireTopology(address safe) internal view {
@@ -200,6 +282,7 @@ contract RecoverBorrowerJaneTimelock is Script, SafeHelper, TimelockHelper {
     {
         bool forward = recipient != PARAMS_TIMELOCK;
         uint256 length = forward ? 7 : 6;
+        Jane jane = Jane(JANE);
         targets = new address[](length);
         values = new uint256[](length);
         datas = new bytes[](length);
@@ -212,7 +295,7 @@ contract RecoverBorrowerJaneTimelock is Script, SafeHelper, TimelockHelper {
         targets[i] = JANE;
         datas[i++] = abi.encodeCall(Jane.setMarkdownController, (ORIGINAL_CONTROLLER));
         targets[i] = JANE;
-        datas[i++] = abi.encodeCall(IJaneAccessControl.grantRole, (TRANSFER_ROLE, PARAMS_TIMELOCK));
+        datas[i++] = abi.encodeCall(jane.grantRole, (TRANSFER_ROLE, PARAMS_TIMELOCK));
         targets[i] = REWARDS_DISTRIBUTOR;
         datas[i++] = abi.encodeCall(RewardsDistributor.sweep, (IERC20(JANE)));
         if (forward) {
@@ -220,7 +303,7 @@ contract RecoverBorrowerJaneTimelock is Script, SafeHelper, TimelockHelper {
             datas[i++] = abi.encodeCall(Jane.transfer, (recipient, amount));
         }
         targets[i] = JANE;
-        datas[i] = abi.encodeCall(IJaneAccessControl.revokeRole, (TRANSFER_ROLE, PARAMS_TIMELOCK));
+        datas[i] = abi.encodeCall(jane.revokeRole, (TRANSFER_ROLE, PARAMS_TIMELOCK));
 
         salt = keccak256(abi.encode(SALT_DOMAIN, borrower, amount, recipient, attempt));
     }
@@ -237,26 +320,6 @@ contract RecoverBorrowerJaneTimelock is Script, SafeHelper, TimelockHelper {
     ) internal {
         uint256 snapshot = vm.snapshotState();
         simulateExecution(PARAMS_TIMELOCK, targets, values, datas);
-        _requirePostState(borrower, amount, recipient, borrowerBalanceBefore, recipientBalanceBefore);
-        vm.revertToState(snapshot);
-    }
-
-    function _simulateExecuteBatch(
-        address safe,
-        bytes memory executeCalldata,
-        address borrower,
-        uint256 amount,
-        address recipient,
-        uint256 borrowerBalanceBefore,
-        uint256 recipientBalanceBefore
-    ) internal {
-        uint256 snapshot = vm.snapshotState();
-        vm.prank(safe);
-        (bool success, bytes memory returnData) = PARAMS_TIMELOCK.call(executeCalldata);
-        if (!success) {
-            console2.log("Timelock executeBatch simulation failed:", _getRevertMsg(returnData));
-            revert("timelock executeBatch simulation failed");
-        }
         _requirePostState(borrower, amount, recipient, borrowerBalanceBefore, recipientBalanceBefore);
         vm.revertToState(snapshot);
     }
