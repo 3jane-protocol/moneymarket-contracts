@@ -300,7 +300,7 @@ contract MultiUserStressTest is Setup {
         if (finalSusd3Value > 0) {
             uint256 subordinationRatio = (finalSusd3Value * 100) / (finalUsd3Supply);
             assertLe(subordinationRatio, MAX_SUBORDINATION + 1, "Should enforce subordination ratio"); // +1 for
-                // rounding
+            // rounding
         }
 
         assertGt(susd3UsersCount, 0, "Some users should have succeeded in sUSD3 deposits");

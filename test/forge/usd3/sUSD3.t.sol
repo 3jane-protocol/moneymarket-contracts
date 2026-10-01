@@ -290,6 +290,35 @@ contract sUSD3Test is Setup {
         susd3Strategy.withdraw(depositAmount, alice, alice);
     }
 
+    function test_withdraw_zeroCooldownDuration() public {
+        // When cooldown duration is 0, users can withdraw without calling startCooldown
+        uint256 depositAmount = 1000e6;
+        vm.startPrank(alice);
+        ERC20(address(usd3)).approve(address(susd3Strategy), depositAmount);
+        susd3Strategy.deposit(depositAmount, alice);
+        vm.stopPrank();
+
+        // Skip lock period
+        skip(90 days + 1);
+
+        // Get protocol config and set cooldown duration to 0
+        address morphoAddress = address(usd3.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(protocolConfigAddress);
+
+        bytes32 SUSD3_COOLDOWN_PERIOD = keccak256("SUSD3_COOLDOWN_PERIOD");
+        protocolConfig.setConfig(SUSD3_COOLDOWN_PERIOD, 0);
+        assertEq(susd3Strategy.cooldownDuration(), 0);
+
+        // Withdraw without starting cooldown - should succeed
+        uint256 balanceBefore = ERC20(address(usd3)).balanceOf(alice);
+        vm.prank(alice);
+        susd3Strategy.withdraw(depositAmount, alice, alice);
+        uint256 balanceAfter = ERC20(address(usd3)).balanceOf(alice);
+
+        assertEq(balanceAfter - balanceBefore, depositAmount, "Should withdraw full amount");
+    }
+
     /*//////////////////////////////////////////////////////////////
                     SUBORDINATION RATIO TESTS
     //////////////////////////////////////////////////////////////*/
@@ -349,6 +378,96 @@ contract sUSD3Test is Setup {
         bytes32 SUSD3_WITHDRAWAL_WINDOW = keccak256("SUSD3_WITHDRAWAL_WINDOW");
         protocolConfig.setConfig(SUSD3_WITHDRAWAL_WINDOW, 3 days);
         assertEq(susd3Strategy.withdrawalWindow(), 3 days);
+    }
+
+    function test_lockDurationReturnsZeroWhenConfigZero() public {
+        address morphoAddress = address(usd3.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(protocolConfigAddress);
+
+        bytes32 SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
+        protocolConfig.setConfig(SUSD3_LOCK_DURATION, 0);
+
+        assertEq(susd3Strategy.lockDuration(), 0);
+    }
+
+    function test_zeroLockAllowsImmediateTransfer() public {
+        address morphoAddress = address(usd3.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(protocolConfigAddress);
+
+        bytes32 SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
+        protocolConfig.setConfig(SUSD3_LOCK_DURATION, 0);
+
+        uint256 depositAmount = 100e6;
+        vm.startPrank(alice);
+        ERC20(address(usd3)).approve(address(susd3Strategy), depositAmount);
+        uint256 shares = susd3Strategy.deposit(depositAmount, alice);
+        ERC20(address(susd3Strategy)).transfer(bob, shares);
+        vm.stopPrank();
+
+        assertEq(ERC20(address(susd3Strategy)).balanceOf(bob), shares);
+    }
+
+    function test_zeroLockAllowsImmediateCooldown() public {
+        address morphoAddress = address(usd3.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(protocolConfigAddress);
+
+        bytes32 SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
+        protocolConfig.setConfig(SUSD3_LOCK_DURATION, 0);
+
+        uint256 depositAmount = 100e6;
+        vm.startPrank(alice);
+        ERC20(address(usd3)).approve(address(susd3Strategy), depositAmount);
+        uint256 shares = susd3Strategy.deposit(depositAmount, alice);
+        susd3Strategy.startCooldown(shares);
+        vm.stopPrank();
+
+        (uint256 cooldownEnd, uint256 windowEnd, uint256 cooldownShares) = susd3Strategy.getCooldownStatus(alice);
+        assertEq(cooldownEnd, block.timestamp + 7 days);
+        assertEq(windowEnd, block.timestamp + 7 days + 2 days);
+        assertEq(cooldownShares, shares);
+    }
+
+    function test_zeroLockSkipsStorageWrite() public {
+        address morphoAddress = address(usd3.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(protocolConfigAddress);
+
+        bytes32 SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
+        protocolConfig.setConfig(SUSD3_LOCK_DURATION, 0);
+
+        uint256 depositAmount = 100e6;
+        vm.startPrank(alice);
+        ERC20(address(usd3)).approve(address(susd3Strategy), depositAmount);
+        susd3Strategy.deposit(depositAmount, alice);
+        vm.stopPrank();
+
+        assertEq(susd3Strategy.lockedUntil(alice), 0);
+    }
+
+    function test_zeroLockPreservesPriorLock() public {
+        address morphoAddress = address(usd3.morphoCredit());
+        address protocolConfigAddress = MorphoCredit(morphoAddress).protocolConfig();
+        MockProtocolConfig protocolConfig = MockProtocolConfig(protocolConfigAddress);
+
+        uint256 firstDeposit = 100e6;
+        vm.startPrank(alice);
+        ERC20(address(usd3)).approve(address(susd3Strategy), type(uint256).max);
+        susd3Strategy.deposit(firstDeposit, alice);
+
+        uint256 originalLock = susd3Strategy.lockedUntil(alice);
+        vm.stopPrank();
+
+        bytes32 SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
+        protocolConfig.setConfig(SUSD3_LOCK_DURATION, 0);
+
+        vm.startPrank(alice);
+        susd3Strategy.deposit(100e6, alice);
+        vm.stopPrank();
+
+        assertEq(susd3Strategy.lockedUntil(alice), originalLock);
     }
 
     function test_setParameters_invalidValues() public {

@@ -15,6 +15,7 @@ import {
 contract MockProtocolConfig is IProtocolConfig {
     mapping(bytes32 => uint256) public config;
     address public owner;
+    address public emergencyAdmin;
 
     // Configuration keys
     bytes32 private constant TRANCHE_RATIO = keccak256("TRANCHE_RATIO");
@@ -31,6 +32,8 @@ contract MockProtocolConfig is IProtocolConfig {
     bytes32 private constant DELINQUENCY_PERIOD = keccak256("DELINQUENCY_PERIOD");
     bytes32 private constant MIN_BORROW = keccak256("MIN_BORROW");
     bytes32 private constant IRP = keccak256("IRP");
+    bytes32 private constant DEBT_CAP = keccak256("DEBT_CAP");
+    bytes32 private constant TEND_DRIFT_THRESHOLD = keccak256("TEND_DRIFT_THRESHOLD");
 
     constructor() {
         owner = msg.sender;
@@ -42,12 +45,14 @@ contract MockProtocolConfig is IProtocolConfig {
         config[SUSD3_COOLDOWN_PERIOD] = 7 days;
         config[USD3_COMMITMENT_TIME] = 0; // No commitment by default in tests
         config[SUSD3_WITHDRAWAL_WINDOW] = 2 days;
-        config[USD3_SUPPLY_CAP] = 0; // No cap by default in tests
+        config[USD3_SUPPLY_CAP] = type(uint256).max; // Unlimited by default in tests
+        config[DEBT_CAP] = type(uint256).max; // Unlimited for testing
         config[CYCLE_DURATION] = 30 days;
         config[MAX_ON_CREDIT] = 10000; // 100%
         config[GRACE_PERIOD] = 7 days;
         config[DELINQUENCY_PERIOD] = 30 days;
         config[MIN_BORROW] = 100e6; // 100 USDC minimum
+        config[TEND_DRIFT_THRESHOLD] = 10; // 0.1% default
     }
 
     function initialize(address newOwner) external {
@@ -57,6 +62,16 @@ contract MockProtocolConfig is IProtocolConfig {
 
     function setConfig(bytes32 key, uint256 value) external {
         require(msg.sender == owner, "Not owner");
+        config[key] = value;
+    }
+
+    function setEmergencyAdmin(address _emergencyAdmin) external {
+        require(msg.sender == owner, "Not owner");
+        emergencyAdmin = _emergencyAdmin;
+    }
+
+    function setEmergencyConfig(bytes32 key, uint256 value) external {
+        require(msg.sender == owner || msg.sender == emergencyAdmin, "Not authorized");
         config[key] = value;
     }
 

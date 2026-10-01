@@ -176,14 +176,58 @@ contract DebtFloorComprehensiveTest is Setup {
         assertLt(withdrawLimit2, bobAssets, "Withdrawal should be limited after backing ratio change");
     }
 
+    function test_debtFloor_zeroBackingRatio_usesNominalBackingFloor() public {
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 100_000e6);
+
+        vm.prank(alice);
+        strategy.deposit(DEPOSIT_AMOUNT, alice);
+
+        setMaxOnCredit(8000);
+        createMarketDebt(borrower, 500_000e6);
+
+        assertEq(susd3Strategy.nominalBackingFloor(), 100_000e6, "nominal floor mismatch");
+        assertEq(susd3Strategy.getSubordinatedDebtFloorInUSDC(), 100_000e6, "should use nominal floor");
+    }
+
+    function test_debtFloor_zeroDebt_usesNominalBackingFloor() public {
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 5000);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 75_000e6);
+
+        assertEq(susd3Strategy.getSubordinatedDebtFloorInUSDC(), 75_000e6, "should use nominal floor without debt");
+    }
+
+    function test_debtFloor_nominalFloorDominatesRatioFloor() public {
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 50_000e6);
+
+        vm.prank(alice);
+        strategy.deposit(DEPOSIT_AMOUNT, alice);
+
+        setMaxOnCredit(8000);
+        createMarketDebt(borrower, 100_000e6); // 10K ratio floor
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 1000); // 10%
+
+        assertEq(susd3Strategy.getSubordinatedDebtFloorInUSDC(), 50_000e6, "nominal floor should dominate");
+    }
+
+    function test_debtFloor_ratioFloorDominatesNominalFloor() public {
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 10_000e6);
+
+        vm.prank(alice);
+        strategy.deposit(DEPOSIT_AMOUNT, alice);
+
+        setMaxOnCredit(8000);
+        createMarketDebt(borrower, 100_000e6); // 50K ratio floor
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 5000); // 50%
+
+        assertEq(susd3Strategy.getSubordinatedDebtFloorInUSDC(), 50_000e6, "ratio floor should dominate");
+    }
+
     /*//////////////////////////////////////////////////////////////
                     BOUNDARY CONDITION TESTING
     //////////////////////////////////////////////////////////////*/
 
     function test_debtFloor_withdrawalAtExactFloor() public {
-        // Set backing ratio to 25%
-        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 2500);
-
         // Setup positions
         vm.prank(alice);
         strategy.deposit(DEPOSIT_AMOUNT, alice);
@@ -194,6 +238,9 @@ contract DebtFloorComprehensiveTest is Setup {
         // Create specific debt amount
         setMaxOnCredit(8000);
         createMarketDebt(borrower, 200_000e6); // 200K debt needs 50K backing at 25%
+
+        // Set backing ratio AFTER debt creation to avoid blocking deployment
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 2500);
 
         // Bob deposits to sUSD3
         uint256 bobUSD3 = strategy.balanceOf(bob);
@@ -244,9 +291,6 @@ contract DebtFloorComprehensiveTest is Setup {
     }
 
     function test_debtFloor_withdrawalOneCentAboveFloor() public {
-        // Set backing ratio to 30%
-        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 3000);
-
         // Setup positions
         vm.prank(alice);
         strategy.deposit(DEPOSIT_AMOUNT, alice);
@@ -257,6 +301,9 @@ contract DebtFloorComprehensiveTest is Setup {
         // Create debt
         setMaxOnCredit(8000);
         createMarketDebt(borrower, 100_000e6); // 100K debt needs 30K backing
+
+        // Set backing ratio AFTER debt creation
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 3000);
 
         // Bob deposits specific amount to sUSD3 (slightly above floor requirement)
         vm.prank(bob);
@@ -304,9 +351,6 @@ contract DebtFloorComprehensiveTest is Setup {
     //////////////////////////////////////////////////////////////*/
 
     function test_debtFloor_debtIncreaseDuringCooldown() public {
-        // Set backing ratio
-        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 4000); // 40%
-
         // Setup initial positions
         vm.prank(alice);
         strategy.deposit(DEPOSIT_AMOUNT * 2, alice);
@@ -317,6 +361,9 @@ contract DebtFloorComprehensiveTest is Setup {
         // Create initial debt
         setMaxOnCredit(8000);
         createMarketDebt(borrower, 100_000e6); // 100K initial debt
+
+        // Set backing ratio AFTER debt creation
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 4000); // 40%
 
         // Bob deposits to sUSD3
         vm.prank(bob);
@@ -335,8 +382,10 @@ contract DebtFloorComprehensiveTest is Setup {
         uint256 withdrawLimit1 = susd3Strategy.availableWithdrawLimit(bob);
         assertGt(withdrawLimit1, 0, "Should have some withdrawal available initially");
 
-        // Increase debt during cooldown window
+        // Temporarily disable backing constraint to allow second borrow's report() to deploy
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
         createMarketDebt(borrower2, 150_000e6); // Additional 150K debt
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 4000);
 
         // Check withdrawal limit after debt increase
         uint256 withdrawLimit2 = susd3Strategy.availableWithdrawLimit(bob);
@@ -353,9 +402,6 @@ contract DebtFloorComprehensiveTest is Setup {
     }
 
     function test_debtFloor_backingRatioChangeDuringCooldown() public {
-        // Start with 20% backing ratio
-        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 2000);
-
         // Setup positions and debt
         vm.prank(alice);
         strategy.deposit(DEPOSIT_AMOUNT, alice);
@@ -365,6 +411,9 @@ contract DebtFloorComprehensiveTest is Setup {
 
         setMaxOnCredit(8000);
         createMarketDebt(borrower, 200_000e6);
+
+        // Start with 20% backing ratio (set AFTER debt creation)
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 2000);
 
         // Bob deposits to sUSD3
         vm.prank(bob);
@@ -400,14 +449,120 @@ contract DebtFloorComprehensiveTest is Setup {
         );
     }
 
+    function test_debtFloor_nominalFloorLimitsWithdrawalsToExcessAboveFloor() public {
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 100_000e6);
+
+        vm.prank(alice);
+        strategy.deposit(DEPOSIT_AMOUNT, alice);
+
+        vm.prank(bob);
+        strategy.deposit(500_000e6, bob);
+
+        setMaxOnCredit(8000);
+        createMarketDebt(borrower, 500_000e6);
+
+        vm.prank(bob);
+        strategy.approve(address(susd3Strategy), 250_000e6);
+
+        vm.prank(bob);
+        uint256 bobSUSD3Shares = susd3Strategy.deposit(250_000e6, bob);
+
+        skip(91 days);
+        vm.prank(bob);
+        susd3Strategy.startCooldown(bobSUSD3Shares);
+        skip(8 days);
+
+        uint256 holdingsUSDC =
+            ITokenizedStrategy(address(usd3Strategy)).convertToAssets(strategy.balanceOf(address(susd3Strategy)));
+        uint256 expectedLimit = ITokenizedStrategy(address(usd3Strategy)).convertToShares(holdingsUSDC - 100_000e6);
+
+        assertEq(susd3Strategy.getSubordinatedDebtFloorInUSDC(), 100_000e6, "nominal floor mismatch");
+        assertApproxEqAbs(
+            susd3Strategy.availableWithdrawLimit(bob), expectedLimit, 2, "withdraw limit should preserve floor"
+        );
+    }
+
+    function test_debtFloor_nominalFloorBlocksWithdrawalAtExactFloor() public {
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 100_000e6);
+
+        vm.prank(bob);
+        strategy.deposit(100_000e6, bob);
+
+        vm.prank(bob);
+        strategy.approve(address(susd3Strategy), 100_000e6);
+
+        vm.prank(bob);
+        uint256 bobSUSD3Shares = susd3Strategy.deposit(100_000e6, bob);
+
+        skip(91 days);
+        vm.prank(bob);
+        susd3Strategy.startCooldown(bobSUSD3Shares);
+        skip(8 days);
+
+        uint256 holdingsUSDC =
+            ITokenizedStrategy(address(usd3Strategy)).convertToAssets(strategy.balanceOf(address(susd3Strategy)));
+
+        assertEq(holdingsUSDC, 100_000e6, "holdings should equal nominal floor");
+        assertEq(susd3Strategy.availableWithdrawLimit(bob), 0, "withdrawal should be blocked at exact floor");
+    }
+
+    function test_debtFloor_nominalFloorChangeDuringCooldown() public {
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 0);
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 50_000e6);
+
+        vm.prank(alice);
+        strategy.deposit(DEPOSIT_AMOUNT, alice);
+
+        vm.prank(bob);
+        strategy.deposit(500_000e6, bob);
+
+        setMaxOnCredit(8000);
+        createMarketDebt(borrower, 500_000e6);
+
+        vm.prank(bob);
+        strategy.approve(address(susd3Strategy), 250_000e6);
+
+        vm.prank(bob);
+        uint256 bobSUSD3Shares = susd3Strategy.deposit(250_000e6, bob);
+
+        skip(91 days);
+        vm.prank(bob);
+        susd3Strategy.startCooldown(bobSUSD3Shares);
+        skip(8 days);
+
+        uint256 withdrawLimitBefore = susd3Strategy.availableWithdrawLimit(bob);
+
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 150_000e6);
+
+        uint256 withdrawLimitAfter = susd3Strategy.availableWithdrawLimit(bob);
+        uint256 holdingsUSDC =
+            ITokenizedStrategy(address(usd3Strategy)).convertToAssets(strategy.balanceOf(address(susd3Strategy)));
+        uint256 expectedLimit = ITokenizedStrategy(address(usd3Strategy)).convertToShares(holdingsUSDC - 150_000e6);
+
+        assertLt(withdrawLimitAfter, withdrawLimitBefore, "higher nominal floor should reduce withdrawal limit");
+        assertApproxEqAbs(withdrawLimitAfter, expectedLimit, 2, "withdraw limit should use updated nominal floor");
+    }
+
+    function test_debtFloor_nominalFloorDoesNotChangeDepositLimit() public {
+        protocolConfig.setConfig(ProtocolConfigLib.DEBT_CAP, 500_000e6);
+        protocolConfig.setConfig(ProtocolConfigLib.TRANCHE_RATIO, 1500); // 15%
+
+        uint256 depositLimitBefore = susd3Strategy.availableDepositLimit(alice);
+
+        protocolConfig.setConfig(ProtocolConfigLib.SUSD3_NOMINAL_BACKING_FLOOR, 1_000_000e6);
+
+        uint256 depositLimitAfter = susd3Strategy.availableDepositLimit(alice);
+
+        assertEq(depositLimitAfter, depositLimitBefore, "nominal floor should not affect deposit cap");
+    }
+
     /*//////////////////////////////////////////////////////////////
                     CONCURRENT OPERATIONS TESTS
     //////////////////////////////////////////////////////////////*/
 
     function test_debtFloor_simultaneousWithdrawalsNearFloor() public {
-        // Set backing ratio
-        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 3000); // 30%
-
         // Setup positions
         vm.prank(alice);
         strategy.deposit(DEPOSIT_AMOUNT, alice);
@@ -421,6 +576,9 @@ contract DebtFloorComprehensiveTest is Setup {
         // Create debt
         setMaxOnCredit(8000);
         createMarketDebt(borrower, 300_000e6); // 300K debt needs 90K backing
+
+        // Set backing ratio AFTER debt creation
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 3000); // 30%
 
         // Bob and Charlie both deposit to sUSD3
         vm.prank(bob);
@@ -469,9 +627,6 @@ contract DebtFloorComprehensiveTest is Setup {
     //////////////////////////////////////////////////////////////*/
 
     function test_debtFloor_recoveryFromBelowFloor() public {
-        // Set backing ratio
-        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 5000); // 50%
-
         // Setup positions
         vm.prank(alice);
         strategy.deposit(DEPOSIT_AMOUNT, alice);
@@ -482,6 +637,9 @@ contract DebtFloorComprehensiveTest is Setup {
         // Create debt
         setMaxOnCredit(8000);
         createMarketDebt(borrower, 400_000e6); // 400K debt needs 200K backing
+
+        // Set backing ratio AFTER debt creation
+        protocolConfig.setConfig(ProtocolConfigLib.MIN_SUSD3_BACKING_RATIO, 5000); // 50%
 
         // Bob deposits less than floor requirement
         vm.prank(bob);

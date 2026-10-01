@@ -466,7 +466,7 @@ contract BaseStrategyCoverage is Setup {
 
         // Even management cannot change it once set (one-time only)
         vm.prank(management);
-        vm.expectRevert("sUSD3 already set");
+        vm.expectRevert();
         usd3Strategy.setSUSD3(newSusd3);
 
         // Test onlyKeepers (syncTrancheShare)

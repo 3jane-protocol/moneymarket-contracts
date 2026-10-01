@@ -315,4 +315,119 @@ contract PremiumRateChangeTimestampTest is BaseTest {
         // Allow small tolerance for rounding
         assertApproxEqRel(weeklyGrowth, expectedBaseGrowth, 0.01e18, "Should only have base rate growth");
     }
+
+    /// @dev Puts BORROWER in debt at zero premium rate, then lets the account go stale
+    /// for `staleWindow` without any accrual touch. Returns the stale lastAccrualTime.
+    function _setupStaleZeroRateBorrower(uint256 staleWindow) internal returns (uint256 staleTime) {
+        configurableIrm.setApr(0);
+
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
+
+        vm.prank(address(creditLine));
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, 10_000e18, 0);
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1000e18, 0, BORROWER, BORROWER);
+
+        _continueMarketCycles(id, block.timestamp + staleWindow);
+
+        (staleTime,,) = IMorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
+        assertLt(staleTime, block.timestamp - staleWindow + 1, "setup: lastAccrualTime must be stale");
+    }
+
+    /// @notice Zero -> nonzero rate change on a stale account must not charge the new rate
+    /// over the window that predates it
+    function test_StaleZeroToNonzeroRate_NoRetroactivePremium() public {
+        _setupStaleZeroRateBorrower(120 days);
+
+        uint256 debtBefore = morpho.expectedBorrowAssets(marketParams, BORROWER);
+
+        uint256 newRate = uint256(0.1e18) / uint256(365 days);
+        vm.prank(address(creditLine));
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, 10_000e18, uint128(newRate));
+
+        (uint256 timeAfterSet,,) = IMorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
+        assertEq(timeAfterSet, block.timestamp, "rate change must reset the accrual clock");
+
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        uint256 debtAfter = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        assertEq(debtAfter, debtBefore, "no premium may accrue for the window before the rate existed");
+
+        skip(5 days);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        uint256 debtLater = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        uint256 expectedPremium = debtAfter.wMulDown(newRate.wTaylorCompounded(5 days));
+        assertApproxEqRel(
+            debtLater - debtAfter, expectedPremium, 1e12, "new rate should accrue only from the rate change onward"
+        );
+    }
+
+    /// @notice A nonzero -> nonzero rate change on an account whose accrual clock is stale
+    /// must charge the old rate only over the window it was actually live
+    function test_StaleNonzeroToNonzeroRate_NoRetroactivePremium() public {
+        _setupStaleZeroRateBorrower(120 days);
+
+        uint256 rate1 = uint256(0.05e18) / uint256(365 days);
+        vm.prank(address(creditLine));
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, 10_000e18, uint128(rate1));
+
+        uint256 debtAtRate1 = morpho.expectedBorrowAssets(marketParams, BORROWER);
+
+        skip(1 days);
+
+        uint256 rate2 = uint256(0.15e18) / uint256(365 days);
+        vm.prank(address(creditLine));
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, 10_000e18, uint128(rate2));
+
+        (uint256 timeAfterSet,,) = IMorphoCredit(address(morpho)).borrowerPremium(id, BORROWER);
+        assertEq(timeAfterSet, block.timestamp, "rate change must reset the accrual clock");
+
+        uint256 debtAtRate2 = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        uint256 expectedEarned = debtAtRate1.wMulDown(rate1.wTaylorCompounded(1 days));
+        assertApproxEqRel(
+            debtAtRate2 - debtAtRate1, expectedEarned, 1e12, "old rate must be charged only over the window it was live"
+        );
+
+        skip(5 days);
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        uint256 debtLater = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        uint256 expectedPremium = debtAtRate2.wMulDown(rate2.wTaylorCompounded(5 days));
+        assertApproxEqRel(
+            debtLater - debtAtRate2, expectedPremium, 1e12, "new rate should accrue only from the rate change onward"
+        );
+    }
+
+    /// @notice Premium genuinely earned under the old rate must still be charged at the switch
+    function test_RateChange_ChargesPremiumEarnedUnderOldRate() public {
+        configurableIrm.setApr(0);
+
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
+
+        uint256 rate1 = uint256(0.1e18) / uint256(365 days);
+        vm.prank(address(creditLine));
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, 10_000e18, uint128(rate1));
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1000e18, 0, BORROWER, BORROWER);
+
+        uint256 borrowTime = block.timestamp;
+        _continueMarketCycles(id, block.timestamp + 30 days);
+        uint256 elapsed = block.timestamp - borrowTime;
+
+        uint256 rate2 = uint256(0.2e18) / uint256(365 days);
+        vm.prank(address(creditLine));
+        IMorphoCredit(address(morpho)).setCreditLine(id, BORROWER, 10_000e18, uint128(rate2));
+
+        uint256 debtAfterSwitch = morpho.expectedBorrowAssets(marketParams, BORROWER);
+        uint256 expectedEarned = uint256(1000e18).wMulDown(rate1.wTaylorCompounded(elapsed));
+        assertGt(expectedEarned, 0, "sanity: old-rate premium must be nonzero");
+        assertApproxEqRel(
+            debtAfterSwitch - 1000e18,
+            expectedEarned,
+            1e12,
+            "premium earned under the old rate must not be forgiven at the switch"
+        );
+    }
 }

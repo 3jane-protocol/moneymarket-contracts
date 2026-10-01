@@ -7,6 +7,9 @@ uint256 constant MAX_FEE = 0.25e18;
 /// @dev Oracle price scale.
 uint256 constant ORACLE_PRICE_SCALE = 1e36;
 
+/// @dev Basis points denominator (100%).
+uint256 constant BPS = 10_000;
+
 /// @dev Liquidation cursor.
 uint256 constant LIQUIDATION_CURSOR = 0.3e18;
 
