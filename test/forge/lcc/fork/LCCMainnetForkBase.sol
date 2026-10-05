@@ -64,8 +64,12 @@ abstract contract LCCMainnetForkBase is Test, LCCMarginOracleConfigs {
         string memory rpcUrl = vm.envOr("MAINNET_RPC_URL", string(""));
         if (bytes(rpcUrl).length == 0) rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
         require(bytes(rpcUrl).length != 0, "fork profile is active but neither MAINNET_RPC_URL nor ETH_RPC_URL is set");
-        vm.createSelectFork(rpcUrl, FORK_BLOCK);
+        vm.createSelectFork(rpcUrl, _forkBlock());
         forkEnabled = true;
+    }
+
+    function _forkBlock() internal pure virtual returns (uint256) {
+        return FORK_BLOCK;
     }
 
     function _createOracle(OracleConfig memory config) internal returns (ILCCForkOracle oracle) {
