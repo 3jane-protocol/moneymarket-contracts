@@ -48,6 +48,8 @@ abstract contract LCCMainnetForkBase is Test, LCCMarginOracleConfigs {
     address internal constant A_USDT = 0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a;
     address internal constant WA_ETH_USDC = 0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E;
     address internal constant WA_ETH_USDT = 0x7Bc3485026Ac48b6cf9BaF0A377477Fff5703Af8;
+    address internal constant USD3 = 0x056B269Eb1f75477a8666ae8C7fE01b64dD55eCc;
+    address internal constant USD3_USDC_ORACLE = 0x68b4c2B2b2e245AB54a3bD55DfD5A9d84f029C06;
 
     bool internal forkEnabled;
 

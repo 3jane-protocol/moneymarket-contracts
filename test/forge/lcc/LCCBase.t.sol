@@ -122,6 +122,28 @@ contract LCCMockNotificationVault is ERC4626 {
     }
 }
 
+/// @dev Arms a single reentrant call that the inheriting mock fires from inside one of its own entrypoints; the call
+/// must fail and its error selector is recorded.
+abstract contract LCCReentryProbe {
+    address public reentryTarget;
+    bytes public reentryData;
+    bytes4 public reentryError;
+
+    function armReentry(address target, bytes calldata data) external {
+        reentryTarget = target;
+        reentryData = data;
+    }
+
+    function _fireReentry() internal {
+        if (reentryTarget == address(0)) return;
+        address target = reentryTarget;
+        reentryTarget = address(0);
+        (bool ok, bytes memory result) = target.call(reentryData);
+        require(!ok, "REENTRY_SUCCEEDED");
+        if (result.length >= 4) reentryError = bytes4(result);
+    }
+}
+
 contract LCCRevertingOracle is IOracle {
     function price() external pure returns (uint256) {
         revert("ORACLE_DOWN");
@@ -224,9 +246,7 @@ contract LCCBase is Test, ILCCVaultFactory {
     function setUp() public virtual {
         vm.warp(START);
         margin = new LCCMockToken("Margin", "MRG");
-        usdc = new LCCMockToken("USD Coin", "USDC");
-        usd3 = new LCCMockUSD3(IERC20(address(usdc)));
-        notificationVault = new LCCMockNotificationVault(IERC20(address(usd3)));
+        _deployTokens();
         oracle = new OracleMock();
         oracle.setPrice(ORACLE_PRICE_SCALE);
         vaultImplementation = new LCCVault(address(notificationVault), treasury);
@@ -259,6 +279,12 @@ contract LCCBase is Test, ILCCVaultFactory {
         _mintAndApprove(alice, 1_000_000e18, 1_000_000e18);
         _mintAndApprove(bob, 1_000_000e18, 1_000_000e18);
         _mintAndApprove(carol, 1_000_000e18, 1_000_000e18);
+    }
+
+    function _deployTokens() internal virtual {
+        usdc = new LCCMockToken("USD Coin", "USDC");
+        usd3 = new LCCMockUSD3(IERC20(address(usdc)));
+        notificationVault = new LCCMockNotificationVault(IERC20(address(usd3)));
     }
 
     function _params(uint256 protocolCap, uint256 userCap) internal view returns (ILCCVault.VaultParams memory) {

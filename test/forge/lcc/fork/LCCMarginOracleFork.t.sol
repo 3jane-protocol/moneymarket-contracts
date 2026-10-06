@@ -6,8 +6,6 @@ import {ILCCForkERC4626, ILCCForkOracle, ILCCForkOracleFactory, LCCMainnetForkBa
 contract LCCMarginOracleForkTest is LCCMainnetForkBase {
     address internal constant SUSDE_USDC_ORACLE = 0x873CD44b860DEDFe139f93e12A4AcCa0926Ffb87;
     address internal constant SUSDE = 0x9D39A5DE30e57443BfF2A8307A4256c8797A3497;
-    address internal constant USD3_USDC_ORACLE = 0x68b4c2B2b2e245AB54a3bD55DfD5A9d84f029C06;
-    address internal constant USD3 = 0x056B269Eb1f75477a8666ae8C7fE01b64dD55eCc;
 
     function testCreatesAllFourFeedlessOraclesAtPinnedAddresses() public requiresFork {
         OracleConfig[4] memory configs = oracleConfigs();
