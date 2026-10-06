@@ -10,8 +10,11 @@ import {SafeHelper} from "../utils/SafeHelper.sol";
 /// @title AuthorizeLCCMarginDepositHelperSafe
 /// @notice Proposes the single factory role grant needed by the self-service margin deposit helper, and separately
 /// the single role revoke that retires a replaced deposit operator.
-/// @dev `run` only grants and `revoke` only revokes, so each Safe proposal is one factory call and a replaced helper
-/// stays authorized until `revoke` is run for it. Both log the resulting deposit-operator set.
+/// @dev `--sig "run(bool)" <send>` proposes the grant for `LCC_MARGIN_DEPOSIT_HELPER`. `--sig "revoke(bool)" <send>`
+/// proposes the revoke for `LCC_DEPOSIT_OPERATOR_TO_REVOKE`, which may be any current deposit operator except the
+/// address in `LCC_MARGIN_DEPOSIT_HELPER`. `run` only grants and `revoke` only revokes, so each Safe proposal is one
+/// factory call and a replaced helper stays authorized until `revoke` is run for it. Both log the deposit-operator
+/// set of the simulated state, which reflects a proposal only once the Safe executes it.
 contract AuthorizeLCCMarginDepositHelperSafe is Script, SafeHelper {
     address internal constant DEFAULT_SAFE = 0x33333333Bd7045F1A601A1E289D7AB21036fB5EF;
     address internal constant WA_ETH_USDC = 0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E;
@@ -62,21 +65,20 @@ contract AuthorizeLCCMarginDepositHelperSafe is Script, SafeHelper {
     function revoke(bool send) external isBatch(vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE)) {
         address safe = vm.envOr("SAFE_ADDRESS", DEFAULT_SAFE);
         LCCVaultFactory factory = LCCVaultFactory(vm.envAddress("LCC_FACTORY"));
-        address previousHelper = vm.envAddress("LCC_MARGIN_DEPOSIT_HELPER_PREVIOUS");
+        address operator = vm.envAddress("LCC_DEPOSIT_OPERATOR_TO_REVOKE");
         require(address(factory).code.length > 0, "factory has no code");
         _verifyRoleAuthority(factory, safe);
-        require(factory.isDepositOperator(previousHelper), "previous helper is not a deposit operator");
+        require(operator != vm.envOr("LCC_MARGIN_DEPOSIT_HELPER", address(0)), "operator is LCC_MARGIN_DEPOSIT_HELPER");
+        require(factory.isDepositOperator(operator), "address is not a deposit operator");
 
-        addToBatch(
-            address(factory), abi.encodeCall(factory.revokeRole, (factory.DEPOSIT_OPERATOR_ROLE(), previousHelper))
-        );
-        require(!factory.isDepositOperator(previousHelper), "simulated role revoke failed");
+        addToBatch(address(factory), abi.encodeCall(factory.revokeRole, (factory.DEPOSIT_OPERATOR_ROLE(), operator)));
+        require(!factory.isDepositOperator(operator), "simulated role revoke failed");
         require(getTotalBatches() == 1, "SafeHelper split role revoke");
         (uint256 txCount,) = getBatchInfo(0);
         require(txCount == 1, "role revoke must be one Safe call");
         executeBatch(send);
 
-        console2.log("LCC margin deposit helper revoked:", previousHelper);
+        console2.log("LCC deposit operator revoked:", operator);
         _logDepositOperators(factory);
     }
 
@@ -92,7 +94,7 @@ contract AuthorizeLCCMarginDepositHelperSafe is Script, SafeHelper {
     function _logDepositOperators(LCCVaultFactory factory) private view {
         bytes32 role = factory.DEPOSIT_OPERATOR_ROLE();
         uint256 count = factory.getRoleMemberCount(role);
-        console2.log("Deposit operators after this proposal:", count);
+        console2.log("Deposit operators in simulated state:", count);
         for (uint256 i; i < count; ++i) {
             console2.log("  deposit operator:", factory.getRoleMember(role, i));
         }

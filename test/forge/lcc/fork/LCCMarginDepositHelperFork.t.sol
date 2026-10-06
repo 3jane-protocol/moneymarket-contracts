@@ -157,7 +157,7 @@ contract LCCMarginDepositHelperForkTest is LCCMainnetForkBase {
         vm.setEnv("SAFE_ADDRESS", vm.toString(address(this)));
         vm.setEnv("LCC_FACTORY", vm.toString(address(factory)));
         vm.setEnv("LCC_MARGIN_DEPOSIT_HELPER", vm.toString(address(replacement)));
-        vm.setEnv("LCC_MARGIN_DEPOSIT_HELPER_PREVIOUS", vm.toString(address(helper)));
+        vm.setEnv("LCC_DEPOSIT_OPERATOR_TO_REVOKE", vm.toString(address(helper)));
 
         AuthorizeLCCMarginDepositHelperSafe grant = new AuthorizeLCCMarginDepositHelperSafe();
         grant.run(false);
@@ -176,7 +176,12 @@ contract LCCMarginDepositHelperForkTest is LCCMainnetForkBase {
         assertTrue(factory.isDepositOperator(address(replacement)));
 
         AuthorizeLCCMarginDepositHelperSafe rejected = new AuthorizeLCCMarginDepositHelperSafe();
-        vm.expectRevert(bytes("previous helper is not a deposit operator"));
+        vm.expectRevert(bytes("address is not a deposit operator"));
+        rejected.revoke(false);
+
+        vm.setEnv("LCC_DEPOSIT_OPERATOR_TO_REVOKE", vm.toString(address(replacement)));
+        rejected = new AuthorizeLCCMarginDepositHelperSafe();
+        vm.expectRevert(bytes("operator is LCC_MARGIN_DEPOSIT_HELPER"));
         rejected.revoke(false);
 
         assertEq(_runRevoke(closedOperator), 1);
@@ -185,8 +190,8 @@ contract LCCMarginDepositHelperForkTest is LCCMainnetForkBase {
         assertEq(factory.getRoleMember(role, 0), address(replacement));
     }
 
-    function _runRevoke(address previousHelper) private returns (uint256 calls) {
-        vm.setEnv("LCC_MARGIN_DEPOSIT_HELPER_PREVIOUS", vm.toString(previousHelper));
+    function _runRevoke(address operator) private returns (uint256 calls) {
+        vm.setEnv("LCC_DEPOSIT_OPERATOR_TO_REVOKE", vm.toString(operator));
         AuthorizeLCCMarginDepositHelperSafe revocation = new AuthorizeLCCMarginDepositHelperSafe();
         revocation.revoke(false);
         (calls,) = revocation.getBatchInfo(0);
