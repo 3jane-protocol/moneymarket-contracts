@@ -457,14 +457,7 @@ contract LCCMarginDepositHelperTest is LCCBase {
     }
 
     function _assertPath(uint256 path, ILCCVault target, uint256 amount) private {
-        ILCCMarginDepositHelper.DepositParams memory params = _paramsFor(target, amount);
-        vm.prank(alice);
-        uint256 commitment;
-        if (path == 0) commitment = helper.depositUSDC(params);
-        else if (path == 1) commitment = helper.depositAethUSDC(params);
-        else if (path == 2) commitment = helper.depositUSDT(params);
-        else commitment = helper.depositAethUSDT(params);
-        assertEq(commitment, amount * 2);
+        assertEq(_depositPath(path, _paramsFor(target, amount)), amount * 2);
     }
 
     function _paramsFor(ILCCVault target, uint256 amount)

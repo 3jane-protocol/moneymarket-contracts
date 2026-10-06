@@ -365,7 +365,12 @@ other than the transaction author. Factory registration and the vault's expected
 input token is pulled. User-supplied share and commitment bounds, pending-activation choice, and deadline are
 forwarded to the matching vault. An optional `referral` code emits `LCCDepositReferred` (depositor, vault, code,
 deposited margin shares, commitment) after a successful deposit only when it is nonzero; the code is caller-supplied,
-unauthenticated, used for offchain attribution only, and adds no authority or state.
+unauthenticated, used for offchain attribution only, and adds no authority or state. Indexers must filter on the
+helper's address rather than the event signature alone, because any contract can emit the same event. Each event
+records one gross deposit under whatever code the caller chose, so netting exits and redeposits, and resolving a
+depositor who uses several codes, are indexer policy; whether the deposit activated immediately or was staged as
+pending is carried by the vault's `DepositCheckpointed` in the same transaction. Deposits made directly through
+`LCCVault.deposit` carry no code.
 
 Underlying-token paths respect the StataToken's finite `maxDeposit`; aToken paths use `depositATokens` and remain
 available when the Aave underlying supply cap leaves no deposit headroom. Integrators should approve only the selected

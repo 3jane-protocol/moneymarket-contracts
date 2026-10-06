@@ -146,29 +146,52 @@ contract LCCMarginDepositHelperForkTest is LCCMainnetForkBase {
         assertGt(usdtVault.getAccount(bob).activeMargin, 0);
     }
 
-    function testAuthorizeScriptGrantsReplacementAndRevokesPreviousHelper() public requiresFork {
+    function testAuthorizeScriptGrantsThenRevokesAcrossHelperReplacements() public requiresFork {
         LCCMarginDepositHelper replacement = new LCCMarginDepositHelper(address(factory), WA_ETH_USDC, WA_ETH_USDT);
+        LCCMarginDepositHelper successor = new LCCMarginDepositHelper(address(factory), WA_ETH_USDC, WA_ETH_USDT);
+        LCCMarginDepositHelper unauthorized = new LCCMarginDepositHelper(address(factory), WA_ETH_USDC, WA_ETH_USDT);
         vm.setEnv("WALLET_TYPE", "local");
         vm.setEnv("SAFE_PROPOSER_PRIVATE_KEY", vm.toString(bytes32(uint256(1))));
         vm.setEnv("SAFE_NONCE", "1");
         vm.setEnv("SAFE_ADDRESS", vm.toString(address(this)));
         vm.setEnv("LCC_FACTORY", vm.toString(address(factory)));
-        vm.setEnv("LCC_MARGIN_DEPOSIT_HELPER", vm.toString(address(replacement)));
-        vm.setEnv("LCC_MARGIN_DEPOSIT_HELPER_PREVIOUS", vm.toString(address(helper)));
 
-        AuthorizeLCCMarginDepositHelperSafe rotation = new AuthorizeLCCMarginDepositHelperSafe();
-        rotation.run(false);
-        (uint256 rotationCalls,) = rotation.getBatchInfo(0);
-        assertEq(rotationCalls, 2);
+        assertEq(_runAuthorize(address(replacement), address(0)), 1);
+        assertTrue(factory.isDepositOperator(address(replacement)));
+        assertTrue(factory.isDepositOperator(address(helper)));
+
+        assertEq(_runAuthorize(address(replacement), address(helper)), 1);
         assertTrue(factory.isDepositOperator(address(replacement)));
         assertFalse(factory.isDepositOperator(address(helper)));
 
-        AuthorizeLCCMarginDepositHelperSafe rerun = new AuthorizeLCCMarginDepositHelperSafe();
-        rerun.run(false);
-        (uint256 rerunCalls,) = rerun.getBatchInfo(0);
-        assertEq(rerunCalls, 0);
-        assertTrue(factory.isDepositOperator(address(replacement)));
-        assertFalse(factory.isDepositOperator(address(helper)));
+        assertEq(_runAuthorize(address(replacement), address(helper)), 0);
+
+        _setAuthorizeTargets(address(successor), address(unauthorized));
+        AuthorizeLCCMarginDepositHelperSafe rejected = new AuthorizeLCCMarginDepositHelperSafe();
+        vm.expectRevert(bytes("previous helper holds no role"));
+        rejected.run(false);
+
+        _setAuthorizeTargets(address(successor), address(successor));
+        rejected = new AuthorizeLCCMarginDepositHelperSafe();
+        vm.expectRevert(bytes("previous helper is the new helper"));
+        rejected.run(false);
+
+        assertEq(_runAuthorize(address(successor), address(replacement)), 2);
+        assertTrue(factory.isDepositOperator(address(successor)));
+        assertFalse(factory.isDepositOperator(address(replacement)));
+        assertEq(factory.getRoleMemberCount(factory.DEPOSIT_OPERATOR_ROLE()), 1);
+    }
+
+    function _runAuthorize(address helperAddress, address previousHelper) private returns (uint256 calls) {
+        _setAuthorizeTargets(helperAddress, previousHelper);
+        AuthorizeLCCMarginDepositHelperSafe authorize = new AuthorizeLCCMarginDepositHelperSafe();
+        authorize.run(false);
+        (calls,) = authorize.getBatchInfo(0);
+    }
+
+    function _setAuthorizeTargets(address helperAddress, address previousHelper) private {
+        vm.setEnv("LCC_MARGIN_DEPOSIT_HELPER", vm.toString(helperAddress));
+        vm.setEnv("LCC_MARGIN_DEPOSIT_HELPER_PREVIOUS", vm.toString(previousHelper));
     }
 
     function testRealUnderlyingDepositEmitsReferralAttribution() public requiresFork {

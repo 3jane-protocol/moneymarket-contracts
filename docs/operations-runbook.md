@@ -495,6 +495,25 @@ Before granting the role:
 3. Verify `factory.isDepositOperator(candidate)` is true. The view is for operations and integrations; enforcement
    occurs inside `authorizeDeposit`.
 
+**Replacing the margin deposit helper.** `LCCMarginDepositHelper` is non-upgradeable, so any change to it, including
+one that alters `DepositParams` and therefore every deposit selector, ships as a new deployment at a new address.
+Keep both helpers authorized across the integrator cutover; revoking the replaced helper in the same transaction as
+the grant makes every deposit still routed through it revert in `authorizeDeposit`.
+
+1. Deploy with `script/deploy/lcc/DeployLCCMarginDepositHelper.s.sol`. It grants no role.
+2. Run `script/operations/AuthorizeLCCMarginDepositHelperSafe.s.sol` with `LCC_MARGIN_DEPOSIT_HELPER` set to the new
+   address and `LCC_MARGIN_DEPOSIT_HELPER_PREVIOUS` unset. It proposes the grant alone and logs the resulting
+   deposit-operator set, which must list both helpers.
+3. Move integrators to the new address and ABI, and point indexers at the new helper while keeping the replaced one
+   for history.
+4. Once no deposits route through the replaced helper, run the same script with `LCC_MARGIN_DEPOSIT_HELPER_PREVIOUS`
+   set to it. It proposes the revoke alone. The script rejects a previous address that holds no role unless the new
+   helper is already authorized, so confirm from the logged operator set, not from the absence of a revert, that the
+   replaced helper is gone and `factory.isDepositOperator(replaced)` is false.
+
+Setting both variables on the first run proposes the grant and the revoke as one Safe transaction. Use that only
+when no integrator still depends on the replaced helper.
+
 Before every delegated adapter-routed deposit, pre-check the beneficiary is nonzero, resolve its explicit or default
 factory cap, include both active and pending commitment in the projected total, confirm it has no exit in progress or
 incompatible pending activation, and confirm eligibility under the warm one-vault pointer and admissions module.
