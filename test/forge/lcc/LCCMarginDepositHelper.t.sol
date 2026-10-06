@@ -12,6 +12,7 @@ import {ILCCMarginDepositHelper} from "../../../src/lcc/interfaces/ILCCMarginDep
 import {ILCCAdmissionsModule} from "../../../src/lcc/interfaces/ILCCAdmissionsModule.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
+import {Vm} from "../../../lib/forge-std/src/Vm.sol";
 
 contract LCCMockStataToken is ERC20 {
     using SafeERC20 for IERC20;
@@ -386,6 +387,75 @@ contract LCCMarginDepositHelperTest is LCCBase {
         new LCCMarginDepositHelper(address(factory), address(waEthUSDC), address(zeroAToken));
     }
 
+    function testReferralEventEmittedOnAllFourPaths() public {
+        factory.setOneVaultPolicyEnabled(false);
+        _assertReferredPath(0, usdcVault, 10e18, keccak256("REF_USDC"));
+        _assertReferredPath(1, usdcVault, 11e18, keccak256("REF_AUSDC"));
+        _assertReferredPath(2, usdtVault, 12e18, keccak256("REF_USDT"));
+        _assertReferredPath(3, usdtVault, 13e18, keccak256("REF_AUSDT"));
+    }
+
+    function testZeroReferralEmitsNoReferralEvent() public {
+        factory.setOneVaultPolicyEnabled(false);
+        vm.recordLogs();
+        _depositPath(0, _paramsFor(usdcVault, 10e18));
+        _depositPath(1, _paramsFor(usdcVault, 10e18));
+        _depositPath(2, _paramsFor(usdtVault, 10e18));
+        _depositPath(3, _paramsFor(usdtVault, 10e18));
+        _assertNoReferralLog(vm.getRecordedLogs());
+        assertEq(usdcVault.getAccount(alice).activeMargin, 20e18);
+        assertEq(usdtVault.getAccount(alice).activeMargin, 20e18);
+    }
+
+    function testReferralDoesNotChangeDepositOutcome() public {
+        ILCCMarginDepositHelper.DepositParams memory params = _paramsFor(usdcVault, 10e18);
+        uint256 snapshot = vm.snapshotState();
+        vm.prank(alice);
+        uint256 plainCommitment = helper.depositUSDC(params);
+        bytes memory plainAccount = abi.encode(usdcVault.getAccount(alice));
+        uint256 plainVaultMargin = waEthUSDC.balanceOf(address(usdcVault));
+        uint256 plainAliceBalance = underlyingUSDC.balanceOf(alice);
+        assertTrue(vm.revertToStateAndDelete(snapshot), "snapshot restore failed");
+
+        params.referral = keccak256("REF_SAME");
+        vm.prank(alice);
+        uint256 referredCommitment = helper.depositUSDC(params);
+        assertEq(referredCommitment, plainCommitment);
+        assertEq(abi.encode(usdcVault.getAccount(alice)), plainAccount);
+        assertEq(waEthUSDC.balanceOf(address(usdcVault)), plainVaultMargin);
+        assertEq(underlyingUSDC.balanceOf(alice), plainAliceBalance);
+        assertEq(waEthUSDC.balanceOf(address(helper)), 0);
+    }
+
+    function _assertReferredPath(uint256 path, ILCCVault target, uint256 amount, bytes32 code) private {
+        ILCCMarginDepositHelper.DepositParams memory params = _paramsFor(target, amount);
+        params.referral = code;
+        vm.expectEmit(true, true, true, true, address(helper));
+        emit ILCCMarginDepositHelper.LCCDepositReferred(alice, address(target), code, amount, amount * 2);
+        uint256 commitment = _depositPath(path, params);
+        assertEq(commitment, amount * 2);
+    }
+
+    function _depositPath(uint256 path, ILCCMarginDepositHelper.DepositParams memory params)
+        private
+        returns (uint256 commitment)
+    {
+        vm.prank(alice);
+        if (path == 0) commitment = helper.depositUSDC(params);
+        else if (path == 1) commitment = helper.depositAethUSDC(params);
+        else if (path == 2) commitment = helper.depositUSDT(params);
+        else commitment = helper.depositAethUSDT(params);
+    }
+
+    function _assertNoReferralLog(Vm.Log[] memory logs) private view {
+        bytes32 topic0 = ILCCMarginDepositHelper.LCCDepositReferred.selector;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter == address(helper) && logs[i].topics.length > 0) {
+                assertTrue(logs[i].topics[0] != topic0, "unexpected referral event");
+            }
+        }
+    }
+
     function _assertPath(uint256 path, ILCCVault target, uint256 amount) private {
         ILCCMarginDepositHelper.DepositParams memory params = _paramsFor(target, amount);
         vm.prank(alice);
@@ -409,7 +479,8 @@ contract LCCMarginDepositHelperTest is LCCBase {
             minCommitment: amount * 2,
             maxCommitment: amount * 2,
             allowPendingActivation: false,
-            deadline: block.timestamp
+            deadline: block.timestamp,
+            referral: bytes32(0)
         });
     }
 }

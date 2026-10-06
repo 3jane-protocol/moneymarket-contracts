@@ -363,7 +363,9 @@ there is no receiver, `onBehalfOf`, `depositFor`, owner, upgrade, rescue, or gen
 needs the family-wide `DEPOSIT_OPERATOR_ROLE` because it pays the vault, but it cannot use that role to credit anyone
 other than the transaction author. Factory registration and the vault's expected margin asset are checked before any
 input token is pulled. User-supplied share and commitment bounds, pending-activation choice, and deadline are
-forwarded to the matching vault.
+forwarded to the matching vault. An optional `referral` code emits `LCCDepositReferred` (depositor, vault, code,
+deposited margin shares, commitment) after a successful deposit only when it is nonzero; the code is caller-supplied,
+unauthenticated, used for offchain attribution only, and adds no authority or state.
 
 Underlying-token paths respect the StataToken's finite `maxDeposit`; aToken paths use `depositATokens` and remain
 available when the Aave underlying supply cap leaves no deposit headroom. Integrators should approve only the selected
