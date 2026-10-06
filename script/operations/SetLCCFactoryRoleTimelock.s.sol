@@ -12,9 +12,9 @@ import {TimelockHelper} from "../utils/TimelockHelper.sol";
 /// @notice Grants or revokes an LCCVaultFactory operational role while the factory is owned by the 24-hour
 ///         parameters timelock: the Safe proposes one timelock operation, executed after the delay.
 /// @dev Covers LISTER_ROLE, BOUNCER_ROLE, and GUARDIAN_ROLE only. OWNER_ROLE moves solely through the factory's
-///      two-step ownership transfer, and DEPOSIT_OPERATOR_ROLE is granted only through
-///      AuthorizeLCCMarginDepositHelperSafe after a runtime code-hash review. Timelock-routed counterpart of
-///      GrantLCCFactoryRoleSafe.
+///      two-step ownership transfer. DEPOSIT_OPERATOR_ROLE grants go through AuthorizeLCCMarginDepositHelperSafe
+///      after a runtime code-hash review; revokes go through the same script's timelock-routed revoke flow, which
+///      reads no operator code. Timelock-routed counterpart of GrantLCCFactoryRoleSafe.
 ///
 ///      Usage:
 ///      1. --sig "schedule(bool,uint256,bool)" true 0 false   (grant; `false` revokes; then send with true)

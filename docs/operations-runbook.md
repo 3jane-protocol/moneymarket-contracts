@@ -490,8 +490,9 @@ Before granting the role:
    every deposit entrypoint hard-binds the beneficiary to `msg.sender` and that there is no receiver, `onBehalfOf`,
    `depositFor`, owner, upgrade, rescue, or generic-call surface. Reject any target that forwards caller-selected
    arbitrary calldata.
-2. Verify `factory.getRoleAdmin(factory.DEPOSIT_OPERATOR_ROLE()) == factory.OWNER_ROLE()` and that the Safe is the
-   sole owner. Submit `grantRole` from the factory owner.
+2. Verify `factory.getRoleAdmin(factory.DEPOSIT_OPERATOR_ROLE()) == factory.OWNER_ROLE()`, that the 24-hour
+   parameters timelock is the factory's sole owner, and that the main Safe holds the timelock's `PROPOSER_ROLE`.
+   Schedule `grantRole` through the Safe, then execute it from an authorized timelock executor after the delay.
 3. Verify `factory.isDepositOperator(candidate)` is true. The view is for operations and integrations; enforcement
    occurs inside `authorizeDeposit`.
 
@@ -501,23 +502,33 @@ Keep both helpers authorized across the integrator cutover; revoking the replace
 the grant makes every deposit still routed through it revert in `authorizeDeposit`.
 
 1. Deploy with `script/deploy/lcc/DeployLCCMarginDepositHelper.s.sol`. It grants no role.
-2. Run `script/operations/AuthorizeLCCMarginDepositHelperSafe.s.sol` with `--sig "run(bool)" true` and
-   `LCC_MARGIN_DEPOSIT_HELPER` set to the new address. It proposes the grant alone. The deposit-operator set it logs
-   is simulated, so after the Safe executes the proposal confirm on chain that `factory.isDepositOperator` is true
-   for both helpers.
-3. Move integrators to the new address and ABI, and point indexers at the new helper while keeping the replaced one
+2. Set `LCC_MARGIN_DEPOSIT_HELPER` to the new address and run
+   `script/operations/AuthorizeLCCMarginDepositHelperSafe.s.sol` with
+   `--sig "schedule(uint256,bool)" 0 true`. The main Safe proposal contains only the parameters timelock's
+   `scheduleBatch` call. The script rebuilds the reviewed helper for its runtime code-hash comparison, checks all
+   seven wiring getters and the factory/timelock topology, and uses `0` as the first attempt nonce.
+3. After 24 hours, run the script with `--sig "execute(uint256)" 0 --broadcast` from the deployer EOA or another
+   account holding the parameters timelock's `EXECUTOR_ROLE`. This is a direct executor broadcast, not a Safe
+   proposal. Then run `--sig "verify()"` and confirm both the new and replaced helpers remain in the logged onchain
+   deposit-operator set.
+4. Move integrators to the new address and ABI, and point indexers at the new helper while keeping the replaced one
    for history.
-4. Once the grant has executed and no deposits route through the replaced helper, run the same script with
-   `--sig "revoke(bool)" true` and `LCC_DEPOSIT_OPERATOR_TO_REVOKE` set to the replaced helper. It proposes the
-   revoke alone and reverts if that address holds no role. After execution confirm
-   `factory.isDepositOperator(replaced)` is false.
+5. Once no deposits route through the replaced helper, set `LCC_DEPOSIT_OPERATOR_TO_REVOKE` to its address and run
+   `--sig "scheduleRevoke(uint256,bool)" 0 true`. This submits a separate one-call Safe proposal that schedules only
+   the revoke operation. The replaced helper remains authorized throughout the Safe queue and the 24-hour timelock
+   delay.
+6. After another 24 hours, run `--sig "executeRevoke(uint256)" 0 --broadcast` from an authorized parameters
+   timelock executor, then run `--sig "verifyRevoke()"`. Only execution removes the role; verification requires
+   `factory.isDepositOperator(replaced)` to be false.
 
-The script's default entrypoint is the grant dry run, so step 4 without `--sig "revoke(bool)"` proposes nothing and
-still exits cleanly. `run` never revokes and `revoke` never grants, so the two cannot land in one Safe transaction by
-accident; do not propose the revoke while the grant is still pending in the Safe queue. `revoke` checks only that
-the named address holds the role and is not the address in `LCC_MARGIN_DEPOSIT_HELPER`: it reads no helper wiring or
-code, so it also retires a helper built from older source or any other deposit operator, and it does not require a
-replacement to be authorized first. To revoke the current helper itself, unset `LCC_MARGIN_DEPOSIT_HELPER`.
+Use the same attempt nonce for a schedule and its execution. Re-running a pending schedule is a no-op while its
+scheduling preconditions still hold; a `scheduleRevoke` re-run for an address that no longer holds the role reverts
+`address is not a deposit operator`. An attempt whose operation is already done must not be reused if the requested
+role state later changes, so increment the attempt. Grant and revoke salts include the account and direction and can
+never identify the same operation. The revoke flow checks only that the named address holds the role and is not the
+address in `LCC_MARGIN_DEPOSIT_HELPER`: it reads no helper wiring or code, so it can also retire a helper built from
+older source or another deposit operator. To revoke an address also present in `LCC_MARGIN_DEPOSIT_HELPER`, unset that
+optional environment variable for the revoke commands.
 
 Before every delegated adapter-routed deposit, pre-check the beneficiary is nonzero, resolve its explicit or default
 factory cap, include both active and pending commitment in the projected total, confirm it has no exit in progress or

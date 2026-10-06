@@ -10,6 +10,7 @@ import {LCCMainnetForkBase} from "./LCCMainnetForkBase.sol";
 import {
     AuthorizeLCCMarginDepositHelperSafe
 } from "../../../../script/operations/AuthorizeLCCMarginDepositHelperSafe.s.sol";
+import {ITimelockController} from "../../../../src/interfaces/ITimelockController.sol";
 import {LCCMockNotificationVault, LCCMockUSD3} from "../LCCBase.t.sol";
 import {LCCMarginDepositHelper} from "../../../../src/lcc/LCCMarginDepositHelper.sol";
 import {LCCVault} from "../../../../src/lcc/LCCVault.sol";
@@ -18,7 +19,7 @@ import {ILCCMarginDepositHelper} from "../../../../src/lcc/interfaces/ILCCMargin
 import {ILCCVault} from "../../../../src/lcc/interfaces/ILCCVault.sol";
 import {OracleMock} from "../../../../src/mocks/OracleMock.sol";
 import {ORACLE_PRICE_SCALE} from "../../../../src/libraries/ConstantsLib.sol";
-import {Vm} from "../../../../lib/forge-std/src/Vm.sol";
+import {Vm, VmSafe} from "../../../../lib/forge-std/src/Vm.sol";
 
 interface IAaveV3PoolSupply {
     function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
@@ -28,6 +29,9 @@ contract LCCMarginDepositHelperForkTest is LCCMainnetForkBase {
     using SafeERC20 for IERC20;
 
     address internal constant AAVE_V3_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
+    address internal constant PARAMS_TIMELOCK = 0x1dCcD4628d48a50C1A7adEA3848bcC869f08f8C2;
+    address internal constant SAFE_ADDRESS = 0x33333333Bd7045F1A601A1E289D7AB21036fB5EF;
+    bytes32 internal constant DEPOSIT_OPERATOR_SALT_DOMAIN = bytes32("3JANE_LCC_DEPOSIT_OPERATOR_V1");
 
     LCCVaultFactory internal factory;
     LCCMarginDepositHelper internal helper;
@@ -146,55 +150,216 @@ contract LCCMarginDepositHelperForkTest is LCCMainnetForkBase {
         assertGt(usdtVault.getAccount(bob).activeMargin, 0);
     }
 
-    function testAuthorizeScriptGrantsAndRevokesAsSeparateProposals() public requiresFork {
+    function testAuthorizeScriptScenariosRunSequentially() public requiresFork {
+        uint256 snapshot = vm.snapshotState();
+        _assertAuthorizeScriptSchedulesExecutesAndVerifiesGrant();
+        assertTrue(vm.revertToStateAndDelete(snapshot), "grant scenario restore failed");
+
+        snapshot = vm.snapshotState();
+        _assertAuthorizeScriptSchedulesExecutesAndVerifiesRevoke();
+        assertTrue(vm.revertToStateAndDelete(snapshot), "revoke scenario restore failed");
+
+        snapshot = vm.snapshotState();
+        _assertAuthorizeScriptRevokesCodelessOperator();
+        assertTrue(vm.revertToStateAndDelete(snapshot), "codeless revoke scenario restore failed");
+
+        snapshot = vm.snapshotState();
+        _assertAuthorizeScriptDoneGrantAttemptRequiresFreshAttemptWhenRoleWasRemoved();
+        assertTrue(vm.revertToStateAndDelete(snapshot), "done-attempt scenario restore failed");
+
+        snapshot = vm.snapshotState();
+        _assertAuthorizeScriptRejectsUnreviewedHelperRuntime();
+        assertTrue(vm.revertToStateAndDelete(snapshot), "runtime-check scenario restore failed");
+    }
+
+    function _assertAuthorizeScriptSchedulesExecutesAndVerifiesGrant() private {
         LCCMarginDepositHelper replacement = new LCCMarginDepositHelper(address(factory), WA_ETH_USDC, WA_ETH_USDT);
-        address closedOperator = makeAddr("closed-operator");
-        bytes32 role = factory.DEPOSIT_OPERATOR_ROLE();
-        factory.grantRole(role, closedOperator);
-        vm.setEnv("WALLET_TYPE", "local");
-        vm.setEnv("SAFE_PROPOSER_PRIVATE_KEY", vm.toString(bytes32(uint256(1))));
-        vm.setEnv("SAFE_NONCE", "1");
-        vm.setEnv("SAFE_ADDRESS", vm.toString(address(this)));
-        vm.setEnv("LCC_FACTORY", vm.toString(address(factory)));
-        vm.setEnv("LCC_MARGIN_DEPOSIT_HELPER", vm.toString(address(replacement)));
-        vm.setEnv("LCC_DEPOSIT_OPERATOR_TO_REVOKE", vm.toString(address(helper)));
+        _configureAuthorizeScript(replacement, address(helper));
+        _moveFactoryToParametersTimelock();
+        _authorizeDefaultBroadcaster();
 
         AuthorizeLCCMarginDepositHelperSafe grant = new AuthorizeLCCMarginDepositHelperSafe();
-        grant.run(false);
+        grant.schedule(0, false);
         (uint256 calls,) = grant.getBatchInfo(0);
         assertEq(calls, 1);
-        assertTrue(factory.isDepositOperator(address(replacement)));
+        assertFalse(factory.isDepositOperator(address(replacement)));
         assertTrue(factory.isDepositOperator(address(helper)));
 
-        grant = new AuthorizeLCCMarginDepositHelperSafe();
-        grant.run(false);
-        (calls,) = grant.getBatchInfo(0);
-        assertEq(calls, 0);
+        bytes32 grantOperationId = _operationId(address(replacement), true, 0);
+        ITimelockController controller = ITimelockController(PARAMS_TIMELOCK);
+        assertTrue(controller.isOperationPending(grantOperationId));
+        uint256 grantReadyAt = controller.getTimestamp(grantOperationId);
 
-        assertEq(_runRevoke(address(helper)), 1);
+        AuthorizeLCCMarginDepositHelperSafe pendingGrant = new AuthorizeLCCMarginDepositHelperSafe();
+        pendingGrant.schedule(0, false);
+        (calls,) = pendingGrant.getBatchInfo(0);
+        assertEq(calls, 0);
+        assertEq(controller.getTimestamp(grantOperationId), grantReadyAt);
+        assertFalse(factory.isDepositOperator(address(replacement)));
+
+        AuthorizeLCCMarginDepositHelperSafe earlyGrantExecution = new AuthorizeLCCMarginDepositHelperSafe();
+        vm.expectRevert();
+        earlyGrantExecution.execute(0);
+
+        vm.warp(block.timestamp + 1 days);
+        address nonProposer = makeAddr("authorize-script-non-proposer");
+        assertFalse(controller.hasRole(controller.PROPOSER_ROLE(), nonProposer));
+        vm.setEnv("SAFE_ADDRESS", vm.toString(nonProposer));
+        AuthorizeLCCMarginDepositHelperSafe grantExecution = new AuthorizeLCCMarginDepositHelperSafe();
+        grantExecution.execute(0);
+        assertTrue(controller.isOperationDone(grantOperationId));
+        assertTrue(factory.isDepositOperator(address(replacement)));
+        assertTrue(factory.isDepositOperator(address(helper)));
+        grantExecution.verify();
+
+        vm.setEnv("SAFE_ADDRESS", vm.toString(SAFE_ADDRESS));
+        AuthorizeLCCMarginDepositHelperSafe completedGrant = new AuthorizeLCCMarginDepositHelperSafe();
+        completedGrant.schedule(0, false);
+        (calls,) = completedGrant.getBatchInfo(0);
+        assertEq(calls, 0);
+    }
+
+    function _assertAuthorizeScriptSchedulesExecutesAndVerifiesRevoke() private {
+        LCCMarginDepositHelper replacement = new LCCMarginDepositHelper(address(factory), WA_ETH_USDC, WA_ETH_USDT);
+        factory.grantRole(factory.DEPOSIT_OPERATOR_ROLE(), address(replacement));
+        _configureAuthorizeScript(replacement, address(helper));
+        _moveFactoryToParametersTimelock();
+        _authorizeDefaultBroadcaster();
+
+        AuthorizeLCCMarginDepositHelperSafe revocation = new AuthorizeLCCMarginDepositHelperSafe();
+        revocation.scheduleRevoke(0, false);
+        (uint256 calls,) = revocation.getBatchInfo(0);
+        assertEq(calls, 1);
+        assertTrue(factory.isDepositOperator(address(helper)));
+        bytes32 revokeOperationId = _operationId(address(helper), false, 0);
+        ITimelockController controller = ITimelockController(PARAMS_TIMELOCK);
+        assertTrue(controller.isOperationPending(revokeOperationId));
+
+        vm.warp(block.timestamp + 1 days);
+        AuthorizeLCCMarginDepositHelperSafe revokeExecution = new AuthorizeLCCMarginDepositHelperSafe();
+        revokeExecution.executeRevoke(0);
+        assertTrue(controller.isOperationDone(revokeOperationId));
         assertFalse(factory.isDepositOperator(address(helper)));
         assertTrue(factory.isDepositOperator(address(replacement)));
+        revokeExecution.verifyRevoke();
 
         AuthorizeLCCMarginDepositHelperSafe rejected = new AuthorizeLCCMarginDepositHelperSafe();
         vm.expectRevert(bytes("address is not a deposit operator"));
-        rejected.revoke(false);
+        rejected.scheduleRevoke(1, false);
 
         vm.setEnv("LCC_DEPOSIT_OPERATOR_TO_REVOKE", vm.toString(address(replacement)));
         rejected = new AuthorizeLCCMarginDepositHelperSafe();
         vm.expectRevert(bytes("operator is LCC_MARGIN_DEPOSIT_HELPER"));
-        rejected.revoke(false);
-
-        assertEq(_runRevoke(closedOperator), 1);
-        assertFalse(factory.isDepositOperator(closedOperator));
-        assertEq(factory.getRoleMemberCount(role), 1);
-        assertEq(factory.getRoleMember(role, 0), address(replacement));
+        rejected.scheduleRevoke(1, false);
     }
 
-    function _runRevoke(address operator) private returns (uint256 calls) {
-        vm.setEnv("LCC_DEPOSIT_OPERATOR_TO_REVOKE", vm.toString(operator));
+    function _assertAuthorizeScriptRevokesCodelessOperator() private {
+        address operator = makeAddr("codeless-deposit-operator");
+        assertEq(operator.code.length, 0);
+        factory.grantRole(factory.DEPOSIT_OPERATOR_ROLE(), operator);
+        _configureAuthorizeScript(helper, operator);
+        _moveFactoryToParametersTimelock();
+        _authorizeDefaultBroadcaster();
+
         AuthorizeLCCMarginDepositHelperSafe revocation = new AuthorizeLCCMarginDepositHelperSafe();
-        revocation.revoke(false);
-        (calls,) = revocation.getBatchInfo(0);
+        revocation.scheduleRevoke(3, false);
+        (uint256 calls,) = revocation.getBatchInfo(0);
+        assertEq(calls, 1);
+        assertTrue(factory.isDepositOperator(operator));
+
+        bytes32 revokeOperationId = _operationId(operator, false, 3);
+        ITimelockController controller = ITimelockController(PARAMS_TIMELOCK);
+        assertTrue(controller.isOperationPending(revokeOperationId));
+
+        vm.warp(block.timestamp + 1 days);
+        AuthorizeLCCMarginDepositHelperSafe revokeExecution = new AuthorizeLCCMarginDepositHelperSafe();
+        revokeExecution.executeRevoke(3);
+        assertTrue(controller.isOperationDone(revokeOperationId));
+        assertFalse(factory.isDepositOperator(operator));
+        revokeExecution.verifyRevoke();
+    }
+
+    function _assertAuthorizeScriptDoneGrantAttemptRequiresFreshAttemptWhenRoleWasRemoved() private {
+        LCCMarginDepositHelper replacement = new LCCMarginDepositHelper(address(factory), WA_ETH_USDC, WA_ETH_USDT);
+        _configureAuthorizeScript(replacement, address(helper));
+        _moveFactoryToParametersTimelock();
+        _authorizeDefaultBroadcaster();
+
+        AuthorizeLCCMarginDepositHelperSafe firstAttempt = new AuthorizeLCCMarginDepositHelperSafe();
+        firstAttempt.schedule(7, false);
+        vm.warp(block.timestamp + 1 days);
+        firstAttempt = new AuthorizeLCCMarginDepositHelperSafe();
+        firstAttempt.execute(7);
+
+        bytes32 depositOperatorRole = factory.DEPOSIT_OPERATOR_ROLE();
+        vm.prank(PARAMS_TIMELOCK);
+        factory.revokeRole(depositOperatorRole, address(replacement));
+        assertFalse(factory.isDepositOperator(address(replacement)));
+
+        AuthorizeLCCMarginDepositHelperSafe completedAttempt = new AuthorizeLCCMarginDepositHelperSafe();
+        vm.expectRevert(bytes("operation already executed; use a fresh attempt"));
+        completedAttempt.schedule(7, false);
+
+        AuthorizeLCCMarginDepositHelperSafe freshAttempt = new AuthorizeLCCMarginDepositHelperSafe();
+        freshAttempt.schedule(8, false);
+        (uint256 calls,) = freshAttempt.getBatchInfo(0);
+        assertEq(calls, 1);
+        assertTrue(ITimelockController(PARAMS_TIMELOCK).isOperationPending(_operationId(address(replacement), true, 8)));
+    }
+
+    function _assertAuthorizeScriptRejectsUnreviewedHelperRuntime() private {
+        LCCMarginDepositHelper replacement = new LCCMarginDepositHelper(address(factory), WA_ETH_USDC, WA_ETH_USDT);
+        _configureAuthorizeScript(replacement, address(helper));
+        _moveFactoryToParametersTimelock();
+
+        OracleMock wrongRuntime = new OracleMock();
+        vm.setEnv("LCC_MARGIN_DEPOSIT_HELPER", vm.toString(address(wrongRuntime)));
+        AuthorizeLCCMarginDepositHelperSafe rejected = new AuthorizeLCCMarginDepositHelperSafe();
+        vm.expectRevert(bytes("helper runtime code hash mismatch"));
+        rejected.schedule(0, false);
+    }
+
+    function _configureAuthorizeScript(LCCMarginDepositHelper replacement, address operatorToRevoke) private {
+        vm.setEnv("WALLET_TYPE", "local");
+        vm.setEnv("SAFE_PROPOSER_PRIVATE_KEY", vm.toString(bytes32(uint256(1))));
+        vm.setEnv("SAFE_NONCE", "1");
+        vm.setEnv("SAFE_ADDRESS", vm.toString(SAFE_ADDRESS));
+        vm.setEnv("LCC_FACTORY", vm.toString(address(factory)));
+        vm.setEnv("LCC_MARGIN_DEPOSIT_HELPER", vm.toString(address(replacement)));
+        vm.setEnv("LCC_DEPOSIT_OPERATOR_TO_REVOKE", vm.toString(operatorToRevoke));
+    }
+
+    function _moveFactoryToParametersTimelock() private {
+        factory.transferOwnership(PARAMS_TIMELOCK);
+        vm.prank(PARAMS_TIMELOCK);
+        factory.acceptOwnership();
+        assertEq(factory.owner(), PARAMS_TIMELOCK);
+    }
+
+    function _authorizeDefaultBroadcaster() private returns (address broadcaster) {
+        vm.startBroadcast();
+        (VmSafe.CallerMode mode, address sender,) = vm.readCallers();
+        vm.stopBroadcast();
+        assertEq(uint256(mode), uint256(VmSafe.CallerMode.RecurrentBroadcast));
+        broadcaster = sender;
+
+        ITimelockController controller = ITimelockController(PARAMS_TIMELOCK);
+        bytes32 executorRole = controller.EXECUTOR_ROLE();
+        vm.prank(PARAMS_TIMELOCK);
+        controller.grantRole(executorRole, broadcaster);
+        assertTrue(controller.hasRole(executorRole, broadcaster));
+    }
+
+    function _operationId(address account, bool grant, uint256 attempt) private view returns (bytes32) {
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory datas = new bytes[](1);
+        targets[0] = address(factory);
+        datas[0] = grant
+            ? abi.encodeCall(factory.grantRole, (factory.DEPOSIT_OPERATOR_ROLE(), account))
+            : abi.encodeCall(factory.revokeRole, (factory.DEPOSIT_OPERATOR_ROLE(), account));
+        bytes32 salt = keccak256(abi.encode(DEPOSIT_OPERATOR_SALT_DOMAIN, address(factory), account, grant, attempt));
+        return ITimelockController(PARAMS_TIMELOCK).hashOperationBatch(targets, values, datas, bytes32(0), salt);
     }
 
     function testRealUnderlyingDepositEmitsReferralAttribution() public requiresFork {
