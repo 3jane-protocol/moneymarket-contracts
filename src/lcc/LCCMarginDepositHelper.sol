@@ -119,6 +119,9 @@ contract LCCMarginDepositHelper is ILCCMarginDepositHelper, ReentrancyGuardTrans
                 params.deadline
             );
         IERC20(address(stata)).forceApprove(params.vault, 0);
+        if (params.referral != bytes32(0)) {
+            emit LCCDepositReferred(msg.sender, params.vault, params.referral, marginShares, commitment);
+        }
     }
 
     function _validateVault(address vault, address expectedMarginAsset) private view {

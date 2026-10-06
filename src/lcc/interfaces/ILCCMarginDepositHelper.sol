@@ -4,6 +4,13 @@ pragma solidity 0.8.35;
 /// @title ILCCMarginDepositHelper
 /// @notice Self-service wrapper for depositing USDC, USDT, or their Aave aTokens into matching LCC vaults.
 interface ILCCMarginDepositHelper {
+    /// @notice Emitted after a successful deposit that carries a nonzero referral code.
+    /// @dev The code is caller-supplied and unauthenticated; it is used for offchain attribution only and grants no
+    /// authority. `marginShares` are the static aToken shares deposited and `commitment` is the vault's return value.
+    event LCCDepositReferred(
+        address indexed depositor, address indexed vault, bytes32 indexed code, uint256 marginShares, uint256 commitment
+    );
+
     struct DepositParams {
         address vault;
         uint256 amountIn;
@@ -12,6 +19,9 @@ interface ILCCMarginDepositHelper {
         uint256 maxCommitment;
         bool allowPendingActivation;
         uint256 deadline;
+        /// @dev Optional caller-supplied, unauthenticated referral code for offchain attribution only; zero emits no
+        /// referral event.
+        bytes32 referral;
     }
 
     error ZeroAddress();
