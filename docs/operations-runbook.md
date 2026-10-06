@@ -495,6 +495,30 @@ Before granting the role:
 3. Verify `factory.isDepositOperator(candidate)` is true. The view is for operations and integrations; enforcement
    occurs inside `authorizeDeposit`.
 
+**Replacing the margin deposit helper.** `LCCMarginDepositHelper` is non-upgradeable, so any change to it, including
+one that alters `DepositParams` and therefore every deposit selector, ships as a new deployment at a new address.
+Keep both helpers authorized across the integrator cutover; revoking the replaced helper in the same transaction as
+the grant makes every deposit still routed through it revert in `authorizeDeposit`.
+
+1. Deploy with `script/deploy/lcc/DeployLCCMarginDepositHelper.s.sol`. It grants no role.
+2. Run `script/operations/AuthorizeLCCMarginDepositHelperSafe.s.sol` with `--sig "run(bool)" true` and
+   `LCC_MARGIN_DEPOSIT_HELPER` set to the new address. It proposes the grant alone. The deposit-operator set it logs
+   is simulated, so after the Safe executes the proposal confirm on chain that `factory.isDepositOperator` is true
+   for both helpers.
+3. Move integrators to the new address and ABI, and point indexers at the new helper while keeping the replaced one
+   for history.
+4. Once the grant has executed and no deposits route through the replaced helper, run the same script with
+   `--sig "revoke(bool)" true` and `LCC_DEPOSIT_OPERATOR_TO_REVOKE` set to the replaced helper. It proposes the
+   revoke alone and reverts if that address holds no role. After execution confirm
+   `factory.isDepositOperator(replaced)` is false.
+
+The script's default entrypoint is the grant dry run, so step 4 without `--sig "revoke(bool)"` proposes nothing and
+still exits cleanly. `run` never revokes and `revoke` never grants, so the two cannot land in one Safe transaction by
+accident; do not propose the revoke while the grant is still pending in the Safe queue. `revoke` checks only that
+the named address holds the role and is not the address in `LCC_MARGIN_DEPOSIT_HELPER`: it reads no helper wiring or
+code, so it also retires a helper built from older source or any other deposit operator, and it does not require a
+replacement to be authorized first. To revoke the current helper itself, unset `LCC_MARGIN_DEPOSIT_HELPER`.
+
 Before every delegated adapter-routed deposit, pre-check the beneficiary is nonzero, resolve its explicit or default
 factory cap, include both active and pending commitment in the projected total, confirm it has no exit in progress or
 incompatible pending activation, and confirm eligibility under the warm one-vault pointer and admissions module.
