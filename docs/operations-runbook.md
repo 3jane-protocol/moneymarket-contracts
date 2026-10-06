@@ -501,18 +501,19 @@ Keep both helpers authorized across the integrator cutover; revoking the replace
 the grant makes every deposit still routed through it revert in `authorizeDeposit`.
 
 1. Deploy with `script/deploy/lcc/DeployLCCMarginDepositHelper.s.sol`. It grants no role.
-2. Run `script/operations/AuthorizeLCCMarginDepositHelperSafe.s.sol` with `LCC_MARGIN_DEPOSIT_HELPER` set to the new
-   address and `LCC_MARGIN_DEPOSIT_HELPER_PREVIOUS` unset. It proposes the grant alone and logs the resulting
+2. Run `script/operations/AuthorizeLCCMarginDepositHelperSafe.s.sol` through `run(bool)` with
+   `LCC_MARGIN_DEPOSIT_HELPER` set to the new address. It proposes the grant alone and logs the resulting
    deposit-operator set, which must list both helpers.
 3. Move integrators to the new address and ABI, and point indexers at the new helper while keeping the replaced one
    for history.
-4. Once no deposits route through the replaced helper, run the same script with `LCC_MARGIN_DEPOSIT_HELPER_PREVIOUS`
-   set to it. It proposes the revoke alone. The script rejects a previous address that holds no role unless the new
-   helper is already authorized, so confirm from the logged operator set, not from the absence of a revert, that the
-   replaced helper is gone and `factory.isDepositOperator(replaced)` is false.
+4. Once no deposits route through the replaced helper, run the same script through `revoke(bool)` with
+   `LCC_MARGIN_DEPOSIT_HELPER_PREVIOUS` set to it. It proposes the revoke alone, reverts if that address holds no
+   role, and logs the remaining deposit-operator set. Confirm `factory.isDepositOperator(replaced)` is false.
 
-Setting both variables on the first run proposes the grant and the revoke as one Safe transaction. Use that only
-when no integrator still depends on the replaced helper.
+`run` never revokes and `revoke` never grants, so the two cannot land in one Safe transaction by accident. `revoke`
+checks only that the named address holds the role: it does not read helper wiring or code, so it also retires a
+helper built from older source or any other deposit operator, and it does not require a replacement to be
+authorized first.
 
 Before every delegated adapter-routed deposit, pre-check the beneficiary is nonzero, resolve its explicit or default
 factory cap, include both active and pending commitment in the projected total, confirm it has no exit in progress or
