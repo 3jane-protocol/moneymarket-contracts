@@ -312,6 +312,62 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         _assertHelperClean();
     }
 
+    function testFullyLeveredFundNeedsNoUsdcAllowance() public {
+        _depositAndOpenCall(alice);
+        _supplyExtraCollateral(alice, CALL);
+        vm.prank(alice);
+        usdc.approve(address(helper), 0);
+
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(CALL);
+        assertEq(params.maxContribution, 0);
+        vm.prank(alice);
+        (, uint256 fundingAmount,) = helper.fund(params);
+
+        assertEq(fundingAmount, CALL);
+        assertTrue(vault.fundedEpoch(0, alice));
+        assertEq(usdc.balanceOf(alice), 0);
+        assertEq(usdc.allowance(alice, address(helper)), 0);
+        assertEq(morpho.borrowAssetsOf(marketId, alice), CALL);
+        _assertHelperClean();
+    }
+
+    function testFullyLeveredSignedFundIgnoresUsdcPermit() public {
+        _depositAndOpenCall(signer);
+        _supplyExtraCollateral(signer, CALL);
+        usdc.mint(signer, 5e18);
+        vm.prank(signer);
+        usdc.approve(address(helper), 7e18);
+        Signed memory s = _sign(0, CALL);
+        delete s.usdcPermit;
+        uint256 usdcNonce = LCCPermitMockToken(address(usdc)).nonces(signer);
+
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(CALL);
+        _fundSigned(params, s);
+
+        assertTrue(vault.fundedEpoch(0, signer));
+        assertEq(usdc.balanceOf(signer), 5e18);
+        assertEq(usdc.allowance(signer, address(helper)), 7e18);
+        assertEq(LCCPermitMockToken(address(usdc)).nonces(signer), usdcNonce);
+        assertEq(morpho.borrowAssetsOf(marketId, signer), CALL);
+        _assertHelperClean();
+    }
+
+    function testFullyLeveredSignedFundDoesNotSubmitValidUsdcPermit() public {
+        _depositAndOpenCall(signer);
+        _supplyExtraCollateral(signer, CALL);
+        vm.prank(signer);
+        usdc.approve(address(helper), 7e18);
+        Signed memory s = _sign(1, CALL);
+        uint256 usdcNonce = LCCPermitMockToken(address(usdc)).nonces(signer);
+
+        _fundSigned(_fundParams(CALL), s);
+
+        assertTrue(vault.fundedEpoch(0, signer));
+        assertEq(usdc.allowance(signer, address(helper)), 7e18);
+        assertEq(LCCPermitMockToken(address(usdc)).nonces(signer), usdcNonce);
+        _assertHelperClean();
+    }
+
     function testDustTopUpFundsMinimumShareAndBoundsContributionByFundingAmount() public {
         _seedUsd3(2, 1);
         _mintAndApprove(alice, 0, 0);
@@ -992,6 +1048,14 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         usdc.mint(address(this), liquidity);
         usdc.approve(address(morpho), liquidity);
         morpho.supply(market, liquidity, 0, address(this), "");
+    }
+
+    function _supplyExtraCollateral(address user, uint256 amount) internal {
+        deal(address(usd3l), user, amount);
+        vm.startPrank(user);
+        usd3l.approve(address(morpho), amount);
+        morpho.supplyCollateral(marketParams, amount, user, "");
+        vm.stopPrank();
     }
 
     function _prepareSigner() internal {

@@ -91,10 +91,11 @@ contract LCCLeveragedFundHelper is
     }
 
     /// @inheritdoc ILCCLeveragedFundHelper
-    /// @dev Both permits are always submitted with msg.sender as owner and this helper as spender, so a permit that
-    /// applies replaces the caller's standing allowance to this helper with its `value`. A permit that reverts is
-    /// tolerated; the call then reverts with `InsufficientAllowance` unless the resulting allowance covers the need.
-    /// The authorization is ignored when
+    /// @dev The USD3l permit, and the USDC permit whenever the USDC contribution is nonzero, are always submitted with
+    /// msg.sender as owner and this helper as spender, so a permit that applies replaces the caller's standing
+    /// allowance to this helper with its `value`. A fully levered entry pulls no USDC, so its USDC permit is ignored
+    /// and the standing USDC allowance is left untouched. A permit that reverts is tolerated; the call then reverts
+    /// with `InsufficientAllowance` unless the resulting allowance covers the need. The authorization is ignored when
     /// `params.borrowAssets` is zero or the caller has already authorized this helper on Morpho. Otherwise it must name
     /// msg.sender as authorizer, this helper as authorized, and enable it; a submission that reverts is tolerated if
     /// the authorization is then in place. There is no revoking counterpart, so the authorization stays enabled until
@@ -108,7 +109,8 @@ contract LCCLeveragedFundHelper is
     ) external nonReentrant returns (uint256 obligation, uint256 fundingAmount, uint256 collateral) {
         Operation memory op = _prepare(params);
 
-        _applyPermit(usdc, usdcPermit, op.fundingAmount - op.borrowAssets);
+        uint256 contribution = op.fundingAmount - op.borrowAssets;
+        if (contribution != 0) _applyPermit(usdc, usdcPermit, contribution);
         _applyPermit(usd3l, usd3lPermit, op.collateral);
         if (_needsAuthorization(op.borrowAssets)) _applyAuthorization(authorization, authorizationSignature);
 

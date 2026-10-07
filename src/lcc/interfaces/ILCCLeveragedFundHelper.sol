@@ -13,7 +13,10 @@ interface ILCCLeveragedFundHelper {
     /// @param vault Factory-registered LCC vault whose current-epoch obligation the caller funds.
     /// @param market Morpho Blue market lending USDC against USD3l in which the caller's collateral is supplied and
     /// from which `borrowAssets` is borrowed.
-    /// @param borrowAssets USDC borrowed from `market` on behalf of the caller; zero borrows nothing.
+    /// @param borrowAssets USDC borrowed from `market` on behalf of the caller; zero borrows nothing. An entry is fully
+    /// levered when `borrowAssets` equals `fundingAmount = max(obligation, usd3.previewMint(1))`, which includes the
+    /// one-share top-up; on a dust obligation `borrowAssets = obligation` with `maxContribution = 0` therefore reverts
+    /// `ContributionExceedsMax`.
     /// @param maxContribution Maximum USDC pulled from the caller (funding amount minus `borrowAssets`).
     /// @param maxEntryLtv Maximum loan-to-value of the caller's whole position in `market` after a levered
     /// entry, WAD-scaled like Morpho's LLTV. Checked only when `borrowAssets` is nonzero; an unlevered entry only adds
@@ -31,11 +34,13 @@ interface ILCCLeveragedFundHelper {
     }
 
     /// @notice EIP-2612 permit signed by the caller for this helper as spender.
-    /// @dev `fundWithSignatures` always submits the permit, so when it applies it replaces the caller's standing
-    /// allowance to this helper with `value`. A caller whose standing allowance already suffices should use `fund`,
-    /// or sign for the allowance it wants to stand after the call.
+    /// @dev `fundWithSignatures` always submits the USD3l permit, and the USDC permit whenever the USDC contribution is
+    /// nonzero, so when one applies it replaces the caller's standing allowance to this helper with `value`. A caller
+    /// whose standing allowance already suffices should use `fund`, or sign for the allowance it wants to stand after
+    /// the call.
     /// @dev `value` must cover the amount pulled at execution: the USDC contribution or the USD3l collateral. The USDC
-    /// contribution is `fundingAmount - borrowAssets`; a fully levered entry pulls no USDC and needs no USDC permit.
+    /// contribution is `fundingAmount - borrowAssets`; a fully levered entry (see `FundParams.borrowAssets`) pulls no
+    /// USDC, and its USDC permit is ignored.
     /// Both are computed from the obligation, the `usd3.previewMint(1)` top-up, and USD3 previews at inclusion time,
     /// which can move between signing and inclusion (for example after a USD3 report), so signers should over-approve
     /// or sign the maximum they accept.
@@ -83,6 +88,10 @@ interface ILCCLeveragedFundHelper {
     /// `params.borrowAssets` is nonzero, a Morpho authorization of this helper by the caller (`NotAuthorized`
     /// otherwise). Reverts before moving tokens unless the vault is in its Funding phase and the USD3 one-share top-up
     /// stays within the vault's limit.
+    /// @dev The vault replays the caller's account under its bounded step limit inside `fundCall`, while the helper
+    /// reads the obligation through the vault's unbounded view replay, so an account stale by more than
+    /// `MAX_MATERIALIZE_STEPS` called epochs should call the vault's `materializeAccount` first; otherwise the entry
+    /// reverts `AccountMaterializationIncomplete` after the replay cost is paid.
     /// @return obligation The obligation funded.
     /// @return fundingAmount USDC delivered to the vault: the obligation, or USD3's one-share minimum if larger.
     /// @return collateral USD3l supplied as Morpho collateral on behalf of the caller.
@@ -93,11 +102,15 @@ interface ILCCLeveragedFundHelper {
     /// @notice Applies the caller's USDC permit, USD3l permit, and, when `params.borrowAssets` is nonzero and the
     /// caller has not yet authorized this helper on Morpho, enabling Morpho authorization, then runs `fund`. Otherwise
     /// the authorization arguments are ignored and may be zeroed.
-    /// @dev Both permits are always submitted; one that applies replaces the standing allowance with its `value`,
-    /// which must cover the amount pulled at execution (zero USDC for a fully levered entry). That amount can differ
-    /// from the amount at signing (see `PermitSignature`). A signature that fails to apply is tolerated when the
-    /// allowance or authorization it grants is already in place, so a third party submitting the same signature first
-    /// cannot make this call revert.
+    /// @dev The USD3l permit, and the USDC permit when the USDC contribution is nonzero, are always submitted; one that
+    /// applies replaces the standing allowance with its `value`, which must cover the amount pulled at execution. A
+    /// fully levered entry ignores its USDC permit and leaves the standing USDC allowance untouched. The amount pulled
+    /// can differ from the amount at signing (see `PermitSignature`). A signature that fails to apply is tolerated
+    /// when the allowance or authorization it grants is already in place, so a third party submitting the same
+    /// signature first cannot make this call revert. The vault replays the caller's account under its bounded step
+    /// limit inside `fundCall`, while the helper reads the obligation through the vault's unbounded view replay, so an
+    /// account stale by more than `MAX_MATERIALIZE_STEPS` called epochs should call the vault's `materializeAccount`
+    /// first; otherwise the entry reverts `AccountMaterializationIncomplete` after the replay cost is paid.
     function fundWithSignatures(
         FundParams calldata params,
         PermitSignature calldata usdcPermit,

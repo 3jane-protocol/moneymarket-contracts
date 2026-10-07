@@ -397,11 +397,13 @@ helper's own in-flight `supplyCollateral`; entrypoints are `nonReentrant`. Allow
 exact and end at zero, and donated balances are ignored. The beneficiary and Morpho `onBehalf` are always
 `msg.sender`; the helper holds no factory role, never deposits into USD3 itself (the vault is the USD3 depositor and
 holds the supply-cap exemption), and has no owner, rescue, receiver, delegated-beneficiary, generic-call, or upgrade
-surface. `fund` needs a pre-set USD3l allowance, a USDC allowance only when `F > borrowAssets` (a fully levered
-entry pulls no USDC), and, only when borrowing, a Morpho authorization of the helper. `fundWithSignatures` always
-submits a USDC permit and a USD3l permit; one that applies replaces the caller's standing allowance to the helper with
+surface. `fund` needs a pre-set USD3l allowance, a USDC allowance only when `F > borrowAssets`, and, only when
+borrowing, a Morpho authorization of the helper. A fully levered entry has `borrowAssets == F` and pulls no USDC;
+because `F` includes the one-share top-up, `borrowAssets = O` with `maxContribution = 0` reverts
+`ContributionExceedsMax` on a dust obligation. `fundWithSignatures` always submits the USD3l permit and, unless the
+entry is fully levered, the USDC permit; one that applies replaces the caller's standing allowance to the helper with
 its `value`, so a caller whose standing allowance already suffices should use `fund` or sign for the allowance it wants
-left standing. Then, only when `borrowAssets` is nonzero and the caller has not already authorized the helper, it
+left standing. A fully levered entry ignores the USDC permit and leaves the standing USDC allowance untouched. Then, only when `borrowAssets` is nonzero and the caller has not already authorized the helper, it
 applies an enable-only `setAuthorizationWithSig`; otherwise the authorization and its signature are ignored and may be
 zeroed. Each signature is tolerant of a third party submitting it first, and the call then requires the resulting
 allowance (`InsufficientAllowance`, carrying the permit's revert data, otherwise) or authorization to be present.
