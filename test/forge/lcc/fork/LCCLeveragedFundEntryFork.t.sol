@@ -260,7 +260,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         assertEq(IERC20(USDC).balanceOf(address(helper)), 0);
         assertEq(USD3L.balanceOf(address(helper)), 0);
         assertEq(IERC20(USDC).allowance(address(helper), address(VAULT)), 0);
-        assertEq(USD3L.allowance(address(helper), address(MORPHO)), 0);
+        assertEq(USD3L.allowance(address(helper), address(MORPHO)), type(uint256).max);
     }
 
     function _positionLtv(address funder) internal view returns (uint256) {

@@ -989,7 +989,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         assertEq(usdc.balanceOf(address(helper)), 7);
         assertEq(usd3l.balanceOf(address(helper)), 7);
         assertEq(usdc.allowance(address(helper), address(vault)), 0);
-        assertEq(usd3l.allowance(address(helper), address(morpho)), 0);
+        assertEq(usd3l.allowance(address(helper), address(morpho)), type(uint256).max);
     }
 
     /* CONSTRUCTOR */
@@ -1004,6 +1004,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         assertEq(helper.usd3(), address(usd3));
         assertEq(helper.usdc(), address(usdc));
         assertEq(helper.usd3l(), address(usd3l));
+        assertEq(usd3l.allowance(address(helper), address(morpho)), type(uint256).max);
     }
 
     /* HELPERS */
@@ -1125,6 +1126,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         assertEq(usdc.balanceOf(address(helper)), 0);
         assertEq(usd3l.balanceOf(address(helper)), 0);
         assertEq(usdc.allowance(address(helper), address(vault)), 0);
-        assertEq(usd3l.allowance(address(helper), address(morpho)), 0);
+        assertEq(usd3l.allowance(address(helper), address(morpho)), type(uint256).max);
     }
 }

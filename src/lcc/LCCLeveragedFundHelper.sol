@@ -78,6 +78,10 @@ contract LCCLeveragedFundHelper is
         usdc = usdc_;
         usd3 = usd3_;
         usd3l = usd3l_;
+
+        // Morpho pulls collateral only from its msg.sender, and the helper holds no USD3l between transactions, so a
+        // standing allowance exposes nothing.
+        IERC20(usd3l_).forceApprove(morpho_, type(uint256).max);
     }
 
     /// @inheritdoc ILCCLeveragedFundHelper
@@ -145,7 +149,6 @@ contract LCCLeveragedFundHelper is
         if (minted != op.collateral) revert CollateralPreviewMismatch(op.collateral, minted);
 
         collateralToken.safeTransferFrom(op.user, address(this), op.collateral);
-        collateralToken.forceApprove(morpho, op.collateral);
     }
 
     function _prepare(FundParams calldata params) private view returns (Operation memory op) {
