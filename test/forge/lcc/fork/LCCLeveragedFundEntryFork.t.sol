@@ -19,6 +19,12 @@ import {ORACLE_PRICE_SCALE} from "../../../../src/libraries/ConstantsLib.sol";
 import {MathLib} from "../../../../src/libraries/MathLib.sol";
 import {SharesMathLib} from "../../../../src/libraries/SharesMathLib.sol";
 
+interface ILCCForkNotificationVault {
+    function management() external view returns (address);
+    function cooldownDuration() external view returns (uint64);
+    function setCooldownBypass(address account, bool allowed) external;
+}
+
 contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSigUtils {
     using SafeERC20 for IERC20;
     using MathLib for uint256;
@@ -57,6 +63,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
 
         _createMarket();
         helper = new LCCLeveragedFundHelper(address(MORPHO), FACTORY, address(USD3L));
+        _setHelperBypass(true);
 
         string[3] memory names = ["levered-funder-small", "levered-funder-odd", "levered-funder-large"];
         for (uint256 i; i < names.length; ++i) {
@@ -255,6 +262,79 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         assertTrue(VAULT.fundedEpoch(CALL_EPOCH, funder));
     }
 
+    /* UNWIND */
+
+    function testFullUnwindAfterCooldownClosesThePosition() public requiresFork {
+        address funder = funders[2];
+        (uint256 start, uint256 collateral) = _enterFunder(funder);
+        vm.warp(start + _cooldown());
+
+        uint256 expectedOut = _expectedUnwindOut(funder, collateral, _debt(funder));
+        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(collateral, true, 0);
+        params.minUsdcOut = expectedOut;
+        vm.prank(funder);
+        (uint256 repaid, uint256 shares, uint256 usdcOut) = helper.unwind(params);
+
+        assertGt(repaid, 0);
+        assertEq(shares, collateral);
+        assertEq(usdcOut, expectedOut);
+        assertGe(usdcOut, params.minUsdcOut);
+        assertEq(IERC20(USDC).balanceOf(funder), usdcOut);
+        (, uint128 borrowShares, uint128 positionCollateral) = MORPHO.position(marketId, funder);
+        assertEq(borrowShares, 0);
+        assertEq(positionCollateral, 0);
+        assertEq(helper.tickets(funder, marketId).length, 0);
+        _assertUnwindHelperClean();
+    }
+
+    function testPartialUnwindAfterCooldown() public requiresFork {
+        address funder = funders[2];
+        (uint256 start, uint256 collateral) = _enterFunder(funder);
+        vm.warp(start + _cooldown());
+
+        uint256 repay = _debt(funder) / 2;
+        uint256 shares = collateral / 2;
+        uint256 expectedOut = _expectedUnwindOut(funder, shares, repay);
+        vm.prank(funder);
+        (uint256 repaid,, uint256 usdcOut) = helper.unwind(_unwindParams(shares, false, repay));
+
+        assertEq(repaid, repay);
+        assertEq(usdcOut, expectedOut);
+        (,, uint128 positionCollateral) = MORPHO.position(marketId, funder);
+        assertEq(positionCollateral, collateral - shares);
+        assertEq(helper.tickets(funder, marketId)[0].shares, collateral - shares);
+        _assertUnwindHelperClean();
+    }
+
+    function testUnwindOneSecondBeforeMaturityReverts() public requiresFork {
+        address funder = funders[2];
+        (uint256 start, uint256 collateral) = _enterFunder(funder);
+        vm.warp(start + _cooldown() - 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.InsufficientMaturedShares.selector, collateral, 0)
+        );
+        vm.prank(funder);
+        helper.unwind(_unwindParams(collateral, true, 0));
+    }
+
+    function testUnwindRevertsAtomicallyWhenBypassRevoked() public requiresFork {
+        address funder = funders[2];
+        (uint256 start, uint256 collateral) = _enterFunder(funder);
+        vm.warp(start + _cooldown());
+        _setHelperBypass(false);
+        uint256 debt = _debt(funder);
+
+        vm.expectRevert(bytes("ERC4626: redeem more than max"));
+        vm.prank(funder);
+        helper.unwind(_unwindParams(collateral, true, 0));
+
+        assertEq(helper.tickets(funder, marketId)[0].shares, collateral);
+        (,, uint128 positionCollateral) = MORPHO.position(marketId, funder);
+        assertEq(positionCollateral, collateral);
+        assertEq(_debt(funder), debt);
+    }
+
     function testBorrowAboveMarketLiquidityReverts() public requiresFork {
         address funder = funders[2];
         ILCCLeveragedFundHelper.FundParams memory params = _fundParams(funder);
@@ -356,6 +436,59 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
                 deadline: block.timestamp + 1 hours
             })
         );
+    }
+
+    function _setHelperBypass(bool allowed) internal {
+        ILCCForkNotificationVault vault = ILCCForkNotificationVault(address(USD3L));
+        vm.prank(vault.management());
+        vault.setCooldownBypass(address(helper), allowed);
+    }
+
+    function _cooldown() internal view returns (uint256) {
+        return ILCCForkNotificationVault(address(USD3L)).cooldownDuration();
+    }
+
+    /// @dev Levered entry with standing allowances; returns the ticket start and the collateral supplied.
+    function _enterFunder(address funder) internal returns (uint256 start, uint256 collateral) {
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(funder);
+        _approveAll(funder, params.maxContribution);
+        vm.prank(funder);
+        (,, collateral) = helper.fund(params);
+        start = block.timestamp;
+        assertEq(helper.tickets(funder, marketId)[0].shares, collateral);
+    }
+
+    function _debt(address funder) internal returns (uint256) {
+        MORPHO.accrueInterest(marketParams);
+        (, uint128 borrowShares,) = MORPHO.position(marketId, funder);
+        return _borrowAssets(borrowShares);
+    }
+
+    function _expectedUnwindOut(address, uint256 shares, uint256 repay) internal view returns (uint256) {
+        return IERC4626(USD3).previewRedeem(shares) - repay;
+    }
+
+    function _unwindParams(uint256 shares, bool full, uint256 repayAssets)
+        internal
+        view
+        returns (ILCCLeveragedFundHelper.UnwindParams memory)
+    {
+        return ILCCLeveragedFundHelper.UnwindParams({
+            market: marketParams,
+            shares: shares,
+            full: full,
+            repayAssets: repayAssets,
+            maxRepayAssets: type(uint256).max,
+            minUsdcOut: 0,
+            deadline: block.timestamp
+        });
+    }
+
+    function _assertUnwindHelperClean() internal view {
+        assertEq(IERC20(USDC).balanceOf(address(helper)), 0);
+        assertEq(USD3L.balanceOf(address(helper)), 0);
+        assertEq(IERC20(USD3).balanceOf(address(helper)), 0);
+        assertEq(IERC20(USDC).allowance(address(helper), address(MORPHO)), 0);
     }
 
     function _assertEntry(address funder, uint256 borrowAssets, uint256 collateral) internal view {

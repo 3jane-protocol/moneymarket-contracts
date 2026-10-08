@@ -450,6 +450,26 @@ An entry with `borrowAssets == 0` and `marginAssets == 0` takes no flash loan an
 these reverts leaves the obligation unfunded, so resubmit before the funding deadline with a smaller borrow, no margin,
 or a plain `fundCall`.
 
+## Granting and revoking the leveraged helper's USD3l cooldown bypass
+
+`LCCLeveragedFundHelper.unwind` redeems a funder's withdrawn USD3l collateral without the 35-day vault cooldown, which
+works only while USD3l management has called `NotificationVault.setCooldownBypass(helper, true)`. The helper enforces
+its own per-user cooldown tickets instead: each funding entry through the helper opens one for the collateral it
+supplied, and an unwind may redeem at most the caller's matured ticket shares. The bypass is owner-keyed to the helper
+address and grants no allowance over anyone else's shares.
+
+- Grant: a management transaction `setCooldownBypass(helper, true)` after verifying the deployed helper's runtime code.
+  A bypass transition clears any vault cooldown the account holds; the helper never holds one, so nothing is lost.
+- Revoke: `setCooldownBypass(helper, false)`. Every `unwind` then reverts at the USD3l redemption (the helper has no
+  vault ticket, so its USD3l withdraw limit is zero) and rolls back atomically with the user's tickets intact. Users
+  still exit the ordinary way: repay the Morpho debt with their own USDC, `withdrawCollateral`, start a USD3l
+  `startCooldown`, and redeem after the vault's cooldown. Re-granting restores unwind with the same tickets.
+- While USD3l is shut down or its cooldown is zero, the helper waives its ticket gate exactly as the vault waives its
+  own cooldown.
+
+Unwinds also revert, without consuming tickets, whenever USD3's own withdraw limit cannot cover the redemption
+(pending loss, waUSDC pause, ring fence, redemption floors).
+
 ## LCC Closed-window delivery or oracle outage
 
 **Trigger.** An LCC shortfall auction is in its `Closed` phase and either the margin oracle or the USD3/USD3l delivery path is unavailable long enough that fills cannot execute.

@@ -39,6 +39,19 @@ interface IMorphoBlue {
         address receiver
     ) external returns (uint256 assetsBorrowed, uint256 sharesBorrowed);
 
+    function repay(
+        MarketParams calldata marketParams,
+        uint256 assets,
+        uint256 shares,
+        address onBehalf,
+        bytes calldata data
+    ) external returns (uint256 assetsRepaid, uint256 sharesRepaid);
+
+    function withdrawCollateral(MarketParams calldata marketParams, uint256 assets, address onBehalf, address receiver)
+        external;
+
+    function accrueInterest(MarketParams calldata marketParams) external;
+
     function flashLoan(address token, uint256 assets, bytes calldata data) external;
 
     function setAuthorizationWithSig(Authorization calldata authorization, Signature calldata signature) external;

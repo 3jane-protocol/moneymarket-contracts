@@ -56,6 +56,50 @@ interface ILCCLeveragedFundHelper {
         uint256 deadline;
     }
 
+    /// @param market Morpho Blue market lending USDC against USD3l that holds the caller's position.
+    /// @param shares USD3l collateral shares to withdraw and redeem; at most the caller's live collateral in `market`
+    /// and, unless the USD3l cooldown is waived, at most the caller's matured ticket shares there.
+    /// @param full Repay the caller's whole debt in `market`, priced on-chain after accruing interest and repaid by
+    /// shares; `repayAssets` is then ignored.
+    /// @param repayAssets USDC of debt to repay when `full` is false; at most the current debt. It is converted to
+    /// borrow shares rounding down (a nonzero amount buying no share reverts `RepayRoundsToZero`) and repaid by shares,
+    /// so the
+    /// amount actually repaid is those shares' value rounded up, at most `repayAssets`. Zero repays nothing.
+    /// @param maxRepayAssets Maximum USDC the repayment may cost.
+    /// @param minUsdcOut Minimum USDC sent to the caller: the redemption proceeds less the repayment.
+    /// @param deadline Last timestamp at which the call may execute.
+    struct UnwindParams {
+        IMorphoBlue.MarketParams market;
+        uint256 shares;
+        bool full;
+        uint256 repayAssets;
+        uint256 maxRepayAssets;
+        uint256 minUsdcOut;
+        uint256 deadline;
+    }
+
+    /// @notice A cooldown ticket for USD3l collateral one funding entry supplied. It matures at
+    /// `start + max(duration, live USD3l cooldownDuration)` and never expires.
+    struct Ticket {
+        uint128 shares;
+        uint64 start;
+        uint64 duration;
+    }
+
+    /// @notice A funding entry opened a ticket for the collateral it supplied.
+    event TicketOpened(address indexed user, bytes32 indexed marketId, uint256 shares, uint256 start, uint256 duration);
+    /// @notice A funding entry found the book full and merged the two oldest tickets into the ticket at `index` (0);
+    /// the values are the merged ticket's totals, carrying the later of the two maturities. The entry's own ticket is
+    /// then opened in the freed last slot (`TicketOpened`).
+    event TicketMerged(
+        address indexed user, bytes32 indexed marketId, uint256 index, uint256 shares, uint256 start, uint256 duration
+    );
+    event TicketCancelled(address indexed user, bytes32 indexed marketId, uint256 index, uint256 shares);
+    event TicketsConsumed(address indexed user, bytes32 indexed marketId, uint256 shares);
+    event Unwound(
+        address indexed user, bytes32 indexed marketId, uint256 repaidAssets, uint256 shares, uint256 usdcOut
+    );
+
     /// @notice EIP-2612 permit signed by the caller for this helper as spender.
     /// @dev `fundWithSignatures` always submits the USD3l permit, the USDC permit whenever the USDC contribution is
     /// nonzero, and the margin-asset permit whenever `marginAssets` is nonzero, so when one applies it replaces the
@@ -106,6 +150,15 @@ interface ILCCLeveragedFundHelper {
     error InvalidAuthorization();
     error AuthorizationFailed();
     error InsufficientAllowance(address token, uint256 allowance, uint256 required, bytes permitRevert);
+    error InvalidUnwindShares();
+    error SharesExceedCollateral(uint256 shares, uint256 collateral);
+    error InsufficientMaturedShares(uint256 requested, uint256 matured);
+    error RepayExceedsDebt(uint256 repayAssets, uint256 debt);
+    error RepayExceedsMax(uint256 repayAssets, uint256 maximum);
+    error UnwindOutputBelowMinimum(uint256 usdcOut, uint256 minimum);
+    error UnwindProceedsBelowRepayment(uint256 received, uint256 repayment);
+    error RepayRoundsToZero(uint256 repayAssets);
+    error UnknownTicket(uint256 index);
 
     /// @notice Canonical Morpho Blue singleton.
     function morpho() external view returns (address);
@@ -160,4 +213,41 @@ interface ILCCLeveragedFundHelper {
         IMorphoBlue.Authorization calldata authorization,
         IMorphoBlue.Signature calldata authorizationSignature
     ) external returns (uint256 obligation, uint256 fundingAmount, uint256 collateral);
+
+    /// @notice Withdraws `params.shares` of the caller's USD3l collateral from `params.market`, repays the requested
+    /// debt with a Morpho flash loan of that amount, redeems the withdrawn USD3l to USDC through USD3 under this
+    /// helper's USD3l cooldown bypass, repays the flash loan, and sends the rest to the caller. Requires the caller's
+    /// Morpho authorization of this helper (`NotAuthorized` otherwise) and, unless the USD3l cooldown is waived (shut
+    /// down or zero), matured tickets covering `params.shares`, consumed oldest first. With nothing to repay no flash
+    /// loan is taken. A partial unwind leaves debt, so Morpho's health check (and the market oracle) applies to the
+    /// withdrawal. USD3's own withdraw limit (pending loss, waUSDC liquidity, ring fence, floors) and the bypass grant
+    /// can make the redemption revert; the whole call then reverts and the tickets are restored. Debt is always repaid
+    /// by shares; redemption proceeds below the flash-loaned repayment revert `UnwindProceedsBelowRepayment`.
+    /// @return repaidAssets USDC of debt repaid: the repaid shares' value rounded up, which the flash loan covers.
+    /// @return sharesRedeemed USD3l collateral shares withdrawn and redeemed.
+    /// @return usdcOut USDC sent to the caller.
+    function unwind(UnwindParams calldata params)
+        external
+        returns (uint256 repaidAssets, uint256 sharesRedeemed, uint256 usdcOut);
+
+    /// @notice `unwind` that first applies the caller's enabling Morpho authorization of this helper when it is not
+    /// already in place, with the same tolerance as `fundWithSignatures`; otherwise the authorization is ignored.
+    function unwindWithAuthorization(
+        UnwindParams calldata params,
+        IMorphoBlue.Authorization calldata authorization,
+        IMorphoBlue.Signature calldata authorizationSignature
+    ) external returns (uint256 repaidAssets, uint256 sharesRedeemed, uint256 usdcOut);
+
+    /// @notice Removes the caller's ticket at `index` in market `marketId`, keeping the rest in order.
+    function cancelTicket(bytes32 marketId, uint256 index) external;
+
+    /// @notice `user`'s open tickets in market `marketId`, oldest first.
+    function tickets(address user, bytes32 marketId) external view returns (Ticket[] memory);
+
+    /// @notice Shares of `user`'s tickets in market `marketId` matured at the live USD3l cooldown.
+    function maturedShares(address user, bytes32 marketId) external view returns (uint256);
+
+    /// @notice The most shares `user` can unwind in market `marketId` by the ticket gate and live collateral; USD3's
+    /// withdraw limit and Morpho's health check are not included.
+    function maxUnwindable(address user, bytes32 marketId) external view returns (uint256);
 }

@@ -25,7 +25,6 @@ import {LCCLeveragedFundSigUtils} from "./LCCLeveragedFundSigUtils.sol";
 import {IMorphoBlueTest} from "./IMorphoBlueTest.sol";
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
-import {LCCLeveragedFundHelper} from "../../../src/lcc/LCCLeveragedFundHelper.sol";
 import {ILCCLeveragedFundHelper} from "../../../src/lcc/interfaces/ILCCLeveragedFundHelper.sol";
 import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {
@@ -37,6 +36,10 @@ import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ORACLE_PRICE_SCALE, DOMAIN_TYPEHASH, AUTHORIZATION_TYPEHASH} from "../../../src/libraries/ConstantsLib.sol";
 import {MathLib} from "../../../src/libraries/MathLib.sol";
 import {SharesMathLib} from "../../../src/libraries/SharesMathLib.sol";
+
+/// @dev The helper is deployed from its artifact so this suite never compiles it together with `LCCVault`, whose
+/// scoped optimizer setting differs from the helper's.
+interface ILCCLeveragedFundHelperUnderTest is ILCCLeveragedFundHelper, IMorphoBlueFlashLoanCallback {}
 
 /// @dev Smart-wallet stand-in that executes a batch of calls in one transaction.
 contract LCCHelperMulticallFunder {
@@ -84,17 +87,56 @@ contract LCCMockUsdcMarginVault is ERC4626, ERC20Permit {
     }
 }
 
+/// @dev USD3 stand-in whose `redeem` with a loss bound honours a settable withdraw limit; `reportProfit` moves the
+/// share price.
+contract LCCUnwindMockUSD3 is LCCMockUSD3 {
+    uint256 public withdrawLimit = type(uint256).max;
+
+    constructor(IERC20 asset_) LCCMockUSD3(asset_) {}
+
+    function setWithdrawLimit(uint256 limit) external {
+        withdrawLimit = limit;
+    }
+
+    function redeem(uint256 shares, address receiver, address owner, uint256) external returns (uint256) {
+        require(previewRedeem(shares) <= withdrawLimit, "ERC4626: redeem more than max");
+        return redeem(shares, receiver, owner);
+    }
+}
+
 contract LCCPermitMockToken is LCCMockToken, ERC20Permit {
     constructor(string memory name_, string memory symbol_) LCCMockToken(name_, symbol_) ERC20Permit(name_) {}
 }
 
+/// @dev USD3l stand-in with the NotificationVault cooldown surface the helper reads: `redeem` with a loss bound is
+/// available only to a bypassed owner, or to anyone while shut down or with a zero cooldown.
 contract LCCPermitNotificationVault is LCCMockNotificationVault, ERC20Permit {
     uint256 public extraMint;
+    uint64 public cooldownDuration = 35 days;
+    bool public isShutdown;
+    mapping(address => bool) public cooldownBypass;
 
     constructor(IERC20 asset_) LCCMockNotificationVault(asset_) ERC20Permit("Mock Notification USD3") {}
 
     function setExtraMint(uint256 extra) external {
         extraMint = extra;
+    }
+
+    function setCooldownDuration(uint64 duration) external {
+        cooldownDuration = duration;
+    }
+
+    function setShutdown(bool shutdown) external {
+        isShutdown = shutdown;
+    }
+
+    function setCooldownBypass(address account, bool allowed) external {
+        cooldownBypass[account] = allowed;
+    }
+
+    function redeem(uint256 shares, address receiver, address owner, uint256) external returns (uint256) {
+        require(isShutdown || cooldownDuration == 0 || cooldownBypass[owner], "ERC4626: redeem more than max");
+        return redeem(shares, receiver, owner);
     }
 
     function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal override {
@@ -138,6 +180,8 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
 
     uint256 public callbackCount = 1;
     bool public tamperCallbackData;
+    bool public tamperCallbackKind;
+    mapping(bytes32 => uint256) public pendingInterest;
     bool public skipCallback;
     uint256 public callbackAssetsDelta;
     uint256 public flashLoanCount;
@@ -159,6 +203,69 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
         tamperCallbackData = tamper;
     }
 
+    function setTamperCallbackKind(bool tamper) external {
+        tamperCallbackKind = tamper;
+    }
+
+    /// @dev Interest added to the market's borrow and supply totals at its next accrual.
+    function setPendingInterest(bytes32 id, uint256 assets) external {
+        pendingInterest[id] = assets;
+    }
+
+    /// @dev Moves `assets` of `user`'s collateral to the caller, standing in for a liquidation.
+    function seizeCollateral(IMorphoBlue.MarketParams calldata params, address user, uint256 assets) external {
+        position[_created(params)][user].collateral -= uint128(assets);
+        IERC20(params.collateralToken).safeTransfer(msg.sender, assets);
+    }
+
+    function accrueInterest(IMorphoBlue.MarketParams calldata params) external {
+        _accrue(_created(params));
+    }
+
+    function repay(
+        IMorphoBlue.MarketParams calldata params,
+        uint256 assets,
+        uint256 shares,
+        address onBehalf,
+        bytes calldata
+    ) external returns (uint256, uint256) {
+        bytes32 id = _created(params);
+        require((assets == 0) != (shares == 0), "inconsistent input");
+        _accrue(id);
+        _fireReentry();
+        MarketState storage m = market[id];
+        if (assets > 0) shares = assets.toSharesDown(m.totalBorrowAssets, m.totalBorrowShares);
+        else assets = shares.toAssetsUp(m.totalBorrowAssets, m.totalBorrowShares);
+        position[id][onBehalf].borrowShares -= uint128(shares);
+        m.totalBorrowShares -= uint128(shares);
+        m.totalBorrowAssets = assets > m.totalBorrowAssets ? 0 : m.totalBorrowAssets - uint128(assets);
+        IERC20(params.loanToken).safeTransferFrom(msg.sender, address(this), assets);
+        return (assets, shares);
+    }
+
+    function withdrawCollateral(
+        IMorphoBlue.MarketParams calldata params,
+        uint256 assets,
+        address onBehalf,
+        address receiver
+    ) external {
+        bytes32 id = _created(params);
+        require(assets != 0, "zero assets");
+        require(msg.sender == onBehalf || isAuthorized[onBehalf][msg.sender], "unauthorized");
+        _accrue(id);
+        position[id][onBehalf].collateral -= uint128(assets);
+        require(_isHealthy(params, id, onBehalf), "insufficient collateral");
+        IERC20(params.collateralToken).safeTransfer(receiver, assets);
+    }
+
+    function _accrue(bytes32 id) internal {
+        uint256 interest = pendingInterest[id];
+        if (interest == 0) return;
+        pendingInterest[id] = 0;
+        market[id].totalBorrowAssets += uint128(interest);
+        market[id].totalSupplyAssets += uint128(interest);
+    }
+
     function setCallbackAssetsDelta(uint256 delta) external {
         callbackAssetsDelta = delta;
     }
@@ -172,6 +279,7 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
         if (skipCallback) return;
         bytes memory payload = data;
         if (tamperCallbackData) payload[payload.length - 1] ^= 0x01;
+        if (tamperCallbackKind) payload[31] ^= 0x01;
         for (uint256 i; i < callbackCount; ++i) {
             IMorphoBlueFlashLoanCallback(msg.sender).onMorphoFlashLoan(assets + callbackAssetsDelta, payload);
         }
@@ -242,6 +350,7 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
         require(msg.sender == onBehalf || isAuthorized[onBehalf][msg.sender], "unauthorized");
 
         _fireReentry();
+        _accrue(id);
 
         MarketState storage m = market[id];
         shares = assets.toSharesUp(m.totalBorrowAssets, m.totalBorrowShares);
@@ -287,6 +396,7 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
         view
         returns (bool)
     {
+        if (position[id][user].borrowShares == 0) return true;
         uint256 maxBorrow = uint256(position[id][user].collateral)
             .mulDivDown(IMorphoBlueOracle(params.oracle).price(), ORACLE_PRICE_SCALE).wMulDown(params.lltv);
         return maxBorrow >= borrowAssetsOf(id, user);
@@ -299,13 +409,17 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
     uint256 internal constant MARGIN = 100e18;
     uint256 internal constant CALL = 100e18;
     uint256 internal constant RELEASED = 50e18;
+    uint256 internal constant COOLDOWN = 35 days;
+    uint256 internal constant MAX_TICKETS = 32;
+    uint256 internal constant SECOND_ENTRY_EPOCH = 21 days / 100 + 1;
 
     LCCMockMorphoBlue internal morpho;
     OracleMock internal marketOracle;
     IMorphoBlue.MarketParams internal marketParams;
     bytes32 internal marketId;
-    LCCLeveragedFundHelper internal helper;
+    ILCCLeveragedFundHelperUnderTest internal helper;
     LCCPermitNotificationVault internal usd3l;
+    LCCUnwindMockUSD3 internal unwindUsd3;
     LCCMockUsdcMarginVault internal waUsdc;
     LCCVault internal marginFacility;
 
@@ -334,7 +448,8 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         usdc.approve(address(morpho), LIQUIDITY);
         morpho.supply(marketParams, LIQUIDITY, 0, address(this), "");
 
-        helper = new LCCLeveragedFundHelper(address(morpho), address(factory), address(usd3l));
+        helper = ILCCLeveragedFundHelperUnderTest(_deployHelper(address(morpho), address(factory), address(usd3l)));
+        usd3l.setCooldownBypass(address(helper), true);
 
         (signer, signerKey) = makeAddrAndKey("signer");
         (, otherKey) = makeAddrAndKey("other-signer");
@@ -945,6 +1060,474 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         assertTrue(marginFacility.fundedEpoch(0, signer));
         assertEq(waUsdc.allowance(signer, address(helper)), 0);
         _assertMarginHelperClean();
+    }
+
+    /* TICKETS */
+
+    function testEntryOpensTicketForSuppliedCollateral() public {
+        uint256 start = _enterLevered(alice);
+
+        ILCCLeveragedFundHelper.Ticket[] memory book = helper.tickets(alice, marketId);
+        assertEq(book.length, 1);
+        assertEq(book[0].shares, CALL);
+        assertEq(book[0].start, start);
+        assertEq(book[0].duration, COOLDOWN);
+        assertEq(helper.maturedShares(alice, marketId), 0);
+        assertEq(helper.maxUnwindable(alice, marketId), 0);
+    }
+
+    function testTicketMaturesExactlyAtCooldownEnd() public {
+        uint256 start = _enterLevered(alice);
+
+        vm.warp(start + COOLDOWN - 1);
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.InsufficientMaturedShares.selector, CALL, 0));
+        vm.prank(alice);
+        helper.unwind(_unwindParams(CALL, true, 0));
+
+        vm.warp(start + COOLDOWN);
+        assertEq(helper.maxUnwindable(alice, marketId), CALL);
+        vm.prank(alice);
+        helper.unwind(_unwindParams(CALL, true, 0));
+        assertEq(helper.tickets(alice, marketId).length, 0);
+    }
+
+    function testTicketsConsumeOldestMaturedFirstAndPartially() public {
+        uint256 first = _enterLevered(alice);
+        uint256 second = _enterLeveredAtEpoch(alice, SECOND_ENTRY_EPOCH);
+        assertGe(second - first, 21 days);
+
+        vm.warp(first + COOLDOWN);
+        assertEq(helper.maturedShares(alice, marketId), CALL);
+        vm.prank(alice);
+        helper.unwind(_unwindParams(60e18, false, 60e18));
+
+        ILCCLeveragedFundHelper.Ticket[] memory book = helper.tickets(alice, marketId);
+        assertEq(book.length, 2);
+        assertEq(book[0].shares, CALL - 60e18);
+        assertEq(book[1].shares, CALL);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.InsufficientMaturedShares.selector, 70e18, 40e18)
+        );
+        vm.prank(alice);
+        helper.unwind(_unwindParams(70e18, false, 70e18));
+
+        vm.warp(second + COOLDOWN);
+        vm.prank(alice);
+        helper.unwind(_unwindParams(140e18, true, 0));
+        assertEq(helper.tickets(alice, marketId).length, 0);
+        (,, uint128 collateral) = morpho.position(marketId, alice);
+        assertEq(collateral, 0);
+    }
+
+    function testLiveCollateralCapsUnwindAfterDirectWithdrawalAndTicketOutlivesIt() public {
+        uint256 start = _enterUnlevered(alice);
+        vm.prank(alice);
+        morpho.withdrawCollateral(marketParams, 40e18, alice, alice);
+
+        vm.warp(start + COOLDOWN);
+        assertEq(helper.maxUnwindable(alice, marketId), 60e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.SharesExceedCollateral.selector, 60e18 + 1, 60e18)
+        );
+        vm.prank(alice);
+        helper.unwind(_unwindParams(60e18 + 1, true, 0));
+
+        vm.prank(alice);
+        helper.unwind(_unwindParams(60e18, true, 0));
+        assertEq(helper.tickets(alice, marketId)[0].shares, 40e18);
+
+        vm.startPrank(alice);
+        usd3l.approve(address(morpho), 40e18);
+        morpho.supplyCollateral(marketParams, 40e18, alice, "");
+        (,, uint256 usdcOut) = helper.unwind(_unwindParams(40e18, true, 0));
+        vm.stopPrank();
+        assertEq(usdcOut, 40e18);
+        assertEq(helper.tickets(alice, marketId).length, 0);
+    }
+
+    function testLiveCollateralCapsUnwindAfterLiquidation() public {
+        uint256 start = _enterLevered(alice);
+        morpho.seizeCollateral(marketParams, alice, 30e18);
+
+        vm.warp(start + COOLDOWN);
+        assertEq(helper.maxUnwindable(alice, marketId), 70e18);
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.SharesExceedCollateral.selector, CALL, 70e18));
+        vm.prank(alice);
+        helper.unwind(_unwindParams(CALL, true, 0));
+    }
+
+    function testFullBookMergesTheTwoOldestTicketsAndFundingNeverReverts() public {
+        _deposit(alice, MARGIN);
+        uint256[] memory starts = new uint256[](MAX_TICKETS + 1);
+        for (uint256 epoch; epoch < MAX_TICKETS; ++epoch) {
+            starts[epoch] = _fundUnleveredAtEpoch(alice, epoch, 1e18);
+        }
+
+        vm.recordLogs();
+        starts[MAX_TICKETS] = _fundUnleveredAtEpoch(alice, MAX_TICKETS, 1e18);
+        assertEq(_countLogs(ILCCLeveragedFundHelper.TicketMerged.selector), 1);
+
+        ILCCLeveragedFundHelper.Ticket[] memory book = helper.tickets(alice, marketId);
+        assertEq(book.length, MAX_TICKETS);
+        assertEq(book[0].shares, 2e18);
+        assertEq(book[0].start, starts[1], "merged pair keeps the later maturity");
+        assertEq(book[1].start, starts[2]);
+        assertEq(book[MAX_TICKETS - 2].start, starts[MAX_TICKETS - 1], "previous newest untouched");
+        assertEq(book[MAX_TICKETS - 2].shares, 1e18);
+        assertEq(book[MAX_TICKETS - 1].start, starts[MAX_TICKETS]);
+        assertEq(book[MAX_TICKETS - 1].shares, 1e18);
+    }
+
+    function testFullBookMergeLeavesUnmaturedNewestTicketUntouched() public {
+        _deposit(alice, MARGIN);
+        for (uint256 epoch; epoch < MAX_TICKETS; ++epoch) {
+            _fundUnleveredAtEpoch(alice, epoch, 1e18);
+        }
+        ILCCLeveragedFundHelper.Ticket memory newestBefore = helper.tickets(alice, marketId)[MAX_TICKETS - 1];
+        ILCCLeveragedFundHelper.Ticket memory oldestBefore = helper.tickets(alice, marketId)[0];
+        vm.warp(uint256(oldestBefore.start) + COOLDOWN);
+        assertGt(helper.maturedShares(alice, marketId), 0);
+
+        uint256 epoch = (block.timestamp - START) / EPOCH + 1;
+        _fundUnleveredAtEpoch(alice, epoch, 1e18);
+
+        ILCCLeveragedFundHelper.Ticket[] memory book = helper.tickets(alice, marketId);
+        assertEq(book[MAX_TICKETS - 2].start, newestBefore.start);
+        assertEq(book[MAX_TICKETS - 2].shares, newestBefore.shares);
+        assertEq(book[MAX_TICKETS - 2].duration, newestBefore.duration);
+        assertGt(uint256(book[0].start) + book[0].duration, uint256(oldestBefore.start) + oldestBefore.duration);
+    }
+
+    function testCancelThenFundRefillsBookWithoutMerging() public {
+        _deposit(alice, MARGIN);
+        for (uint256 epoch; epoch < MAX_TICKETS; ++epoch) {
+            _fundUnleveredAtEpoch(alice, epoch, 1e18);
+        }
+        vm.prank(alice);
+        helper.cancelTicket(marketId, 5);
+        assertEq(helper.tickets(alice, marketId).length, MAX_TICKETS - 1);
+
+        vm.recordLogs();
+        uint256 start = _fundUnleveredAtEpoch(alice, MAX_TICKETS, 1e18);
+        assertEq(_countLogs(ILCCLeveragedFundHelper.TicketMerged.selector), 0);
+        ILCCLeveragedFundHelper.Ticket[] memory book = helper.tickets(alice, marketId);
+        assertEq(book.length, MAX_TICKETS);
+        assertEq(book[MAX_TICKETS - 1].start, start);
+        assertEq(book[0].shares, 1e18);
+    }
+
+    function testConsumptionSkipsUnmaturedTicketAndKeepsOrder() public {
+        _deposit(alice, MARGIN);
+        uint256 first = _fundUnleveredAtEpoch(alice, 0, 30e18);
+        usd3l.setCooldownDuration(uint64(100 days));
+        uint256 second = _fundUnleveredAtEpoch(alice, 1 days / EPOCH, 30e18);
+        usd3l.setCooldownDuration(uint64(COOLDOWN));
+        uint256 third = _fundUnleveredAtEpoch(alice, 2 days / EPOCH, 30e18);
+
+        vm.warp(third + COOLDOWN);
+        assertLt(block.timestamp, second + 100 days);
+        assertEq(helper.maturedShares(alice, marketId), 60e18);
+
+        vm.prank(alice);
+        helper.unwind(_unwindParams(40e18, true, 0));
+
+        ILCCLeveragedFundHelper.Ticket[] memory book = helper.tickets(alice, marketId);
+        assertEq(book.length, 2);
+        assertEq(book[0].shares, 30e18);
+        assertEq(book[0].start, second);
+        assertEq(book[0].duration, 100 days);
+        assertEq(book[1].shares, 20e18);
+        assertEq(book[1].start, third);
+        assertEq(book[1].duration, COOLDOWN);
+        assertGt(third, first);
+    }
+
+    function testCancelTicketRemovesItInOrder() public {
+        _enterLevered(alice);
+
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.UnknownTicket.selector, 1));
+        vm.prank(alice);
+        helper.cancelTicket(marketId, 1);
+
+        vm.prank(alice);
+        helper.cancelTicket(marketId, 0);
+        assertEq(helper.tickets(alice, marketId).length, 0);
+    }
+
+    function testTicketsAreIsolatedPerMarket() public {
+        uint256 start = _enterUnlevered(alice);
+        IMorphoBlue.MarketParams memory other = _createMarket(0.5e18, LIQUIDITY);
+        bytes32 otherId = keccak256(abi.encode(other));
+        vm.prank(alice);
+        morpho.withdrawCollateral(marketParams, 50e18, alice, alice);
+        vm.startPrank(alice);
+        usd3l.approve(address(morpho), 50e18);
+        morpho.supplyCollateral(other, 50e18, alice, "");
+        vm.stopPrank();
+
+        vm.warp(start + COOLDOWN);
+        assertEq(helper.tickets(alice, otherId).length, 0);
+        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(50e18, true, 0);
+        params.market = other;
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.InsufficientMaturedShares.selector, 50e18, 0));
+        vm.prank(alice);
+        helper.unwind(params);
+    }
+
+    function testShutdownAndZeroCooldownWaiveTheTicketGate() public {
+        _enterUnlevered(alice);
+
+        usd3l.setShutdown(true);
+        assertEq(helper.maxUnwindable(alice, marketId), CALL);
+        vm.prank(alice);
+        helper.unwind(_unwindParams(40e18, true, 0));
+        assertEq(helper.tickets(alice, marketId)[0].shares, CALL);
+
+        usd3l.setShutdown(false);
+        usd3l.setCooldownDuration(0);
+        vm.prank(alice);
+        helper.unwind(_unwindParams(60e18, true, 0));
+        (,, uint128 collateral) = morpho.position(marketId, alice);
+        assertEq(collateral, 0);
+    }
+
+    function testLiveCooldownIncreaseDelaysOpenTicket() public {
+        uint256 start = _enterLevered(alice);
+        usd3l.setCooldownDuration(uint64(2 * COOLDOWN));
+
+        vm.warp(start + COOLDOWN);
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.InsufficientMaturedShares.selector, CALL, 0));
+        vm.prank(alice);
+        helper.unwind(_unwindParams(CALL, true, 0));
+
+        vm.warp(start + 2 * COOLDOWN);
+        vm.prank(alice);
+        helper.unwind(_unwindParams(CALL, true, 0));
+    }
+
+    /* UNWIND */
+
+    function testFullUnwindRepaysAccruedDebtByShares() public {
+        uint256 start = _enterLevered(alice);
+        morpho.setPendingInterest(marketId, 1e18);
+        vm.warp(start + COOLDOWN);
+        uint256 flashLoansBefore = morpho.flashLoanCount();
+
+        vm.prank(alice);
+        (uint256 repaid, uint256 shares, uint256 usdcOut) = helper.unwind(_unwindParams(CALL, true, 0));
+
+        assertGe(repaid, 81e18);
+        assertLe(repaid, 81e18 + 1);
+        assertEq(shares, CALL);
+        assertEq(usdcOut, CALL - repaid);
+        assertEq(usdc.balanceOf(alice), usdcOut);
+        assertEq(morpho.flashLoanCount(), flashLoansBefore + 1);
+        assertEq(morpho.lastFlashAssets(), repaid);
+        (, uint128 borrowShares, uint128 collateral) = morpho.position(marketId, alice);
+        assertEq(borrowShares, 0);
+        assertEq(collateral, 0);
+        _assertUnwindHelperClean();
+    }
+
+    function testPartialUnwindRepaysByAssetsAndKeepsHealthyPosition() public {
+        uint256 start = _enterLevered(alice);
+        vm.warp(start + COOLDOWN);
+
+        vm.prank(alice);
+        (uint256 repaid,, uint256 usdcOut) = helper.unwind(_unwindParams(50e18, false, 40e18));
+
+        assertEq(repaid, 40e18);
+        assertEq(usdcOut, 10e18);
+        assertEq(morpho.borrowAssetsOf(marketId, alice), 40e18);
+        (,, uint128 collateral) = morpho.position(marketId, alice);
+        assertEq(collateral, 50e18);
+        assertEq(helper.tickets(alice, marketId)[0].shares, 50e18);
+        _assertUnwindHelperClean();
+    }
+
+    function testPartialUnwindFailingHealthReverts() public {
+        uint256 start = _enterLevered(alice);
+        vm.warp(start + COOLDOWN);
+
+        vm.expectRevert("insufficient collateral");
+        vm.prank(alice);
+        helper.unwind(_unwindParams(10e18, false, 0));
+    }
+
+    function testFullUnwindSucceedsWithRevertingOracle() public {
+        uint256 start = _enterLevered(alice);
+        vm.warp(start + COOLDOWN);
+        vm.mockCallRevert(address(marketOracle), abi.encodeCall(IMorphoBlueOracle.price, ()), "ORACLE_DOWN");
+
+        vm.prank(alice);
+        helper.unwind(_unwindParams(CALL, true, 0));
+        (,, uint128 collateral) = morpho.position(marketId, alice);
+        assertEq(collateral, 0);
+    }
+
+    function testUnwindProceedsBelowRepaymentReverts() public {
+        uint256 start = _enterLevered(alice);
+        vm.warp(start + COOLDOWN);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.UnwindProceedsBelowRepayment.selector, 10e18, 80e18)
+        );
+        vm.prank(alice);
+        helper.unwind(_unwindParams(10e18, true, 0));
+    }
+
+    function testDustPartialRepaymentThatBuysNoShareReverts() public {
+        uint256 start = _enterLevered(alice);
+        vm.warp(start + COOLDOWN);
+        morpho.setPendingInterest(marketId, 1e26);
+
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.RepayRoundsToZero.selector, 1));
+        vm.prank(alice);
+        helper.unwind(_unwindParams(10e18, false, 1));
+    }
+
+    function testUnwindBoundsRevert() public {
+        uint256 start = _enterLevered(alice);
+        vm.warp(start + COOLDOWN);
+
+        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(CALL, true, 0);
+        params.maxRepayAssets = 80e18 - 1;
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.RepayExceedsMax.selector, 80e18, 80e18 - 1));
+        vm.prank(alice);
+        helper.unwind(params);
+
+        params = _unwindParams(CALL, true, 0);
+        params.minUsdcOut = 20e18 + 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.UnwindOutputBelowMinimum.selector, 20e18, 20e18 + 1)
+        );
+        vm.prank(alice);
+        helper.unwind(params);
+
+        params = _unwindParams(CALL, true, 0);
+        params.deadline = block.timestamp - 1;
+        vm.expectRevert(ILCCLeveragedFundHelper.DeadlineExpired.selector);
+        vm.prank(alice);
+        helper.unwind(params);
+
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.RepayExceedsDebt.selector, 80e18 + 1, 80e18));
+        vm.prank(alice);
+        helper.unwind(_unwindParams(CALL, false, 80e18 + 1));
+
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidUnwindShares.selector);
+        vm.prank(alice);
+        helper.unwind(_unwindParams(0, true, 0));
+    }
+
+    function testRedemptionLimitsRevertAtomicallyWithTicketsRestored() public {
+        uint256 start = _enterLevered(alice);
+        vm.warp(start + COOLDOWN);
+
+        unwindUsd3.setWithdrawLimit(CALL - 1);
+        _expectFailedUnwindRestoresState(bytes("ERC4626: redeem more than max"));
+
+        unwindUsd3.setWithdrawLimit(0);
+        _expectFailedUnwindRestoresState(bytes("ERC4626: redeem more than max"));
+
+        unwindUsd3.setWithdrawLimit(type(uint256).max);
+        usd3l.setCooldownBypass(address(helper), false);
+        _expectFailedUnwindRestoresState(bytes("ERC4626: redeem more than max"));
+    }
+
+    function testUnwindPayloadKindAndContentAreBound() public {
+        uint256 start = _enterLevered(alice);
+        vm.warp(start + COOLDOWN);
+
+        morpho.setTamperCallbackKind(true);
+        vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+        vm.prank(alice);
+        helper.unwind(_unwindParams(CALL, true, 0));
+
+        morpho.setTamperCallbackKind(false);
+        morpho.setTamperCallbackData(true);
+        vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+        vm.prank(alice);
+        helper.unwind(_unwindParams(CALL, true, 0));
+
+        morpho.setTamperCallbackData(false);
+        morpho.setCallbackAssetsDelta(1);
+        vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+        vm.prank(alice);
+        helper.unwind(_unwindParams(CALL, true, 0));
+    }
+
+    function testFundingPayloadKindIsBound() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, 20e18);
+        morpho.setTamperCallbackKind(true);
+        vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+        vm.prank(alice);
+        helper.fund(_fundParams(80e18));
+    }
+
+    function testUnwindIsNotReenterable() public {
+        uint256 start = _enterLevered(alice);
+        vm.warp(start + COOLDOWN);
+        morpho.armReentry(
+            address(helper), abi.encodeCall(ILCCLeveragedFundHelper.unwind, (_unwindParams(CALL, true, 0)))
+        );
+
+        vm.prank(alice);
+        helper.unwind(_unwindParams(CALL, true, 0));
+        assertEq(morpho.reentryError(), ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector);
+    }
+
+    function testCancelTicketIsNotReenterable() public {
+        _assertNotReenterable(abi.encodeCall(ILCCLeveragedFundHelper.cancelTicket, (marketId, 0)));
+    }
+
+    function testDonatedUsd3lAndUsd3StayUntouched() public {
+        uint256 start = _enterLevered(alice);
+        vm.warp(start + COOLDOWN);
+        deal(address(usd3l), address(helper), 7);
+        deal(address(usd3), address(helper), 7);
+
+        vm.prank(alice);
+        (,, uint256 usdcOut) = helper.unwind(_unwindParams(CALL, true, 0));
+
+        assertEq(usdcOut, 20e18);
+        assertEq(usd3l.balanceOf(address(helper)), 7);
+        assertEq(usd3.balanceOf(address(helper)), 7);
+        assertEq(usdc.balanceOf(address(helper)), 0);
+    }
+
+    function testUnwindRequiresAuthorizationAndSignatureVariantAppliesIt() public {
+        uint256 start = _enterUnlevered(signer);
+        vm.warp(start + COOLDOWN);
+        assertFalse(morpho.isAuthorized(signer, address(helper)));
+
+        vm.expectRevert(ILCCLeveragedFundHelper.NotAuthorized.selector);
+        vm.prank(signer);
+        helper.unwind(_unwindParams(CALL, true, 0));
+
+        IMorphoBlue.Authorization memory authorization =
+            _morphoAuthorization(address(morpho), signer, address(helper), type(uint256).max);
+        IMorphoBlue.Signature memory signature = _signMorphoAuthorization(address(morpho), signerKey, authorization);
+        vm.prank(signer);
+        (,, uint256 usdcOut) = helper.unwindWithAuthorization(_unwindParams(CALL, true, 0), authorization, signature);
+
+        assertEq(usdcOut, CALL);
+        assertTrue(morpho.isAuthorized(signer, address(helper)));
+    }
+
+    function testZeroDebtUnwindTakesNoFlashLoan() public {
+        uint256 start = _enterUnlevered(alice);
+        vm.warp(start + COOLDOWN);
+        uint256 flashLoansBefore = morpho.flashLoanCount();
+
+        vm.prank(alice);
+        (uint256 repaid,, uint256 usdcOut) = helper.unwind(_unwindParams(CALL, true, 0));
+
+        assertEq(repaid, 0);
+        assertEq(usdcOut, CALL);
+        assertEq(morpho.flashLoanCount(), flashLoansBefore);
+        _assertUnwindHelperClean();
     }
 
     /* SIGNATURES */
@@ -1598,22 +2181,22 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
 
     function testConstructorDerivesTokensFromUsd3l() public {
         vm.expectRevert(ILCCLeveragedFundHelper.InvalidConfiguration.selector);
-        new LCCLeveragedFundHelper(address(0), address(factory), address(usd3l));
+        _deployHelper(address(0), address(factory), address(usd3l));
 
         vm.expectRevert(ILCCLeveragedFundHelper.InvalidConfiguration.selector);
-        new LCCLeveragedFundHelper(address(morpho), address(factory), makeAddr("codeless-usd3l"));
+        _deployHelper(address(morpho), address(factory), makeAddr("codeless-usd3l"));
 
         LCCAssetOnlyVault codelessUsd3 = new LCCAssetOnlyVault(makeAddr("codeless-usd3"));
         vm.expectRevert(ILCCLeveragedFundHelper.InvalidConfiguration.selector);
-        new LCCLeveragedFundHelper(address(morpho), address(factory), address(codelessUsd3));
+        _deployHelper(address(morpho), address(factory), address(codelessUsd3));
 
         LCCAssetOnlyVault codelessUsdc =
             new LCCAssetOnlyVault(address(new LCCAssetOnlyVault(makeAddr("codeless-usdc"))));
         vm.expectRevert(ILCCLeveragedFundHelper.InvalidConfiguration.selector);
-        new LCCLeveragedFundHelper(address(morpho), address(factory), address(codelessUsdc));
+        _deployHelper(address(morpho), address(factory), address(codelessUsdc));
 
         vm.expectRevert();
-        new LCCLeveragedFundHelper(address(morpho), address(factory), address(margin));
+        _deployHelper(address(morpho), address(factory), address(margin));
 
         assertEq(helper.usd3(), address(usd3));
         assertEq(helper.usdc(), address(usdc));
@@ -1625,7 +2208,8 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
 
     function _deployTokens() internal override {
         usdc = new LCCPermitMockToken("USD Coin", "USDC");
-        usd3 = new LCCMockUSD3(IERC20(address(usdc)));
+        unwindUsd3 = new LCCUnwindMockUSD3(IERC20(address(usdc)));
+        usd3 = unwindUsd3;
         usd3l = new LCCPermitNotificationVault(IERC20(address(usd3)));
         notificationVault = usd3l;
     }
@@ -1718,6 +2302,108 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         params.marginAssets = marginAssets;
         params.maxMarginShares = marginAssets;
         params.maxContribution = CALL - borrowAssets - marginAssets;
+    }
+
+    /// @dev Levered entry at epoch 0 (80% borrowed); returns the ticket start.
+    function _enterLevered(address user) internal returns (uint256) {
+        _depositAndOpenCall(user);
+        usdc.mint(user, 20e18);
+        vm.prank(user);
+        helper.fund(_fundParams(80e18));
+        return block.timestamp;
+    }
+
+    /// @dev Second levered entry for a user who already funded epoch 0, at a later called epoch.
+    function _enterLeveredAtEpoch(address user, uint256 epoch) internal returns (uint256) {
+        _openCallAtEpoch(epoch, CALL);
+        vm.warp(START + EPOCH * epoch + NORMAL + PRE_CALL);
+        usdc.mint(user, 20e18);
+        vm.prank(user);
+        helper.fund(_fundParams(80e18));
+        return block.timestamp;
+    }
+
+    /// @dev Unlevered entry at epoch 0 (no borrow); returns the ticket start.
+    function _enterUnlevered(address user) internal returns (uint256) {
+        _depositAndOpenCall(user);
+        usdc.mint(user, CALL);
+        vm.startPrank(user);
+        usdc.approve(address(helper), type(uint256).max);
+        usd3l.approve(address(helper), type(uint256).max);
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(0);
+        helper.fund(params);
+        vm.stopPrank();
+        return block.timestamp;
+    }
+
+    /// @dev Unlevered entry for `call` at `epoch` by a user who already deposited; returns the ticket start.
+    function _fundUnleveredAtEpoch(address user, uint256 epoch, uint256 call) internal returns (uint256) {
+        _openCallAtEpoch(epoch, call);
+        vm.warp(START + EPOCH * epoch + NORMAL + PRE_CALL);
+        uint256 obligation = vault.obligationOf(epoch, user);
+        usdc.mint(user, obligation);
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(0);
+        params.maxObligation = obligation;
+        params.maxContribution = obligation;
+        params.minCollateral = obligation;
+        params.maxCollateral = obligation;
+        vm.prank(user);
+        helper.fund(params);
+        return block.timestamp;
+    }
+
+    function _countLogs(bytes32 topic) internal returns (uint256 count) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter == address(helper) && logs[i].topics[0] == topic) ++count;
+        }
+    }
+
+    function _unwindParams(uint256 shares, bool full, uint256 repayAssets)
+        internal
+        view
+        returns (ILCCLeveragedFundHelper.UnwindParams memory)
+    {
+        return ILCCLeveragedFundHelper.UnwindParams({
+            market: marketParams,
+            shares: shares,
+            full: full,
+            repayAssets: repayAssets,
+            maxRepayAssets: type(uint256).max,
+            minUsdcOut: 0,
+            deadline: block.timestamp
+        });
+    }
+
+    function _expectFailedUnwindRestoresState(bytes memory reason) internal {
+        uint256 debtBefore = morpho.borrowAssetsOf(marketId, alice);
+        vm.expectRevert(reason);
+        vm.prank(alice);
+        helper.unwind(_unwindParams(CALL, true, 0));
+        assertEq(helper.tickets(alice, marketId)[0].shares, CALL);
+        assertEq(morpho.borrowAssetsOf(marketId, alice), debtBefore);
+        (,, uint128 collateral) = morpho.position(marketId, alice);
+        assertEq(collateral, CALL);
+    }
+
+    function _assertUnwindHelperClean() internal view {
+        assertEq(usdc.balanceOf(address(helper)), 0);
+        assertEq(usd3l.balanceOf(address(helper)), 0);
+        assertEq(usd3.balanceOf(address(helper)), 0);
+        assertEq(usdc.allowance(address(helper), address(morpho)), 0);
+    }
+
+    function _deployHelper(address morpho_, address factory_, address usd3l_) internal returns (address deployed) {
+        bytes memory initCode = abi.encodePacked(
+            vm.getCode("LCCLeveragedFundHelper.sol:LCCLeveragedFundHelper"), abi.encode(morpho_, factory_, usd3l_)
+        );
+        assembly ("memory-safe") {
+            deployed := create(0, add(initCode, 0x20), mload(initCode))
+            if iszero(deployed) {
+                returndatacopy(0, 0, returndatasize())
+                revert(0, returndatasize())
+            }
+        }
     }
 
     function _supplyExtraCollateral(address user, uint256 amount) internal {
