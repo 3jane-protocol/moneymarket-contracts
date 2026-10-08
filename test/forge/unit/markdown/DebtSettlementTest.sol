@@ -335,7 +335,8 @@ contract DebtSettlementTest is BaseTest {
         // Setup loan in new market
         Id callbackMarketId = MarketParams(
                 address(loanToken), address(0), address(oracle), address(irm), 0, address(callbackHandler)
-            ).id();
+            )
+            .id();
 
         vm.prank(address(callbackHandler));
         morphoCredit.setCreditLine(callbackMarketId, BORROWER, borrowAmount * 2, 0);
