@@ -375,55 +375,77 @@ shares just minted. Tokens force-transferred to the helper are ignored and unspe
 
 ### Leveraged funding helper
 
-`LCCLeveragedFundHelper` lets a funder meet an amortizing capital-call obligation while borrowing part of it on a
-Morpho Blue market of the caller's choice. The helper pins the canonical Morpho Blue singleton, USDC, USD3, and USD3l,
-and accepts any market on that singleton named in `FundParams.market` whose loan token is USDC and collateral token is
-USD3l (`MarketTokenMismatch` otherwise); its oracle, IRM, and LLTV are chosen by the caller among markets curators
-created. Construction validates only the USDC/USD3l/USD3 wiring. Before moving tokens the helper requires the vault's
-Funding phase (`NotFundingPhase`), a one-share top-up within `MAX_FUNDING_TOP_UP` (`FundingTopUpExceeded`), and, for a
-levered `fund`, an existing Morpho authorization (`NotAuthorized`). For obligation `O` the vault pulls
-`F = max(O, usd3.previewMint(1))`; the caller picks `borrowAssets` and contributes `F - borrowAssets` USDC, which the
-helper pulls first. A levered entry (`borrowAssets` nonzero) then takes a Morpho flash loan of `borrowAssets`; inside
-`onMorphoFlashLoan` the helper runs one sequence, which an unlevered entry runs directly without a flash loan: pay the
-vault through the permissionless `fundCall(address)`, measure the USD3l the caller received, require it to reach the
-caller's `minCollateral` (`CollateralBelowMinimum` otherwise), pull and supply up to `maxCollateral` of it as the
-caller's collateral (any excess stays in the caller's wallet), and borrow `borrowAssets` for the caller to repay the
-flash loan. The bounds must satisfy `0 < minCollateral <= maxCollateral` (`InvalidCollateralBounds` otherwise);
-integrators set `minCollateral` just under `usd3l.previewDeposit(usd3.previewDeposit(F))` and `maxCollateral` at or
-just above it. After a levered entry the LTV of the caller's whole position at the market oracle price, with debt
-rounded up, must be within the caller's `maxEntryLtv`. Levered entries need the singleton to physically hold
-`2 * borrowAssets` of USDC during the entry (the flash loan plus the borrow). An unlevered entry never touches the
-flash loan or the market oracle, so it stays usable during an oracle outage.
+`LCCLeveragedFundHelper` lets a funder meet an amortizing capital-call obligation while borrowing part of it on a Morpho
+Blue market of the caller's choice. The helper pins the canonical Morpho Blue singleton and USD3l, derives USD3 as
+`USD3l.asset()` and USDC as `USD3.asset()` at construction (`InvalidConfiguration` for a codeless link), and accepts any
+market on that singleton named in `FundParams.market` whose loan token is USDC and collateral token is USD3l
+(`MarketTokenMismatch` otherwise); its oracle, IRM, and LLTV are chosen by the caller among markets curators created.
+Before moving tokens the helper requires the vault's Funding phase (`NotFundingPhase`), a one-share top-up within
+`MAX_FUNDING_TOP_UP` (`FundingTopUpExceeded`), and, for a levered `fund`, an existing Morpho authorization
+(`NotAuthorized`). For obligation `O` the vault pulls `F = max(O, usd3.previewMint(1))`; the caller picks `borrowAssets`
+and `marginAssets` and contributes `F - borrowAssets - marginAssets` USDC, which the helper pulls first
+(`BorrowAndMarginExceedFunding` if `borrowAssets + marginAssets > F`). When `borrowAssets + marginAssets` is nonzero the
+helper takes a Morpho flash loan of that sum; inside `onMorphoFlashLoan` it runs one sequence, which an entry with
+neither runs directly without a flash loan: pay the vault through the permissionless `fundCall(address)`, which also
+releases margin to the caller; measure the USD3l the caller received, require it to reach the caller's `minCollateral`
+(`CollateralBelowMinimum` otherwise), pull and supply up to `maxCollateral` of it as the caller's collateral (any excess
+stays in the caller's wallet); when `marginAssets` is nonzero, withdraw exactly `marginAssets` of USDC from the caller's
+margin-asset shares; and borrow `borrowAssets` for the caller. The withdrawal and the borrow repay the flash loan. The
+bounds must satisfy `0 < minCollateral <= maxCollateral` (`InvalidCollateralBounds` otherwise); integrators set
+`minCollateral` just under `usd3l.previewDeposit(usd3.previewDeposit(F))` and `maxCollateral` at or just above it. After
+an entry that borrows, the LTV of the caller's whole position at the market oracle price, with debt rounded up, must be
+within the caller's `maxEntryLtv`. A flash-loan entry needs the singleton to physically hold
+`2 * borrowAssets + marginAssets` of USDC (the flash loan of `borrowAssets + marginAssets`, then the borrow; see the
+operations runbook for the preflight). An entry that does not borrow never reads the market oracle or needs Morpho
+authorization, so it stays usable during an oracle outage; a margin-only entry still takes the flash loan, and an entry
+with neither borrow nor margin never touches it.
+
+Released margin as contribution. On amortizing funding the vault transfers the released margin shares to the funder
+inside `fundCall`, after it has pulled the funding USDC, so the helper bridges `marginAssets` and recovers it after
+`fundCall` returns by calling ERC-4626 `withdraw(marginAssets, helper, caller)` on the vault's margin asset. The margin
+path is admitted only when that asset is an ERC-4626 vault whose `asset()` is USDC (`MarginAssetNotUsdcVault`
+otherwise, and `InvalidMarginShares` for a zero `maxMarginShares`), and only when `marginAssets` is nonzero; an entry
+without margin never calls the margin asset. The shares the withdrawal burns are measured as the caller's balance
+change and must not exceed `maxMarginShares` (`MarginSharesExceedMax`) or the shares the vault released to the caller
+across `fundCall` in this entry (`MarginExceedsReleased`), so a caller's pre-existing margin-asset balance is never
+consumed; the withdrawal must also deliver exactly `marginAssets` of USDC (`MarginReceiptMismatch`). Integrators set
+`maxMarginShares` to the released shares `activeMargin * obligation / activeCommitment` (rounded down, as the vault
+does) and `marginAssets` to their `previewRedeem` or just under.
 
 The flash-loan callback is accepted only from Morpho, only for the operation hash recorded in transient storage for the
-helper's own in-flight `flashLoan`, and only for the borrowed amount; the hash is consumed before any external call, and
-the call reverts `CallbackNotExecuted` if the callback did not run. On a levered entry the collateral supplied is read
-back as the change in the caller's Morpho position across the flash loan; an unlevered entry returns it from the
-sequence directly. Entrypoints are `nonReentrant`. Allowances to the vault and the USDC flash repayment allowance to
-Morpho are exact and end at zero, Morpho holds a standing USD3l allowance, and donated balances are ignored. The
-beneficiary and Morpho `onBehalf` are always `msg.sender`; the helper holds no factory role, never deposits into USD3
-itself (the vault is the USD3 depositor and holds the supply-cap exemption), and has no owner, rescue, receiver,
-delegated-beneficiary, generic-call, or upgrade surface. `fund` needs a pre-set USD3l allowance covering
-`maxCollateral`, a USDC allowance covering `F - borrowAssets` only when `F > borrowAssets`, and, only when borrowing, a
-Morpho authorization of the helper; it checks both allowances before any funding and reverts `InsufficientAllowance` if
-either is short. A fully levered entry has `borrowAssets == F` and pulls no USDC; because `F` includes the one-share
-top-up, `borrowAssets = O` with `maxContribution = 0` reverts `ContributionExceedsMax` on a dust obligation.
+helper's own in-flight `flashLoan`, and only for the bridged amount `borrowAssets + marginAssets`; the hash is consumed
+before any external call, and the call reverts `CallbackNotExecuted` if the callback did not run. On a flash-loan entry
+the collateral supplied is read back as the change in the caller's Morpho position across the flash loan; an entry
+without a flash loan returns it from the sequence directly. Entrypoints are `nonReentrant`. Allowances to the vault and
+the USDC flash repayment allowance to Morpho are exact and end at zero, Morpho holds a standing USD3l allowance, and
+donated balances are ignored. The beneficiary and Morpho `onBehalf` are always `msg.sender`; the helper holds no factory
+role, never deposits into USD3 itself (the vault is the USD3 depositor and holds the supply-cap exemption), and has no
+owner, rescue, receiver, delegated-beneficiary, generic-call, or upgrade surface. `fund` needs a pre-set USD3l allowance
+covering `maxCollateral`, a USDC allowance covering the contribution only when it is nonzero, a margin-asset share
+allowance covering `maxMarginShares` only when `marginAssets` is nonzero, and, only when borrowing, a Morpho
+authorization of the helper; it checks those allowances before any funding and reverts `InsufficientAllowance` if one is
+short. A fully levered entry has `borrowAssets == F` and pulls no USDC; because `F` includes the one-share top-up,
+`borrowAssets = O` with `maxContribution = 0` reverts `ContributionExceedsMax` on a dust obligation.
 `fundWithSignatures` always submits the USD3l permit and, unless the entry is fully levered, the USDC permit; one that
 applies replaces the caller's standing allowance to the helper with its `value`, so a caller whose standing allowance
 already suffices should use `fund` or sign for the allowance it wants left standing. The USD3l permit is signed for
-`maxCollateral` and checked against it before any funding. A fully levered entry ignores the USDC permit and leaves the
-standing USDC allowance untouched. Then, only when `borrowAssets` is nonzero and the caller has not already authorized
-the helper, it applies an enable-only `setAuthorizationWithSig`; otherwise the authorization and its signature are
-ignored and may be zeroed. Each signature is tolerant of a third party submitting it first, and the call then requires
-the resulting allowance (`InsufficientAllowance`, carrying the permit's revert data, otherwise) or authorization to be
-present. Permit values must cover the amounts pulled at execution, which can move between signing and inclusion (USD3
-reports, the `previewMint(1)` top-up), so signers should over-approve. The enable signature is separable: a third party
-can submit it on its own, and the authorization then stands even if the helper call reverts. Vaults whose margin asset
-is USD3l are rejected, because released margin and minted collateral would be the same token.
+`maxCollateral` and checked against it before any funding. When `marginAssets` is nonzero it also submits the
+margin-asset permit, checked against `maxMarginShares` (waEthUSDC supports ERC-2612); otherwise the margin permit is
+ignored and the standing margin-asset allowance is untouched. A fully levered entry ignores the USDC permit and leaves
+the standing USDC allowance untouched. Then, only when `borrowAssets` is nonzero and the caller has not already
+authorized the helper, it applies an enable-only `setAuthorizationWithSig`; otherwise the authorization and its
+signature are ignored and may be zeroed. Each signature is tolerant of a third party submitting it first, and the call
+then requires the resulting allowance (`InsufficientAllowance`, carrying the permit's revert data, otherwise) or
+authorization to be present. Permit values must cover the amounts pulled at execution, which can move between signing
+and inclusion (USD3 reports, the `previewMint(1)` top-up), so signers should over-approve. The enable signature is
+separable: a third party can submit it on its own, and the authorization then stands even if the helper call reverts.
+Vaults whose margin asset is USD3l are rejected, because released margin and minted collateral would be the same token.
 
-The helper recomputes the vault's funding amount `max(O, usd3.previewMint(1))` and mirrors `MAX_FUNDING_TOP_UP`, so
-any vault implementation change to `_fund`'s funding amount or top-up bound requires redeploying the helper. Delivered
-USD3l is measured rather than previewed, so wrapped-delivery changes are bounded by each caller's collateral bounds.
+The helper recomputes the vault's funding amount `max(O, usd3.previewMint(1))` and mirrors `MAX_FUNDING_TOP_UP`, so any
+vault implementation change to `_fund`'s funding amount or top-up bound requires redeploying the helper. Delivered USD3l
+is measured rather than previewed, so wrapped-delivery changes are bounded by each caller's collateral bounds. The
+margin path assumes the vault releases amortized margin to the funder inside `fundCall` before it returns; a vault
+change that defers or removes margin release on amortizing funding requires redeploying the helper.
 
 Accepted properties: the Morpho authorization is global across all of the caller's Morpho positions and stays
 enabled until the caller revokes it; there is no entry-LTV buffer below LLTV beyond the caller's own bound; levered

@@ -28,6 +28,7 @@ abstract contract LCCLeveragedFundSigUtils is Test {
     struct Signed {
         ILCCLeveragedFundHelper.PermitSignature usdcPermit;
         ILCCLeveragedFundHelper.PermitSignature usd3lPermit;
+        ILCCLeveragedFundHelper.PermitSignature marginPermit;
         IMorphoBlue.Authorization authorization;
         IMorphoBlue.Signature signature;
     }

@@ -431,6 +431,25 @@ Funding is all-or-nothing. A revert records no partial payment, and an account s
 slash-eligible for its entire remaining margin, not only the called fraction. Re-read `obligationOf` and
 `USD3.previewMint(1)` immediately before submission rather than funding from an illustrative estimate.
 
+## LCC leveraged funding helper liquidity preflight
+
+`LCCLeveragedFundHelper` bridges `borrowAssets + marginAssets` with a Morpho Blue flash loan and then borrows
+`borrowAssets` from the caller's market, so during a flash-loan entry the canonical singleton must physically hold
+`2 * borrowAssets + marginAssets` of USDC. Before submitting a levered or margin entry, integrators should check:
+
+- `USDC.balanceOf(morpho) >= 2 * borrowAssets + marginAssets`. A shortfall reverts inside USDC's transfer, either on
+  the flash loan or on the borrow's transfer after the flash loan has drawn the balance down (the real token's
+  transfer-amount-exceeds-balance revert).
+- The market's available liquidity after interest accrual, `totalSupplyAssets - totalBorrowAssets`, covers
+  `borrowAssets`. A shortfall reverts Morpho's `borrow` with `insufficient liquidity`.
+- When `marginAssets` is nonzero, the margin asset's `maxWithdraw(user)` covers it. waEthUSDC withdrawals draw on Aave
+  USDC liquidity and revert when the reserve cannot pay; resubmit with `marginAssets = 0` and the full contribution in
+  USDC.
+
+An entry with `borrowAssets == 0` and `marginAssets == 0` takes no flash loan and needs none of these checks. Any of
+these reverts leaves the obligation unfunded, so resubmit before the funding deadline with a smaller borrow, no margin,
+or a plain `fundCall`.
+
 ## LCC Closed-window delivery or oracle outage
 
 **Trigger.** An LCC shortfall auction is in its `Closed` phase and either the margin oracle or the USD3/USD3l delivery path is unavailable long enough that fills cannot execute.

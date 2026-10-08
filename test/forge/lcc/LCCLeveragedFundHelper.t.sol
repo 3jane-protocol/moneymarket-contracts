@@ -10,9 +10,17 @@ import {SafeERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/utils/S
 import {ReentrancyGuardTransient} from "../../../lib/openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {Vm} from "../../../lib/forge-std/src/Vm.sol";
+import {IERC4626} from "../../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 import {IERC20Errors} from "../../../lib/openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
-import {LCCBase, LCCMockToken, LCCMockUSD3, LCCMockNotificationVault, LCCReentryProbe} from "./LCCBase.t.sol";
+import {
+    LCCBase,
+    LCCMockToken,
+    LCCMockUSD3,
+    LCCMockNotificationVault,
+    LCCReentryProbe,
+    LCCAssetOnlyVault
+} from "./LCCBase.t.sol";
 import {LCCLeveragedFundSigUtils} from "./LCCLeveragedFundSigUtils.sol";
 import {IMorphoBlueTest} from "./IMorphoBlueTest.sol";
 import {LCCVault} from "../../../src/lcc/LCCVault.sol";
@@ -43,6 +51,36 @@ contract LCCHelperMulticallFunder {
             }
             results[i] = result;
         }
+    }
+}
+
+/// @dev ERC-4626 margin asset over the test USDC with ERC-2612 permit, standing in for waEthUSDC. `withdrawShortfall`
+/// pays the receiver less than the requested assets while burning the full share amount; `extraBurn` burns more shares
+/// than `withdraw` returns.
+contract LCCMockUsdcMarginVault is ERC4626, ERC20Permit {
+    uint256 public withdrawShortfall;
+    uint256 public extraBurn;
+
+    constructor(IERC20 asset_) ERC20("Mock waUSDC", "mwaUSDC") ERC4626(asset_) ERC20Permit("Mock waUSDC") {}
+
+    function setWithdrawShortfall(uint256 shortfall) external {
+        withdrawShortfall = shortfall;
+    }
+
+    function setExtraBurn(uint256 extra) external {
+        extraBurn = extra;
+    }
+
+    function _withdraw(address caller, address receiver, address owner, uint256 assets, uint256 shares)
+        internal
+        override
+    {
+        super._withdraw(caller, receiver, owner, assets - withdrawShortfall, shares);
+        if (extraBurn != 0) _burn(owner, extraBurn);
+    }
+
+    function decimals() public view override(ERC20, ERC4626) returns (uint8) {
+        return super.decimals();
     }
 }
 
@@ -103,6 +141,7 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
     bool public skipCallback;
     uint256 public callbackAssetsDelta;
     uint256 public flashLoanCount;
+    uint256 public lastFlashAssets;
 
     function DOMAIN_SEPARATOR() public view returns (bytes32) {
         return keccak256(abi.encode(DOMAIN_TYPEHASH, block.chainid, address(this)));
@@ -128,6 +167,7 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
     function flashLoan(address token, uint256 assets, bytes calldata data) external {
         require(assets != 0, "zero assets");
         ++flashLoanCount;
+        lastFlashAssets = assets;
         IERC20(token).safeTransfer(msg.sender, assets);
         if (skipCallback) return;
         bytes memory payload = data;
@@ -258,6 +298,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
     uint256 internal constant LIQUIDITY = 1_000_000e18;
     uint256 internal constant MARGIN = 100e18;
     uint256 internal constant CALL = 100e18;
+    uint256 internal constant RELEASED = 50e18;
 
     LCCMockMorphoBlue internal morpho;
     OracleMock internal marketOracle;
@@ -265,6 +306,8 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
     bytes32 internal marketId;
     LCCLeveragedFundHelper internal helper;
     LCCPermitNotificationVault internal usd3l;
+    LCCMockUsdcMarginVault internal waUsdc;
+    LCCVault internal marginFacility;
 
     address internal signer;
     uint256 internal signerKey;
@@ -291,7 +334,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         usdc.approve(address(morpho), LIQUIDITY);
         morpho.supply(marketParams, LIQUIDITY, 0, address(this), "");
 
-        helper = new LCCLeveragedFundHelper(address(morpho), address(factory), address(usdc), address(usd3l));
+        helper = new LCCLeveragedFundHelper(address(morpho), address(factory), address(usd3l));
 
         (signer, signerKey) = makeAddrAndKey("signer");
         (, otherKey) = makeAddrAndKey("other-signer");
@@ -601,6 +644,309 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         helper.fund(_fundParams(80e18));
     }
 
+    /* RELEASED MARGIN */
+
+    function testMarginOnlyEntryTakesOneFlashLoanWithoutOracleOrAuthorization() public {
+        _openMarginFacility(alice);
+        usdc.mint(alice, CALL - RELEASED);
+        vm.prank(alice);
+        morpho.setAuthorization(address(helper), false);
+        vm.mockCallRevert(address(marketOracle), abi.encodeCall(IMorphoBlueOracle.price, ()), "ORACLE_DOWN");
+
+        ILCCLeveragedFundHelper.FundParams memory params = _marginParams(0, RELEASED);
+        params.maxEntryLtv = 0;
+        vm.prank(alice);
+        (,, uint256 collateral) = helper.fund(params);
+
+        assertEq(collateral, CALL);
+        assertEq(morpho.flashLoanCount(), 1);
+        assertEq(morpho.lastFlashAssets(), RELEASED);
+        assertTrue(marginFacility.fundedEpoch(0, alice));
+        assertEq(usdc.balanceOf(alice), 0);
+        assertEq(waUsdc.balanceOf(alice), 0);
+        (, uint128 borrowShares, uint128 positionCollateral) = morpho.position(marketId, alice);
+        assertEq(borrowShares, 0);
+        assertEq(positionCollateral, CALL);
+        _assertMarginHelperClean();
+    }
+
+    function testLeveredMarginEntryFlashLoansBorrowPlusMargin() public {
+        _openMarginFacility(alice);
+        usdc.mint(alice, CALL - 40e18 - RELEASED);
+
+        vm.prank(alice);
+        (, uint256 fundingAmount, uint256 collateral) = helper.fund(_marginParams(40e18, RELEASED));
+
+        assertEq(fundingAmount, CALL);
+        assertEq(collateral, CALL);
+        assertEq(morpho.flashLoanCount(), 1);
+        assertEq(morpho.lastFlashAssets(), 40e18 + RELEASED);
+        assertEq(morpho.borrowAssetsOf(marketId, alice), 40e18);
+        assertEq(usdc.balanceOf(alice), 0);
+        assertEq(waUsdc.balanceOf(alice), 0);
+        assertEq(waUsdc.allowance(alice, address(helper)), 0);
+        _assertMarginHelperClean();
+    }
+
+    function testMarginAboveHeldSharesReverts() public {
+        _openMarginFacility(alice);
+        usdc.mint(alice, CALL);
+        vm.prank(alice);
+        waUsdc.approve(address(helper), RELEASED + 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxWithdraw.selector, alice, RELEASED + 1, RELEASED)
+        );
+        vm.prank(alice);
+        helper.fund(_marginParams(0, RELEASED + 1));
+    }
+
+    function testMarginSharesAboveMaximumReverts() public {
+        _openMarginFacility(alice);
+        usdc.mint(alice, CALL - RELEASED);
+        ILCCLeveragedFundHelper.FundParams memory params = _marginParams(0, RELEASED);
+        params.maxMarginShares = RELEASED - 1;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginSharesExceedMax.selector, RELEASED, RELEASED - 1)
+        );
+        vm.prank(alice);
+        helper.fund(params);
+    }
+
+    function testMarginReceiptShortfallReverts() public {
+        _openMarginFacility(alice);
+        usdc.mint(alice, CALL - RELEASED);
+        waUsdc.setWithdrawShortfall(1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginReceiptMismatch.selector, RELEASED - 1, RELEASED)
+        );
+        vm.prank(alice);
+        helper.fund(_marginParams(0, RELEASED));
+    }
+
+    function testZeroMaxMarginSharesRejected() public {
+        _openMarginFacility(alice);
+        ILCCLeveragedFundHelper.FundParams memory params = _marginParams(0, RELEASED);
+        params.maxMarginShares = 0;
+
+        _expectNoFunding(address(marginFacility));
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidMarginShares.selector);
+        vm.prank(alice);
+        helper.fund(params);
+    }
+
+    function testMarginPathRequiresMarginAssetVaultOverUsdc() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, 20e18);
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(40e18);
+        params.marginAssets = 40e18;
+        params.maxMarginShares = 40e18;
+        params.maxContribution = 20e18;
+        LCCMockUsdcMarginVault foreignVault = new LCCMockUsdcMarginVault(IERC20(address(margin)));
+        ILCCVault.VaultParams memory vaultParams = _params(CAP, CAP);
+        vaultParams.marginAsset = address(foreignVault);
+        address foreignFacility = address(_newVault(vaultParams));
+        _expectNoFunding(address(vault));
+        vm.expectCall(foreignFacility, abi.encodeWithSignature("fundCall(address)"), 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginAssetNotUsdcVault.selector, address(margin))
+        );
+        vm.prank(alice);
+        helper.fund(params);
+
+        params.vault = foreignFacility;
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginAssetNotUsdcVault.selector, address(foreignVault))
+        );
+        vm.prank(alice);
+        helper.fund(params);
+    }
+
+    function testCodelessMarginAssetRejected() public {
+        address codeless = makeAddr("codeless-margin");
+        ILCCVault.VaultParams memory vaultParams = _params(CAP, CAP);
+        vaultParams.marginAsset = codeless;
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(0);
+        params.vault = address(_newVault(vaultParams));
+        params.marginAssets = 1;
+        params.maxMarginShares = 1;
+
+        _expectNoFunding(params.vault);
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginAssetNotUsdcVault.selector, codeless));
+        vm.prank(alice);
+        helper.fund(params);
+    }
+
+    function testMarginBeyondReleasedRejectedForSurplusHolder() public {
+        _openMarginFacility(alice);
+        _mintSurplusMargin(alice, 30e18);
+        usdc.mint(alice, CALL);
+        vm.prank(alice);
+        waUsdc.approve(address(helper), RELEASED + 10);
+        ILCCLeveragedFundHelper.FundParams memory params = _marginParams(0, RELEASED + 1);
+        params.maxMarginShares = RELEASED + 10;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginExceedsReleased.selector, RELEASED + 1, RELEASED)
+        );
+        vm.prank(alice);
+        helper.fund(params);
+        assertFalse(marginFacility.fundedEpoch(0, alice));
+        assertEq(waUsdc.balanceOf(alice), 30e18);
+    }
+
+    function testSurplusHolderSpendsExactlyReleasedMargin() public {
+        _openMarginFacility(alice);
+        _mintSurplusMargin(alice, 30e18);
+        usdc.mint(alice, CALL - RELEASED);
+        ILCCLeveragedFundHelper.FundParams memory params = _marginParams(0, RELEASED);
+        params.maxMarginShares = RELEASED + 10;
+        vm.prank(alice);
+        waUsdc.approve(address(helper), RELEASED + 10);
+
+        vm.prank(alice);
+        helper.fund(params);
+
+        assertTrue(marginFacility.fundedEpoch(0, alice));
+        assertEq(waUsdc.balanceOf(alice), 30e18);
+        assertEq(usdc.balanceOf(alice), 0);
+        _assertMarginHelperClean();
+    }
+
+    function testMeasuredMarginBurnAboveMaximumReverts() public {
+        _openMarginFacility(alice);
+        _mintSurplusMargin(alice, 30e18);
+        usdc.mint(alice, CALL - RELEASED);
+        waUsdc.setExtraBurn(1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginSharesExceedMax.selector, RELEASED + 1, RELEASED)
+        );
+        vm.prank(alice);
+        helper.fund(_marginParams(0, RELEASED));
+    }
+
+    function testEntryWithoutMarginNeverCallsMarginAsset() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, 20e18);
+
+        vm.expectCall(address(margin), abi.encodeWithSelector(IERC4626.asset.selector), 0);
+        vm.expectCall(address(margin), abi.encodeWithSelector(IERC4626.withdraw.selector), 0);
+        vm.prank(alice);
+        helper.fund(_fundParams(80e18));
+        assertTrue(vault.fundedEpoch(0, alice));
+    }
+
+    function testBorrowAndMarginAboveFundingRejected() public {
+        _openMarginFacility(alice);
+        ILCCLeveragedFundHelper.FundParams memory params = _marginParams(0, RELEASED);
+        params.borrowAssets = CALL - RELEASED + 1;
+        params.maxContribution = 0;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ILCCLeveragedFundHelper.BorrowAndMarginExceedFunding.selector, CALL - RELEASED + 1, RELEASED, CALL
+            )
+        );
+        vm.prank(alice);
+        helper.fund(params);
+    }
+
+    function testOverflowingBorrowAndMarginRejectedWithTypedError() public {
+        _openMarginFacility(alice);
+        ILCCLeveragedFundHelper.FundParams memory params = _marginParams(0, RELEASED);
+        params.borrowAssets = CALL;
+        params.marginAssets = type(uint256).max;
+        params.maxContribution = 0;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ILCCLeveragedFundHelper.BorrowAndMarginExceedFunding.selector, CALL, type(uint256).max, CALL
+            )
+        );
+        vm.prank(alice);
+        helper.fund(params);
+    }
+
+    function testCallbackAssetsMustEqualBorrowPlusMargin() public {
+        _openMarginFacility(alice);
+        usdc.mint(alice, CALL - 40e18 - RELEASED);
+        morpho.setCallbackAssetsDelta(1);
+
+        vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+        vm.prank(alice);
+        helper.fund(_marginParams(40e18, RELEASED));
+    }
+
+    function testFundWithShortMarginAllowanceRevertsBeforeFunding() public {
+        _openMarginFacility(alice);
+        usdc.mint(alice, CALL - RELEASED);
+        vm.prank(alice);
+        waUsdc.approve(address(helper), RELEASED - 1);
+
+        _expectNoFunding(address(marginFacility));
+        _expectInsufficientAllowance(address(waUsdc), RELEASED - 1, RELEASED, "");
+        vm.prank(alice);
+        helper.fund(_marginParams(0, RELEASED));
+    }
+
+    function testFundWithSignaturesAppliesMarginPermit() public {
+        _openMarginFacility(signer);
+        vm.prank(signer);
+        waUsdc.approve(address(helper), 0);
+        usdc.mint(signer, CALL - 40e18 - RELEASED);
+        Signed memory s = _sign(CALL - 40e18 - RELEASED, CALL);
+        s.marginPermit = _signPermit(address(waUsdc), signerKey, address(helper), RELEASED, type(uint256).max);
+        uint256 nonceBefore = waUsdc.nonces(signer);
+
+        _fundSigned(_marginParams(40e18, RELEASED), s);
+
+        assertTrue(marginFacility.fundedEpoch(0, signer));
+        assertEq(waUsdc.nonces(signer), nonceBefore + 1);
+        assertEq(waUsdc.allowance(signer, address(helper)), 0);
+        assertEq(waUsdc.balanceOf(signer), 0);
+        assertEq(morpho.borrowAssetsOf(marketId, signer), 40e18);
+        _assertMarginHelperClean();
+    }
+
+    function testFundWithSignaturesIgnoresMarginPermitWithoutMargin() public {
+        _openMarginFacility(signer);
+        vm.prank(signer);
+        waUsdc.approve(address(helper), 7);
+        usdc.mint(signer, 20e18);
+        Signed memory s = _sign(20e18, CALL);
+        s.marginPermit = _signPermit(address(waUsdc), signerKey, address(helper), 1, type(uint256).max);
+        uint256 nonceBefore = waUsdc.nonces(signer);
+
+        _fundSigned(_marginParams(80e18, 0), s);
+
+        assertTrue(marginFacility.fundedEpoch(0, signer));
+        assertEq(waUsdc.nonces(signer), nonceBefore);
+        assertEq(waUsdc.allowance(signer, address(helper)), 7);
+        assertEq(waUsdc.balanceOf(signer), RELEASED);
+        _assertMarginHelperClean();
+    }
+
+    function testMarginPermitSubmittedFirstByThirdPartyIsTolerated() public {
+        _openMarginFacility(signer);
+        vm.prank(signer);
+        waUsdc.approve(address(helper), 0);
+        usdc.mint(signer, CALL - 40e18 - RELEASED);
+        Signed memory s = _sign(CALL - 40e18 - RELEASED, CALL);
+        s.marginPermit = _signPermit(address(waUsdc), signerKey, address(helper), RELEASED, type(uint256).max);
+
+        vm.prank(stranger);
+        _submitPermit(address(waUsdc), signer, address(helper), s.marginPermit);
+
+        _fundSigned(_marginParams(40e18, RELEASED), s);
+        assertTrue(marginFacility.fundedEpoch(0, signer));
+        assertEq(waUsdc.allowance(signer, address(helper)), 0);
+        _assertMarginHelperClean();
+    }
+
     /* SIGNATURES */
 
     function testFundWithSignaturesAppliesPermitsAndAuthorization() public {
@@ -873,7 +1219,9 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         _depositAndOpenCall(alice);
         ILCCLeveragedFundHelper.FundParams memory params = _fundParams(0);
         params.borrowAssets = CALL + 1;
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.BorrowExceedsFunding.selector, CALL + 1, CALL));
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.BorrowAndMarginExceedFunding.selector, CALL + 1, 0, CALL)
+        );
         vm.prank(alice);
         helper.fund(params);
     }
@@ -1227,7 +1575,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         _assertNotReenterable(
             abi.encodeCall(
                 ILCCLeveragedFundHelper.fundWithSignatures,
-                (_fundParams(80e18), s.usdcPermit, s.usd3lPermit, s.authorization, s.signature)
+                (_fundParams(80e18), s.usdcPermit, s.usd3lPermit, s.marginPermit, s.authorization, s.signature)
             )
         );
     }
@@ -1248,12 +1596,24 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
 
     /* CONSTRUCTOR */
 
-    function testConstructorValidatesTokenWiring() public {
+    function testConstructorDerivesTokensFromUsd3l() public {
         vm.expectRevert(ILCCLeveragedFundHelper.InvalidConfiguration.selector);
-        new LCCLeveragedFundHelper(address(morpho), address(factory), address(margin), address(usd3l));
+        new LCCLeveragedFundHelper(address(0), address(factory), address(usd3l));
 
         vm.expectRevert(ILCCLeveragedFundHelper.InvalidConfiguration.selector);
-        new LCCLeveragedFundHelper(address(0), address(factory), address(usdc), address(usd3l));
+        new LCCLeveragedFundHelper(address(morpho), address(factory), makeAddr("codeless-usd3l"));
+
+        LCCAssetOnlyVault codelessUsd3 = new LCCAssetOnlyVault(makeAddr("codeless-usd3"));
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidConfiguration.selector);
+        new LCCLeveragedFundHelper(address(morpho), address(factory), address(codelessUsd3));
+
+        LCCAssetOnlyVault codelessUsdc =
+            new LCCAssetOnlyVault(address(new LCCAssetOnlyVault(makeAddr("codeless-usdc"))));
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidConfiguration.selector);
+        new LCCLeveragedFundHelper(address(morpho), address(factory), address(codelessUsdc));
+
+        vm.expectRevert();
+        new LCCLeveragedFundHelper(address(morpho), address(factory), address(margin));
 
         assertEq(helper.usd3(), address(usd3));
         assertEq(helper.usdc(), address(usdc));
@@ -1289,6 +1649,8 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
             vault: address(vault),
             market: marketParams,
             borrowAssets: borrowAssets,
+            marginAssets: 0,
+            maxMarginShares: 0,
             maxContribution: CALL - borrowAssets,
             minCollateral: CALL,
             maxCollateral: CALL,
@@ -1308,8 +1670,54 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
     }
 
     function _expectNoFunding() internal {
+        _expectNoFunding(address(vault));
+    }
+
+    function _expectNoFunding(address target) internal {
         vm.expectCall(address(morpho), abi.encodeWithSelector(IMorphoBlue.flashLoan.selector), 0);
-        vm.expectCall(address(vault), abi.encodeWithSignature("fundCall(address)"), 0);
+        vm.expectCall(target, abi.encodeWithSignature("fundCall(address)"), 0);
+    }
+
+    /// @dev Lists a facility whose margin asset is an ERC-4626 over USDC, deposits `MARGIN` of fresh shares for `user`,
+    /// opens a `CALL` and warps into Funding. With `user` the only depositor, half its margin is released on funding.
+    function _openMarginFacility(address user) internal {
+        waUsdc = new LCCMockUsdcMarginVault(IERC20(address(usdc)));
+        ILCCVault.VaultParams memory params = _params(CAP, CAP);
+        params.marginAsset = address(waUsdc);
+        marginFacility = _newVault(params);
+
+        usdc.mint(user, MARGIN);
+        vm.startPrank(user);
+        usdc.approve(address(waUsdc), MARGIN);
+        waUsdc.deposit(MARGIN, user);
+        waUsdc.approve(address(marginFacility), MARGIN);
+        marginFacility.deposit(MARGIN, user, 1, type(uint256).max, true, type(uint256).max);
+        waUsdc.approve(address(helper), RELEASED);
+        vm.stopPrank();
+
+        vm.warp(START + NORMAL);
+        marginFacility.openEpochCall(0, CALL);
+        vm.warp(START + NORMAL + PRE_CALL);
+    }
+
+    function _mintSurplusMargin(address user, uint256 assets) internal {
+        usdc.mint(user, assets);
+        vm.startPrank(user);
+        usdc.approve(address(waUsdc), assets);
+        waUsdc.deposit(assets, user);
+        vm.stopPrank();
+    }
+
+    function _marginParams(uint256 borrowAssets, uint256 marginAssets)
+        internal
+        view
+        returns (ILCCLeveragedFundHelper.FundParams memory params)
+    {
+        params = _fundParams(borrowAssets);
+        params.vault = address(marginFacility);
+        params.marginAssets = marginAssets;
+        params.maxMarginShares = marginAssets;
+        params.maxContribution = CALL - borrowAssets - marginAssets;
     }
 
     function _supplyExtraCollateral(address user, uint256 amount) internal {
@@ -1342,7 +1750,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
 
     function _fundSigned(ILCCLeveragedFundHelper.FundParams memory params, Signed memory s) internal {
         vm.prank(signer);
-        helper.fundWithSignatures(params, s.usdcPermit, s.usd3lPermit, s.authorization, s.signature);
+        helper.fundWithSignatures(params, s.usdcPermit, s.usd3lPermit, s.marginPermit, s.authorization, s.signature);
     }
 
     function _expectInsufficientAllowance(address token, uint256 allowance, uint256 required, bytes memory permitRevert)
@@ -1381,6 +1789,12 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         helper.fund(_fundParams(80e18));
         assertEq(morpho.reentryError(), ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector);
         assertTrue(vault.fundedEpoch(0, alice));
+    }
+
+    function _assertMarginHelperClean() internal view {
+        _assertHelperClean();
+        assertEq(usdc.allowance(address(helper), address(marginFacility)), 0);
+        assertEq(waUsdc.balanceOf(address(helper)), 0);
     }
 
     function _assertHelperClean() internal view {

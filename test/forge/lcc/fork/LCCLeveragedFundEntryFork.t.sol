@@ -4,6 +4,8 @@ pragma solidity 0.8.35;
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC4626} from "../../../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
+import {IERC20Permit} from "../../../../lib/openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import {Math} from "../../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 
 import {LCCMainnetForkBase} from "./LCCMainnetForkBase.sol";
 import {LCCLeveragedFundSigUtils} from "../LCCLeveragedFundSigUtils.sol";
@@ -54,7 +56,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         if (!forkEnabled) return;
 
         _createMarket();
-        helper = new LCCLeveragedFundHelper(address(MORPHO), FACTORY, USDC, address(USD3L));
+        helper = new LCCLeveragedFundHelper(address(MORPHO), FACTORY, address(USD3L));
 
         string[3] memory names = ["levered-funder-small", "levered-funder-odd", "levered-funder-large"];
         for (uint256 i; i < names.length; ++i) {
@@ -92,6 +94,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
 
     function testHelperDerivesUSD3AndRejectsMarketWithWrongTokens() public requiresFork {
         assertEq(helper.usd3(), USD3);
+        assertEq(helper.usdc(), USDC);
 
         address funder = funders[0];
         ILCCLeveragedFundHelper.FundParams memory params = _fundParams(funder);
@@ -140,7 +143,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
 
         vm.prank(funder);
         (,, uint256 collateral) =
-            helper.fundWithSignatures(params, s.usdcPermit, s.usd3lPermit, s.authorization, s.signature);
+            helper.fundWithSignatures(params, s.usdcPermit, s.usd3lPermit, s.marginPermit, s.authorization, s.signature);
 
         assertEq(collateral, previewed);
         assertTrue(MORPHO.isAuthorized(funder, address(helper)), "authorization stays enabled");
@@ -166,9 +169,90 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
 
         vm.prank(funder);
         (,, uint256 collateral) =
-            helper.fundWithSignatures(params, s.usdcPermit, s.usd3lPermit, s.authorization, s.signature);
+            helper.fundWithSignatures(params, s.usdcPermit, s.usd3lPermit, s.marginPermit, s.authorization, s.signature);
         assertEq(collateral, previewed);
         _assertEntry(funder, params.borrowAssets, collateral);
+    }
+
+    function testLeveredMarginEntryWithStandingAllowances() public requiresFork {
+        address funder = funders[2];
+        (ILCCLeveragedFundHelper.FundParams memory params, uint256 released) = _marginFundParams(funder);
+        uint256 previewed = _previewCollateral(params.maxObligation);
+        uint256 burned = IERC4626(WA_ETH_USDC).previewWithdraw(params.marginAssets);
+        uint256 marginBefore = IERC20(WA_ETH_USDC).balanceOf(funder);
+
+        _approveAll(funder, params.maxContribution);
+        vm.prank(funder);
+        IERC20(WA_ETH_USDC).forceApprove(address(helper), params.maxMarginShares);
+        uint256 usdcBefore = IERC20(USDC).balanceOf(funder);
+        vm.prank(funder);
+        (uint256 obligation, uint256 fundingAmount, uint256 collateral) = helper.fund(params);
+
+        assertEq(obligation, params.maxObligation);
+        assertEq(usdcBefore - IERC20(USDC).balanceOf(funder), fundingAmount - params.borrowAssets - params.marginAssets);
+        _assertMarginEntry(funder, params, released, burned, marginBefore, previewed, collateral);
+    }
+
+    function testSignatureMarginEntryAppliesRealMarginPermit() public requiresFork {
+        address funder = funders[1];
+        uint256 key = funderKeys[1];
+        (ILCCLeveragedFundHelper.FundParams memory params, uint256 released) = _marginFundParams(funder);
+        uint256 previewed = _previewCollateral(params.maxObligation);
+        uint256 burned = IERC4626(WA_ETH_USDC).previewWithdraw(params.marginAssets);
+        uint256 marginBefore = IERC20(WA_ETH_USDC).balanceOf(funder);
+        deal(USDC, funder, params.maxContribution);
+        uint256 usdcBefore = IERC20(USDC).balanceOf(funder);
+
+        Signed memory s = _sign(key, params.maxContribution, params.maxCollateral);
+        s.marginPermit =
+            _signPermit(WA_ETH_USDC, key, address(helper), params.maxMarginShares, block.timestamp + 1 hours);
+        uint256 marginNonce = IERC20Permit(WA_ETH_USDC).nonces(funder);
+
+        vm.prank(funder);
+        (, uint256 fundingAmount, uint256 collateral) =
+            helper.fundWithSignatures(params, s.usdcPermit, s.usd3lPermit, s.marginPermit, s.authorization, s.signature);
+
+        assertEq(usdcBefore - IERC20(USDC).balanceOf(funder), fundingAmount - params.borrowAssets - params.marginAssets);
+        assertEq(IERC20Permit(WA_ETH_USDC).nonces(funder), marginNonce + 1);
+        assertEq(IERC20(WA_ETH_USDC).allowance(funder, address(helper)), params.maxMarginShares - burned);
+        _assertMarginEntry(funder, params, released, burned, marginBefore, previewed, collateral);
+    }
+
+    function testMarginBeyondReleasedRevertsForSurplusHolder() public requiresFork {
+        address funder = funders[0];
+        (ILCCLeveragedFundHelper.FundParams memory params, uint256 released) = _marginFundParams(funder);
+        deal(USDC, funder, 1_000e6);
+        vm.startPrank(funder);
+        IERC20(USDC).forceApprove(WA_ETH_USDC, 1_000e6);
+        IERC4626(WA_ETH_USDC).deposit(1_000e6, funder);
+        vm.stopPrank();
+
+        params.marginAssets += 10;
+        uint256 burned = IERC4626(WA_ETH_USDC).previewWithdraw(params.marginAssets);
+        assertGt(burned, released);
+        params.maxMarginShares = burned;
+        params.maxContribution = params.maxObligation - params.borrowAssets - params.marginAssets;
+        _approveAll(funder, params.maxContribution);
+        vm.prank(funder);
+        IERC20(WA_ETH_USDC).forceApprove(address(helper), burned);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginExceedsReleased.selector, burned, released)
+        );
+        vm.prank(funder);
+        helper.fund(params);
+    }
+
+    function testEntryWithoutMarginNeverCallsMarginAsset() public requiresFork {
+        address funder = funders[0];
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(funder);
+        _approveAll(funder, params.maxContribution);
+
+        vm.expectCall(WA_ETH_USDC, abi.encodeWithSelector(IERC4626.asset.selector), 0);
+        vm.expectCall(WA_ETH_USDC, abi.encodeWithSelector(IERC4626.withdraw.selector), 0);
+        vm.prank(funder);
+        helper.fund(params);
+        assertTrue(VAULT.fundedEpoch(CALL_EPOCH, funder));
     }
 
     function testBorrowAboveMarketLiquidityReverts() public requiresFork {
@@ -209,6 +293,22 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         assertEq(_positionLtv(funder), entryLtv);
     }
 
+    /// @dev Adds released margin to `_fundParams`: the funder's released shares (the vault's own rounding), their
+    /// redeemable USDC as `marginAssets`, and the released shares as the burn bound.
+    function _marginFundParams(address funder)
+        internal
+        view
+        returns (ILCCLeveragedFundHelper.FundParams memory params, uint256 released)
+    {
+        params = _fundParams(funder);
+        ILCCVault.Account memory account = VAULT.getAccount(funder);
+        released = Math.mulDiv(account.activeMargin, params.maxObligation, account.activeCommitment);
+        assertGt(released, 0);
+        params.marginAssets = IERC4626(WA_ETH_USDC).previewRedeem(released);
+        params.maxMarginShares = released;
+        params.maxContribution = params.maxObligation - params.borrowAssets - params.marginAssets;
+    }
+
     function _previewCollateral(uint256 fundingAmount) internal view returns (uint256) {
         return USD3L.previewDeposit(IERC4626(USD3).previewDeposit(fundingAmount));
     }
@@ -223,6 +323,8 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
             vault: address(VAULT),
             market: marketParams,
             borrowAssets: borrowAssets,
+            marginAssets: 0,
+            maxMarginShares: 0,
             maxContribution: obligation - borrowAssets,
             minCollateral: previewed - previewed * COLLATERAL_SLACK_BPS / 10_000,
             maxCollateral: previewed + previewed * COLLATERAL_SLACK_BPS / 10_000,
@@ -270,6 +372,22 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         assertEq(IERC20(USDC).allowance(address(helper), address(VAULT)), 0);
         assertEq(IERC20(USDC).allowance(address(helper), address(MORPHO)), 0);
         assertEq(USD3L.allowance(address(helper), address(MORPHO)), type(uint256).max);
+    }
+
+    function _assertMarginEntry(
+        address funder,
+        ILCCLeveragedFundHelper.FundParams memory params,
+        uint256 released,
+        uint256 burned,
+        uint256 marginBefore,
+        uint256 previewed,
+        uint256 collateral
+    ) internal view {
+        assertEq(collateral, previewed);
+        assertLe(burned, released);
+        assertEq(IERC20(WA_ETH_USDC).balanceOf(funder), marginBefore + released - burned, "margin shares");
+        assertEq(IERC20(WA_ETH_USDC).balanceOf(address(helper)), 0);
+        _assertEntry(funder, params.borrowAssets, collateral);
     }
 
     function _positionLtv(address funder) internal view returns (uint256) {
