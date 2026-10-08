@@ -454,21 +454,23 @@ or a plain `fundCall`.
 
 `LCCLeveragedFundHelper.unwind` redeems a funder's withdrawn USD3l collateral without the 35-day vault cooldown, which
 works only while USD3l management has called `NotificationVault.setCooldownBypass(helper, true)`. The helper enforces
-its own per-user cooldown tickets instead: each funding entry through the helper opens one for the collateral it
-supplied, and an unwind may redeem at most the caller's matured ticket shares. The bypass is owner-keyed to the helper
+its own per-user cooldowns instead: each funding entry through the helper opens one for the collateral it
+supplied, and an unwind may redeem at most the caller's matured cooldown shares. The bypass is owner-keyed to the helper
 address and grants no allowance over anyone else's shares.
 
 - Grant: a management transaction `setCooldownBypass(helper, true)` after verifying the deployed helper's runtime code.
   A bypass transition clears any vault cooldown the account holds; the helper never holds one, so nothing is lost.
 - Revoke: `setCooldownBypass(helper, false)`. Every `unwind` then reverts at the USD3l redemption (the helper has no
-  vault ticket, so its USD3l withdraw limit is zero) and rolls back atomically with the user's tickets intact. Users
+  vault cooldown, so its USD3l withdraw limit is zero) and rolls back atomically with the user's helper cooldowns intact. Users
   still exit the ordinary way: repay the Morpho debt with their own USDC, `withdrawCollateral`, start a USD3l
-  `startCooldown`, and redeem after the vault's cooldown. Re-granting restores unwind with the same tickets.
-- While USD3l is shut down or its cooldown is zero, the helper waives its ticket gate exactly as the vault waives its
+  `startCooldown`, and redeem after the vault's cooldown. Re-granting restores unwind with the same cooldowns.
+- While USD3l is shut down or its cooldown is zero, the helper waives its cooldown gate exactly as the vault waives its
   own cooldown.
 
-Unwinds also revert, without consuming tickets, whenever USD3's own withdraw limit cannot cover the redemption
-(pending loss, waUSDC pause, ring fence, redemption floors).
+Unwinds also revert, without consuming cooldowns, whenever USD3's own withdraw limit cannot cover the redemption
+(pending loss, waUSDC pause, ring fence, redemption floors). With `usd3Out` only the repayment is converted to USDC, so
+the limit must cover just that slice, and a `usd3Out` unwind with nothing to repay never reads it; the caller then
+receives USD3, which has no cooldown.
 
 ## LCC Closed-window delivery or oracle outage
 

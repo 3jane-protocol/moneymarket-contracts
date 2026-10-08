@@ -15,6 +15,7 @@ import {LCCVaultFactory} from "../../../../src/lcc/LCCVaultFactory.sol";
 import {LCCLeveragedFundHelper} from "../../../../src/lcc/LCCLeveragedFundHelper.sol";
 import {ILCCLeveragedFundHelper} from "../../../../src/lcc/interfaces/ILCCLeveragedFundHelper.sol";
 import {IMorphoBlue, IMorphoBlueOracle} from "../../../../src/lcc/interfaces/IMorphoBlue.sol";
+import {ILCCRedeemableVault} from "../../../../src/lcc/interfaces/ILCCNotificationVault.sol";
 import {ORACLE_PRICE_SCALE} from "../../../../src/libraries/ConstantsLib.sol";
 import {MathLib} from "../../../../src/libraries/MathLib.sol";
 import {SharesMathLib} from "../../../../src/libraries/SharesMathLib.sol";
@@ -271,19 +272,96 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
 
         uint256 expectedOut = _expectedUnwindOut(funder, collateral, _debt(funder));
         ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(collateral, true, 0);
-        params.minUsdcOut = expectedOut;
+        params.minOut = expectedOut;
         vm.prank(funder);
-        (uint256 repaid, uint256 shares, uint256 usdcOut) = helper.unwind(params);
+        (uint256 repaid, uint256 shares,, uint256 usdcOut) = helper.unwind(params);
 
         assertGt(repaid, 0);
         assertEq(shares, collateral);
         assertEq(usdcOut, expectedOut);
-        assertGe(usdcOut, params.minUsdcOut);
+        assertGe(usdcOut, params.minOut);
         assertEq(IERC20(USDC).balanceOf(funder), usdcOut);
         (, uint128 borrowShares, uint128 positionCollateral) = MORPHO.position(marketId, funder);
         assertEq(borrowShares, 0);
         assertEq(positionCollateral, 0);
-        assertEq(helper.tickets(funder, marketId).length, 0);
+        assertEq(helper.cooldowns(funder, marketId).length, 0);
+        _assertUnwindHelperClean();
+    }
+
+    function testFullUnwindWithUsd3OutDeliversUsd3() public requiresFork {
+        address funder = funders[2];
+        (uint256 start, uint256 collateral) = _enterFunder(funder);
+        vm.warp(start + _cooldown());
+
+        uint256 debt = _debt(funder);
+        uint256 expectedUsd3 = collateral - IERC4626(USD3).previewWithdraw(debt);
+        uint256 usd3Before = IERC20(USD3).balanceOf(funder);
+        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(collateral, true, 0);
+        params.usd3Out = true;
+        params.minOut = expectedUsd3;
+        vm.prank(funder);
+        (uint256 repaid,, address outToken, uint256 amountOut) = helper.unwind(params);
+
+        assertEq(repaid, debt);
+        assertEq(outToken, USD3);
+        assertEq(amountOut, expectedUsd3);
+        assertEq(IERC20(USD3).balanceOf(funder) - usd3Before, amountOut);
+        assertEq(IERC20(USDC).balanceOf(funder), 0);
+        (, uint128 borrowShares, uint128 positionCollateral) = MORPHO.position(marketId, funder);
+        assertEq(borrowShares, 0);
+        assertEq(positionCollateral, 0);
+        _assertUnwindHelperClean();
+    }
+
+    function testZeroRepayUnwindWithUsd3OutDeliversAllRedeemedUsd3() public requiresFork {
+        address funder = funders[1];
+        ILCCLeveragedFundHelper.FundParams memory fundParams = _fundParams(funder);
+        fundParams.borrowAssets = 0;
+        fundParams.maxContribution = fundParams.maxObligation;
+        _approveAll(funder, fundParams.maxContribution);
+        vm.prank(funder);
+        (,, uint256 collateral) = helper.fund(fundParams);
+        vm.warp(block.timestamp + _cooldown());
+
+        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(collateral, true, 0);
+        params.usd3Out = true;
+        vm.expectCall(USD3, abi.encodeWithSelector(ILCCRedeemableVault.withdraw.selector), 0);
+        vm.prank(funder);
+        (uint256 repaid,,, uint256 amountOut) = helper.unwind(params);
+
+        assertEq(repaid, 0);
+        assertEq(amountOut, collateral);
+        assertEq(IERC20(USD3).balanceOf(funder), collateral);
+        _assertUnwindHelperClean();
+    }
+
+    function testUsd3OutUnwindWithZeroUsd3WithdrawLimit() public requiresFork {
+        address levered = funders[2];
+        (uint256 leveredStart, uint256 leveredCollateral) = _enterFunder(levered);
+        address unlevered = funders[1];
+        ILCCLeveragedFundHelper.FundParams memory fundParams = _fundParams(unlevered);
+        fundParams.borrowAssets = 0;
+        fundParams.maxContribution = fundParams.maxObligation;
+        _approveAll(unlevered, fundParams.maxContribution);
+        vm.prank(unlevered);
+        (,, uint256 unleveredCollateral) = helper.fund(fundParams);
+        vm.warp(leveredStart + _cooldown());
+
+        vm.mockCall(USD3, abi.encodeWithSignature("availableWithdrawLimit(address)"), abi.encode(uint256(0)));
+
+        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(leveredCollateral, true, 0);
+        params.usd3Out = true;
+        vm.expectRevert(bytes("ERC4626: withdraw more than max"));
+        vm.prank(levered);
+        helper.unwind(params);
+
+        params = _unwindParams(unleveredCollateral, true, 0);
+        params.usd3Out = true;
+        vm.prank(unlevered);
+        (uint256 repaid,,, uint256 amountOut) = helper.unwind(params);
+        assertEq(repaid, 0);
+        assertEq(amountOut, unleveredCollateral);
+        assertEq(IERC20(USD3).balanceOf(unlevered), unleveredCollateral);
         _assertUnwindHelperClean();
     }
 
@@ -296,13 +374,13 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         uint256 shares = collateral / 2;
         uint256 expectedOut = _expectedUnwindOut(funder, shares, repay);
         vm.prank(funder);
-        (uint256 repaid,, uint256 usdcOut) = helper.unwind(_unwindParams(shares, false, repay));
+        (uint256 repaid,,, uint256 usdcOut) = helper.unwind(_unwindParams(shares, false, repay));
 
         assertEq(repaid, repay);
         assertEq(usdcOut, expectedOut);
         (,, uint128 positionCollateral) = MORPHO.position(marketId, funder);
         assertEq(positionCollateral, collateral - shares);
-        assertEq(helper.tickets(funder, marketId)[0].shares, collateral - shares);
+        assertEq(helper.cooldowns(funder, marketId)[0].shares, collateral - shares);
         _assertUnwindHelperClean();
     }
 
@@ -329,7 +407,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         vm.prank(funder);
         helper.unwind(_unwindParams(collateral, true, 0));
 
-        assertEq(helper.tickets(funder, marketId)[0].shares, collateral);
+        assertEq(helper.cooldowns(funder, marketId)[0].shares, collateral);
         (,, uint128 positionCollateral) = MORPHO.position(marketId, funder);
         assertEq(positionCollateral, collateral);
         assertEq(_debt(funder), debt);
@@ -448,14 +526,14 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         return ILCCForkNotificationVault(address(USD3L)).cooldownDuration();
     }
 
-    /// @dev Levered entry with standing allowances; returns the ticket start and the collateral supplied.
+    /// @dev Levered entry with standing allowances; returns the cooldown start and the collateral supplied.
     function _enterFunder(address funder) internal returns (uint256 start, uint256 collateral) {
         ILCCLeveragedFundHelper.FundParams memory params = _fundParams(funder);
         _approveAll(funder, params.maxContribution);
         vm.prank(funder);
         (,, collateral) = helper.fund(params);
         start = block.timestamp;
-        assertEq(helper.tickets(funder, marketId)[0].shares, collateral);
+        assertEq(helper.cooldowns(funder, marketId)[0].shares, collateral);
     }
 
     function _debt(address funder) internal returns (uint256) {
@@ -479,7 +557,8 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
             full: full,
             repayAssets: repayAssets,
             maxRepayAssets: type(uint256).max,
-            minUsdcOut: 0,
+            usd3Out: false,
+            minOut: 0,
             deadline: block.timestamp
         });
     }

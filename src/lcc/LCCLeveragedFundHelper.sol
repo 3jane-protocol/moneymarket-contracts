@@ -31,19 +31,19 @@ import {ILCCNotificationVault, ILCCRedeemableVault} from "./interfaces/ILCCNotif
 /// ERC-4626-over-USDC margin-asset shares, and borrows `borrowAssets`; those two repay the flash loan. An entry with
 /// neither runs the same sequence directly, without a flash loan. After a flash-loan entry the collateral supplied is
 /// read back from the caller's Morpho position; only an entry that borrows reads the oracle, and the caller's whole
-/// position in that market must then be within the caller's LTV bound. Every entry opens a cooldown ticket for the
+/// position in that market must then be within the caller's LTV bound. Every entry opens a cooldown for the
 /// collateral it supplied.
 ///
 /// `unwind` closes all or part of the caller's position from the collateral alone. USD3l management grants this
 /// helper the USD3l cooldown bypass; the helper uses it only for collateral it withdraws from the caller's own
-/// position, and only up to the caller's matured tickets, so a bypass redemption for a user never exceeds the USD3l
-/// the helper supplied for that user, each at least the cooldown after it was supplied. A ticket is not reduced when
+/// position, and only up to the caller's matured cooldowns, so a bypass redemption for a user never exceeds the USD3l
+/// the helper supplied for that user, each at least the cooldown after it was supplied. A cooldown is not reduced when
 /// the collateral it covered leaves the position directly or by liquidation, so this is weaker than the USD3l
 /// vault's own transfer lock. The gate is waived while USD3l is shut down or its cooldown is zero, mirroring the
 /// vault's own waivers.
 ///
 /// The helper holds no factory role, never deposits into USD3 itself, and has no owner, rescue, receiver-choice,
-/// delegated-beneficiary, arbitrary-call, or upgrade surface. Its state is the per-user ticket book, the transient
+/// delegated-beneficiary, arbitrary-call, or upgrade surface. Its state is the per-user cooldown book, the transient
 /// in-flight operation, and the reentrancy lock.
 contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoanCallback, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
@@ -53,8 +53,8 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     /// @dev Mirrors the vault's bound on the extra funding asset pulled so a dust obligation mints one USD3 share.
     uint256 internal constant MAX_FUNDING_TOP_UP = 1_000;
 
-    /// @notice Maximum open tickets per user and market; a further entry first merges the two oldest tickets.
-    uint256 public constant MAX_TICKETS = 32;
+    /// @notice Maximum open cooldowns per user and market; a further entry first merges the two oldest cooldowns.
+    uint256 public constant MAX_COOLDOWNS = 32;
 
     /// @dev First field of every flash-loan payload, so the callback dispatches on the operation it was armed for.
     enum OperationKind {
@@ -78,6 +78,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         uint256 shares;
         uint256 repayAssets;
         uint256 repayShares;
+        bool usd3Out;
     }
 
     /// @dev Inputs one funding binds; its hash is the in-flight operation the Morpho flash-loan callback must match.
@@ -103,7 +104,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
 
     bytes32 private transient _operation;
 
-    mapping(address user => mapping(bytes32 marketId => Ticket[])) private _tickets;
+    mapping(address user => mapping(bytes32 marketId => Cooldown[])) private _cooldowns;
 
     /// @param morpho_ Canonical Morpho Blue singleton.
     /// @param factory_ LCC vault factory whose registered vaults may be funded.
@@ -207,7 +208,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     function unwind(UnwindParams calldata params)
         external
         nonReentrant
-        returns (uint256 repaidAssets, uint256 sharesRedeemed, uint256 usdcOut)
+        returns (uint256 repaidAssets, uint256 sharesRedeemed, address outToken, uint256 amountOut)
     {
         if (!IMorphoBlue(morpho).isAuthorized(msg.sender, address(this))) revert NotAuthorized();
         return _unwind(params);
@@ -218,7 +219,11 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         UnwindParams calldata params,
         IMorphoBlue.Authorization calldata authorization,
         IMorphoBlue.Signature calldata authorizationSignature
-    ) external nonReentrant returns (uint256 repaidAssets, uint256 sharesRedeemed, uint256 usdcOut) {
+    )
+        external
+        nonReentrant
+        returns (uint256 repaidAssets, uint256 sharesRedeemed, address outToken, uint256 amountOut)
+    {
         if (!IMorphoBlue(morpho).isAuthorized(msg.sender, address(this))) {
             _applyAuthorization(authorization, authorizationSignature);
         }
@@ -226,21 +231,8 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     }
 
     /// @inheritdoc ILCCLeveragedFundHelper
-    function cancelTicket(bytes32 marketId, uint256 index) external nonReentrant {
-        Ticket[] storage book = _tickets[msg.sender][marketId];
-        uint256 length = book.length;
-        if (index >= length) revert UnknownTicket(index);
-        uint256 shares = book[index].shares;
-        for (uint256 i = index + 1; i < length; ++i) {
-            book[i - 1] = book[i];
-        }
-        book.pop();
-        emit TicketCancelled(msg.sender, marketId, index, shares);
-    }
-
-    /// @inheritdoc ILCCLeveragedFundHelper
-    function tickets(address user, bytes32 marketId) external view returns (Ticket[] memory) {
-        return _tickets[user][marketId];
+    function cooldowns(address user, bytes32 marketId) external view returns (Cooldown[] memory) {
+        return _cooldowns[user][marketId];
     }
 
     /// @inheritdoc ILCCLeveragedFundHelper
@@ -261,20 +253,22 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         view
         returns (uint256 shares)
     {
-        Ticket[] storage book = _tickets[user][marketId];
+        Cooldown[] storage book = _cooldowns[user][marketId];
         for (uint256 i; i < book.length; ++i) {
-            Ticket memory ticket = book[i];
-            if (_isMatured(ticket, liveDuration)) shares += ticket.shares;
+            Cooldown memory cooldown = book[i];
+            if (_isMatured(cooldown, liveDuration)) shares += cooldown.shares;
         }
     }
 
-    /// @dev Checks the request, consumes matured tickets before any state-changing external call, accrues the market,
+    /// @dev Checks the request, consumes matured cooldowns before any state-changing external call, accrues the market,
     /// prices the repayment, and runs the unwind sequence, through a flash loan of the repayment when it is nonzero.
-    /// The caller receives the measured USDC change of the helper, which is the redemption proceeds less the repayment.
+    /// The caller receives the output token's measured balance change of the helper: USDC (the redemption proceeds
+    /// less the repayment) or, with `usd3Out`, USD3 (the redeemed USD3 less the slice withdrawn to cover the
+    /// repayment). In `usd3Out` mode the helper's USDC balance must end unchanged (`UnexpectedUsdcChange` otherwise).
     /// Full mode leaves zero debt because it repays the exact share count read after accrual in this transaction.
     function _unwind(UnwindParams calldata params)
         private
-        returns (uint256 repaidAssets, uint256 sharesRedeemed, uint256 usdcOut)
+        returns (uint256 repaidAssets, uint256 sharesRedeemed, address outToken, uint256 amountOut)
     {
         if (block.timestamp > params.deadline) revert DeadlineExpired(); // deliberate wall-clock read
         if (params.market.loanToken != usdc || params.market.collateralToken != usd3l) revert MarketTokenMismatch();
@@ -283,12 +277,13 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         bytes32 id = keccak256(abi.encode(params.market));
         uint256 collateral = _positionCollateral(id, msg.sender);
         if (params.shares > collateral) revert SharesExceedCollateral(params.shares, collateral);
-        _consumeTickets(msg.sender, id, params.shares);
+        _consumeCooldowns(msg.sender, id, params.shares);
 
         IMorphoBlue(morpho).accrueInterest(params.market);
         UnwindOperation memory op = _priceRepayment(params, id);
 
         uint256 usdcBefore = IERC20(usdc).balanceOf(address(this));
+        uint256 usd3Before = params.usd3Out ? IERC20(usd3).balanceOf(address(this)) : 0;
         if (op.repayAssets == 0) {
             _runUnwind(op);
         } else {
@@ -297,12 +292,20 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
             IMorphoBlue(morpho).flashLoan(usdc, op.repayAssets, data);
             if (_operation != bytes32(0)) revert CallbackNotExecuted();
         }
-        usdcOut = IERC20(usdc).balanceOf(address(this)) - usdcBefore;
-        if (usdcOut < params.minUsdcOut) revert UnwindOutputBelowMinimum(usdcOut, params.minUsdcOut);
+        uint256 usdcChange = IERC20(usdc).balanceOf(address(this)) - usdcBefore;
+        if (params.usd3Out) {
+            if (usdcChange != 0) revert UnexpectedUsdcChange(usdcChange);
+            outToken = usd3;
+            amountOut = IERC20(usd3).balanceOf(address(this)) - usd3Before;
+        } else {
+            outToken = usdc;
+            amountOut = usdcChange;
+        }
+        if (amountOut < params.minOut) revert UnwindOutputBelowMinimum(amountOut, params.minOut);
 
-        if (usdcOut != 0) IERC20(usdc).safeTransfer(msg.sender, usdcOut);
-        emit Unwound(msg.sender, id, op.repayAssets, params.shares, usdcOut);
-        return (op.repayAssets, params.shares, usdcOut);
+        if (amountOut != 0) IERC20(outToken).safeTransfer(msg.sender, amountOut);
+        emit Unwound(msg.sender, id, outToken, op.repayAssets, params.shares, amountOut);
+        return (op.repayAssets, params.shares, outToken, amountOut);
     }
 
     /// @dev Prices the repayment against the just-accrued market, always as borrow shares: in full mode all of the
@@ -320,6 +323,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         op.user = msg.sender;
         op.market = params.market;
         op.shares = params.shares;
+        op.usd3Out = params.usd3Out;
         if (params.full) {
             op.repayShares = debt.borrowShares;
         } else if (params.repayAssets != 0) {
@@ -347,7 +351,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
 
     /// @dev Repays `repayShares` of the caller's debt by shares from the helper's flash-loaned USDC, withdraws
     /// `shares` of the caller's collateral to the helper, redeems exactly the USD3l that withdrawal delivered, and
-    /// returns the USDC received. Any other USD3l, USD3, or USDC the helper holds is never touched.
+    /// returns the USDC received from USD3. Any other USD3l, USD3, or USDC the helper holds is never touched.
     function _runUnwind(UnwindOperation memory op) private returns (uint256) {
         if (op.repayShares != 0) {
             IERC20(usdc).forceApprove(morpho, op.repayAssets);
@@ -355,42 +359,59 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         }
         uint256 usd3lBefore = IERC20(usd3l).balanceOf(address(this));
         IMorphoBlue(morpho).withdrawCollateral(op.market, op.shares, op.user, address(this));
-        return _redeemCollateral(IERC20(usd3l).balanceOf(address(this)) - usd3lBefore);
+        return _redeemCollateral(IERC20(usd3l).balanceOf(address(this)) - usd3lBefore, op.usd3Out, op.repayAssets);
     }
 
-    /// @dev Redeems `shares` of USD3l to USD3 under the helper's cooldown bypass and the USD3 received to USDC, both
-    /// with zero loss tolerance, and returns the USDC received. Every amount is a measured balance change.
-    function _redeemCollateral(uint256 shares) private returns (uint256 usdcReceived) {
+    /// @dev Redeems `shares` of USD3l to USD3 under the helper's cooldown bypass, then converts USD3 to USDC with zero
+    /// loss tolerance: all of it when `usd3Out` is false; with `usd3Out`, only `repayAssets` of USDC through USD3's
+    /// `withdraw`, and nothing at all when `repayAssets` is zero, so USD3's withdraw limit is then never read. Before
+    /// the withdraw the USD3 it needs (`previewWithdraw`) must not exceed what this redemption produced, and after it
+    /// the USD3 actually burned is held to the same bound, so donated USD3 is never spent (`Usd3BelowRepayment` for
+    /// both). Returns the USDC received. Every amount is a measured balance change.
+    function _redeemCollateral(uint256 shares, bool usd3Out, uint256 repayAssets)
+        private
+        returns (uint256 usdcReceived)
+    {
         uint256 usd3Before = IERC20(usd3).balanceOf(address(this));
         ILCCRedeemableVault(usd3l).redeem(shares, address(this), address(this), 0);
-        uint256 usd3Received = IERC20(usd3).balanceOf(address(this)) - usd3Before;
+        uint256 usd3AfterRedeem = IERC20(usd3).balanceOf(address(this));
+        uint256 usd3Received = usd3AfterRedeem - usd3Before;
 
+        if (usd3Out && repayAssets == 0) return 0;
         uint256 usdcBefore = IERC20(usdc).balanceOf(address(this));
-        ILCCRedeemableVault(usd3).redeem(usd3Received, address(this), address(this), 0);
+        if (usd3Out) {
+            uint256 required = IERC4626(usd3).previewWithdraw(repayAssets);
+            if (required > usd3Received) revert Usd3BelowRepayment(usd3Received, required);
+            ILCCRedeemableVault(usd3).withdraw(repayAssets, address(this), address(this), 0);
+            uint256 usd3Spent = usd3AfterRedeem - IERC20(usd3).balanceOf(address(this));
+            if (usd3Spent > usd3Received) revert Usd3BelowRepayment(usd3Received, usd3Spent);
+        } else {
+            ILCCRedeemableVault(usd3).redeem(usd3Received, address(this), address(this), 0);
+        }
         usdcReceived = IERC20(usdc).balanceOf(address(this)) - usdcBefore;
     }
 
-    /// @dev Consumes `shares` from the caller's matured tickets in `marketId`, oldest first, keeping the remaining
-    /// tickets in order and writing only tickets that changed or moved. Skipped while the USD3l cooldown is waived.
+    /// @dev Consumes `shares` from the caller's matured cooldowns in `marketId`, oldest first, keeping the remaining
+    /// cooldowns in order and writing only cooldowns that changed or moved. Skipped while the USD3l cooldown is waived.
     /// Reads the vault's cooldown duration once.
-    function _consumeTickets(address user, bytes32 marketId, uint256 shares) private {
+    function _consumeCooldowns(address user, bytes32 marketId, uint256 shares) private {
         uint256 liveDuration = ILCCNotificationVault(usd3l).cooldownDuration();
         if (_cooldownWaived(liveDuration)) return;
-        Ticket[] storage book = _tickets[user][marketId];
+        Cooldown[] storage book = _cooldowns[user][marketId];
         uint256 length = book.length;
         uint256 remaining = shares;
         uint256 kept;
         for (uint256 i; i < length; ++i) {
-            Ticket memory ticket = book[i];
+            Cooldown memory cooldown = book[i];
             bool changed;
-            if (remaining != 0 && _isMatured(ticket, liveDuration)) {
-                uint256 taken = Math.min(remaining, ticket.shares);
-                ticket.shares -= uint128(taken);
+            if (remaining != 0 && _isMatured(cooldown, liveDuration)) {
+                uint256 taken = Math.min(remaining, cooldown.shares);
+                cooldown.shares -= uint128(taken);
                 remaining -= taken;
                 changed = true;
             }
-            if (ticket.shares != 0) {
-                if (changed || kept != i) book[kept] = ticket;
+            if (cooldown.shares != 0) {
+                if (changed || kept != i) book[kept] = cooldown;
                 ++kept;
             }
         }
@@ -398,24 +419,24 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         for (uint256 i = kept; i < length; ++i) {
             book.pop();
         }
-        emit TicketsConsumed(user, marketId, shares);
+        emit CooldownsConsumed(user, marketId, shares);
     }
 
-    /// @dev Opens a ticket for `shares` supplied in this entry. When the book is full it first merges the two oldest
-    /// tickets into index 0 (shares summed, the later of their two maturities kept), shifts the rest down, and writes
-    /// the new ticket into the freed last slot, so the newer tickets keep their own maturities. Never reverts for book
-    /// reasons.
-    function _openTicket(address user, bytes32 marketId, uint256 shares) private {
+    /// @dev Opens a cooldown for `shares` supplied in this entry. When the book is full it first merges the two oldest
+    /// cooldowns into index 0 (shares summed, the later of their two maturities kept), shifts the rest down, and writes
+    /// the new cooldown into the freed last slot, so the newer cooldowns keep their own maturities. Never reverts for
+    /// book reasons.
+    function _startCooldown(address user, bytes32 marketId, uint256 shares) private {
         uint64 duration = ILCCNotificationVault(usd3l).cooldownDuration();
         uint64 start = uint64(block.timestamp); // deliberate wall-clock read
-        Ticket memory ticket = Ticket({shares: uint128(shares), start: start, duration: duration});
-        Ticket[] storage book = _tickets[user][marketId];
+        Cooldown memory cooldown = Cooldown({shares: uint128(shares), start: start, duration: duration});
+        Cooldown[] storage book = _cooldowns[user][marketId];
         uint256 length = book.length;
-        if (length < MAX_TICKETS) {
-            book.push(ticket);
+        if (length < MAX_COOLDOWNS) {
+            book.push(cooldown);
         } else {
-            Ticket memory merged = book[0];
-            Ticket memory second = book[1];
+            Cooldown memory merged = book[0];
+            Cooldown memory second = book[1];
             if (uint256(second.start) + second.duration > uint256(merged.start) + merged.duration) {
                 merged.start = second.start;
                 merged.duration = second.duration;
@@ -425,16 +446,16 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
             for (uint256 i = 2; i < length; ++i) {
                 book[i - 1] = book[i];
             }
-            book[length - 1] = ticket;
-            emit TicketMerged(user, marketId, 0, merged.shares, merged.start, merged.duration);
+            book[length - 1] = cooldown;
+            emit CooldownsMerged(user, marketId, 0, merged.shares, merged.start, merged.duration);
         }
-        emit TicketOpened(user, marketId, ticket.shares, ticket.start, ticket.duration);
+        emit CooldownStarted(user, marketId, cooldown.shares, cooldown.start, cooldown.duration);
     }
 
-    /// @dev A ticket matures at its start plus the longer of its recorded and the live USD3l cooldown.
-    function _isMatured(Ticket memory ticket, uint256 liveDuration) private view returns (bool) {
+    /// @dev A cooldown matures at its start plus the longer of its recorded and the live USD3l cooldown.
+    function _isMatured(Cooldown memory cooldown, uint256 liveDuration) private view returns (bool) {
         uint256 currentTime = block.timestamp; // deliberate wall-clock read
-        return currentTime >= uint256(ticket.start) + Math.max(ticket.duration, liveDuration);
+        return currentTime >= uint256(cooldown.start) + Math.max(cooldown.duration, liveDuration);
     }
 
     /// @dev Mirrors the USD3l vault's own waivers: no cooldown applies while its already-read `liveDuration` is zero
@@ -507,7 +528,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
                 : _positionCollateral(id, op.user);
             collateral = collateralAfter - collateralBefore;
         }
-        _openTicket(op.user, id, collateral);
+        _startCooldown(op.user, id, collateral);
         return (op.obligation, op.fundingAmount, collateral);
     }
 

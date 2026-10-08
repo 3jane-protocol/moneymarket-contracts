@@ -2,9 +2,13 @@
 pragma solidity 0.8.35;
 
 /// @title ILCCRedeemableVault
-/// @notice TokenizedStrategy redemption with an explicit loss bound, as exposed by USD3 and USD3l.
+/// @notice TokenizedStrategy redemption and withdrawal with an explicit loss bound, as exposed by USD3 and USD3l.
 interface ILCCRedeemableVault {
     function redeem(uint256 shares, address receiver, address owner, uint256 maxLoss) external returns (uint256 assets);
+
+    function withdraw(uint256 assets, address receiver, address owner, uint256 maxLoss)
+        external
+        returns (uint256 shares);
 }
 
 /// @title ILCCNotificationVault

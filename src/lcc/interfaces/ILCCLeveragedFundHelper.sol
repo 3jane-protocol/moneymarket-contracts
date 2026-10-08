@@ -58,7 +58,7 @@ interface ILCCLeveragedFundHelper {
 
     /// @param market Morpho Blue market lending USDC against USD3l that holds the caller's position.
     /// @param shares USD3l collateral shares to withdraw and redeem; at most the caller's live collateral in `market`
-    /// and, unless the USD3l cooldown is waived, at most the caller's matured ticket shares there.
+    /// and, unless the USD3l cooldown is waived, at most the caller's matured cooldown shares there.
     /// @param full Repay the caller's whole debt in `market`, priced on-chain after accruing interest and repaid by
     /// shares; `repayAssets` is then ignored.
     /// @param repayAssets USDC of debt to repay when `full` is false; at most the current debt. It is converted to
@@ -66,7 +66,10 @@ interface ILCCLeveragedFundHelper {
     /// so the
     /// amount actually repaid is those shares' value rounded up, at most `repayAssets`. Zero repays nothing.
     /// @param maxRepayAssets Maximum USDC the repayment may cost.
-    /// @param minUsdcOut Minimum USDC sent to the caller: the redemption proceeds less the repayment.
+    /// @param usd3Out Deliver the remainder as USD3 instead of USDC. Only the repayment is converted to USDC (through
+    /// USD3's `withdraw`); with nothing to repay no USD3 is converted and USD3's withdraw limit is never read, so such
+    /// an unwind works during a USD3 pending loss or waUSDC pause. USD3 carries no cooldown, which lives on USD3l.
+    /// @param minOut Minimum amount of the output token sent to the caller: USD3 when `usd3Out`, USDC otherwise.
     /// @param deadline Last timestamp at which the call may execute.
     struct UnwindParams {
         IMorphoBlue.MarketParams market;
@@ -74,30 +77,39 @@ interface ILCCLeveragedFundHelper {
         bool full;
         uint256 repayAssets;
         uint256 maxRepayAssets;
-        uint256 minUsdcOut;
+        bool usd3Out;
+        uint256 minOut;
         uint256 deadline;
     }
 
-    /// @notice A cooldown ticket for USD3l collateral one funding entry supplied. It matures at
+    /// @notice A cooldown for USD3l collateral one funding entry supplied. It matures at
     /// `start + max(duration, live USD3l cooldownDuration)` and never expires.
-    struct Ticket {
+    struct Cooldown {
         uint128 shares;
         uint64 start;
         uint64 duration;
     }
 
-    /// @notice A funding entry opened a ticket for the collateral it supplied.
-    event TicketOpened(address indexed user, bytes32 indexed marketId, uint256 shares, uint256 start, uint256 duration);
-    /// @notice A funding entry found the book full and merged the two oldest tickets into the ticket at `index` (0);
-    /// the values are the merged ticket's totals, carrying the later of the two maturities. The entry's own ticket is
-    /// then opened in the freed last slot (`TicketOpened`).
-    event TicketMerged(
+    /// @notice A funding entry started a cooldown for the collateral it supplied.
+    event CooldownStarted(
+        address indexed user, bytes32 indexed marketId, uint256 shares, uint256 start, uint256 duration
+    );
+    /// @notice A funding entry found the book full and merged the two oldest cooldowns into the cooldown at `index`
+    /// (0); the values are the merged cooldown's totals, carrying the later of the two maturities. The entry's own
+    /// cooldown is then started in the freed last slot (`CooldownStarted`).
+    event CooldownsMerged(
         address indexed user, bytes32 indexed marketId, uint256 index, uint256 shares, uint256 start, uint256 duration
     );
-    event TicketCancelled(address indexed user, bytes32 indexed marketId, uint256 index, uint256 shares);
-    event TicketsConsumed(address indexed user, bytes32 indexed marketId, uint256 shares);
+    event CooldownsConsumed(address indexed user, bytes32 indexed marketId, uint256 shares);
+    /// @notice An unwind repaid `repaidAssets` of debt, redeemed `shares` of collateral, and sent `amountOut` of
+    /// `outToken` (USDC or USD3) to the caller.
     event Unwound(
-        address indexed user, bytes32 indexed marketId, uint256 repaidAssets, uint256 shares, uint256 usdcOut
+        address indexed user,
+        bytes32 indexed marketId,
+        address outToken,
+        uint256 repaidAssets,
+        uint256 shares,
+        uint256 amountOut
     );
 
     /// @notice EIP-2612 permit signed by the caller for this helper as spender.
@@ -155,10 +167,15 @@ interface ILCCLeveragedFundHelper {
     error InsufficientMaturedShares(uint256 requested, uint256 matured);
     error RepayExceedsDebt(uint256 repayAssets, uint256 debt);
     error RepayExceedsMax(uint256 repayAssets, uint256 maximum);
-    error UnwindOutputBelowMinimum(uint256 usdcOut, uint256 minimum);
+    error UnwindOutputBelowMinimum(uint256 amountOut, uint256 minimum);
+    /// @notice With `usd3Out`, the USD3 needed to withdraw the repayment (previewed before the withdraw, or actually
+    /// burned by it) exceeds the USD3 this unwind's redemption produced.
+    error Usd3BelowRepayment(uint256 usd3Redeemed, uint256 usd3Required);
+    /// @notice A `usd3Out` unwind changed the helper's USDC balance, which the exact flash and repayment pulls keep at
+    /// zero.
+    error UnexpectedUsdcChange(uint256 amount);
     error UnwindProceedsBelowRepayment(uint256 received, uint256 repayment);
     error RepayRoundsToZero(uint256 repayAssets);
-    error UnknownTicket(uint256 index);
 
     /// @notice Canonical Morpho Blue singleton.
     function morpho() external view returns (address);
@@ -215,20 +232,25 @@ interface ILCCLeveragedFundHelper {
     ) external returns (uint256 obligation, uint256 fundingAmount, uint256 collateral);
 
     /// @notice Withdraws `params.shares` of the caller's USD3l collateral from `params.market`, repays the requested
-    /// debt with a Morpho flash loan of that amount, redeems the withdrawn USD3l to USDC through USD3 under this
-    /// helper's USD3l cooldown bypass, repays the flash loan, and sends the rest to the caller. Requires the caller's
+    /// debt with a Morpho flash loan of that amount, redeems the withdrawn USD3l to USD3 under this helper's USD3l
+    /// cooldown bypass, converts to USDC either all of that USD3 or, with `params.usd3Out`, only the repayment, repays
+    /// the flash loan, and sends the rest to the caller in USDC or USD3. Requires the caller's
     /// Morpho authorization of this helper (`NotAuthorized` otherwise) and, unless the USD3l cooldown is waived (shut
-    /// down or zero), matured tickets covering `params.shares`, consumed oldest first. With nothing to repay no flash
+    /// down or zero), matured cooldowns covering `params.shares`, consumed oldest first. With nothing to repay no flash
     /// loan is taken. A partial unwind leaves debt, so Morpho's health check (and the market oracle) applies to the
     /// withdrawal. USD3's own withdraw limit (pending loss, waUSDC liquidity, ring fence, floors) and the bypass grant
-    /// can make the redemption revert; the whole call then reverts and the tickets are restored. Debt is always repaid
-    /// by shares; redemption proceeds below the flash-loaned repayment revert `UnwindProceedsBelowRepayment`.
-    /// @return repaidAssets USDC of debt repaid: the repaid shares' value rounded up, which the flash loan covers.
+    /// can make the redemption revert; the whole call then reverts and the cooldowns are restored. Debt is always
+    /// repaid by shares. On the USDC path, redemption proceeds below the flash-loaned repayment revert
+    /// `UnwindProceedsBelowRepayment`; on the `usd3Out` path, a repayment needing more USD3 than the redemption
+    /// produced reverts `Usd3BelowRepayment`, and the helper's USDC balance must end unchanged
+    /// (`UnexpectedUsdcChange`). @return repaidAssets USDC of debt repaid: the repaid shares' value rounded up, which
+    /// the flash loan covers.
     /// @return sharesRedeemed USD3l collateral shares withdrawn and redeemed.
-    /// @return usdcOut USDC sent to the caller.
+    /// @return outToken Token sent to the caller: USD3 with `params.usd3Out`, USDC otherwise.
+    /// @return amountOut Amount of `outToken` sent to the caller.
     function unwind(UnwindParams calldata params)
         external
-        returns (uint256 repaidAssets, uint256 sharesRedeemed, uint256 usdcOut);
+        returns (uint256 repaidAssets, uint256 sharesRedeemed, address outToken, uint256 amountOut);
 
     /// @notice `unwind` that first applies the caller's enabling Morpho authorization of this helper when it is not
     /// already in place, with the same tolerance as `fundWithSignatures`; otherwise the authorization is ignored.
@@ -236,18 +258,15 @@ interface ILCCLeveragedFundHelper {
         UnwindParams calldata params,
         IMorphoBlue.Authorization calldata authorization,
         IMorphoBlue.Signature calldata authorizationSignature
-    ) external returns (uint256 repaidAssets, uint256 sharesRedeemed, uint256 usdcOut);
+    ) external returns (uint256 repaidAssets, uint256 sharesRedeemed, address outToken, uint256 amountOut);
 
-    /// @notice Removes the caller's ticket at `index` in market `marketId`, keeping the rest in order.
-    function cancelTicket(bytes32 marketId, uint256 index) external;
+    /// @notice `user`'s open cooldowns in market `marketId`, oldest first.
+    function cooldowns(address user, bytes32 marketId) external view returns (Cooldown[] memory);
 
-    /// @notice `user`'s open tickets in market `marketId`, oldest first.
-    function tickets(address user, bytes32 marketId) external view returns (Ticket[] memory);
-
-    /// @notice Shares of `user`'s tickets in market `marketId` matured at the live USD3l cooldown.
+    /// @notice Shares of `user`'s cooldowns in market `marketId` matured at the live USD3l cooldown.
     function maturedShares(address user, bytes32 marketId) external view returns (uint256);
 
-    /// @notice The most shares `user` can unwind in market `marketId` by the ticket gate and live collateral; USD3's
+    /// @notice The most shares `user` can unwind in market `marketId` by the cooldown gate and live collateral; USD3's
     /// withdraw limit and Morpho's health check are not included.
     function maxUnwindable(address user, bytes32 marketId) external view returns (uint256);
 }

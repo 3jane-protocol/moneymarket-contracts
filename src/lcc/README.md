@@ -454,32 +454,39 @@ is measured rather than previewed, so wrapped-delivery changes are bounded by ea
 margin path assumes the vault releases amortized margin to the funder inside `fundCall` before it returns; a vault
 change that defers or removes margin release on amortizing funding requires redeploying the helper.
 
-Cooldown tickets and unwind. USD3l carries a 35-day withdrawal cooldown, so a levered funder cannot repay from the
+Helper cooldowns and unwind. USD3l carries a 35-day withdrawal cooldown, so a levered funder cannot repay from the
 collateral alone through the vault. USD3l management grants the helper the vault's cooldown bypass, and the helper
-enforces its own per-user cooldown instead. Every entry through `fund` or `fundWithSignatures` opens a ticket
+enforces its own per-user cooldown instead. Every entry through `fund` or `fundWithSignatures` opens a cooldown
 `{shares, start, duration}` for the collateral it supplied, keyed by user and market id; nothing else opens one. A
-ticket matures at `start + max(duration, live cooldownDuration)` and never expires. A book holds at most 32 tickets per
-user and market; when it is full, a further entry first merges the two oldest tickets into one with the later of their
-maturities and then opens its own ticket in the freed slot, so funding never reverts for ticket reasons and newer
-tickets keep their own maturities, and `cancelTicket` removes a ticket. `unwind(params)` (or `unwindWithAuthorization`,
-which first applies the caller's Morpho authorization, needed because unlevered and margin-only funders never granted
-it) checks `shares` against live collateral (`SharesExceedCollateral`), consumes matured tickets oldest first before any
+cooldown matures at `start + max(duration, live cooldownDuration)` and never expires. A book holds at most 32 cooldowns
+per user and market; when it is full, a further entry first merges the two oldest cooldowns into one with the later of
+their maturities and then opens its own cooldown in the freed slot, so funding never reverts for cooldown reasons and
+newer cooldowns keep their own maturities. Funding is the only way a cooldown is started and unwind consumption the only
+way one is removed; that full-book merge is the only other change. `unwind(params)` (or `unwindWithAuthorization`, which
+first applies the caller's Morpho authorization, needed because unlevered and margin-only funders never granted it)
+checks `shares` against live collateral (`SharesExceedCollateral`), consumes matured cooldowns oldest first before any
 state-changing external call (`InsufficientMaturedShares`), accrues the market, and prices the repayment: in `full` mode
 every borrow share, leaving zero debt; otherwise `repayAssets`, at most the debt (`RepayExceedsDebt`), converted to
 borrow shares rounding down (`RepayRoundsToZero` when it buys none), with Morpho's health check and oracle then applying
 to the withdrawal. Both modes repay by shares, and the repayment is those shares' value rounded up, bounded by
 `maxRepayAssets` (`RepayExceedsMax`). A nonzero repayment is bridged by a Morpho flash loan of exactly that amount (the
 singleton must hold it); inside the callback the helper repays, withdraws `shares` of collateral to itself, redeems
-exactly that USD3l to USD3 under the bypass and that USD3 to USDC, both with zero loss tolerance, requires the proceeds
-to cover the repayment (`UnwindProceedsBelowRepayment`), and lets Morpho pull the flash loan back. The caller receives
-the measured remainder (`UnwindOutputBelowMinimum` below `minUsdcOut`); donated USD3l, USD3, and USDC are never touched.
-Flash payloads carry a funding/unwind kind tag as their first hashed field. The gate is waived while USD3l is shut down
-or its cooldown is zero, mirroring the vault. USD3's withdraw limit (pending loss, waUSDC pause, ring fence, floors) and
-a revoked bypass make an unwind revert atomically with tickets restored; users then exit by repaying with their own USDC
-and using the vault cooldown. Accepted residual: a ticket outlives collateral that leaves the position directly or by
+exactly that USD3l to USD3 under the bypass and, by default, all of that USD3 to USDC, both with zero loss tolerance; on
+this USDC path the proceeds must cover the repayment (`UnwindProceedsBelowRepayment`) before Morpho pulls the flash loan
+back. With `usd3Out` only the repayment slice is converted, through USD3's `withdraw(assets, …, maxLoss = 0)`; on this
+USD3 path the USD3 the withdraw needs (`previewWithdraw`, checked before it) and the USD3 it actually burns (checked
+after it) must not exceed what the redemption produced (`Usd3BelowRepayment`). The rest is delivered as USD3, which
+carries no cooldown because the cooldown lives on USD3l, and a zero-repayment `usd3Out` unwind converts nothing, so it
+never reads USD3's withdraw limit and works during a pending loss or waUSDC pause. The caller receives the measured
+remainder of the output token (`UnwindOutputBelowMinimum` below `minOut`); in `usd3Out` mode the helper's USDC balance
+must end unchanged (`UnexpectedUsdcChange` otherwise); donated USD3l, USD3, and USDC are never touched. Flash payloads
+carry a funding/unwind kind tag as their first hashed field. The gate is waived while USD3l is shut down or its cooldown
+is zero, mirroring the vault. USD3's withdraw limit (pending loss, waUSDC pause, ring fence, floors) and a revoked
+bypass make an unwind revert atomically with cooldowns restored; users then exit by repaying with their own USDC and
+using the vault cooldown. Accepted residual: a cooldown outlives collateral that leaves the position directly or by
 liquidation, so bypass redemptions for a user never exceed the USD3l the helper supplied for that user, each at least
 the cooldown after supply, which is weaker than the vault's transfer lock on cooled shares. The helper deliberately
-mirrors no withdrawal window: tickets never expire because the live USD3l `withdrawalWindow` is effectively unbounded
+mirrors no withdrawal window: cooldowns never expire because the live USD3l `withdrawalWindow` is effectively unbounded
 (2^63 seconds); a NotificationVault upgrade that introduces a finite window falls under the helper upgrade rule
 (re-validate or redeploy the helper).
 
