@@ -7,6 +7,9 @@ import {IERC4626} from "../../../../lib/openzeppelin/contracts/interfaces/IERC46
 import {UpgradeableBeacon} from "../../../../lib/openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 
 import {LCCMainnetForkBase} from "./LCCMainnetForkBase.sol";
+import {
+    AuthorizeLCCMarginDepositHelperSafe
+} from "../../../../script/operations/AuthorizeLCCMarginDepositHelperSafe.s.sol";
 import {LCCMockNotificationVault, LCCMockUSD3} from "../LCCBase.t.sol";
 import {LCCMarginDepositHelper} from "../../../../src/lcc/LCCMarginDepositHelper.sol";
 import {LCCVault} from "../../../../src/lcc/LCCVault.sol";
@@ -15,6 +18,7 @@ import {ILCCMarginDepositHelper} from "../../../../src/lcc/interfaces/ILCCMargin
 import {ILCCVault} from "../../../../src/lcc/interfaces/ILCCVault.sol";
 import {OracleMock} from "../../../../src/mocks/OracleMock.sol";
 import {ORACLE_PRICE_SCALE} from "../../../../src/libraries/ConstantsLib.sol";
+import {Vm} from "../../../../lib/forge-std/src/Vm.sol";
 
 interface IAaveV3PoolSupply {
     function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
@@ -142,6 +146,89 @@ contract LCCMarginDepositHelperForkTest is LCCMainnetForkBase {
         assertGt(usdtVault.getAccount(bob).activeMargin, 0);
     }
 
+    function testAuthorizeScriptGrantsAndRevokesAsSeparateProposals() public requiresFork {
+        LCCMarginDepositHelper replacement = new LCCMarginDepositHelper(address(factory), WA_ETH_USDC, WA_ETH_USDT);
+        address closedOperator = makeAddr("closed-operator");
+        bytes32 role = factory.DEPOSIT_OPERATOR_ROLE();
+        factory.grantRole(role, closedOperator);
+        vm.setEnv("WALLET_TYPE", "local");
+        vm.setEnv("SAFE_PROPOSER_PRIVATE_KEY", vm.toString(bytes32(uint256(1))));
+        vm.setEnv("SAFE_NONCE", "1");
+        vm.setEnv("SAFE_ADDRESS", vm.toString(address(this)));
+        vm.setEnv("LCC_FACTORY", vm.toString(address(factory)));
+        vm.setEnv("LCC_MARGIN_DEPOSIT_HELPER", vm.toString(address(replacement)));
+        vm.setEnv("LCC_DEPOSIT_OPERATOR_TO_REVOKE", vm.toString(address(helper)));
+
+        AuthorizeLCCMarginDepositHelperSafe grant = new AuthorizeLCCMarginDepositHelperSafe();
+        grant.run(false);
+        (uint256 calls,) = grant.getBatchInfo(0);
+        assertEq(calls, 1);
+        assertTrue(factory.isDepositOperator(address(replacement)));
+        assertTrue(factory.isDepositOperator(address(helper)));
+
+        grant = new AuthorizeLCCMarginDepositHelperSafe();
+        grant.run(false);
+        (calls,) = grant.getBatchInfo(0);
+        assertEq(calls, 0);
+
+        assertEq(_runRevoke(address(helper)), 1);
+        assertFalse(factory.isDepositOperator(address(helper)));
+        assertTrue(factory.isDepositOperator(address(replacement)));
+
+        AuthorizeLCCMarginDepositHelperSafe rejected = new AuthorizeLCCMarginDepositHelperSafe();
+        vm.expectRevert(bytes("address is not a deposit operator"));
+        rejected.revoke(false);
+
+        vm.setEnv("LCC_DEPOSIT_OPERATOR_TO_REVOKE", vm.toString(address(replacement)));
+        rejected = new AuthorizeLCCMarginDepositHelperSafe();
+        vm.expectRevert(bytes("operator is LCC_MARGIN_DEPOSIT_HELPER"));
+        rejected.revoke(false);
+
+        assertEq(_runRevoke(closedOperator), 1);
+        assertFalse(factory.isDepositOperator(closedOperator));
+        assertEq(factory.getRoleMemberCount(role), 1);
+        assertEq(factory.getRoleMember(role, 0), address(replacement));
+    }
+
+    function _runRevoke(address operator) private returns (uint256 calls) {
+        vm.setEnv("LCC_DEPOSIT_OPERATOR_TO_REVOKE", vm.toString(operator));
+        AuthorizeLCCMarginDepositHelperSafe revocation = new AuthorizeLCCMarginDepositHelperSafe();
+        revocation.revoke(false);
+        (calls,) = revocation.getBatchInfo(0);
+    }
+
+    function testRealUnderlyingDepositEmitsReferralAttribution() public requiresFork {
+        uint256 amount = 25e6;
+        bytes32 code = keccak256("FORK_REF");
+        ILCCMarginDepositHelper.DepositParams memory params = _params(usdcVault, amount);
+        params.referral = code;
+        uint256 expectedShares = IERC4626(WA_ETH_USDC).previewDeposit(amount);
+
+        vm.recordLogs();
+        vm.prank(alice);
+        uint256 commitment = helper.depositUSDC(params);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        uint256 found;
+        for (uint256 i; i < logs.length; ++i) {
+            if (
+                logs[i].emitter != address(helper) || logs[i].topics.length == 0
+                    || logs[i].topics[0] != ILCCMarginDepositHelper.LCCDepositReferred.selector
+            ) continue;
+            ++found;
+            assertEq(logs[i].topics.length, 4);
+            assertEq(logs[i].topics[1], bytes32(uint256(uint160(alice))));
+            assertEq(logs[i].topics[2], bytes32(uint256(uint160(address(usdcVault)))));
+            assertEq(logs[i].topics[3], code);
+            (uint256 marginShares, uint256 loggedCommitment) = abi.decode(logs[i].data, (uint256, uint256));
+            assertEq(marginShares, expectedShares);
+            assertEq(loggedCommitment, commitment);
+        }
+        assertEq(found, 1);
+        assertGt(commitment, 0);
+        assertEq(usdcVault.getAccount(alice).activeMargin, expectedShares);
+    }
+
     function _probeIngressDelta(IERC20 token, address user, uint256 amount) private returns (uint256 delta) {
         uint256 snapshot = vm.snapshotState();
         uint256 beforeBalance = token.balanceOf(address(helper));
@@ -175,7 +262,8 @@ contract LCCMarginDepositHelperForkTest is LCCMainnetForkBase {
             minCommitment: 1,
             maxCommitment: type(uint256).max,
             allowPendingActivation: false,
-            deadline: block.timestamp
+            deadline: block.timestamp,
+            referral: bytes32(0)
         });
     }
 
