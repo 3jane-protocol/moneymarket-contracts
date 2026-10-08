@@ -95,8 +95,9 @@ interface ILCCLeveragedFundHelper {
         address indexed user, bytes32 indexed marketId, uint256 shares, uint256 start, uint256 duration
     );
     /// @notice A funding entry found the book full and merged the two oldest cooldowns into the cooldown at `index`
-    /// (0); the values are the merged cooldown's totals, carrying the later of the two maturities. The entry's own
-    /// cooldown is then started in the freed last slot (`CooldownStarted`).
+    /// (0); `shares` is their sum, `start` the later of their starts, and `duration` runs from that start to the later
+    /// of their recorded maturities (`start + duration`), so the merged cooldown matures no earlier than either input
+    /// under any live duration. The entry's own cooldown is then started in the freed last slot (`CooldownStarted`).
     event CooldownsMerged(
         address indexed user, bytes32 indexed marketId, uint256 index, uint256 shares, uint256 start, uint256 duration
     );
@@ -243,8 +244,8 @@ interface ILCCLeveragedFundHelper {
     /// repaid by shares. On the USDC path, redemption proceeds below the flash-loaned repayment revert
     /// `UnwindProceedsBelowRepayment`; on the `usd3Out` path, a repayment needing more USD3 than the redemption
     /// produced reverts `Usd3BelowRepayment`, and the helper's USDC balance must end unchanged
-    /// (`UnexpectedUsdcChange`). @return repaidAssets USDC of debt repaid: the repaid shares' value rounded up, which
-    /// the flash loan covers.
+    /// (`UnexpectedUsdcChange`).
+    /// @return repaidAssets USDC of debt repaid: the repaid shares' value rounded up, which the flash loan covers.
     /// @return sharesRedeemed USD3l collateral shares withdrawn and redeemed.
     /// @return outToken Token sent to the caller: USD3 with `params.usd3Out`, USDC otherwise.
     /// @return amountOut Amount of `outToken` sent to the caller.

@@ -410,7 +410,8 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
     {
         if (position[id][user].borrowShares == 0) return true;
         uint256 maxBorrow = uint256(position[id][user].collateral)
-            .mulDivDown(IMorphoBlueOracle(params.oracle).price(), ORACLE_PRICE_SCALE).wMulDown(params.lltv);
+            .mulDivDown(IMorphoBlueOracle(params.oracle).price(), ORACLE_PRICE_SCALE)
+            .wMulDown(params.lltv);
         return maxBorrow >= borrowAssetsOf(id, user);
     }
 }
@@ -1183,7 +1184,8 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
         assertEq(book.length, MAX_COOLDOWNS);
         assertEq(book[0].shares, 2e18);
-        assertEq(book[0].start, starts[1], "merged pair keeps the later maturity");
+        assertEq(book[0].start, starts[1], "merged pair keeps the later start");
+        assertEq(book[0].duration, COOLDOWN, "merged pair keeps the later recorded maturity");
         assertEq(book[1].start, starts[2]);
         assertEq(book[MAX_COOLDOWNS - 2].start, starts[MAX_COOLDOWNS - 1], "previous newest untouched");
         assertEq(book[MAX_COOLDOWNS - 2].shares, 1e18);
@@ -1209,6 +1211,37 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         assertEq(book[MAX_COOLDOWNS - 2].shares, newestBefore.shares);
         assertEq(book[MAX_COOLDOWNS - 2].duration, newestBefore.duration);
         assertGt(uint256(book[0].start) + book[0].duration, uint256(oldestBefore.start) + oldestBefore.duration);
+    }
+
+    function testFullBookMergeKeepsLaterStartAndLaterRecordedMaturity() public {
+        _deposit(alice, MARGIN);
+        usd3l.setCooldownDuration(uint64(100 days));
+        uint256 firstStart = _fundUnleveredAtEpoch(alice, 0, 1e18);
+        usd3l.setCooldownDuration(uint64(1 days));
+        uint256 secondStart = _fundUnleveredAtEpoch(alice, 1, 1e18);
+        usd3l.setCooldownDuration(uint64(COOLDOWN));
+        for (uint256 epoch = 2; epoch < MAX_COOLDOWNS; ++epoch) {
+            _fundUnleveredAtEpoch(alice, epoch, 1e18);
+        }
+        assertGt(secondStart, firstStart);
+        uint256 mergedDuration = firstStart + 100 days - secondStart;
+
+        vm.recordLogs();
+        _fundUnleveredAtEpoch(alice, MAX_COOLDOWNS, 1e18);
+        assertEq(
+            _singleLogData(ILCCLeveragedFundHelper.CooldownsMerged.selector),
+            abi.encode(uint256(0), uint256(2e18), secondStart, mergedDuration)
+        );
+
+        assertEq(helper.cooldowns(alice, marketId)[0].shares, 2e18);
+        assertEq(helper.cooldowns(alice, marketId)[0].start, secondStart);
+        assertEq(helper.cooldowns(alice, marketId)[0].duration, mergedDuration);
+
+        usd3l.setCooldownDuration(uint64(200 days));
+        vm.warp(secondStart + 200 days - 1);
+        assertEq(helper.maturedShares(alice, marketId), 0);
+        vm.warp(secondStart + 200 days);
+        assertEq(helper.maturedShares(alice, marketId), 2e18);
     }
 
     function testFundAfterUnwindRefillsBookWithoutMerging() public {
@@ -2524,6 +2557,18 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         vm.prank(user);
         helper.fund(params);
         return block.timestamp;
+    }
+
+    function _singleLogData(bytes32 topic) internal returns (bytes memory data) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 count;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter == address(helper) && logs[i].topics[0] == topic) {
+                data = logs[i].data;
+                ++count;
+            }
+        }
+        assertEq(count, 1);
     }
 
     function _countLogs(bytes32 topic) internal returns (uint256 count) {

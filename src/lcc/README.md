@@ -459,8 +459,9 @@ collateral alone through the vault. USD3l management grants the helper the vault
 enforces its own per-user cooldown instead. Every entry through `fund` or `fundWithSignatures` opens a cooldown
 `{shares, start, duration}` for the collateral it supplied, keyed by user and market id; nothing else opens one. A
 cooldown matures at `start + max(duration, live cooldownDuration)` and never expires. A book holds at most 32 cooldowns
-per user and market; when it is full, a further entry first merges the two oldest cooldowns into one with the later of
-their maturities and then opens its own cooldown in the freed slot, so funding never reverts for cooldown reasons and
+per user and market; when it is full, a further entry first merges the two oldest cooldowns into one that keeps the
+later start and the later recorded maturity (`start + duration`), so it is never earlier than either input under any
+live duration, and then opens its own cooldown in the freed slot, so funding never reverts for cooldown reasons and
 newer cooldowns keep their own maturities. Funding is the only way a cooldown is started and unwind consumption the only
 way one is removed; that full-book merge is the only other change. `unwind(params)` (or `unwindWithAuthorization`, which
 first applies the caller's Morpho authorization, needed because unlevered and margin-only funders never granted it)

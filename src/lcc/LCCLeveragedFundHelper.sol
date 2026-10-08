@@ -194,7 +194,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         if (abi.decode(data[:32], (OperationKind)) == OperationKind.Funding) {
             (, Operation memory op) = abi.decode(data, (OperationKind, Operation));
             if (assets != op.borrowAssets + op.marginAssets) revert OperationMismatch();
-            _run(op);
+            _runFund(op);
         } else {
             (, UnwindOperation memory op) = abi.decode(data, (OperationKind, UnwindOperation));
             if (assets != op.repayAssets) revert OperationMismatch();
@@ -423,9 +423,11 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     }
 
     /// @dev Opens a cooldown for `shares` supplied in this entry. When the book is full it first merges the two oldest
-    /// cooldowns into index 0 (shares summed, the later of their two maturities kept), shifts the rest down, and writes
-    /// the new cooldown into the freed last slot, so the newer cooldowns keep their own maturities. Never reverts for
-    /// book reasons.
+    /// cooldowns into index 0 and shifts the rest down: shares are summed, the merged start is the later of the two
+    /// starts, and the merged duration runs from that start to the later of the two recorded maturities
+    /// (`start + duration`), so the merged cooldown matures no earlier than either input under any live duration. The
+    /// new cooldown is written into the freed last slot, so the newer cooldowns keep their own maturities. Never
+    /// reverts for book reasons.
     function _startCooldown(address user, bytes32 marketId, uint256 shares) private {
         uint64 duration = ILCCNotificationVault(usd3l).cooldownDuration();
         uint64 start = uint64(block.timestamp); // deliberate wall-clock read
@@ -437,10 +439,10 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         } else {
             Cooldown memory merged = book[0];
             Cooldown memory second = book[1];
-            if (uint256(second.start) + second.duration > uint256(merged.start) + merged.duration) {
-                merged.start = second.start;
-                merged.duration = second.duration;
-            }
+            uint256 maturity =
+                Math.max(uint256(merged.start) + merged.duration, uint256(second.start) + second.duration);
+            if (second.start > merged.start) merged.start = second.start;
+            merged.duration = uint64(maturity - merged.start);
             merged.shares += second.shares;
             book[0] = merged;
             for (uint256 i = 2; i < length; ++i) {
@@ -514,7 +516,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         uint256 flashAssets = op.borrowAssets + op.marginAssets;
         bytes32 id = keccak256(abi.encode(op.market));
         if (flashAssets == 0) {
-            collateral = _run(op);
+            collateral = _runFund(op);
         } else {
             uint256 collateralBefore = _positionCollateral(id, op.user);
 
@@ -548,7 +550,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     /// in the caller's wallet); then withdraws `marginAssets` of USDC from the caller's margin-asset shares to the
     /// helper, burning no more than `maxMarginShares` and no more than the shares released in this entry; then borrows
     /// `borrowAssets` for the caller to the helper. Returns the collateral supplied.
-    function _run(Operation memory op) private returns (uint256 supplied) {
+    function _runFund(Operation memory op) private returns (uint256 supplied) {
         IERC20 collateralToken = IERC20(usd3l);
         uint256 balanceBefore = collateralToken.balanceOf(op.user);
         uint256 marginBefore = op.marginAssets != 0 ? IERC20(op.marginAsset).balanceOf(op.user) : 0;
