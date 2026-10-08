@@ -382,38 +382,48 @@ USD3l (`MarketTokenMismatch` otherwise); its oracle, IRM, and LLTV are chosen by
 created. Construction validates only the USDC/USD3l/USD3 wiring. Before moving tokens the helper requires the vault's
 Funding phase (`NotFundingPhase`), a one-share top-up within `MAX_FUNDING_TOP_UP` (`FundingTopUpExceeded`), and, for a
 levered `fund`, an existing Morpho authorization (`NotAuthorized`). For obligation `O` the vault pulls
-`F = max(O, usd3.previewMint(1))`; the caller picks `borrowAssets` and contributes `F - borrowAssets` USDC. The helper
-supplies `usd3l.previewDeposit(usd3.previewDeposit(F))` USD3l as collateral on behalf of `msg.sender`. Morpho credits
-it and calls `onMorphoSupplyCollateral` before pulling the tokens; inside the callback the helper borrows
-`borrowAssets` for the caller, pays the vault through the permissionless `fundCall(address)`, requires the caller's
-USD3l balance to grow by exactly the preview (`CollateralPreviewMismatch` otherwise), and pulls that USD3l from the
-caller for Morpho. On a levered entry (`borrowAssets` nonzero), after `supplyCollateral` returns, the LTV of the
-caller's whole position at the market oracle price, with debt rounded up, must be within the caller's `maxEntryLtv`.
-An unlevered entry only adds collateral, skips that check, and never reads the market oracle, so it stays usable
-during an oracle outage.
+`F = max(O, usd3.previewMint(1))`; the caller picks `borrowAssets` and contributes `F - borrowAssets` USDC, which the
+helper pulls first. A levered entry (`borrowAssets` nonzero) then takes a Morpho flash loan of `borrowAssets`; inside
+`onMorphoFlashLoan` the helper runs one sequence, which an unlevered entry runs directly without a flash loan: pay the
+vault through the permissionless `fundCall(address)`, measure the USD3l the caller received, require it to reach the
+caller's `minCollateral` (`CollateralBelowMinimum` otherwise), pull and supply up to `maxCollateral` of it as the
+caller's collateral (any excess stays in the caller's wallet), and borrow `borrowAssets` for the caller to repay the
+flash loan. The bounds must satisfy `0 < minCollateral <= maxCollateral` (`InvalidCollateralBounds` otherwise);
+integrators set `minCollateral` just under `usd3l.previewDeposit(usd3.previewDeposit(F))` and `maxCollateral` at or
+just above it. After a levered entry the LTV of the caller's whole position at the market oracle price, with debt
+rounded up, must be within the caller's `maxEntryLtv`. Levered entries need the singleton to physically hold
+`2 * borrowAssets` of USDC during the entry (the flash loan plus the borrow). An unlevered entry never touches the
+flash loan or the market oracle, so it stays usable during an oracle outage.
 
-The callback is accepted only from Morpho and only for the operation hash recorded in transient storage for the
-helper's own in-flight `supplyCollateral`; entrypoints are `nonReentrant`. Allowances to the vault and Morpho are
-exact and end at zero, and donated balances are ignored. The beneficiary and Morpho `onBehalf` are always
-`msg.sender`; the helper holds no factory role, never deposits into USD3 itself (the vault is the USD3 depositor and
-holds the supply-cap exemption), and has no owner, rescue, receiver, delegated-beneficiary, generic-call, or upgrade
-surface. `fund` needs a pre-set USD3l allowance, a USDC allowance only when `F > borrowAssets`, and, only when
-borrowing, a Morpho authorization of the helper. A fully levered entry has `borrowAssets == F` and pulls no USDC;
-because `F` includes the one-share top-up, `borrowAssets = O` with `maxContribution = 0` reverts
-`ContributionExceedsMax` on a dust obligation. `fundWithSignatures` always submits the USD3l permit and, unless the
-entry is fully levered, the USDC permit; one that applies replaces the caller's standing allowance to the helper with
-its `value`, so a caller whose standing allowance already suffices should use `fund` or sign for the allowance it wants
-left standing. A fully levered entry ignores the USDC permit and leaves the standing USDC allowance untouched. Then, only when `borrowAssets` is nonzero and the caller has not already authorized the helper, it
-applies an enable-only `setAuthorizationWithSig`; otherwise the authorization and its signature are ignored and may be
-zeroed. Each signature is tolerant of a third party submitting it first, and the call then requires the resulting
-allowance (`InsufficientAllowance`, carrying the permit's revert data, otherwise) or authorization to be present.
-Permit values must cover the amounts pulled at execution, which can move between signing and inclusion (USD3 reports,
-the `previewMint(1)` top-up), so signers should over-approve. The enable signature is separable: a third party can
-submit it on its own, and the authorization then stands even if the helper call reverts. Vaults whose margin asset is
-USD3l are rejected, because released margin and minted collateral would be the same token.
+The flash-loan callback is accepted only from Morpho, only for the operation hash recorded in transient storage for the
+helper's own in-flight `flashLoan`, and only for the borrowed amount; the hash is consumed before any external call, and
+the call reverts `CallbackNotExecuted` if the callback did not run. On a levered entry the collateral supplied is read
+back as the change in the caller's Morpho position across the flash loan; an unlevered entry returns it from the
+sequence directly. Entrypoints are `nonReentrant`. Allowances to the vault and the USDC flash repayment allowance to
+Morpho are exact and end at zero, Morpho holds a standing USD3l allowance, and donated balances are ignored. The
+beneficiary and Morpho `onBehalf` are always `msg.sender`; the helper holds no factory role, never deposits into USD3
+itself (the vault is the USD3 depositor and holds the supply-cap exemption), and has no owner, rescue, receiver,
+delegated-beneficiary, generic-call, or upgrade surface. `fund` needs a pre-set USD3l allowance covering
+`maxCollateral`, a USDC allowance covering `F - borrowAssets` only when `F > borrowAssets`, and, only when borrowing, a
+Morpho authorization of the helper; it checks both allowances before any funding and reverts `InsufficientAllowance` if
+either is short. A fully levered entry has `borrowAssets == F` and pulls no USDC; because `F` includes the one-share
+top-up, `borrowAssets = O` with `maxContribution = 0` reverts `ContributionExceedsMax` on a dust obligation.
+`fundWithSignatures` always submits the USD3l permit and, unless the entry is fully levered, the USDC permit; one that
+applies replaces the caller's standing allowance to the helper with its `value`, so a caller whose standing allowance
+already suffices should use `fund` or sign for the allowance it wants left standing. The USD3l permit is signed for
+`maxCollateral` and checked against it before any funding. A fully levered entry ignores the USDC permit and leaves the
+standing USDC allowance untouched. Then, only when `borrowAssets` is nonzero and the caller has not already authorized
+the helper, it applies an enable-only `setAuthorizationWithSig`; otherwise the authorization and its signature are
+ignored and may be zeroed. Each signature is tolerant of a third party submitting it first, and the call then requires
+the resulting allowance (`InsufficientAllowance`, carrying the permit's revert data, otherwise) or authorization to be
+present. Permit values must cover the amounts pulled at execution, which can move between signing and inclusion (USD3
+reports, the `previewMint(1)` top-up), so signers should over-approve. The enable signature is separable: a third party
+can submit it on its own, and the authorization then stands even if the helper call reverts. Vaults whose margin asset
+is USD3l are rejected, because released margin and minted collateral would be the same token.
 
-The helper recomputes the vault's funding top-up `max(O, usd3.previewMint(1))` and the USD3l preview itself, so any
-vault implementation change to `_fund`'s funding amount or delivery requires redeploying the helper.
+The helper recomputes the vault's funding amount `max(O, usd3.previewMint(1))` and mirrors `MAX_FUNDING_TOP_UP`, so
+any vault implementation change to `_fund`'s funding amount or top-up bound requires redeploying the helper. Delivered
+USD3l is measured rather than previewed, so wrapped-delivery changes are bounded by each caller's collateral bounds.
 
 Accepted properties: the Morpho authorization is global across all of the caller's Morpho positions and stays
 enabled until the caller revokes it; there is no entry-LTV buffer below LLTV beyond the caller's own bound; levered

@@ -39,6 +39,8 @@ interface IMorphoBlue {
         address receiver
     ) external returns (uint256 assetsBorrowed, uint256 sharesBorrowed);
 
+    function flashLoan(address token, uint256 assets, bytes calldata data) external;
+
     function setAuthorizationWithSig(Authorization calldata authorization, Signature calldata signature) external;
 
     function isAuthorized(address authorizer, address authorized) external view returns (bool);
@@ -61,10 +63,10 @@ interface IMorphoBlue {
         );
 }
 
-/// @notice Callback Morpho Blue invokes on the `supplyCollateral` caller when non-empty data is passed, after crediting
-/// the collateral and before pulling the collateral tokens.
-interface IMorphoBlueSupplyCollateralCallback {
-    function onMorphoSupplyCollateral(uint256 assets, bytes calldata data) external;
+/// @notice Callback Morpho Blue invokes on the `flashLoan` caller after transferring the loaned assets and before
+/// pulling the same amount back without a fee.
+interface IMorphoBlueFlashLoanCallback {
+    function onMorphoFlashLoan(uint256 assets, bytes calldata data) external;
 }
 
 /// @notice Morpho Blue market oracle: price of one collateral unit in loan units, scaled by 1e36.

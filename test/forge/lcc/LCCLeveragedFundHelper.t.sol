@@ -10,6 +10,7 @@ import {SafeERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/utils/S
 import {ReentrancyGuardTransient} from "../../../lib/openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {Vm} from "../../../lib/forge-std/src/Vm.sol";
+import {IERC20Errors} from "../../../lib/openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 import {LCCBase, LCCMockToken, LCCMockUSD3, LCCMockNotificationVault, LCCReentryProbe} from "./LCCBase.t.sol";
 import {LCCLeveragedFundSigUtils} from "./LCCLeveragedFundSigUtils.sol";
@@ -22,12 +23,28 @@ import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {
     IMorphoBlue,
     IMorphoBlueOracle,
-    IMorphoBlueSupplyCollateralCallback
+    IMorphoBlueFlashLoanCallback
 } from "../../../src/lcc/interfaces/IMorphoBlue.sol";
 import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ORACLE_PRICE_SCALE, DOMAIN_TYPEHASH, AUTHORIZATION_TYPEHASH} from "../../../src/libraries/ConstantsLib.sol";
 import {MathLib} from "../../../src/libraries/MathLib.sol";
 import {SharesMathLib} from "../../../src/libraries/SharesMathLib.sol";
+
+/// @dev Smart-wallet stand-in that executes a batch of calls in one transaction.
+contract LCCHelperMulticallFunder {
+    function execute(address[] calldata targets, bytes[] calldata calls) external returns (bytes[] memory results) {
+        results = new bytes[](targets.length);
+        for (uint256 i; i < targets.length; ++i) {
+            (bool ok, bytes memory result) = targets[i].call(calls[i]);
+            if (!ok) {
+                assembly ("memory-safe") {
+                    revert(add(result, 0x20), mload(result))
+                }
+            }
+            results[i] = result;
+        }
+    }
+}
 
 contract LCCPermitMockToken is LCCMockToken, ERC20Permit {
     constructor(string memory name_, string memory symbol_) LCCMockToken(name_, symbol_) ERC20Permit(name_) {}
@@ -52,9 +69,10 @@ contract LCCPermitNotificationVault is LCCMockNotificationVault, ERC20Permit {
     }
 }
 
-/// @dev Canonical Morpho Blue semantics for the paths the helper uses: collateral is credited before the callback and
-/// pulled after it, borrowing requires authorization, health, and liquidity, and authorization signatures follow the
-/// canonical EIP-712 domain and nonce rules.
+/// @dev Canonical Morpho Blue semantics for the paths the helper uses: a flash loan transfers the assets, calls back,
+/// and pulls the same amount without a fee; collateral is credited and then pulled; borrowing requires authorization,
+/// health, and liquidity; authorization signatures follow the canonical EIP-712 domain and nonce rules. Knobs alter
+/// the flash-loan callback to exercise the helper's binding checks.
 contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
     using SafeERC20 for IERC20;
     using MathLib for uint256;
@@ -83,6 +101,8 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
     uint256 public callbackCount = 1;
     bool public tamperCallbackData;
     bool public skipCallback;
+    uint256 public callbackAssetsDelta;
+    uint256 public flashLoanCount;
 
     function DOMAIN_SEPARATOR() public view returns (bytes32) {
         return keccak256(abi.encode(DOMAIN_TYPEHASH, block.chainid, address(this)));
@@ -98,6 +118,24 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
 
     function setTamperCallbackData(bool tamper) external {
         tamperCallbackData = tamper;
+    }
+
+    function setCallbackAssetsDelta(uint256 delta) external {
+        callbackAssetsDelta = delta;
+    }
+
+    /// @dev With `skipCallback` set, the loaned assets are left with the borrower and nothing is pulled back.
+    function flashLoan(address token, uint256 assets, bytes calldata data) external {
+        require(assets != 0, "zero assets");
+        ++flashLoanCount;
+        IERC20(token).safeTransfer(msg.sender, assets);
+        if (skipCallback) return;
+        bytes memory payload = data;
+        if (tamperCallbackData) payload[payload.length - 1] ^= 0x01;
+        for (uint256 i; i < callbackCount; ++i) {
+            IMorphoBlueFlashLoanCallback(msg.sender).onMorphoFlashLoan(assets + callbackAssetsDelta, payload);
+        }
+        IERC20(token).safeTransferFrom(msg.sender, address(this), assets);
     }
 
     function createMarket(IMorphoBlue.MarketParams calldata params) external {
@@ -146,15 +184,8 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
         bytes32 id = _created(params);
         require(assets != 0, "zero assets");
         require(onBehalf != address(0), "zero address");
+        require(data.length == 0, "callback unsupported");
         position[id][onBehalf].collateral += uint128(assets);
-        if (skipCallback) return;
-        if (data.length > 0) {
-            bytes memory payload = data;
-            if (tamperCallbackData) payload[payload.length - 1] ^= 0x01;
-            for (uint256 i; i < callbackCount; ++i) {
-                IMorphoBlueSupplyCollateralCallback(msg.sender).onMorphoSupplyCollateral(assets, payload);
-            }
-        }
         IERC20(params.collateralToken).safeTransferFrom(msg.sender, address(this), assets);
     }
 
@@ -380,6 +411,8 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
 
         ILCCLeveragedFundHelper.FundParams memory params = _fundParams(0);
         params.maxObligation = 1;
+        params.minCollateral = 1;
+        params.maxCollateral = 1;
         params.maxContribution = 1;
         vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.ContributionExceedsMax.selector, 2, 1));
         vm.prank(alice);
@@ -472,6 +505,8 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
 
         ILCCLeveragedFundHelper.FundParams memory params = _fundParams(0);
         params.maxObligation = obligation;
+        params.minCollateral = obligation;
+        params.maxCollateral = obligation;
         params.maxContribution = obligation;
 
         params.borrowAssets = obligation * 4 / 5;
@@ -533,6 +568,8 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
 
         ILCCLeveragedFundHelper.FundParams memory params = _fundParams(0);
         params.maxObligation = 1;
+        params.minCollateral = 1;
+        params.maxCollateral = 1;
         params.maxContribution = type(uint256).max;
         usdc.mint(alice, 1_001);
 
@@ -784,6 +821,8 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         ILCCLeveragedFundHelper.FundParams memory params = _fundParams(obligation / 2);
         params.maxContribution = obligation;
         params.maxObligation = obligation;
+        params.minCollateral = obligation;
+        params.maxCollateral = obligation;
 
         vm.recordLogs();
         vm.prank(alice);
@@ -909,15 +948,221 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         helper.fund(_fundParams(80e18));
     }
 
-    function testCollateralPreviewMismatchRejected() public {
+    function testCollateralBelowMinimumRejected() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, 20e18);
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(80e18);
+        params.minCollateral = CALL + 1;
+        params.maxCollateral = CALL + 1;
+
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.CollateralBelowMinimum.selector, CALL, CALL + 1));
+        vm.prank(alice);
+        helper.fund(params);
+    }
+
+    function testCollateralAtMinimumAccepted() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, 20e18);
+
+        vm.prank(alice);
+        (,, uint256 collateral) = helper.fund(_fundParams(80e18));
+
+        assertEq(collateral, CALL);
+        (,, uint128 positionCollateral) = morpho.position(marketId, alice);
+        assertEq(positionCollateral, CALL);
+        _assertHelperClean();
+    }
+
+    function testDeliveryAboveMaximumLeavesSurplusWithCaller() public {
         _depositAndOpenCall(alice);
         usdc.mint(alice, 20e18);
         usd3l.setExtraMint(1);
+
+        vm.prank(alice);
+        (,, uint256 collateral) = helper.fund(_fundParams(80e18));
+
+        assertEq(collateral, CALL);
+        (,, uint128 positionCollateral) = morpho.position(marketId, alice);
+        assertEq(positionCollateral, CALL);
+        assertEq(usd3l.balanceOf(alice), 1);
+        _assertHelperClean();
+    }
+
+    function testDeliveryWithinMaximumIsSuppliedInFull() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, 20e18);
+        usd3l.setExtraMint(1);
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(80e18);
+        params.maxCollateral = CALL + 5;
+
+        vm.prank(alice);
+        (,, uint256 collateral) = helper.fund(params);
+
+        assertEq(collateral, CALL + 1);
+        (,, uint128 positionCollateral) = morpho.position(marketId, alice);
+        assertEq(positionCollateral, CALL + 1);
+        assertEq(usd3l.balanceOf(alice), 0);
+        _assertHelperClean();
+    }
+
+    function testFundWithShortUsdcAllowanceRevertsBeforeFunding() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, 20e18);
+        vm.prank(alice);
+        usdc.approve(address(helper), 20e18 - 1);
+
+        _expectNoFunding();
+        _expectInsufficientAllowance(address(usdc), 20e18 - 1, 20e18, "");
+        vm.prank(alice);
+        helper.fund(_fundParams(80e18));
+        assertFalse(vault.fundedEpoch(0, alice));
+        assertEq(morpho.flashLoanCount(), 0);
+        assertEq(usdc.balanceOf(alice), 20e18);
+    }
+
+    function testFundWithShortUsd3lAllowanceRevertsBeforeFunding() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, 20e18);
+        vm.prank(alice);
+        usd3l.approve(address(helper), CALL - 1);
+
+        _expectNoFunding();
+        _expectInsufficientAllowance(address(usd3l), CALL - 1, CALL, "");
+        vm.prank(alice);
+        helper.fund(_fundParams(80e18));
+        assertFalse(vault.fundedEpoch(0, alice));
+        assertEq(morpho.flashLoanCount(), 0);
+        assertEq(usdc.balanceOf(alice), 20e18);
+    }
+
+    function testZeroMinimumCollateralRejected() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, 20e18);
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(80e18);
+        params.minCollateral = 0;
+
+        _expectNoFunding();
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.InvalidCollateralBounds.selector, 0, CALL));
+        vm.prank(alice);
+        helper.fund(params);
+    }
+
+    function testMaximumBelowMinimumCollateralRejected() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, 20e18);
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(80e18);
+        params.maxCollateral = CALL - 1;
+
+        _expectNoFunding();
         vm.expectRevert(
-            abi.encodeWithSelector(ILCCLeveragedFundHelper.CollateralPreviewMismatch.selector, CALL, CALL + 1)
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.InvalidCollateralBounds.selector, CALL, CALL - 1)
+        );
+        vm.prank(alice);
+        helper.fund(params);
+    }
+
+    function testUsd3lPermitBelowMaximumCollateralRevertsBeforeFunding() public {
+        _prepareSigner();
+        Signed memory s = _sign(20e18, CALL);
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(80e18);
+        params.maxCollateral = CALL + 5;
+
+        _expectNoFunding();
+        _expectInsufficientAllowance(address(usd3l), CALL, CALL + 5, "");
+        _fundSigned(params, s);
+        assertFalse(vault.fundedEpoch(0, signer));
+        assertEq(morpho.flashLoanCount(), 0);
+    }
+
+    function testLeveredEntryRevertsWhenSingletonHoldsLessThanTwiceTheBorrow() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, 20e18);
+        deal(address(usdc), address(morpho), 120e18);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, address(morpho), 40e18, 80e18)
         );
         vm.prank(alice);
         helper.fund(_fundParams(80e18));
+    }
+
+    function testUnleveredEntryUsesNoFlashLoanOracleOrAuthorization() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, CALL);
+        vm.prank(alice);
+        morpho.setAuthorization(address(helper), false);
+        vm.mockCallRevert(address(marketOracle), abi.encodeCall(IMorphoBlueOracle.price, ()), "ORACLE_DOWN");
+
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(0);
+        params.maxEntryLtv = 0;
+        vm.prank(alice);
+        (,, uint256 collateral) = helper.fund(params);
+
+        assertEq(collateral, CALL);
+        assertEq(morpho.flashLoanCount(), 0);
+        (, uint128 borrowShares, uint128 positionCollateral) = morpho.position(marketId, alice);
+        assertEq(borrowShares, 0);
+        assertEq(positionCollateral, CALL);
+        _assertHelperClean();
+    }
+
+    function testTwoEntriesInOneTransactionKeepSeparateResults() public {
+        LCCHelperMulticallFunder funder = new LCCHelperMulticallFunder();
+        _setDepositorCap(address(funder), type(uint128).max);
+        factory.setOneVaultPolicyEnabled(false);
+        LCCVault secondVault = _newVault(_params(CAP, CAP));
+        margin.mint(address(funder), 2 * MARGIN);
+
+        address[] memory targets = new address[](7);
+        bytes[] memory calls = new bytes[](7);
+        (targets[0], calls[0]) = (address(margin), abi.encodeCall(IERC20.approve, (address(vault), MARGIN)));
+        (targets[1], calls[1]) = (address(margin), abi.encodeCall(IERC20.approve, (address(secondVault), MARGIN)));
+        (targets[2], calls[2]) =
+        (
+            address(vault),
+            abi.encodeCall(LCCVault.deposit, (MARGIN, address(funder), 1, type(uint256).max, true, type(uint256).max))
+        );
+        (targets[3], calls[3]) =
+        (
+            address(secondVault),
+            abi.encodeCall(LCCVault.deposit, (MARGIN, address(funder), 1, type(uint256).max, true, type(uint256).max))
+        );
+        (targets[4], calls[4]) = (address(usdc), abi.encodeCall(IERC20.approve, (address(helper), type(uint256).max)));
+        (targets[5], calls[5]) = (address(usd3l), abi.encodeCall(IERC20.approve, (address(helper), type(uint256).max)));
+        (targets[6], calls[6]) =
+        (address(morpho), abi.encodeCall(IMorphoBlueTest.setAuthorization, (address(helper), true)));
+        funder.execute(targets, calls);
+
+        _openCall(CALL);
+        secondVault.openEpochCall(0, CALL / 2);
+        vm.warp(START + NORMAL + PRE_CALL);
+        usdc.mint(address(funder), 20e18 + CALL / 2);
+
+        ILCCLeveragedFundHelper.FundParams memory levered = _fundParams(80e18);
+        ILCCLeveragedFundHelper.FundParams memory unlevered = _fundParams(0);
+        unlevered.vault = address(secondVault);
+        unlevered.maxContribution = CALL / 2;
+        unlevered.minCollateral = CALL / 2;
+        unlevered.maxCollateral = CALL / 2;
+        unlevered.maxObligation = CALL / 2;
+
+        targets = new address[](2);
+        calls = new bytes[](2);
+        (targets[0], calls[0]) = (address(helper), abi.encodeCall(ILCCLeveragedFundHelper.fund, (levered)));
+        (targets[1], calls[1]) = (address(helper), abi.encodeCall(ILCCLeveragedFundHelper.fund, (unlevered)));
+        bytes[] memory results = funder.execute(targets, calls);
+
+        (,, uint256 leveredCollateral) = abi.decode(results[0], (uint256, uint256, uint256));
+        (,, uint256 unleveredCollateral) = abi.decode(results[1], (uint256, uint256, uint256));
+        assertEq(leveredCollateral, CALL);
+        assertEq(unleveredCollateral, CALL / 2);
+        assertTrue(vault.fundedEpoch(0, address(funder)));
+        assertTrue(secondVault.fundedEpoch(0, address(funder)));
+        (,, uint128 positionCollateral) = morpho.position(marketId, address(funder));
+        assertEq(positionCollateral, CALL + CALL / 2);
+        assertEq(morpho.borrowAssetsOf(marketId, address(funder)), 80e18);
+        assertEq(morpho.flashLoanCount(), 1);
+        _assertHelperClean();
     }
 
     function testBorrowAboveMarketLiquidityRejected() public {
@@ -937,13 +1182,13 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
     function testCallbackFromNonMorphoRejected() public {
         vm.expectRevert(ILCCLeveragedFundHelper.NotMorpho.selector);
         vm.prank(stranger);
-        helper.onMorphoSupplyCollateral(1, hex"01");
+        helper.onMorphoFlashLoan(1, hex"01");
     }
 
     function testCallbackWithNoOperationInFlightRejected() public {
         vm.expectRevert(ILCCLeveragedFundHelper.NoOperationInFlight.selector);
         vm.prank(address(morpho));
-        helper.onMorphoSupplyCollateral(1, hex"01");
+        helper.onMorphoFlashLoan(1, hex"01");
     }
 
     function testRepeatedCallbackRejected() public {
@@ -959,6 +1204,15 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         _depositAndOpenCall(alice);
         usdc.mint(alice, 20e18);
         morpho.setTamperCallbackData(true);
+        vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+        vm.prank(alice);
+        helper.fund(_fundParams(80e18));
+    }
+
+    function testCallbackWithWrongAmountRejected() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, 20e18);
+        morpho.setCallbackAssetsDelta(1);
         vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
         vm.prank(alice);
         helper.fund(_fundParams(80e18));
@@ -1036,6 +1290,8 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
             market: marketParams,
             borrowAssets: borrowAssets,
             maxContribution: CALL - borrowAssets,
+            minCollateral: CALL,
+            maxCollateral: CALL,
             maxEntryLtv: LLTV,
             maxObligation: CALL,
             deadline: block.timestamp
@@ -1049,6 +1305,11 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         usdc.mint(address(this), liquidity);
         usdc.approve(address(morpho), liquidity);
         morpho.supply(market, liquidity, 0, address(this), "");
+    }
+
+    function _expectNoFunding() internal {
+        vm.expectCall(address(morpho), abi.encodeWithSelector(IMorphoBlue.flashLoan.selector), 0);
+        vm.expectCall(address(vault), abi.encodeWithSignature("fundCall(address)"), 0);
     }
 
     function _supplyExtraCollateral(address user, uint256 amount) internal {
@@ -1126,6 +1387,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils {
         assertEq(usdc.balanceOf(address(helper)), 0);
         assertEq(usd3l.balanceOf(address(helper)), 0);
         assertEq(usdc.allowance(address(helper), address(vault)), 0);
+        assertEq(usdc.allowance(address(helper), address(morpho)), 0);
         assertEq(usd3l.allowance(address(helper), address(morpho)), type(uint256).max);
     }
 }

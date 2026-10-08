@@ -27,6 +27,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
     uint256 internal constant CALL_AMOUNT = 1_234_567_891_011;
     uint256 internal constant LLTV = 0.86e18;
     uint256 internal constant ENTRY_LTV_BPS = 8_000;
+    uint256 internal constant COLLATERAL_SLACK_BPS = 5;
     uint256 internal constant LENDER_LIQUIDITY = 5_000_000e6;
 
     IMorphoBlueTest internal constant MORPHO = IMorphoBlueTest(0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb);
@@ -114,6 +115,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
             address funder = funders[i];
             ILCCLeveragedFundHelper.FundParams memory params = _fundParams(funder);
             uint256 marginBefore = IERC20(WA_ETH_USDC).balanceOf(funder);
+            uint256 previewed = _previewCollateral(params.maxObligation);
 
             _approveAll(funder, params.maxContribution);
             vm.prank(funder);
@@ -122,6 +124,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
             assertEq(funded, params.maxObligation);
             assertEq(fundingAmount, params.maxObligation);
             assertGt(IERC20(WA_ETH_USDC).balanceOf(funder), marginBefore, "margin not released");
+            assertEq(collateral, previewed);
             _assertEntry(funder, params.borrowAssets, collateral);
         }
     }
@@ -132,7 +135,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         uint256 previewed = _previewCollateral(params.maxObligation);
         deal(USDC, funder, params.maxContribution);
 
-        Signed memory s = _sign(funderKeys[1], params.maxContribution, previewed);
+        Signed memory s = _sign(funderKeys[1], params.maxContribution, params.maxCollateral);
         assertFalse(MORPHO.isAuthorized(funder, address(helper)));
 
         vm.prank(funder);
@@ -143,7 +146,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         assertTrue(MORPHO.isAuthorized(funder, address(helper)), "authorization stays enabled");
         assertEq(MORPHO.nonce(funder), s.authorization.nonce + 1);
         assertEq(IERC20(USDC).allowance(funder, address(helper)), 0);
-        assertEq(USD3L.allowance(funder, address(helper)), 0);
+        assertEq(USD3L.allowance(funder, address(helper)), params.maxCollateral - previewed);
         _assertEntry(funder, params.borrowAssets, collateral);
     }
 
@@ -152,7 +155,8 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         ILCCLeveragedFundHelper.FundParams memory params = _fundParams(funder);
         deal(USDC, funder, params.maxContribution);
 
-        Signed memory s = _sign(funderKeys[2], params.maxContribution, _previewCollateral(params.maxObligation));
+        uint256 previewed = _previewCollateral(params.maxObligation);
+        Signed memory s = _sign(funderKeys[2], params.maxContribution, params.maxCollateral);
 
         vm.startPrank(makeAddr("front-runner"));
         _submitPermit(USDC, funder, address(helper), s.usdcPermit);
@@ -163,6 +167,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         vm.prank(funder);
         (,, uint256 collateral) =
             helper.fundWithSignatures(params, s.usdcPermit, s.usd3lPermit, s.authorization, s.signature);
+        assertEq(collateral, previewed);
         _assertEntry(funder, params.borrowAssets, collateral);
     }
 
@@ -213,11 +218,14 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         assertGt(obligation, 0);
         assertGt(obligation, IERC4626(USD3).previewMint(1));
         uint256 borrowAssets = obligation * ENTRY_LTV_BPS / 10_000;
+        uint256 previewed = _previewCollateral(obligation);
         return ILCCLeveragedFundHelper.FundParams({
             vault: address(VAULT),
             market: marketParams,
             borrowAssets: borrowAssets,
             maxContribution: obligation - borrowAssets,
+            minCollateral: previewed - previewed * COLLATERAL_SLACK_BPS / 10_000,
+            maxCollateral: previewed + previewed * COLLATERAL_SLACK_BPS / 10_000,
             maxEntryLtv: LLTV,
             maxObligation: obligation,
             deadline: block.timestamp
@@ -260,6 +268,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         assertEq(IERC20(USDC).balanceOf(address(helper)), 0);
         assertEq(USD3L.balanceOf(address(helper)), 0);
         assertEq(IERC20(USDC).allowance(address(helper), address(VAULT)), 0);
+        assertEq(IERC20(USDC).allowance(address(helper), address(MORPHO)), 0);
         assertEq(USD3L.allowance(address(helper), address(MORPHO)), type(uint256).max);
     }
 
