@@ -16,6 +16,9 @@ import {LCCLeveragedFundHelper} from "../../../../src/lcc/LCCLeveragedFundHelper
 import {ILCCLeveragedFundHelper} from "../../../../src/lcc/interfaces/ILCCLeveragedFundHelper.sol";
 import {IMorphoBlue, IMorphoBlueOracle} from "../../../../src/lcc/interfaces/IMorphoBlue.sol";
 import {ILCCRedeemableVault} from "../../../../src/lcc/interfaces/ILCCNotificationVault.sol";
+import {LCCAuctionLib} from "../../../../src/lcc/libraries/LCCAuctionLib.sol";
+import {LCCEventsLib} from "../../../../src/lcc/libraries/LCCEventsLib.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {ORACLE_PRICE_SCALE} from "../../../../src/libraries/ConstantsLib.sol";
 import {MathLib} from "../../../../src/libraries/MathLib.sol";
 import {SharesMathLib} from "../../../../src/libraries/SharesMathLib.sol";
@@ -24,6 +27,14 @@ interface ILCCForkNotificationVault {
     function management() external view returns (address);
     function cooldownDuration() external view returns (uint64);
     function setCooldownBypass(address account, bool allowed) external;
+}
+
+/// @dev The USD3 reads these tests need. `IUSD3` cannot be imported here because `src/usd3` compiles for Shanghai and
+/// the helper for Cancun, which one compilation cannot satisfy.
+interface ILCCForkUSD3 {
+    function ringFencedLiquidity() external view returns (uint256);
+    function ringFenceConduit(address conduit) external view returns (bool);
+    function supplyCapExempt(address account) external view returns (bool);
 }
 
 contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSigUtils {
@@ -38,6 +49,9 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
     uint256 internal constant ENTRY_LTV_BPS = 8_000;
     uint256 internal constant COLLATERAL_SLACK_BPS = 5;
     uint256 internal constant LENDER_LIQUIDITY = 5_000_000e6;
+    uint256 internal constant TAKE_FILL = 10_000e6;
+    uint256 internal constant TAKE_BORROW = 8_000e6;
+    uint256 internal constant LATE_STEP = 96;
 
     IMorphoBlueTest internal constant MORPHO = IMorphoBlueTest(0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb);
     address internal constant ADAPTIVE_CURVE_IRM = 0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC;
@@ -53,6 +67,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
     address internal lender;
     address[] internal funders;
     uint256[] internal funderKeys;
+    address internal taker;
 
     function _forkBlock() internal pure override returns (uint256) {
         return ENTRY_FORK_BLOCK;
@@ -451,6 +466,225 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         assertEq(_positionLtv(funder), entryLtv);
     }
 
+    /* AUCTION TAKES */
+
+    function testPartialLeveredTakeDeliversPreviewedCollateralAndRealAward() public requiresFork {
+        _assertAuctionWiring();
+        _openForkAuction(1);
+        ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(TAKE_FILL, TAKE_BORROW);
+        deal(USDC, taker, TAKE_FILL - TAKE_BORROW);
+        uint256 previewed = _previewCollateral(TAKE_FILL);
+        uint256 award = _dryRunAward(TAKE_FILL);
+        assertGt(award, 0);
+        uint256 fenceBefore = ILCCForkUSD3(USD3).ringFencedLiquidity();
+
+        vm.prank(taker);
+        (uint256 filled, uint256 collateral) = helper.takeAuction(params);
+
+        assertEq(filled, TAKE_FILL);
+        assertEq(collateral, previewed);
+        assertEq(ILCCForkUSD3(USD3).ringFencedLiquidity() - fenceBefore, filled);
+        assertEq(IERC20(WA_ETH_USDC).balanceOf(taker), award);
+        assertEq(IERC20(USDC).balanceOf(taker), 0);
+        assertEq(USD3L.balanceOf(taker), 0);
+        (, uint128 borrowShares, uint128 positionCollateral) = MORPHO.position(marketId, taker);
+        assertEq(positionCollateral, collateral);
+        assertApproxEqAbs(_borrowAssets(borrowShares), TAKE_BORROW, 1);
+        assertEq(helper.cooldowns(taker, marketId)[0].shares, collateral);
+        assertEq(VAULT.syncState().pendingAuctionEpochPlusOne, CALL_EPOCH + 1);
+        assertEq(VAULT.getAuctionState(CALL_EPOCH).filledAmount, filled);
+        _assertTakeHelperClean();
+    }
+
+    function testLateStepTakeSourcesContributionFromRealAwardWithdrawal() public requiresFork {
+        _openForkAuction(LATE_STEP);
+        uint256 award = _dryRunAward(TAKE_FILL);
+        uint256 marginAssets = IERC4626(WA_ETH_USDC).previewRedeem(award) / 2;
+        assertGt(marginAssets, 0);
+        uint256 burned = IERC4626(WA_ETH_USDC).previewWithdraw(marginAssets);
+
+        ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(TAKE_FILL, TAKE_BORROW);
+        params.marginAssets = marginAssets;
+        deal(USDC, taker, TAKE_FILL - TAKE_BORROW - marginAssets);
+
+        vm.prank(taker);
+        (uint256 filled, uint256 collateral) = helper.takeAuction(params);
+
+        assertEq(filled, TAKE_FILL);
+        assertEq(collateral, _previewCollateral(TAKE_FILL));
+        assertEq(IERC20(USDC).balanceOf(taker), 0);
+        assertEq(IERC20(WA_ETH_USDC).balanceOf(taker), award - burned);
+        (, uint128 borrowShares,) = MORPHO.position(marketId, taker);
+        assertApproxEqAbs(_borrowAssets(borrowShares), TAKE_BORROW, 1);
+        _assertTakeHelperClean();
+    }
+
+    function testCompletingTakeSettlesWithCallOpenPriceSnapshot() public requiresFork {
+        _openForkAuction(1);
+        VAULT.finalizeEpochSlash(CALL_EPOCH);
+        LCCAuctionLib.AuctionState memory auction = VAULT.getAuctionState(CALL_EPOCH);
+        uint256 remaining = uint256(auction.shortfallAmount) - auction.filledAmount;
+        assertGt(remaining, 1_000_000e6);
+        ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(remaining, 0);
+        deal(USDC, taker, remaining);
+
+        vm.recordLogs();
+        vm.prank(taker);
+        (uint256 filled, uint256 collateral) = helper.takeAuction(params);
+
+        assertEq(filled, remaining);
+        assertEq(collateral, _previewCollateral(remaining));
+        assertEq(_countLogs(address(VAULT), LCCEventsLib.AuctionSettled.selector), 1);
+        assertEq(VAULT.syncState().pendingAuctionEpochPlusOne, 0);
+        assertEq(VAULT.getAuctionState(CALL_EPOCH).filledAmount, auction.shortfallAmount);
+        assertEq(helper.cooldowns(taker, marketId)[0].shares, collateral);
+        _assertTakeHelperClean();
+    }
+
+    function testTakeBorrowAboveMarketLiquidityReverts() public requiresFork {
+        _openForkAuction(1);
+        ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(TAKE_FILL, TAKE_BORROW);
+        deal(USDC, taker, TAKE_FILL - TAKE_BORROW);
+        vm.prank(lender);
+        MORPHO.withdraw(marketParams, LENDER_LIQUIDITY - TAKE_BORROW + 1, 0, lender, lender);
+        assertGt(IERC20(USDC).balanceOf(address(MORPHO)), 2 * TAKE_BORROW);
+
+        vm.expectRevert(bytes("insufficient liquidity"));
+        vm.prank(taker);
+        helper.takeAuction(params);
+    }
+
+    function testMaturedUnwindOfTakeBookedCollateral() public requiresFork {
+        (uint256 start, uint256 collateral) = _takeLevered();
+        vm.warp(start + _cooldown() - 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.InsufficientMaturedShares.selector, collateral, 0)
+        );
+        vm.prank(taker);
+        helper.unwind(_unwindParams(collateral, true, 0));
+
+        vm.warp(start + _cooldown());
+        uint256 expectedOut = _expectedUnwindOut(taker, collateral, _debt(taker));
+        vm.prank(taker);
+        (uint256 repaid, uint256 shares,, uint256 usdcOut) = helper.unwind(_unwindParams(collateral, true, 0));
+
+        assertGt(repaid, TAKE_BORROW);
+        assertEq(shares, collateral);
+        assertEq(usdcOut, expectedOut);
+        assertEq(IERC20(USDC).balanceOf(taker), usdcOut);
+        (, uint128 borrowShares, uint128 positionCollateral) = MORPHO.position(marketId, taker);
+        assertEq(borrowShares, 0);
+        assertEq(positionCollateral, 0);
+        assertEq(helper.cooldowns(taker, marketId).length, 0);
+        _assertUnwindHelperClean();
+    }
+
+    function testTakeBookedUnwindRevertsAtomicallyWhenBypassRevoked() public requiresFork {
+        (uint256 start, uint256 collateral) = _takeLevered();
+        vm.warp(start + _cooldown());
+        _setHelperBypass(false);
+        uint256 debt = _debt(taker);
+
+        vm.expectRevert(bytes("ERC4626: redeem more than max"));
+        vm.prank(taker);
+        helper.unwind(_unwindParams(collateral, true, 0));
+
+        assertEq(helper.cooldowns(taker, marketId)[0].shares, collateral);
+        (,, uint128 positionCollateral) = MORPHO.position(marketId, taker);
+        assertEq(positionCollateral, collateral);
+        assertEq(_debt(taker), debt);
+    }
+
+    /// @dev The production facility's auction and USD3 wiring the take tests rely on.
+    function _assertAuctionWiring() internal view {
+        ILCCVault.AuctionConfig memory auctionConfig = VAULT.auctionConfig();
+        assertEq(auctionConfig.auctionStepCount, 192);
+        assertEq(auctionConfig.auctionStepDuration, 1_800);
+        assertEq(auctionConfig.auctionStepDecayRateBps, 84);
+        ILCCVault.RiskConfig memory riskConfig = VAULT.riskConfig();
+        assertEq(riskConfig.maxAuctionAwardBps, 10_000);
+        assertEq(riskConfig.slashFeeBps, 0);
+        assertTrue(ILCCForkUSD3(USD3).ringFenceConduit(address(VAULT)));
+        assertTrue(ILCCForkUSD3(USD3).supplyCapExempt(address(VAULT)));
+        assertEq(VAULT.assetConfig().marginAsset, WA_ETH_USDC);
+    }
+
+    /// @dev The first two test funders fund the call; the third and the production depositors default. Warps `step`
+    /// award steps past the funding deadline without touching the vault, and prepares a taker with a USDC allowance
+    /// and Morpho authorization for the helper.
+    function _openForkAuction(uint256 step) internal {
+        for (uint256 i; i < 2; ++i) {
+            address funder = funders[i];
+            uint256 obligation = VAULT.obligationOf(CALL_EPOCH, funder);
+            deal(USDC, funder, obligation + IERC4626(USD3).previewMint(1));
+            vm.startPrank(funder);
+            IERC20(USDC).forceApprove(address(VAULT), type(uint256).max);
+            VAULT.fundCall(false);
+            vm.stopPrank();
+        }
+        uint256 deadline = VAULT.phaseEndsAt(CALL_EPOCH, ILCCVault.Phase.Funding);
+        vm.warp(deadline + step * VAULT.auctionConfig().auctionStepDuration);
+
+        taker = makeAddr("auction-taker");
+        _approveAll(taker, type(uint128).max);
+    }
+
+    function _takeParams(uint256 maxFill, uint256 borrowAssets)
+        internal
+        view
+        returns (ILCCLeveragedFundHelper.TakeParams memory)
+    {
+        uint256 previewed = _previewCollateral(maxFill);
+        return ILCCLeveragedFundHelper.TakeParams({
+            vault: address(VAULT),
+            market: marketParams,
+            maxFill: maxFill,
+            minFill: 0,
+            borrowAssets: borrowAssets,
+            marginAssets: 0,
+            minMarginAward: 0,
+            minCollateral: previewed - previewed * COLLATERAL_SLACK_BPS / 10_000,
+            maxEntryLtv: LLTV,
+            deadline: block.timestamp
+        });
+    }
+
+    /// @dev Levered partial take at the first award step; returns the cooldown start and the collateral supplied.
+    function _takeLevered() internal returns (uint256 start, uint256 collateral) {
+        _openForkAuction(1);
+        ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(TAKE_FILL, TAKE_BORROW);
+        deal(USDC, taker, TAKE_FILL - TAKE_BORROW);
+        vm.prank(taker);
+        (, collateral) = helper.takeAuction(params);
+        start = vm.getBlockTimestamp();
+        assertEq(helper.cooldowns(taker, marketId)[0].shares, collateral);
+    }
+
+    /// @dev The waEthUSDC award a direct `fill` would receive now, measured and rolled back.
+    function _dryRunAward(uint256 fill) internal returns (uint256 award) {
+        address filler = makeAddr("dry-run-filler");
+        uint256 snapshot = vm.snapshotState();
+        deal(USDC, filler, fill);
+        vm.startPrank(filler);
+        IERC20(USDC).forceApprove(address(VAULT), fill);
+        (, award) = VAULT.takeAuction(fill, 0, block.timestamp);
+        vm.stopPrank();
+        assertEq(IERC20(WA_ETH_USDC).balanceOf(filler), award);
+        vm.revertToState(snapshot);
+    }
+
+    function _countLogs(address emitter, bytes32 topic) internal returns (uint256 count) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter == emitter && logs[i].topics[0] == topic) ++count;
+        }
+    }
+
+    function _assertTakeHelperClean() internal view {
+        _assertHelperClean();
+        assertEq(IERC20(WA_ETH_USDC).balanceOf(address(helper)), 0);
+    }
+
     /// @dev Adds released margin to `_fundParams`: the funder's released shares (the vault's own rounding), their
     /// redeemable USDC as `marginAssets`, and the released shares as the burn bound.
     function _marginFundParams(address funder)
@@ -564,10 +798,16 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
     }
 
     function _assertUnwindHelperClean() internal view {
+        _assertHelperClean();
+        assertEq(IERC20(USD3).balanceOf(address(helper)), 0);
+    }
+
+    function _assertHelperClean() internal view {
         assertEq(IERC20(USDC).balanceOf(address(helper)), 0);
         assertEq(USD3L.balanceOf(address(helper)), 0);
-        assertEq(IERC20(USD3).balanceOf(address(helper)), 0);
+        assertEq(IERC20(USDC).allowance(address(helper), address(VAULT)), 0);
         assertEq(IERC20(USDC).allowance(address(helper), address(MORPHO)), 0);
+        assertEq(USD3L.allowance(address(helper), address(MORPHO)), type(uint256).max);
     }
 
     function _assertEntry(address funder, uint256 borrowAssets, uint256 collateral) internal view {
@@ -578,12 +818,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMainnetForkBase, LCCLeveragedFundSi
         (, uint128 borrowShares, uint128 positionCollateral) = MORPHO.position(marketId, funder);
         assertEq(positionCollateral, collateral);
         assertApproxEqAbs(_borrowAssets(borrowShares), borrowAssets, 1);
-
-        assertEq(IERC20(USDC).balanceOf(address(helper)), 0);
-        assertEq(USD3L.balanceOf(address(helper)), 0);
-        assertEq(IERC20(USDC).allowance(address(helper), address(VAULT)), 0);
-        assertEq(IERC20(USDC).allowance(address(helper), address(MORPHO)), 0);
-        assertEq(USD3L.allowance(address(helper), address(MORPHO)), type(uint256).max);
+        _assertHelperClean();
     }
 
     function _assertMarginEntry(

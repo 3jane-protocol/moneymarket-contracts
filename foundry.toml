@@ -17,8 +17,8 @@ fs_permissions = [
 ]
 # LCCVault pins optimizer_runs = 150 (24,268 B runtime after extracting exit accounting to LCCExitLib, leaving 108 B
 # below the 24,376 release ceiling and 308 B below EIP-170). The active-only monolith measures 24,703 B, so the
-# extraction remains necessary. LCCLeveragedFundHelper pins optimizer_runs = 200 (17,270 B runtime, 7,306 B below
-# EIP-170); at the repo default it measures 24,606 B, 30 B over EIP-170, so the pin is required. The frozen USD3_old
+# extraction remains necessary. LCCLeveragedFundHelper pins optimizer_runs = 200 (21,067 B runtime, 3,509 B below
+# EIP-170); at the repo default it measures 29,066 B, 4,490 B over EIP-170, so the pin is required. The frozen USD3_old
 # upgrade-test artifact pins optimizer_runs = 200 because its test profile disables via-ir and higher runs hit solc "Stack too deep"; the pin lets this test-only fixture compile without
 # via-ir. Its optimizer runs are otherwise immaterial. USD3 itself fits at the repo default with a thin
 # ~862 B margin (23,714 B measured at 999999 runs), so future features may need a lower pin or cleanup. Foundry produces

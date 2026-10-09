@@ -469,8 +469,12 @@ contract LCCBase is Test, ILCCVaultFactory {
     }
 
     function _deposit(address user, uint256 assets) internal returns (uint256 commitment) {
+        return _deposit(vault, user, assets);
+    }
+
+    function _deposit(LCCVault target, address user, uint256 assets) internal returns (uint256 commitment) {
         vm.prank(user);
-        commitment = vault.deposit(assets, user, 1, type(uint256).max, true, type(uint256).max);
+        commitment = target.deposit(assets, user, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function _depositFor(address payer, address beneficiary, uint256 assets) internal returns (uint256 commitment) {
@@ -483,9 +487,13 @@ contract LCCBase is Test, ILCCVaultFactory {
     }
 
     function _openCallAtEpoch(uint256 epoch, uint256 amount) internal {
+        _openCallAtEpoch(vault, epoch, amount);
+    }
+
+    function _openCallAtEpoch(LCCVault target, uint256 epoch, uint256 amount) internal {
         vm.warp(START + EPOCH * epoch + NORMAL);
         vm.prank(owner);
-        vault.openEpochCall(epoch, amount);
+        target.openEpochCall(epoch, amount);
     }
 
     function _fund(address user) internal returns (uint256 obligation) {
@@ -493,9 +501,13 @@ contract LCCBase is Test, ILCCVaultFactory {
     }
 
     function _fundAtEpoch(address user, uint256 epoch) internal returns (uint256 obligation) {
+        return _fundAtEpoch(vault, user, epoch);
+    }
+
+    function _fundAtEpoch(LCCVault target, address user, uint256 epoch) internal returns (uint256 obligation) {
         vm.warp(START + EPOCH * epoch + NORMAL + PRE_CALL);
         vm.prank(user);
-        obligation = vault.fundCall(false);
+        obligation = target.fundCall(false);
     }
 
     function _fundRolling(address user) internal returns (uint256 obligation) {
@@ -520,6 +532,14 @@ contract LCCBase is Test, ILCCVaultFactory {
 
     function _finishFundingAtEpoch(uint256 epoch) internal {
         vm.warp(START + EPOCH * epoch + NORMAL + PRE_CALL + FUNDING);
+    }
+
+    /// @dev Number of recorded logs from `emitter` whose first topic is `topic`; consumes the recorded logs.
+    function _countLogs(address emitter, bytes32 topic) internal returns (uint256 count) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter == emitter && logs[i].topics[0] == topic) ++count;
+        }
     }
 
     function _syncAs(address user) internal {

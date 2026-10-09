@@ -382,8 +382,8 @@ shares just minted. Tokens force-transferred to the helper are ignored and unspe
 
 ### Leveraged funding helper
 
-`LCCLeveragedFundHelper` lets a funder meet an amortizing capital-call obligation while borrowing part of it on a Morpho
-Blue market of the caller's choice. The helper pins the canonical Morpho Blue singleton and USD3l, derives USD3 as
+`LCCLeveragedFundHelper` lets a funder meet an amortizing capital-call obligation, or a taker fill a vault's live
+shortfall auction, while borrowing part of the USDC paid on a Morpho Blue market of the caller's choice. The helper pins the canonical Morpho Blue singleton and USD3l, derives USD3 as
 `USD3l.asset()` and USDC as `USD3.asset()` at construction (`InvalidConfiguration` for a codeless link), and accepts any
 market on that singleton named in `FundParams.market` whose loan token is USDC and collateral token is USD3l
 (`MarketTokenMismatch` otherwise); its oracle, IRM, and LLTV are chosen by the caller among markets curators created.
@@ -391,7 +391,7 @@ Before moving tokens the helper requires the vault's Funding phase (`NotFundingP
 `MAX_FUNDING_TOP_UP` (`FundingTopUpExceeded`), and, for a levered `fund`, an existing Morpho authorization
 (`NotAuthorized`). For obligation `O` the vault pulls `F = max(O, usd3.previewMint(1))`; the caller picks `borrowAssets`
 and `marginAssets` and contributes `F - borrowAssets - marginAssets` USDC, which the helper pulls first
-(`BorrowAndMarginExceedFunding` if `borrowAssets + marginAssets > F`). When `borrowAssets + marginAssets` is nonzero the
+(`BorrowAndMarginExceedTotal` if `borrowAssets + marginAssets > F`). When `borrowAssets + marginAssets` is nonzero the
 helper takes a Morpho flash loan of that sum; inside `onMorphoFlashLoan` it runs one sequence, which an entry with
 neither runs directly without a flash loan: pay the vault through the permissionless `fundCall(address)`, which also
 releases margin to the caller; measure the USD3l the caller received, require it to reach the caller's `minCollateral`
@@ -452,18 +452,77 @@ The helper recomputes the vault's funding amount `max(O, usd3.previewMint(1))` a
 vault implementation change to `_fund`'s funding amount or top-up bound requires redeploying the helper. Delivered USD3l
 is measured rather than previewed, so wrapped-delivery changes are bounded by each caller's collateral bounds. The
 margin path assumes the vault releases amortized margin to the funder inside `fundCall` before it returns; a vault
-change that defers or removes margin release on amortizing funding requires redeploying the helper.
+change that defers or removes margin release on amortizing funding requires redeploying the helper. The take path relies
+on the vault's `takeAuction` clamping the fill to `min(maxFill, remaining)` after its sync, delivering USD3l and the
+margin award to `msg.sender` before returning, and applying no funding top-up, and its sync poke relies on
+`finalizeEpochSlash` staying `synced` with a no-op body for an already slash-finalized epoch; a vault change to any of
+these requires redeploying the helper.
+
+Shortfall-auction takes. `takeAuction(TakeParams)` fills the live shortfall auction of a registered vault for the caller
+during its Closed phase. There is no signature variant: a taker sets a USDC allowance and, to borrow, a Morpho
+authorization directly. The helper first requires Morpho authorization when the quoted `borrowAssets` is nonzero
+(`NotAuthorized`; a nonzero quote always scales to a nonzero borrow). Before any external call other than view reads it
+then checks the deadline (`DeadlineExpired`), the market tokens, a nonzero `minCollateral` (`InvalidCollateralBounds`),
+`maxFill != 0` and `minFill <= maxFill` (`InvalidFillBounds`), `borrowAssets + marginAssets <= maxFill` in
+overflow-safe form (`BorrowAndMarginExceedTotal`, shared with funding), the vault's registration and wiring, and that
+the margin asset is neither USDC nor USD3 (`TakeMarginAssetUnsupported`): a USDC margin asset would make the helper's
+USDC balance change alias the fill, flash, and receipt measurements, and USD3 would put USD3 in the helper and pass the
+ERC-4626-over-USDC gate.
+
+It then syncs the vault through a permissionless `synced` entrypoint. When an auction slot is already live it pokes
+`finalizeEpochSlash` of that auction's epoch, whose body is a no-op because the epoch is already slash-finalized, so it
+cannot revert `SlashNotEligible` and writes no epoch state. Only when no slot is live does it poke
+`materializeAccount(helper)`, which can kick an untouched auction whose slash became eligible and leaves an inert helper
+account in the vault. Either sync settles an expired auction or one under shutdown and reverts `Paused` on a paused
+vault; the sync is part of the take's transaction, so a later revert rolls it back. With no live slot the take reverts
+`NoLiveAuction`; otherwise the fill is `min(maxFill, remaining shortfall)` read from the vault's auction state
+(`FillBelowMinimum` below `minFill`).
+
+Every amount quoted at `maxFill` is scaled by `fill / maxFill`, so a partial or front-run fill keeps the caller's
+per-unit protections; `TakeParams` states the exact rounding. The quoted contribution and `marginAssets` round down and
+the dust goes to the borrow, else the margin, else the contribution, so the parts sum to the fill, a quote without a
+contribution pulls none, and the scaled borrow (or margin) can exceed its pro-rata share by up to two base units.
+`minMarginAward` rounds down, because it is a floor and the vault floors its award; the award is pro-rata in the fill,
+so the scaled floor keeps its per-unit meaning. `minCollateral` rounds down with a floor of one share, because the
+delivery itself floors twice (USD3, then USD3l). The scaled contribution never exceeds the quoted one, which the caller
+computed, so takes carry no contribution bound. Quote `maxFill` near the expected remaining shortfall, and
+`minCollateral` at `maxFill` from `usd3l.previewDeposit(usd3.previewDeposit(maxFill))` with slack, because the scaled
+quote and a live double preview at the fill differ by rounding (delivered USD3l is below the fill when USD3's share price
+exceeds one). Only the caller's USDC allowance is checked, since the USD3l and the award are delivered to the helper and
+the award withdrawal burns its own shares. When `borrowAssets + marginAssets` (scaled) is nonzero the helper bridges it
+with a Morpho flash loan (payload kind `Take`), so the singleton must physically hold `2 * borrowAssets + marginAssets`
+of USDC during the take as it must for funding.
+
+On a take the vault's filler is the helper. It pays exactly `fill` through the vault's `takeAuction` with the scaled
+`minMarginAward` (`VaultAmountMismatch`, shared with funding, if the vault fills another amount or leaves allowance),
+measures the USD3l and the margin-asset shares it received, requires the USD3l to reach the scaled `minCollateral`,
+supplies all of it from its own balance as the caller's collateral (a taker who wants part of it liquid withdraws
+unlevered collateral from Morpho), and forwards the award whole unless `marginAssets` is nonzero. With `marginAssets`
+(admitted only for an ERC-4626 margin asset over USDC, `MarginAssetNotUsdcVault` otherwise) it withdraws exactly the
+scaled amount of USDC from its own shares, requires the shares burned to stay within the award it received
+(`MarginExceedsAward`, so donated shares are never spent) and the USDC received to equal the amount
+(`MarginReceiptMismatch`), and forwards the rest of the award. It then borrows the scaled borrow for the caller and
+requires its USD3l balance to end unchanged (`Usd3lRetained`), because it is a bypassed USD3l owner. After the run or
+the flash bridge returns, `takeAuction` emits `AuctionTaken(user, vault, marketId, filled, collateral, borrowed,
+marginAssets)`; the vault's `AuctionFill` in the same transaction records the epoch and the gross award, and the
+margin-asset transfer records the forwarded award. Morpho `onBehalf` and the cooldown owner are always `msg.sender`;
+whole-position LTV is checked only when the scaled borrow is nonzero, and the take opens a cooldown for the collateral
+supplied. There is no pending-loss gating. The vault's own checks after its sync (liveness, `InsufficientMarginAward`,
+the margin oracle) apply to the fill and revert the whole take. A fill that completes the shortfall settles the auction
+inside the vault's `takeAuction`, which makes no token transfers; a missing call-open price snapshot reverts that
+settlement for this non-owner filler exactly as for any other. No funding top-up applies to fills, so a residual below
+one USD3 share is unfillable for anyone.
 
 Helper cooldowns and unwind. USD3l carries a 35-day withdrawal cooldown, so a levered funder cannot repay from the
 collateral alone through the vault. USD3l management grants the helper the vault's cooldown bypass, and the helper
-enforces its own per-user cooldown instead. Every entry through `fund` or `fundWithSignatures` opens a cooldown
-`{shares, start, duration}` for the collateral it supplied, keyed by user and market id; nothing else opens one. A
+enforces its own per-user cooldown instead. Every entry through `fund`, `fundWithSignatures`, or `takeAuction` opens a
+cooldown `{shares, start, duration}` for the collateral it supplied, keyed by user and market id; nothing else opens one. A
 cooldown matures at `start + max(duration, live cooldownDuration)` and never expires. A book holds at most 32 cooldowns
 per user and market; when it is full, a further entry first merges the two oldest cooldowns into one that keeps the
 later start and the later recorded maturity (`start + duration`), so it is never earlier than either input under any
-live duration, and then opens its own cooldown in the freed slot, so funding never reverts for cooldown reasons and
-newer cooldowns keep their own maturities. Funding is the only way a cooldown is started and unwind consumption the only
-way one is removed; that full-book merge is the only other change. `unwind(params)` (or `unwindWithAuthorization`, which
+live duration, and then opens its own cooldown in the freed slot, so no entry reverts for cooldown reasons and newer
+cooldowns keep their own maturities. Funding and take entries are the only ways a cooldown is started and unwind
+consumption the only way one is removed; that full-book merge is the only other change. `unwind(params)` (or `unwindWithAuthorization`, which
 first applies the caller's Morpho authorization, needed because unlevered and margin-only funders never granted it)
 checks `shares` against live collateral (`SharesExceedCollateral`), consumes matured cooldowns oldest first before any
 state-changing external call (`InsufficientMaturedShares`), accrues the market, and prices the repayment: in `full` mode
@@ -481,7 +540,7 @@ carries no cooldown because the cooldown lives on USD3l, and a zero-repayment `u
 never reads USD3's withdraw limit and works during a pending loss or waUSDC pause. The caller receives the measured
 remainder of the output token (`UnwindOutputBelowMinimum` below `minOut`); in `usd3Out` mode the helper's USDC balance
 must end unchanged (`UnexpectedUsdcChange` otherwise); donated USD3l, USD3, and USDC are never touched. Flash payloads
-carry a funding/unwind kind tag as their first hashed field. The gate is waived while USD3l is shut down or its cooldown
+carry a funding, unwind, or take kind tag as their first hashed field. The gate is waived while USD3l is shut down or its cooldown
 is zero, mirroring the vault. USD3's withdraw limit (pending loss, waUSDC pause, ring fence, floors) and a revoked
 bypass make an unwind revert atomically with cooldowns restored; users then exit by repaying with their own USDC and
 using the vault cooldown. Accepted residual: a cooldown outlives collateral that leaves the position directly or by
