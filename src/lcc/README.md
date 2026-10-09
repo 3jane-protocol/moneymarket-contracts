@@ -391,7 +391,7 @@ trust boundaries lie.
 **Pins and served markets.** The helper pins the canonical Morpho Blue singleton, the LCC vault factory, and USD3l,
 and derives USD3 as `USD3l.asset()` and USDC as `USD3.asset()` at construction (`InvalidConfiguration` for a codeless
 link). Every request (`FundParams`, `TakeParams`, and `UnwindParams` alike) names a `market`, which must be a market on
-that singleton whose loan token is USDC and collateral token is USD3l (`MarketTokenMismatch` otherwise); its oracle,
+that singleton whose loan token is USDC and collateral token is USD3l (`InvalidRequest` otherwise); its oracle,
 IRM, and LLTV are chosen by the caller among markets curators created. A vault must be factory-registered (checked
 through `ILCCVaultFactory.isVault`), wired to the same USDC, USD3, and USD3l, and must not use USD3l as its margin
 asset, because released margin and minted collateral would then be the same token. The LCC beneficiary, the Morpho
@@ -438,8 +438,8 @@ any other. Fills get no funding top-up, so a residual below one USD3 share is un
 **Flash binding, allowances, and balances.** At most one operation is in flight. The helper records
 `keccak256(abi.encodePacked(assets, keccak256(payload)))` in transient storage before calling `flashLoan`; the callback is accepted only
 from Morpho and only when Morpho's `assets` and `data` hash to that record, so the loaned amount is bound together with
-the payload, and the record is consumed before any external call (`CallbackNotExecuted` if the callback never ran).
-Payloads carry a funding, take, or unwind kind tag as their first field, on which the callback dispatches after the hash
+the payload, and the record is consumed before any external call (`InvalidCallback` for a failed guard or a callback
+that never ran). Payloads carry a funding, take, or unwind kind tag as their first field, on which the callback dispatches after the hash
 check. Morpho holds standing maximal USD3l and USDC allowances from the helper, granted at construction and used for
 collateral supply, flash-loan repayment, and debt repayment; this is safe because Morpho pulls only from its
 `msg.sender`, at exactly the amounts the helper's own calls determine, and the helper holds no USD3l or USDC of its own
@@ -448,8 +448,8 @@ relies on canonical Morpho pulling exactly the repay and flash amounts, and an u
 catches any excess. (Mainnet USDC decrements even a maximal allowance by each pull, so the standing USDC allowance
 declines by cumulative pulls; it starts at `2^256 - 1`.) Each vault receives an exact USDC approval that must be spent
 in full. Every entrypoint (funding, take, and unwind) requires the helper's USD3l balance to end where it started
-(`Usd3lRetained`), because the helper is a bypassed USD3l owner and must never keep USD3l it handled; donated USD3l,
-USD3, USDC, and margin-asset shares are never spent.
+(`UnexpectedBalance` with the USD3l token), because the helper is a bypassed USD3l owner and must never keep USD3l it
+handled; donated USD3l, USD3, USDC, and margin-asset shares are never spent.
 
 **Helper cooldowns and unwind.** USD3l carries a 35-day withdrawal cooldown, so a levered funder cannot repay from the
 collateral alone through the vault. USD3l management grants the helper the vault's cooldown bypass, and the helper
@@ -488,6 +488,19 @@ levered entry is allowed while a USD3 loss is pending; the market's oracle, LLTV
 curator. The helper holds no factory role, never deposits into USD3 itself (the vault is the USD3 depositor and holds
 the supply-cap exemption), and has no owner, rescue, receiver-choice, delegated-beneficiary, generic-call, or upgrade
 surface.
+
+**Errors.** The helper declares its errors on `ILCCLeveragedFundHelper` in three groups: caller bounds (a bound the
+caller set or a precondition the caller controls, most carrying the offending value and the bound), request, vault and
+timing (`InvalidRequest`, `UnregisteredVault`, `UnsupportedMarginAsset`, `NothingToFund`, `FundingTopUpExceeded`,
+`InvalidConfiguration`), and internal invariants (`VaultAmountMismatch`, `UnexpectedBalance`, `InvalidCallback`). Errors
+that cover more than one token carry it: `RedemptionBelowRepayment` reports USDC on the USDC unwind path and USD3 on the
+`usd3Out` path, and `UnexpectedBalance` names the token and carries absolute balances of it. Reverts from the vault,
+Morpho, USD3, USD3l, and tokens propagate unchanged, except at three sites where the helper deliberately tolerates or
+classifies them: a reverting permit is tolerated, and its revert data surfaces in `InsufficientAllowance.permitRevert`
+only when the resulting allowance is still short; a reverting `setAuthorizationWithSig` is tolerated and surfaces as
+`NotAuthorized` only when the authorization is still missing; and on a request that sources margin, a codeless margin
+asset or one whose `asset()` reverts or returns an address other than USDC surfaces as `UnsupportedMarginAsset` (an
+`asset()` return that does not decode as an address is not caught and reverts as is).
 
 **Upgrade couplings.** The helper recomputes the vault's funding amount `max(O, usd3.previewMint(1))` and mirrors
 `MAX_FUNDING_TOP_UP`, assumes the vault releases amortized margin inside `fundCall`, and assumes the vault's

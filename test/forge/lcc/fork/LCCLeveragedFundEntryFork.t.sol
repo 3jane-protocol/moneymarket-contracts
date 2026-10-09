@@ -105,13 +105,13 @@ contract LCCLeveragedFundEntryForkTest is LCCMorphoForkFixture, LCCLeveragedFund
         _approveAll(funder, params.maxContribution);
 
         params.market.loanToken = USDT;
-        vm.expectRevert(ILCCLeveragedFundHelper.MarketTokenMismatch.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         vm.prank(funder);
         helper.fund(params);
 
         params.market = marketParams;
         params.market.collateralToken = USD3;
-        vm.expectRevert(ILCCLeveragedFundHelper.MarketTokenMismatch.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         vm.prank(funder);
         helper.fund(params);
     }
@@ -241,7 +241,7 @@ contract LCCLeveragedFundEntryForkTest is LCCMorphoForkFixture, LCCLeveragedFund
         IERC20(WA_ETH_USDC).forceApprove(address(helper), burned);
 
         vm.expectRevert(
-            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginExceedsReleased.selector, burned, released)
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginSharesUnavailable.selector, burned, released)
         );
         vm.prank(funder);
         helper.fund(params);

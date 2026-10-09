@@ -191,6 +191,7 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
     mapping(bytes32 => uint256) public pendingInterest;
     bool public skipCallback;
     uint256 public callbackAssetsDelta;
+    uint256 public flashRepayExtra;
     uint256 public flashLoanCount;
     uint256 public lastFlashAssets;
     bytes public lastFlashData;
@@ -281,6 +282,11 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
         callbackAssetsDelta = delta;
     }
 
+    /// @dev Pulls `extra` more than the loaned assets back from the borrower after the callback.
+    function setFlashRepayExtra(uint256 extra) external {
+        flashRepayExtra = extra;
+    }
+
     /// @dev With `skipCallback` set, the loaned assets are left with the borrower and nothing is pulled back.
     function flashLoan(address token, uint256 assets, bytes calldata data) external {
         require(assets != 0, "zero assets");
@@ -295,7 +301,7 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
         for (uint256 i; i < callbackCount; ++i) {
             IMorphoBlueFlashLoanCallback(msg.sender).onMorphoFlashLoan(assets + callbackAssetsDelta, payload);
         }
-        IERC20(token).safeTransferFrom(msg.sender, address(this), assets);
+        IERC20(token).safeTransferFrom(msg.sender, address(this), assets + flashRepayExtra);
     }
 
     function createMarket(IMorphoBlue.MarketParams calldata params) external {
@@ -629,13 +635,13 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         ILCCLeveragedFundHelper.FundParams memory params = _fundParams(80e18);
 
         params.market.loanToken = address(margin);
-        vm.expectRevert(ILCCLeveragedFundHelper.MarketTokenMismatch.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         vm.prank(alice);
         helper.fund(params);
 
         params.market = marketParams;
         params.market.collateralToken = address(usd3);
-        vm.expectRevert(ILCCLeveragedFundHelper.MarketTokenMismatch.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         vm.prank(alice);
         helper.fund(params);
     }
@@ -682,7 +688,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         _deposit(alice, MARGIN);
         _openCall(CALL);
         usdc.mint(alice, 20e18);
-        vm.expectRevert(ILCCLeveragedFundHelper.NotFundingPhase.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.NothingToFund.selector);
         vm.prank(alice);
         helper.fund(_fundParams(80e18));
     }
@@ -821,7 +827,9 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         waUsdc.setWithdrawShortfall(1);
 
         vm.expectRevert(
-            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginReceiptMismatch.selector, RELEASED - 1, RELEASED)
+            abi.encodeWithSelector(
+                ILCCLeveragedFundHelper.UnexpectedBalance.selector, address(usdc), RELEASED - 1, RELEASED
+            )
         );
         vm.prank(alice);
         helper.fund(_marginParams(0, RELEASED));
@@ -833,7 +841,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         params.maxMarginShares = 0;
 
         _expectNoFunding(address(marginFacility));
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidMarginShares.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         vm.prank(alice);
         helper.fund(params);
     }
@@ -853,14 +861,14 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         vm.expectCall(foreignFacility, abi.encodeWithSignature("fundCall(address)"), 0);
 
         vm.expectRevert(
-            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginAssetNotUsdcVault.selector, address(margin))
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.UnsupportedMarginAsset.selector, address(margin))
         );
         vm.prank(alice);
         helper.fund(params);
 
         params.vault = foreignFacility;
         vm.expectRevert(
-            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginAssetNotUsdcVault.selector, address(foreignVault))
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.UnsupportedMarginAsset.selector, address(foreignVault))
         );
         vm.prank(alice);
         helper.fund(params);
@@ -876,7 +884,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         params.maxMarginShares = 1;
 
         _expectNoFunding(params.vault);
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginAssetNotUsdcVault.selector, codeless));
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.UnsupportedMarginAsset.selector, codeless));
         vm.prank(alice);
         helper.fund(params);
     }
@@ -891,7 +899,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         params.maxMarginShares = RELEASED + 10;
 
         vm.expectRevert(
-            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginExceedsReleased.selector, RELEASED + 1, RELEASED)
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginSharesUnavailable.selector, RELEASED + 1, RELEASED)
         );
         vm.prank(alice);
         helper.fund(params);
@@ -977,7 +985,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         usdc.mint(alice, CALL - 40e18 - RELEASED);
         morpho.setCallbackAssetsDelta(1);
 
-        vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
         vm.prank(alice);
         helper.fund(_marginParams(40e18, RELEASED));
     }
@@ -1511,19 +1519,36 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
 
         ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(10e18, true, 0);
         params.usd3Out = true;
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.Usd3BelowRepayment.selector, 10e18, 80e18));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ILCCLeveragedFundHelper.RedemptionBelowRepayment.selector, address(usd3), 10e18, 80e18
+            )
+        );
         vm.prank(alice);
         helper.unwind(params);
     }
 
-    function testUsd3OutUnwindRejectsUnexpectedUsdcChange() public {
+    function testUsd3OutUnwindRejectsUsdcBalanceChange() public {
         uint256 start = _enterLevered(alice);
         vm.warp(start + cooldown);
         unwindUsd3.setWithdrawOverDelivery(1);
 
         ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(CALL, true, 0);
         params.usd3Out = true;
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.UnexpectedUsdcChange.selector, 1));
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.UnexpectedBalance.selector, address(usdc), 1, 0));
+        vm.prank(alice);
+        helper.unwind(params);
+    }
+
+    function testUsd3OutUnwindRejectsUsdcBalanceDrop() public {
+        uint256 start = _enterLevered(alice);
+        vm.warp(start + cooldown);
+        deal(address(usdc), address(helper), 5);
+        morpho.setFlashRepayExtra(1);
+
+        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(CALL, true, 0);
+        params.usd3Out = true;
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.UnexpectedBalance.selector, address(usdc), 4, 5));
         vm.prank(alice);
         helper.unwind(params);
     }
@@ -1577,20 +1602,89 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
 
         ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(10e18, true, 0);
         params.usd3Out = true;
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.Usd3BelowRepayment.selector, 10e18, 80e18));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ILCCLeveragedFundHelper.RedemptionBelowRepayment.selector, address(usd3), 10e18, 80e18
+            )
+        );
         vm.prank(alice);
         helper.unwind(params);
     }
 
-    function testUnwindProceedsBelowRepaymentReverts() public {
+    function testUsdcRedemptionBelowRepaymentReverts() public {
         uint256 start = _enterLevered(alice);
         vm.warp(start + cooldown);
 
         vm.expectRevert(
-            abi.encodeWithSelector(ILCCLeveragedFundHelper.UnwindProceedsBelowRepayment.selector, 10e18, 80e18)
+            abi.encodeWithSelector(
+                ILCCLeveragedFundHelper.RedemptionBelowRepayment.selector, address(usdc), 10e18, 80e18
+            )
         );
         vm.prank(alice);
         helper.unwind(_unwindParams(10e18, true, 0));
+    }
+
+    function testRedemptionBelowRepaymentReportsTheTokenOfItsPath() public {
+        uint256 start = _enterLevered(alice);
+        vm.warp(start + cooldown);
+        uint256 snapshot = vm.snapshotState();
+
+        _assertRevertToken(
+            _unwindRevert(_unwindParams(10e18, true, 0)),
+            ILCCLeveragedFundHelper.RedemptionBelowRepayment.selector,
+            address(usdc)
+        );
+        vm.revertToState(snapshot);
+
+        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(10e18, true, 0);
+        params.usd3Out = true;
+        _assertRevertToken(
+            _unwindRevert(params), ILCCLeveragedFundHelper.RedemptionBelowRepayment.selector, address(usd3)
+        );
+    }
+
+    function testUnexpectedBalanceReportsTheTokenOfItsPath() public {
+        uint256 snapshot = vm.snapshotState();
+        _depositAndOpenCall(alice);
+        _supplyExtraCollateral(alice, CALL);
+        usdc.mint(alice, CALL);
+        vm.mockCall(address(morpho), abi.encodeWithSelector(IMorphoBlue.supplyCollateral.selector), "");
+        ILCCLeveragedFundHelper.FundParams memory fundParams = _fundParams(0);
+        fundParams.maxContribution = CALL;
+        vm.prank(alice);
+        try helper.fund(fundParams) {
+            revert("fund succeeded");
+        } catch (bytes memory reason) {
+            _assertRevertToken(reason, ILCCLeveragedFundHelper.UnexpectedBalance.selector, address(usd3l));
+        }
+        vm.clearMockedCalls();
+        vm.revertToState(snapshot);
+
+        uint256 start = _enterLevered(alice);
+        vm.warp(start + cooldown);
+        unwindUsd3.setWithdrawOverDelivery(1);
+        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(CALL, true, 0);
+        params.usd3Out = true;
+        _assertRevertToken(_unwindRevert(params), ILCCLeveragedFundHelper.UnexpectedBalance.selector, address(usdc));
+    }
+
+    function _unwindRevert(ILCCLeveragedFundHelper.UnwindParams memory params) private returns (bytes memory reason) {
+        vm.prank(alice);
+        try helper.unwind(params) {
+            revert("unwind succeeded");
+        } catch (bytes memory data) {
+            reason = data;
+        }
+    }
+
+    function _assertRevertToken(bytes memory reason, bytes4 selector, address token) private pure {
+        assertGe(reason.length, 36);
+        assertEq(bytes4(reason), selector);
+        address reported;
+        assembly ("memory-safe") {
+            reported := mload(add(reason, 36))
+        }
+        assertEq(reported, token);
     }
 
     function testDustPartialRepaymentThatBuysNoShareReverts() public {
@@ -1631,7 +1725,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         vm.prank(alice);
         helper.unwind(_unwindParams(CALL, false, 80e18 + 1));
 
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidUnwindShares.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         vm.prank(alice);
         helper.unwind(_unwindParams(0, true, 0));
     }
@@ -1656,13 +1750,13 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         vm.warp(start + cooldown);
 
         morpho.setTamperCallbackData(true);
-        vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
         vm.prank(alice);
         helper.unwind(_unwindParams(CALL, true, 0));
 
         morpho.setTamperCallbackData(false);
         morpho.setCallbackAssetsDelta(1);
-        vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
         vm.prank(alice);
         helper.unwind(_unwindParams(CALL, true, 0));
     }
@@ -1690,11 +1784,15 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
 
         ILCCLeveragedFundHelper.FundParams memory params = _fundParams(0);
         params.maxContribution = CALL;
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.Usd3lRetained.selector, CALL, 0));
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.UnexpectedBalance.selector, address(usd3l), CALL, 0)
+        );
         vm.prank(alice);
         helper.fund(params);
 
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.Usd3lRetained.selector, CALL, 0));
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.UnexpectedBalance.selector, address(usd3l), CALL, 0)
+        );
         vm.prank(alice);
         helper.fund(_fundParams(80e18));
     }
@@ -1709,7 +1807,9 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
             abi.encode(uint256(0))
         );
 
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.Usd3lRetained.selector, CALL + 7, 7));
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.UnexpectedBalance.selector, address(usd3l), CALL + 7, 7)
+        );
         vm.prank(alice);
         helper.unwind(_unwindParams(CALL, true, 0));
     }
@@ -1892,16 +1992,16 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         Signed memory s = _sign(20e18, CALL);
 
         s.authorization.authorizer = alice;
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidAuthorization.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         _fundSigned(_fundParams(80e18), s);
 
         s.authorization = _morphoAuthorization(address(morpho), signer, stranger, type(uint256).max);
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidAuthorization.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         _fundSigned(_fundParams(80e18), s);
 
         s.authorization = _morphoAuthorization(address(morpho), signer, address(helper), type(uint256).max);
         s.authorization.isAuthorized = false;
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidAuthorization.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         _fundSigned(_fundParams(80e18), s);
     }
 
@@ -1910,7 +2010,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         Signed memory s = _sign(20e18, CALL);
         s.signature = _signMorphoAuthorization(address(morpho), otherKey, s.authorization);
 
-        vm.expectRevert(ILCCLeveragedFundHelper.AuthorizationFailed.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.NotAuthorized.selector);
         _fundSigned(_fundParams(80e18), s);
     }
 
@@ -1929,7 +2029,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         LCCMockNotificationVault otherNotificationVault = new LCCMockNotificationVault(IERC20(address(usd3)));
         beacon.upgradeTo(address(new LCCVault(address(otherNotificationVault), treasury)));
 
-        vm.expectRevert(ILCCLeveragedFundHelper.VaultAssetMismatch.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidConfiguration.selector);
         vm.prank(alice);
         helper.fund(_fundParams(0));
     }
@@ -1941,7 +2041,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
 
         ILCCLeveragedFundHelper.FundParams memory fundParams = _fundParams(0);
         fundParams.vault = address(usd3lMarginVault);
-        vm.expectRevert(ILCCLeveragedFundHelper.MarginAssetIsCollateral.selector);
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.UnsupportedMarginAsset.selector, address(usd3l)));
         vm.prank(alice);
         helper.fund(fundParams);
     }
@@ -1999,9 +2099,9 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.fund(params);
     }
 
-    function testNoObligationRejected() public {
+    function testZeroObligationRejected() public {
         _depositAndOpenCall(bob);
-        vm.expectRevert(ILCCLeveragedFundHelper.NoObligation.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.NothingToFund.selector);
         vm.prank(alice);
         helper.fund(_fundParams(0));
     }
@@ -2091,7 +2191,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         usdc.mint(alice, 20e18);
         morpho.setSkipCallback(true);
 
-        vm.expectRevert(ILCCLeveragedFundHelper.CallbackNotExecuted.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
         vm.prank(alice);
         helper.fund(_fundParams(80e18));
     }
@@ -2190,7 +2290,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         params.minCollateral = 0;
 
         _expectNoFunding();
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.InvalidCollateralBounds.selector, 0, CALL));
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         vm.prank(alice);
         helper.fund(params);
     }
@@ -2202,9 +2302,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         params.maxCollateral = CALL - 1;
 
         _expectNoFunding();
-        vm.expectRevert(
-            abi.encodeWithSelector(ILCCLeveragedFundHelper.InvalidCollateralBounds.selector, CALL, CALL - 1)
-        );
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         vm.prank(alice);
         helper.fund(params);
     }
@@ -2328,13 +2426,13 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
     /* CALLBACK */
 
     function testCallbackFromNonMorphoRejected() public {
-        vm.expectRevert(ILCCLeveragedFundHelper.NotMorpho.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
         vm.prank(stranger);
         helper.onMorphoFlashLoan(1, hex"01");
     }
 
-    function testCallbackWithNoOperationInFlightRejected() public {
-        vm.expectRevert(ILCCLeveragedFundHelper.NoOperationInFlight.selector);
+    function testCallbackWithoutOperationInFlightRejected() public {
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
         vm.prank(address(morpho));
         helper.onMorphoFlashLoan(1, hex"01");
     }
@@ -2343,7 +2441,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         _depositAndOpenCall(alice);
         usdc.mint(alice, 20e18);
         morpho.setCallbackCount(2);
-        vm.expectRevert(ILCCLeveragedFundHelper.NoOperationInFlight.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
         vm.prank(alice);
         helper.fund(_fundParams(80e18));
     }
@@ -2352,7 +2450,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         _depositAndOpenCall(alice);
         usdc.mint(alice, 20e18);
         morpho.setTamperCallbackData(true);
-        vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
         vm.prank(alice);
         helper.fund(_fundParams(80e18));
     }
@@ -2361,7 +2459,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         _depositAndOpenCall(alice);
         usdc.mint(alice, 20e18);
         morpho.setCallbackAssetsDelta(1);
-        vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
         vm.prank(alice);
         helper.fund(_fundParams(80e18));
     }
@@ -2672,19 +2770,17 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.takeAuction(params);
     }
 
-    function testInvalidFillBoundsRejected() public {
+    function testMalformedFillBoundsRejected() public {
         _openTakeAuction(false, true);
         ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(SHORTFALL);
         params.minFill = SHORTFALL + 1;
-        vm.expectRevert(
-            abi.encodeWithSelector(ILCCLeveragedFundHelper.InvalidFillBounds.selector, SHORTFALL + 1, SHORTFALL)
-        );
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         vm.prank(carol);
         helper.takeAuction(params);
 
         params.minFill = 0;
         params.maxFill = 0;
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.InvalidFillBounds.selector, 0, 0));
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         vm.prank(carol);
         helper.takeAuction(params);
     }
@@ -2821,12 +2917,12 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         assertEq(auctionVault.getAuctionState(0).filledAmount, 20e18);
     }
 
-    function testExpiredAuctionRevertsNoLiveAuctionAndRollsBackSettlement() public {
+    function testExpiredAuctionRevertsNothingToFundAndRollsBackSettlement() public {
         _openTakeAuction(false, true);
         vm.warp(START + EPOCH);
         uint256 treasuryBefore = auctionVault.pendingTreasuryMargin();
 
-        vm.expectRevert(ILCCLeveragedFundHelper.NoLiveAuction.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.NothingToFund.selector);
         vm.prank(carol);
         helper.takeAuction(_takeParams(SHORTFALL));
 
@@ -2854,12 +2950,12 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         assertEq(auctionVault.getAuctionState(1).filledAmount, 10e18);
     }
 
-    function testShutdownRevertsNoLiveAuctionWithoutCallingTake() public {
+    function testShutdownRevertsNothingToFundWithoutCallingTake() public {
         _openTakeAuction(false, true);
         auctionVault.shutdown();
 
         vm.expectCall(address(auctionVault), abi.encodeWithSelector(LCCVault.takeAuction.selector), 0);
-        vm.expectRevert(ILCCLeveragedFundHelper.NoLiveAuction.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.NothingToFund.selector);
         vm.prank(carol);
         helper.takeAuction(_takeParams(SHORTFALL));
     }
@@ -2992,13 +3088,17 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         _supplyExtraCollateral(carol, SHORTFALL);
         vm.mockCall(address(morpho), abi.encodeWithSelector(IMorphoBlue.supplyCollateral.selector), "");
 
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.Usd3lRetained.selector, 20e18, 0));
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.UnexpectedBalance.selector, address(usd3l), 20e18, 0)
+        );
         vm.prank(carol);
         helper.takeAuction(_takeParams(20e18));
 
         ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(20e18);
         params.borrowAssets = 10e18;
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.Usd3lRetained.selector, 20e18, 0));
+        vm.expectRevert(
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.UnexpectedBalance.selector, address(usd3l), 20e18, 0)
+        );
         vm.prank(carol);
         helper.takeAuction(params);
     }
@@ -3024,7 +3124,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(SHORTFALL);
         params.marginAssets = 10e18;
 
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginExceedsAward.selector, 10e18, 0));
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginSharesUnavailable.selector, 10e18, 0));
         vm.prank(carol);
         helper.takeAuction(params);
     }
@@ -3036,7 +3136,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         params.marginAssets = 10e18;
 
         vm.expectRevert(
-            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginReceiptMismatch.selector, 10e18 - 1, 10e18)
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.UnexpectedBalance.selector, address(usdc), 10e18 - 1, 10e18)
         );
         vm.prank(carol);
         helper.takeAuction(params);
@@ -3066,7 +3166,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
 
         _expectNoSync(address(auctionVault));
         vm.expectRevert(
-            abi.encodeWithSelector(ILCCLeveragedFundHelper.MarginAssetNotUsdcVault.selector, address(margin))
+            abi.encodeWithSelector(ILCCLeveragedFundHelper.UnsupportedMarginAsset.selector, address(margin))
         );
         vm.prank(carol);
         helper.takeAuction(params);
@@ -3081,9 +3181,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
             params.vault = address(_newVault(vaultParams));
 
             _expectNoSync(params.vault);
-            vm.expectRevert(
-                abi.encodeWithSelector(ILCCLeveragedFundHelper.TakeMarginAssetUnsupported.selector, assets[i])
-            );
+            vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.UnsupportedMarginAsset.selector, assets[i]));
             vm.prank(carol);
             helper.takeAuction(params);
         }
@@ -3099,15 +3197,13 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
 
         params = _takeParams(SHORTFALL);
         params.market.collateralToken = address(usd3);
-        vm.expectRevert(ILCCLeveragedFundHelper.MarketTokenMismatch.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         vm.prank(carol);
         helper.takeAuction(params);
 
         params = _takeParams(SHORTFALL);
         params.minCollateral = 0;
-        vm.expectRevert(
-            abi.encodeWithSelector(ILCCLeveragedFundHelper.InvalidCollateralBounds.selector, 0, type(uint256).max)
-        );
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidRequest.selector);
         vm.prank(carol);
         helper.takeAuction(params);
     }
@@ -3131,7 +3227,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
     function testTakeCallbackWithWrongAmountRejected() public {
         _openTakeAuction(false, true);
         morpho.setCallbackAssetsDelta(1);
-        vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
         vm.prank(carol);
         helper.takeAuction(_leveredTakeParams());
     }
@@ -3143,7 +3239,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         uint8[3] memory fromTake = [uint8(0), 1, 3];
         for (uint256 i; i < fromTake.length; ++i) {
             morpho.setCallbackKind(fromTake[i]);
-            vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+            vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
             vm.prank(carol);
             helper.takeAuction(_leveredTakeParams());
             vm.revertToState(snapshot);
@@ -3158,7 +3254,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         uint8[3] memory fromFunding = [uint8(1), 2, 3];
         for (uint256 i; i < fromFunding.length; ++i) {
             morpho.setCallbackKind(fromFunding[i]);
-            vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+            vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
             vm.prank(alice);
             helper.fund(_fundParams(80e18));
             vm.revertToState(snapshot);
@@ -3171,7 +3267,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         uint8[3] memory fromUnwind = [uint8(0), 2, 3];
         for (uint256 i; i < fromUnwind.length; ++i) {
             morpho.setCallbackKind(fromUnwind[i]);
-            vm.expectRevert(ILCCLeveragedFundHelper.OperationMismatch.selector);
+            vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
             vm.prank(alice);
             helper.unwind(_unwindParams(CALL, true, 0));
             vm.revertToState(snapshot);
@@ -3181,7 +3277,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
     function testRepeatedTakeCallbackRejected() public {
         _openTakeAuction(false, true);
         morpho.setCallbackCount(2);
-        vm.expectRevert(ILCCLeveragedFundHelper.NoOperationInFlight.selector);
+        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
         vm.prank(carol);
         helper.takeAuction(_leveredTakeParams());
     }

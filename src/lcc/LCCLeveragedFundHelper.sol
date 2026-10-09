@@ -141,8 +141,8 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         IERC20(usdc_).forceApprove(morpho_, type(uint256).max);
     }
 
-    /// @dev Requires the helper's USD3l balance to end the entrypoint where it started (`Usd3lRetained`): the helper is
-    /// a bypassed USD3l owner, so it must never keep USD3l it handled, and donated USD3l is never touched.
+    /// @dev Requires the helper's USD3l balance to end the entrypoint where it started (`UnexpectedBalance`): the
+    /// helper is a bypassed USD3l owner, so it must never keep USD3l it handled, and donated USD3l is never touched.
     modifier keepsUsd3lBalance() {
         uint256 usd3lBefore = _usd3lBalance();
         _;
@@ -258,10 +258,10 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     /// loaned `assets` and `data` hash to the operation recorded for it, so the amount is bound with the payload. The
     /// record is cleared before any external call. Morpho pulls the repayment under the standing USDC allowance.
     function onMorphoFlashLoan(uint256 assets, bytes calldata data) external override {
-        if (msg.sender != morpho) revert NotMorpho();
+        if (msg.sender != morpho) revert InvalidCallback();
         bytes32 expected = _operation;
-        if (expected == bytes32(0)) revert NoOperationInFlight();
-        if (keccak256(abi.encodePacked(assets, keccak256(data))) != expected) revert OperationMismatch();
+        if (expected == bytes32(0)) revert InvalidCallback();
+        if (keccak256(abi.encodePacked(assets, keccak256(data))) != expected) revert InvalidCallback();
         _operation = bytes32(0);
 
         OperationKind kind = abi.decode(data[:32], (OperationKind));
@@ -271,7 +271,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         } else if (kind == OperationKind.Unwind) {
             (, UnwindOperation memory op) = abi.decode(data, (OperationKind, UnwindOperation));
             uint256 received = _runUnwind(op);
-            if (received < assets) revert UnwindProceedsBelowRepayment(received, assets);
+            if (received < assets) revert RedemptionBelowRepayment(usdc, received, assets);
         } else {
             (, TakeOperation memory op) = abi.decode(data, (OperationKind, TakeOperation));
             _runTake(op);
@@ -298,10 +298,10 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         return IERC20(usd3l).balanceOf(address(this));
     }
 
-    /// @dev Reverts with `Usd3lRetained` unless the helper's USD3l balance equals `expected`.
+    /// @dev Reverts with `UnexpectedBalance` unless the helper's USD3l balance equals `expected`.
     function _requireUsd3lBalance(uint256 expected) private view {
         uint256 balance = _usd3lBalance();
-        if (balance != expected) revert Usd3lRetained(balance, expected);
+        if (balance != expected) revert UnexpectedBalance(usd3l, balance, expected);
     }
 
     /* REQUEST VALIDATION */
@@ -309,7 +309,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     /// @dev Checks shared by every entry and unwind: the deadline, then the market's loan and collateral tokens.
     function _validateRequest(uint256 deadline, IMorphoBlue.MarketParams calldata market) private view {
         if (block.timestamp > deadline) revert DeadlineExpired(); // deliberate wall-clock read
-        if (market.loanToken != usdc || market.collateralToken != usd3l) revert MarketTokenMismatch();
+        if (market.loanToken != usdc || market.collateralToken != usd3l) revert InvalidRequest();
     }
 
     /// @dev Requires `borrowAssets + marginAssets <= total` without overflowing (`BorrowAndMarginExceedTotal`).
@@ -330,11 +330,11 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     function _sizeFund(FundParams calldata params) private view returns (FundOperation memory op) {
         _validateRequest(params.deadline, params.market);
         if (params.minCollateral == 0 || params.minCollateral > params.maxCollateral) {
-            revert InvalidCollateralBounds(params.minCollateral, params.maxCollateral);
+            revert InvalidRequest();
         }
         address marginAsset = _validateVault(params.vault);
         if (params.marginAssets != 0) {
-            if (params.maxMarginShares == 0) revert InvalidMarginShares();
+            if (params.maxMarginShares == 0) revert InvalidRequest();
             _requireUsdcVault(marginAsset);
             op.marginAsset = marginAsset;
             op.marginAssets = params.marginAssets;
@@ -342,12 +342,12 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         }
 
         ILCCVault vault = ILCCVault(params.vault);
-        if (vault.currentPhase() != ILCCVault.Phase.Funding) revert NotFundingPhase();
+        if (vault.currentPhase() != ILCCVault.Phase.Funding) revert NothingToFund();
         op.user = msg.sender;
         op.vault = params.vault;
         op.market = params.market;
         op.obligation = vault.obligationOf(vault.currentEpoch(), msg.sender);
-        if (op.obligation == 0) revert NoObligation();
+        if (op.obligation == 0) revert NothingToFund();
         if (op.obligation > params.maxObligation) revert ObligationExceedsMax(op.obligation, params.maxObligation);
 
         op.fundingAmount = Math.max(op.obligation, IERC4626(usd3).previewMint(1));
@@ -369,12 +369,12 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     /// @dev Validates a take, syncs the vault (see `takeAuction`), sizes the fill, and scales it as `TakeParams` says.
     function _sizeTake(TakeParams calldata params) private returns (TakeOperation memory op) {
         _validateRequest(params.deadline, params.market);
-        if (params.minCollateral == 0) revert InvalidCollateralBounds(0, type(uint256).max);
+        if (params.minCollateral == 0) revert InvalidRequest();
         uint256 maxFill = params.maxFill;
-        if (maxFill == 0 || params.minFill > maxFill) revert InvalidFillBounds(params.minFill, maxFill);
+        if (maxFill == 0 || params.minFill > maxFill) revert InvalidRequest();
         _requireSplit(params.borrowAssets, params.marginAssets, maxFill);
         address marginAsset = _validateVault(params.vault);
-        if (marginAsset == usdc || marginAsset == usd3) revert TakeMarginAssetUnsupported(marginAsset);
+        if (marginAsset == usdc || marginAsset == usd3) revert UnsupportedMarginAsset(marginAsset);
         if (params.marginAssets != 0) _requireUsdcVault(marginAsset);
 
         ILCCVault vault = ILCCVault(params.vault);
@@ -382,7 +382,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         if (slot != 0) vault.finalizeEpochSlash(slot - 1);
         else vault.materializeAccount(address(this));
         slot = vault.syncState().pendingAuctionEpochPlusOne;
-        if (slot == 0) revert NoLiveAuction();
+        if (slot == 0) revert NothingToFund();
         LCCAuctionLib.AuctionState memory auction = vault.getAuctionState(slot - 1);
         uint256 fill = Math.min(maxFill, uint256(auction.shortfallAmount) - auction.filledAmount);
         if (fill < params.minFill) revert FillBelowMinimum(fill, params.minFill);
@@ -478,7 +478,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     /// repays the exact share count read after accrual in this transaction.
     function _executeUnwind(UnwindParams calldata params) private returns (uint256 repaidAssets, uint256 amountOut) {
         _validateRequest(params.deadline, params.market);
-        if (params.shares == 0) revert InvalidUnwindShares();
+        if (params.shares == 0) revert InvalidRequest();
 
         bytes32 id = _marketId(params.market);
         uint256 collateral = _positionCollateral(id, msg.sender);
@@ -492,15 +492,15 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         uint256 usd3Before = params.usd3Out ? IERC20(usd3).balanceOf(address(this)) : 0;
         if (op.repayAssets == 0) _runUnwind(op);
         else _bridge(abi.encode(OperationKind.Unwind, op), op.repayAssets);
-        uint256 usdcChange = IERC20(usdc).balanceOf(address(this)) - usdcBefore;
+        uint256 usdcAfter = IERC20(usdc).balanceOf(address(this));
         address outToken;
         if (params.usd3Out) {
-            if (usdcChange != 0) revert UnexpectedUsdcChange(usdcChange);
+            if (usdcAfter != usdcBefore) revert UnexpectedBalance(usdc, usdcAfter, usdcBefore);
             outToken = usd3;
             amountOut = IERC20(usd3).balanceOf(address(this)) - usd3Before;
         } else {
             outToken = usdc;
-            amountOut = usdcChange;
+            amountOut = usdcAfter - usdcBefore;
         }
         if (amountOut < params.minOut) revert UnwindOutputBelowMinimum(amountOut, params.minOut);
 
@@ -533,7 +533,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     function _bridge(bytes memory data, uint256 assets) private {
         _operation = keccak256(abi.encodePacked(assets, keccak256(data)));
         IMorphoBlue(morpho).flashLoan(usdc, assets, data);
-        if (_operation != bytes32(0)) revert CallbackNotExecuted();
+        if (_operation != bytes32(0)) revert InvalidCallback();
     }
 
     /* RUN PATHS */
@@ -619,8 +619,8 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     /// loss tolerance: all of it when `usd3Out` is false; with `usd3Out`, only `repayAssets` of USDC through USD3's
     /// `withdraw`, and nothing at all when `repayAssets` is zero, so USD3's withdraw limit is then never read. Before
     /// the withdraw the USD3 it needs (`previewWithdraw`) must not exceed what this redemption produced, and after it
-    /// the USD3 actually burned is held to the same bound, so donated USD3 is never spent (`Usd3BelowRepayment` for
-    /// both). Returns the USDC received. Every amount is a measured balance change.
+    /// the USD3 actually burned is held to the same bound, so donated USD3 is never spent (`RedemptionBelowRepayment`
+    /// in USD3 for both). Returns the USDC received. Every amount is a measured balance change.
     function _redeemCollateral(uint256 shares, bool usd3Out, uint256 repayAssets)
         private
         returns (uint256 usdcReceived)
@@ -634,10 +634,10 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         uint256 usdcBefore = IERC20(usdc).balanceOf(address(this));
         if (usd3Out) {
             uint256 required = IERC4626(usd3).previewWithdraw(repayAssets);
-            if (required > usd3Received) revert Usd3BelowRepayment(usd3Received, required);
+            if (required > usd3Received) revert RedemptionBelowRepayment(usd3, usd3Received, required);
             ILCCRedeemableVault(usd3).withdraw(repayAssets, address(this), address(this), 0);
             uint256 usd3Spent = usd3AfterRedeem - IERC20(usd3).balanceOf(address(this));
-            if (usd3Spent > usd3Received) revert Usd3BelowRepayment(usd3Received, usd3Spent);
+            if (usd3Spent > usd3Received) revert RedemptionBelowRepayment(usd3, usd3Received, usd3Spent);
         } else {
             ILCCRedeemableVault(usd3).redeem(usd3Received, address(this), address(this), 0);
         }
@@ -657,7 +657,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         uint256 released = marginAfterFund - marginBefore;
         uint256 burned = _withdrawUsdc(op.marginAsset, op.marginAssets, op.user, marginAfterFund);
         if (burned > op.maxMarginShares) revert MarginSharesExceedMax(burned, op.maxMarginShares);
-        if (burned > released) revert MarginExceedsReleased(burned, released);
+        if (burned > released) revert MarginSharesUnavailable(burned, released);
     }
 
     /// @dev Withdraws exactly `marginAssets` of USDC to the helper from its own margin-asset shares, whose balance is
@@ -668,14 +668,14 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         returns (uint256)
     {
         uint256 burned = _withdrawUsdc(op.marginAsset, op.marginAssets, address(this), marginBefore + awardReceived);
-        if (burned > awardReceived) revert MarginExceedsAward(burned, awardReceived);
+        if (burned > awardReceived) revert MarginSharesUnavailable(burned, awardReceived);
         return awardReceived - burned;
     }
 
     /// @dev Withdraws exactly `assets` of USDC to the helper from `owner`'s shares of the ERC-4626 `marginAsset`,
-    /// requires the helper's USDC balance to rise by exactly `assets` (`MarginReceiptMismatch`), and returns the shares
-    /// burned, measured from `sharesBefore`, `owner`'s balance the caller already read, to its balance after the
-    /// withdrawal.
+    /// requires the helper's USDC balance to end exactly `assets` above where it started (`UnexpectedBalance`, with
+    /// both balances absolute), and returns the shares burned, measured from `sharesBefore`, `owner`'s balance the
+    /// caller already read, to its balance after the withdrawal.
     function _withdrawUsdc(address marginAsset, uint256 assets, address owner, uint256 sharesBefore)
         private
         returns (uint256 burned)
@@ -685,8 +685,8 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         IERC4626(marginAsset).withdraw(assets, address(this), owner);
 
         burned = sharesBefore - IERC20(marginAsset).balanceOf(owner);
-        uint256 received = IERC20(usdc).balanceOf(address(this)) - usdcBefore;
-        if (received != assets) revert MarginReceiptMismatch(received, assets);
+        uint256 usdcAfter = IERC20(usdc).balanceOf(address(this));
+        if (usdcAfter != usdcBefore + assets) revert UnexpectedBalance(usdc, usdcAfter, usdcBefore + assets);
     }
 
     /* COOLDOWN BOOK */
@@ -823,8 +823,10 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         return IMorphoBlue(morpho).isAuthorized(msg.sender, address(this));
     }
 
-    /// @dev Applies the caller's enabling Morpho authorization of this helper. A submission that reverts (for example
-    /// because a third party already submitted it) is tolerated when the authorization is then in place.
+    /// @dev Applies the caller's enabling Morpho authorization of this helper. A payload whose authorizer is not the
+    /// caller, whose authorized address is not this helper, or that does not enable reverts `InvalidRequest`. A
+    /// submission that reverts (for example because a third party already submitted it) is tolerated when the
+    /// authorization is then in place, and reverts `NotAuthorized` otherwise.
     function _applyAuthorization(
         IMorphoBlue.Authorization calldata authorization,
         IMorphoBlue.Signature calldata signature
@@ -832,9 +834,9 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         if (
             authorization.authorizer != msg.sender || authorization.authorized != address(this)
                 || !authorization.isAuthorized
-        ) revert InvalidAuthorization();
+        ) revert InvalidRequest();
         try IMorphoBlue(morpho).setAuthorizationWithSig(authorization, signature) {} catch {}
-        if (!_isAuthorized()) revert AuthorizationFailed();
+        if (!_isAuthorized()) revert NotAuthorized();
     }
 
     /// @dev Submits the permit (see `PermitSignature`), tolerating a revert such as a third party's prior submission,
@@ -869,18 +871,18 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         if (!ILCCVaultFactory(factory).isVault(vault)) revert UnregisteredVault();
         ILCCVault.AssetConfig memory config = ILCCVault(vault).assetConfig();
         if (config.fundingAsset != usdc || config.usd3 != usd3 || config.notificationVault != usd3l) {
-            revert VaultAssetMismatch();
+            revert InvalidConfiguration();
         }
-        if (config.marginAsset == usd3l) revert MarginAssetIsCollateral();
+        if (config.marginAsset == usd3l) revert UnsupportedMarginAsset(config.marginAsset);
         return config.marginAsset;
     }
 
     /// @dev Requires `marginAsset` to be an ERC-4626 vault over USDC; checked only on entries that source margin.
     function _requireUsdcVault(address marginAsset) private view {
-        if (marginAsset.code.length == 0) revert MarginAssetNotUsdcVault(marginAsset);
+        if (marginAsset.code.length == 0) revert UnsupportedMarginAsset(marginAsset);
         try IERC4626(marginAsset).asset() returns (address asset) {
             if (asset == usdc) return;
         } catch {}
-        revert MarginAssetNotUsdcVault(marginAsset);
+        revert UnsupportedMarginAsset(marginAsset);
     }
 }
