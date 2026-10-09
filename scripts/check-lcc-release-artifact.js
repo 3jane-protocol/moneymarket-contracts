@@ -41,6 +41,8 @@ const LCC_VAULT_SETTINGS = {
   optimizerRuns: EXPECTED_OPTIMIZER_RUNS,
   bytecodeHash: "none",
 };
+// LCCLeveragedFundHelper shares the vault's compiler settings, optimizer-runs pin, and runtime-size budget.
+const LEVERAGED_FUND_HELPER_SETTINGS = LCC_VAULT_SETTINGS;
 const NOTIFICATION_VAULT_SETTINGS = {
   compiler: EXPECTED_COMPILER,
   evmVersion: "shanghai",
@@ -169,6 +171,14 @@ function resolveArtifactBySettings(outputDirectory, sourceName, contractName, ex
 function assertArtifactSettings(contractName, metadata, expected) {
   const differences = artifactSettingsDifferences(metadata, expected);
   if (differences.length !== 0) fail(`${contractName}: ${differences.join("; ")}`);
+}
+
+function runtimeSize(contractName, artifact) {
+  const bytecode = artifact.deployedBytecode?.object;
+  if (typeof bytecode !== "string" || !bytecode.startsWith("0x") || bytecode.length % 2 !== 0) {
+    fail(`${contractName} deployed bytecode is malformed`);
+  }
+  return (bytecode.length - 2) / 2;
 }
 
 function canonicalType(typeId, types, ancestry = new Set()) {
@@ -481,14 +491,9 @@ function main() {
   const artifactPath = lccVaultResolution.artifactPath;
   const artifact = lccVaultResolution.artifact;
   const metadata = artifact.metadata;
-  const bytecode = artifact.deployedBytecode?.object;
 
   assertArtifactSettings("LCCVault", metadata, LCC_VAULT_SETTINGS);
-  if (typeof bytecode !== "string" || !bytecode.startsWith("0x") || bytecode.length % 2 !== 0) {
-    fail("deployed bytecode is malformed");
-  }
-
-  const runtimeBytes = (bytecode.length - 2) / 2;
+  const runtimeBytes = runtimeSize("LCCVault", artifact);
   if (runtimeBytes > MAX_RUNTIME_BYTES) {
     fail(`runtime is ${runtimeBytes} bytes; maximum is ${MAX_RUNTIME_BYTES}`);
   }
@@ -539,11 +544,32 @@ function main() {
     NOTIFICATION_VAULT_SETTINGS,
   );
 
+  const helperResolution = resolveArtifactBySettings(
+    outputDirectory,
+    "LCCLeveragedFundHelper.sol",
+    "LCCLeveragedFundHelper",
+    LEVERAGED_FUND_HELPER_SETTINGS,
+  );
+  assertArtifactSettings(
+    "LCCLeveragedFundHelper",
+    helperResolution.artifact.metadata,
+    LEVERAGED_FUND_HELPER_SETTINGS,
+  );
+  const helperRuntimeBytes = runtimeSize("LCCLeveragedFundHelper", helperResolution.artifact);
+  if (helperRuntimeBytes > MAX_RUNTIME_BYTES) {
+    fail(`LCCLeveragedFundHelper runtime is ${helperRuntimeBytes} bytes; maximum is ${MAX_RUNTIME_BYTES}`);
+  }
+
   console.log(
     `LCCVault release artifact: ${runtimeBytes} bytes, ${EIP_170_LIMIT - runtimeBytes} bytes below EIP-170, ` +
       `${EXPECTED_OPTIMIZER_RUNS} runs; LCCAuctionLib, LCCConfigLib, and LCCExitLib link references present; ` +
       `storage layout and external ABI match reviewer-controlled baselines; ` +
       `LCCVault and NotificationVault artifacts match their canonical compiler, EVM, via-IR, optimizer, and metadata settings`,
+  );
+  console.log(
+    `LCCLeveragedFundHelper release artifact: ${helperRuntimeBytes} bytes, ` +
+      `${EIP_170_LIMIT - helperRuntimeBytes} bytes below EIP-170 (budget ${MAX_RUNTIME_BYTES}), ` +
+      `${EXPECTED_OPTIMIZER_RUNS} runs; matches its canonical compiler, EVM, via-IR, optimizer, and metadata settings`,
   );
 }
 

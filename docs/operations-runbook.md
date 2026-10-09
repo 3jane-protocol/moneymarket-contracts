@@ -431,6 +431,56 @@ Funding is all-or-nothing. A revert records no partial payment, and an account s
 slash-eligible for its entire remaining margin, not only the called fraction. Re-read `obligationOf` and
 `USD3.previewMint(1)` immediately before submission rather than funding from an illustrative estimate.
 
+## LCC leveraged funding helper liquidity preflight
+
+`LCCLeveragedFundHelper` bridges `borrowAssets + marginAssets` with a Morpho Blue flash loan and then borrows
+`borrowAssets` from the caller's market, so during a flash-loan entry the canonical singleton must physically hold
+`2 * borrowAssets + marginAssets` of USDC. This applies to funding entries in the Funding phase and to `takeAuction`
+fills in the Closed phase, where the amounts are the take's scaled `borrowAssets` and `marginAssets` (each quoted at
+`maxFill` and scaled by `fill / maxFill`; `TakeParams` states the rounding and dust rule).
+Before submitting a levered or margin entry, integrators should check:
+
+- `USDC.balanceOf(morpho) >= 2 * borrowAssets + marginAssets`. A shortfall reverts inside USDC's transfer, either on
+  the flash loan or on the borrow's transfer after the flash loan has drawn the balance down (the real token's
+  transfer-amount-exceeds-balance revert).
+- The market's available liquidity after interest accrual, `totalSupplyAssets - totalBorrowAssets`, covers
+  `borrowAssets`. A shortfall reverts Morpho's `borrow` with `insufficient liquidity`.
+- When `marginAssets` is nonzero, the margin asset's `maxWithdraw(user)` covers it (for a take, the award the helper
+  receives must cover it; preview the award at the fill). waEthUSDC withdrawals draw on Aave USDC liquidity and revert
+  when the reserve cannot pay; resubmit with `marginAssets = 0` and the full contribution in USDC.
+
+An entry with `borrowAssets == 0` and `marginAssets == 0`, or a take whose scaled borrow and margin are both zero, takes
+no flash loan and needs none of these checks. Any of these reverts leaves the obligation unfunded, so resubmit before
+the funding deadline with a smaller borrow, no margin, or a plain `fundCall`; a failed take leaves the auction
+unchanged, so resubmit before the Closed window ends with a smaller borrow, no margin, or a direct vault
+`takeAuction`. A take syncs the vault before sizing the fill: through `finalizeEpochSlash` of the live auction's epoch
+when a slot is already live, otherwise through `materializeAccount(helper)`, which can kick an untouched auction and
+leaves an inert helper account in the vault. That account holds no margin or commitment and needs no operator action.
+
+## Granting and revoking the leveraged helper's USD3l cooldown bypass
+
+`LCCLeveragedFundHelper.unwind` redeems a funder's withdrawn USD3l collateral without the 35-day vault cooldown, which
+works only while USD3l management has called `NotificationVault.setCooldownBypass(helper, true)`. The helper enforces
+its own per-user cooldowns instead: each funding or take entry through the helper opens one for the collateral it
+supplied, and an unwind may redeem at most the caller's matured cooldown shares. Unwinds emit no per-cooldown event; to
+answer a user's question about matured shares, read `cooldowns(user, marketId)` together with USD3l's live
+`cooldownDuration`, or `maxUnwindable(user, marketId)` for the amount the gate and live collateral allow. The bypass is
+owner-keyed to the helper address and grants no allowance over anyone else's shares.
+
+- Grant: a management transaction `setCooldownBypass(helper, true)` after verifying the deployed helper's runtime code.
+  A bypass transition clears any vault cooldown the account holds; the helper never holds one, so nothing is lost.
+- Revoke: `setCooldownBypass(helper, false)`. Every `unwind` then reverts at the USD3l redemption (the helper has no
+  vault cooldown, so its USD3l withdraw limit is zero) and rolls back atomically with the user's helper cooldowns intact. Users
+  still exit the ordinary way: repay the Morpho debt with their own USDC, `withdrawCollateral`, start a USD3l
+  `startCooldown`, and redeem after the vault's cooldown. Re-granting restores unwind with the same cooldowns.
+- While USD3l is shut down or its cooldown is zero, the helper waives its cooldown gate exactly as the vault waives its
+  own cooldown.
+
+Unwinds also revert, without consuming cooldowns, whenever USD3's own withdraw limit cannot cover the redemption
+(pending loss, waUSDC pause, ring fence, redemption floors). With `usd3Out` only the repayment is converted to USDC, so
+the limit must cover just that slice, and a `usd3Out` unwind with nothing to repay never reads it; the caller then
+receives USD3, which has no cooldown.
+
 ## LCC Closed-window delivery or oracle outage
 
 **Trigger.** An LCC shortfall auction is in its `Closed` phase and either the margin oracle or the USD3/USD3l delivery path is unavailable long enough that fills cannot execute.
