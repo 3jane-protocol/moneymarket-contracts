@@ -81,8 +81,3 @@ interface IMorphoBlue {
 interface IMorphoBlueFlashLoanCallback {
     function onMorphoFlashLoan(uint256 assets, bytes calldata data) external;
 }
-
-/// @notice Morpho Blue market oracle: price of one collateral unit in loan units, scaled by 1e36.
-interface IMorphoBlueOracle {
-    function price() external view returns (uint256);
-}

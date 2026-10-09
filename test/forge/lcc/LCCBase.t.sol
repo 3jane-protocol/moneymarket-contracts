@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.22;
 
-import {Test} from "../../../lib/forge-std/src/Test.sol";
 import {Vm} from "../../../lib/forge-std/src/Vm.sol";
 import {BeaconProxy} from "../../../lib/openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
 import {UpgradeableBeacon} from "../../../lib/openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
@@ -21,6 +20,8 @@ import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ORACLE_PRICE_SCALE, BPS} from "../../../src/libraries/ConstantsLib.sol";
 import {IOracle} from "../../../src/interfaces/IOracle.sol";
 import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
+
+import {LCCLogCounter} from "./LCCLogCounter.sol";
 
 contract LCCMockToken is ERC20 {
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
@@ -194,7 +195,7 @@ contract LCCDepositRouterMock {
     }
 }
 
-contract LCCBase is Test, ILCCVaultFactory {
+contract LCCBase is LCCLogCounter, ILCCVaultFactory {
     uint256 internal constant START = 1_000;
     uint256 internal constant EPOCH = 100;
     uint256 internal constant NORMAL = 40;
@@ -361,6 +362,10 @@ contract LCCBase is Test, ILCCVaultFactory {
 
     function isGuardian(address account) external view override returns (bool) {
         return account == guardian;
+    }
+
+    function isVault(address) external pure override returns (bool) {
+        return false;
     }
 
     function isBouncer(address account) external view override returns (bool) {
@@ -532,14 +537,6 @@ contract LCCBase is Test, ILCCVaultFactory {
 
     function _finishFundingAtEpoch(uint256 epoch) internal {
         vm.warp(START + EPOCH * epoch + NORMAL + PRE_CALL + FUNDING);
-    }
-
-    /// @dev Number of recorded logs from `emitter` whose first topic is `topic`; consumes the recorded logs.
-    function _countLogs(address emitter, bytes32 topic) internal returns (uint256 count) {
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].emitter == emitter && logs[i].topics[0] == topic) ++count;
-        }
     }
 
     function _syncAs(address user) internal {

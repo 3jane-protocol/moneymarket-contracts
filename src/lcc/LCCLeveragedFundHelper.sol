@@ -8,56 +8,26 @@ import {IERC4626} from "../../lib/openzeppelin/contracts/interfaces/IERC4626.sol
 import {Math} from "../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuardTransient} from "../../lib/openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
+import {IOracle} from "../interfaces/IOracle.sol";
 import {ORACLE_PRICE_SCALE} from "../libraries/ConstantsLib.sol";
 import {MathLib} from "../libraries/MathLib.sol";
 import {SharesMathLib} from "../libraries/SharesMathLib.sol";
-import {LCCVaultFactory} from "./LCCVaultFactory.sol";
 import {ILCCLeveragedFundHelper} from "./interfaces/ILCCLeveragedFundHelper.sol";
 import {ILCCVault} from "./interfaces/ILCCVault.sol";
+import {ILCCVaultFactory} from "./interfaces/ILCCVaultFactory.sol";
 import {LCCAuctionLib} from "./libraries/LCCAuctionLib.sol";
-import {IMorphoBlue, IMorphoBlueOracle, IMorphoBlueFlashLoanCallback} from "./interfaces/IMorphoBlue.sol";
+import {IMorphoBlue, IMorphoBlueFlashLoanCallback} from "./interfaces/IMorphoBlue.sol";
 import {ILCCNotificationVault, ILCCRedeemableVault} from "./interfaces/ILCCNotificationVault.sol";
 
 /// @title LCCLeveragedFundHelper
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
-/// @notice Levered LCC positions on the pinned canonical Morpho Blue singleton, in three lifecycles: `fund` pays the
-/// caller's capital-call obligation with amortizing push funding, `takeAuction` fills an LCC vault's live shortfall
-/// auction for the caller, and `unwind` closes all or part of the resulting position. Both entries supply the USD3l
-/// the vault delivers as the caller's collateral in a caller-chosen market lending USDC against USD3l, and can borrow
-/// part of the USDC paid there.
-/// @dev Common shape. The LCC beneficiary, the Morpho `onBehalf`, and the cooldown owner are always msg.sender. An
-/// operation takes a Morpho flash loan only when the USDC it bridges is nonzero. At most one operation is in flight:
-/// its hash is held in transient storage, and the flash-loan callback runs only for that hash. Collateral is measured
-/// as balance changes, never previewed. Only an entry that borrows reads the market oracle, and the caller's whole
-/// position in that market must then be within the caller's LTV bound.
-///
-/// Fund. The helper pulls the caller's USDC contribution, bridges `borrowAssets + marginAssets`, pays the vault
-/// through `fundCall(address)` (which releases margin to the caller), measures the USD3l the caller received, requires
-/// it to reach `minCollateral`, supplies up to `maxCollateral` of it (any excess stays in the caller's wallet),
-/// withdraws `marginAssets` of USDC from the caller's released ERC-4626-over-USDC margin-asset shares, and borrows
-/// `borrowAssets`; those two repay the flash loan.
-///
-/// Take. The helper syncs the vault, sizes the fill as `min(maxFill, remaining shortfall)`, scales every quoted amount
-/// to the fill, pulls the scaled contribution, bridges the scaled borrow and award-sourced USDC, and fills through the
-/// vault's `takeAuction` as the filler itself. It supplies all the USD3l delivered to it as the caller's collateral,
-/// withdraws the scaled `marginAssets` of USDC from the margin award (ERC-4626-over-USDC margin assets only), forwards
-/// the rest of the award, and borrows the scaled borrow. Its USD3l balance must end unchanged. Vaults whose margin
-/// asset is USDC or USD3 are not served by takes.
-///
-/// Cooldown book. Every fund or take entry opens a cooldown for the collateral it supplied, at most `MAX_COOLDOWNS`
-/// per user and market; a full book first merges its two oldest cooldowns (`CooldownsMerged`).
-///
-/// Unwind. USD3l management grants this helper the USD3l cooldown bypass; the helper uses it only for collateral it
-/// withdraws from the caller's own position, and only up to the caller's matured cooldowns, so a bypass redemption for
-/// a user never exceeds the USD3l the helper supplied for that user, each at least the cooldown after it was supplied.
-/// Accepted residual: a cooldown is not reduced when the collateral it covered leaves the position directly or by
-/// liquidation, so this is weaker than the USD3l vault's own transfer lock. The gate is waived while USD3l is shut down
-/// or its cooldown is zero, mirroring the vault's own waivers.
-///
-/// Surface and state. The helper holds no factory role, never deposits into USD3 itself, and has no owner, rescue,
-/// receiver-choice, delegated-beneficiary, arbitrary-call, or upgrade surface. Its state is the per-user cooldown book,
-/// the transient in-flight operation, and the reentrancy lock.
+/// @notice Levered LCC funding, shortfall-auction takes, and unwinds on the pinned canonical Morpho Blue singleton.
+/// `ILCCLeveragedFundHelper` is the behaviour specification; `src/lcc/README.md` is the auditor narrative.
+/// @dev Layout: entrypoints size and validate a request with view reads (a take also syncs the vault), then
+/// `_executeFund`, `takeAuction`, or `_executeUnwind` runs it directly or through `_bridge`, whose flash-loan
+/// callback dispatches on the payload's `OperationKind` to `_runFund`, `_runTake`, or `_runUnwind`. Persistent state is
+/// the cooldown book; the in-flight operation hash and the reentrancy lock are transient.
 contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoanCallback, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
     using MathLib for uint256;
@@ -86,6 +56,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         IMorphoBlue.MarketParams market;
         uint256 obligation;
         uint256 fundingAmount;
+        uint256 contribution;
         uint256 borrowAssets;
         uint256 marginAssets;
         uint256 maxMarginShares;
@@ -100,6 +71,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         address marginAsset;
         IMorphoBlue.MarketParams market;
         uint256 fill;
+        uint256 contribution;
         uint256 borrowAssets;
         uint256 marginAssets;
         uint256 minMarginAward;
@@ -139,6 +111,10 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
 
     /* CONSTRUCTOR */
 
+    /// @notice Grants Morpho standing maximal USD3l and USDC allowances, used for collateral supply, flash-loan
+    /// repayment, and debt repayment. The standing USDC allowance means Morpho's pulls are not capped by an exact
+    /// approval: the helper relies on canonical Morpho pulling exactly the repay and flash amounts, and an unwind's
+    /// end-of-entry USDC balance check catches any excess.
     /// @param morpho_ Canonical Morpho Blue singleton.
     /// @param factory_ LCC vault factory whose registered vaults may be funded.
     /// @param usd3l_ USD3l, the notification vault wrapping USD3 and the collateral token of every market served. USD3
@@ -159,29 +135,36 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         usd3 = usd3_;
         usd3l = usd3l_;
 
-        // Morpho pulls collateral only from its msg.sender, and the helper holds no USD3l between transactions, so a
-        // standing allowance exposes nothing.
+        // Morpho pulls only from its msg.sender, and the helper holds no USD3l or USDC of its own between
+        // transactions, so standing allowances expose nothing.
         IERC20(usd3l_).forceApprove(morpho_, type(uint256).max);
+        IERC20(usdc_).forceApprove(morpho_, type(uint256).max);
+    }
+
+    /// @dev Requires the helper's USD3l balance to end the entrypoint where it started (`Usd3lRetained`): the helper is
+    /// a bypassed USD3l owner, so it must never keep USD3l it handled, and donated USD3l is never touched.
+    modifier keepsUsd3lBalance() {
+        uint256 usd3lBefore = _usd3lBalance();
+        _;
+        _requireUsd3lBalance(usd3lBefore);
     }
 
     /* FUND */
 
     /// @inheritdoc ILCCLeveragedFundHelper
-    /// @dev Checks the caller's standing USDC allowance (when the contribution is nonzero), USD3l allowance (against
-    /// `maxCollateral`), and margin-asset allowance (against `maxMarginShares`, when `marginAssets` is nonzero) after
-    /// the fail-fast checks and before any token moves, reverting with `InsufficientAllowance`.
+    /// @dev The allowance checks follow sizing, which makes only view calls, and precede any token movement.
     function fund(FundParams calldata params)
         external
         nonReentrant
+        keepsUsd3lBalance
         returns (uint256 obligation, uint256 fundingAmount, uint256 collateral)
     {
         if (_needsAuthorization(params.borrowAssets)) revert NotAuthorized();
         FundOperation memory op = _sizeFund(params);
-        uint256 contribution = _fundContribution(op);
-        if (contribution != 0) _requireAllowance(usdc, contribution, "");
+        _requireContributionAllowance(op.contribution);
         _requireAllowance(usd3l, op.maxCollateral, "");
         if (op.marginAssets != 0) _requireAllowance(op.marginAsset, op.maxMarginShares, "");
-        return _executeFund(op, params.maxEntryLtv);
+        return (op.obligation, op.fundingAmount, _executeFund(op, _marketId(op.market), params.maxEntryLtv));
     }
 
     /// @inheritdoc ILCCLeveragedFundHelper
@@ -197,16 +180,15 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         PermitSignature calldata marginPermit,
         IMorphoBlue.Authorization calldata authorization,
         IMorphoBlue.Signature calldata authorizationSignature
-    ) external nonReentrant returns (uint256 obligation, uint256 fundingAmount, uint256 collateral) {
+    ) external nonReentrant keepsUsd3lBalance returns (uint256 obligation, uint256 fundingAmount, uint256 collateral) {
         FundOperation memory op = _sizeFund(params);
 
-        uint256 contribution = _fundContribution(op);
-        if (contribution != 0) _applyPermit(usdc, usdcPermit, contribution);
+        if (op.contribution != 0) _applyPermit(usdc, usdcPermit, op.contribution);
         _applyPermit(usd3l, usd3lPermit, op.maxCollateral);
         if (op.marginAssets != 0) _applyPermit(op.marginAsset, marginPermit, op.maxMarginShares);
         if (_needsAuthorization(op.borrowAssets)) _applyAuthorization(authorization, authorizationSignature);
 
-        return _executeFund(op, params.maxEntryLtv);
+        return (op.obligation, op.fundingAmount, _executeFund(op, _marketId(op.market), params.maxEntryLtv));
     }
 
     /* TAKE */
@@ -217,15 +199,30 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     function takeAuction(TakeParams calldata params)
         external
         nonReentrant
+        keepsUsd3lBalance
         returns (uint256 filled, uint256 collateral)
     {
-        if (_needsAuthorization(params.borrowAssets)) {
-            revert NotAuthorized();
-        }
+        if (_needsAuthorization(params.borrowAssets)) revert NotAuthorized();
         TakeOperation memory op = _sizeTake(params);
-        bytes32 marketId = _marketId(params.market);
-        collateral = _executeTake(op, marketId, params.maxEntryLtv);
-        emit AuctionTaken(op.user, op.vault, marketId, op.fill, collateral, op.borrowAssets, op.marginAssets);
+        _requireContributionAllowance(op.contribution);
+        bytes32 id = _marketId(op.market);
+        uint256 flashAssets = op.borrowAssets + op.marginAssets;
+        if (flashAssets == 0) {
+            _pullContribution(op.contribution);
+            collateral = _runTake(op);
+            _startCooldown(msg.sender, id, collateral);
+        } else {
+            collateral = _executeBridgedEntry(
+                abi.encode(OperationKind.Take, op),
+                flashAssets,
+                op.contribution,
+                op.market,
+                id,
+                op.borrowAssets != 0,
+                params.maxEntryLtv
+            );
+        }
+        emit AuctionTaken(op.user, op.vault, id, op.fill, collateral, op.borrowAssets, op.marginAssets);
         return (op.fill, collateral);
     }
 
@@ -235,7 +232,8 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     function unwind(UnwindParams calldata params)
         external
         nonReentrant
-        returns (uint256 repaidAssets, uint256 sharesRedeemed, address outToken, uint256 amountOut)
+        keepsUsd3lBalance
+        returns (uint256 repaidAssets, uint256 amountOut)
     {
         if (!_isAuthorized()) revert NotAuthorized();
         return _executeUnwind(params);
@@ -246,11 +244,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         UnwindParams calldata params,
         IMorphoBlue.Authorization calldata authorization,
         IMorphoBlue.Signature calldata authorizationSignature
-    )
-        external
-        nonReentrant
-        returns (uint256 repaidAssets, uint256 sharesRedeemed, address outToken, uint256 amountOut)
-    {
+    ) external nonReentrant keepsUsd3lBalance returns (uint256 repaidAssets, uint256 amountOut) {
         if (!_isAuthorized()) {
             _applyAuthorization(authorization, authorizationSignature);
         }
@@ -260,32 +254,28 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     /* FLASH-LOAN CALLBACK */
 
     /// @inheritdoc IMorphoBlueFlashLoanCallback
-    /// @dev Accepted only from Morpho while this helper's own `flashLoan` call is in flight, and only for the exact
-    /// operation recorded for it and the amount it bridges (`borrowAssets + marginAssets` for funding and takes, the
-    /// repayment for an unwind). The record is cleared before any external call.
+    /// @dev Accepted only from Morpho while this helper's own `flashLoan` call is in flight, and only when the
+    /// loaned `assets` and `data` hash to the operation recorded for it, so the amount is bound with the payload. The
+    /// record is cleared before any external call. Morpho pulls the repayment under the standing USDC allowance.
     function onMorphoFlashLoan(uint256 assets, bytes calldata data) external override {
         if (msg.sender != morpho) revert NotMorpho();
         bytes32 expected = _operation;
         if (expected == bytes32(0)) revert NoOperationInFlight();
-        if (keccak256(data) != expected) revert OperationMismatch();
+        if (keccak256(abi.encodePacked(assets, keccak256(data))) != expected) revert OperationMismatch();
         _operation = bytes32(0);
 
         OperationKind kind = abi.decode(data[:32], (OperationKind));
         if (kind == OperationKind.Fund) {
             (, FundOperation memory op) = abi.decode(data, (OperationKind, FundOperation));
-            if (assets != op.borrowAssets + op.marginAssets) revert OperationMismatch();
             _runFund(op);
         } else if (kind == OperationKind.Unwind) {
             (, UnwindOperation memory op) = abi.decode(data, (OperationKind, UnwindOperation));
-            if (assets != op.repayAssets) revert OperationMismatch();
             uint256 received = _runUnwind(op);
             if (received < assets) revert UnwindProceedsBelowRepayment(received, assets);
         } else {
             (, TakeOperation memory op) = abi.decode(data, (OperationKind, TakeOperation));
-            if (assets != op.borrowAssets + op.marginAssets) revert OperationMismatch();
             _runTake(op);
         }
-        IERC20(usdc).forceApprove(morpho, assets);
     }
 
     /* VIEWS */
@@ -296,16 +286,22 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     }
 
     /// @inheritdoc ILCCLeveragedFundHelper
-    function maturedShares(address user, bytes32 marketId) external view returns (uint256) {
-        return _maturedShares(user, marketId, ILCCNotificationVault(usd3l).cooldownDuration());
-    }
-
-    /// @inheritdoc ILCCLeveragedFundHelper
     function maxUnwindable(address user, bytes32 marketId) external view returns (uint256) {
         uint256 collateral = _positionCollateral(marketId, user);
         uint256 liveDuration = ILCCNotificationVault(usd3l).cooldownDuration();
         if (_cooldownWaived(liveDuration)) return collateral;
         return Math.min(collateral, _maturedShares(user, marketId, liveDuration));
+    }
+
+    /// @dev The helper's own USD3l balance.
+    function _usd3lBalance() private view returns (uint256) {
+        return IERC20(usd3l).balanceOf(address(this));
+    }
+
+    /// @dev Reverts with `Usd3lRetained` unless the helper's USD3l balance equals `expected`.
+    function _requireUsd3lBalance(uint256 expected) private view {
+        uint256 balance = _usd3lBalance();
+        if (balance != expected) revert Usd3lRetained(balance, expected);
     }
 
     /* REQUEST VALIDATION */
@@ -361,16 +357,13 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         _requireSplit(params.borrowAssets, params.marginAssets, op.fundingAmount);
         op.borrowAssets = params.borrowAssets;
 
-        uint256 contribution = _fundContribution(op);
-        if (contribution > params.maxContribution) revert ContributionExceedsMax(contribution, params.maxContribution);
+        op.contribution = op.fundingAmount - op.borrowAssets - op.marginAssets;
+        if (op.contribution > params.maxContribution) {
+            revert ContributionExceedsMax(op.contribution, params.maxContribution);
+        }
 
         op.minCollateral = params.minCollateral;
         op.maxCollateral = params.maxCollateral;
-    }
-
-    /// @dev USDC pulled from the caller: the funding amount less the borrowed and margin-sourced parts.
-    function _fundContribution(FundOperation memory op) private pure returns (uint256) {
-        return op.fundingAmount - op.borrowAssets - op.marginAssets;
     }
 
     /// @dev Validates a take, syncs the vault (see `takeAuction`), sizes the fill, and scales it as `TakeParams` says.
@@ -399,10 +392,10 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         op.marginAsset = marginAsset;
         op.market = params.market;
         op.fill = fill;
-        uint256 contribution = Math.mulDiv(maxFill - params.borrowAssets - params.marginAssets, fill, maxFill);
+        op.contribution = Math.mulDiv(maxFill - params.borrowAssets - params.marginAssets, fill, maxFill);
         op.marginAssets = Math.mulDiv(params.marginAssets, fill, maxFill);
-        if (params.borrowAssets != 0) op.borrowAssets = fill - contribution - op.marginAssets;
-        else if (params.marginAssets != 0) op.marginAssets = fill - contribution;
+        if (params.borrowAssets != 0) op.borrowAssets = fill - op.contribution - op.marginAssets;
+        else if (params.marginAssets != 0) op.marginAssets = fill - op.contribution;
         op.minMarginAward = Math.mulDiv(params.minMarginAward, fill, maxFill);
         op.minCollateral = Math.max(1, Math.mulDiv(params.minCollateral, fill, maxFill));
     }
@@ -434,70 +427,56 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
 
     /* EXECUTION & FLASH BRIDGE */
 
-    /// @dev Pulls the contribution, runs the funding directly or through the flash bridge, and opens its cooldown.
-    function _executeFund(FundOperation memory op, uint256 maxEntryLtv)
-        private
-        returns (uint256 obligation, uint256 fundingAmount, uint256 collateral)
-    {
-        uint256 contribution = _fundContribution(op);
-        if (contribution != 0) IERC20(usdc).safeTransferFrom(msg.sender, address(this), contribution);
-
-        uint256 flashAssets = op.borrowAssets + op.marginAssets;
-        bytes32 id = _marketId(op.market);
-        if (flashAssets == 0) {
-            collateral = _runFund(op);
-        } else {
-            collateral = _bridgeEntry(
-                abi.encode(OperationKind.Fund, op),
-                flashAssets,
-                op.market,
-                id,
-                op.user,
-                op.borrowAssets != 0,
-                maxEntryLtv
-            );
-        }
-        _startCooldown(op.user, id, collateral);
-        return (op.obligation, op.fundingAmount, collateral);
-    }
-
-    /// @dev Checks the caller's USDC allowance against the scaled contribution and pulls it, runs the take directly or
-    /// through the flash bridge, and opens its cooldown. Returns the collateral supplied.
-    function _executeTake(TakeOperation memory op, bytes32 marketId, uint256 maxEntryLtv)
+    /// @dev Runs a sized funding in market `id`, directly through `_runFund` when it bridges nothing and otherwise
+    /// through `_executeBridgedEntry`, and returns the collateral supplied.
+    function _executeFund(FundOperation memory op, bytes32 id, uint256 maxEntryLtv)
         private
         returns (uint256 collateral)
     {
-        uint256 contribution = op.fill - op.borrowAssets - op.marginAssets;
-        if (contribution != 0) {
-            _requireAllowance(usdc, contribution, "");
-            IERC20(usdc).safeTransferFrom(msg.sender, address(this), contribution);
-        }
-
         uint256 flashAssets = op.borrowAssets + op.marginAssets;
-        if (flashAssets == 0) {
-            collateral = _runTake(op);
-        } else {
-            collateral = _bridgeEntry(
-                abi.encode(OperationKind.Take, op),
+        if (flashAssets != 0) {
+            return _executeBridgedEntry(
+                abi.encode(OperationKind.Fund, op),
                 flashAssets,
+                op.contribution,
                 op.market,
-                marketId,
-                op.user,
+                id,
                 op.borrowAssets != 0,
                 maxEntryLtv
             );
         }
-        _startCooldown(op.user, marketId, collateral);
+        _pullContribution(op.contribution);
+        collateral = _runFund(op);
+        _startCooldown(msg.sender, id, collateral);
+    }
+
+    /// @dev The bridged half of a funding or take entry, shared by both: pulls the caller's `contribution`, runs the
+    /// entry's `payload` inside a flash loan of `flashAssets` (`_bridgeEntry`), and opens the cooldown for the
+    /// collateral supplied in market `id`.
+    function _executeBridgedEntry(
+        bytes memory payload,
+        uint256 flashAssets,
+        uint256 contribution,
+        IMorphoBlue.MarketParams memory market,
+        bytes32 id,
+        bool borrowed,
+        uint256 maxEntryLtv
+    ) private returns (uint256 collateral) {
+        _pullContribution(contribution);
+        collateral = _bridgeEntry(payload, flashAssets, market, id, borrowed, maxEntryLtv);
+        _startCooldown(msg.sender, id, collateral);
+    }
+
+    /// @dev Pulls a nonzero USDC `contribution` from the caller to the helper.
+    function _pullContribution(uint256 contribution) private {
+        if (contribution != 0) IERC20(usdc).safeTransferFrom(msg.sender, address(this), contribution);
     }
 
     /// @dev Checks the request, consumes matured cooldowns before any state-changing external call, accrues the market,
     /// sizes the repayment, runs the unwind directly or through the flash bridge when the repayment is nonzero, and
     /// sends the caller the output token's measured balance change of the helper. Full mode leaves zero debt because it
     /// repays the exact share count read after accrual in this transaction.
-    function _executeUnwind(UnwindParams calldata params)
-        private
-        returns (uint256 repaidAssets, uint256 sharesRedeemed, address outToken, uint256 amountOut)
-    {
+    function _executeUnwind(UnwindParams calldata params) private returns (uint256 repaidAssets, uint256 amountOut) {
         _validateRequest(params.deadline, params.market);
         if (params.shares == 0) revert InvalidUnwindShares();
 
@@ -514,6 +493,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         if (op.repayAssets == 0) _runUnwind(op);
         else _bridge(abi.encode(OperationKind.Unwind, op), op.repayAssets);
         uint256 usdcChange = IERC20(usdc).balanceOf(address(this)) - usdcBefore;
+        address outToken;
         if (params.usd3Out) {
             if (usdcChange != 0) revert UnexpectedUsdcChange(usdcChange);
             outToken = usd3;
@@ -526,20 +506,21 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
 
         if (amountOut != 0) IERC20(outToken).safeTransfer(msg.sender, amountOut);
         emit Unwound(msg.sender, id, outToken, op.repayAssets, params.shares, amountOut);
-        return (op.repayAssets, params.shares, outToken, amountOut);
+        return (op.repayAssets, amountOut);
     }
 
-    /// @dev Bridges an entry and returns the change in `user`'s collateral in market `id` across the flash loan. When
-    /// the entry borrowed, the read-back is the whole-position LTV check against `maxEntryLtv`.
+    /// @dev Bridges an entry and returns the change in the caller's collateral in market `id` across the flash loan.
+    /// The caller is read here, before bridging, because msg.sender is Morpho inside the callback. When the entry
+    /// borrowed, the read-back is the whole-position LTV check against `maxEntryLtv`.
     function _bridgeEntry(
         bytes memory data,
         uint256 flashAssets,
         IMorphoBlue.MarketParams memory market,
         bytes32 id,
-        address user,
         bool borrowed,
         uint256 maxEntryLtv
     ) private returns (uint256) {
+        address user = msg.sender;
         uint256 collateralBefore = _positionCollateral(id, user);
         _bridge(data, flashAssets);
         uint256 collateralAfter =
@@ -547,10 +528,10 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         return collateralAfter - collateralBefore;
     }
 
-    /// @dev Records `data` as the in-flight operation, takes a Morpho flash loan of `assets` USDC for it, and requires
-    /// the callback to have consumed the record.
+    /// @dev Records `keccak256(abi.encodePacked(assets, keccak256(data)))` as the in-flight operation, takes a Morpho
+    /// flash loan of `assets` USDC with `data`, and requires the callback to have consumed the record.
     function _bridge(bytes memory data, uint256 assets) private {
-        _operation = keccak256(data);
+        _operation = keccak256(abi.encodePacked(assets, keccak256(data)));
         IMorphoBlue(morpho).flashLoan(usdc, assets, data);
         if (_operation != bytes32(0)) revert CallbackNotExecuted();
     }
@@ -587,8 +568,8 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     /// @dev Fills the vault's auction from the helper's USDC (the caller's contribution plus any flash-loaned
     /// `borrowAssets` and `marginAssets`), receiving the USD3l delivery and the margin award; supplies the whole
     /// measured delivery as the caller's collateral; withdraws `marginAssets` of USDC from the award when nonzero and
-    /// forwards the rest of the award; borrows `borrowAssets` for the caller to the helper; and requires the helper's
-    /// USD3l balance to end where it started. Returns the collateral supplied.
+    /// forwards the rest of the award; and borrows `borrowAssets` for the caller to the helper. Returns the collateral
+    /// supplied.
     function _runTake(TakeOperation memory op) private returns (uint256 supplied) {
         uint256 usd3lBefore = IERC20(usd3l).balanceOf(address(this));
         uint256 marginBefore = IERC20(op.marginAsset).balanceOf(address(this));
@@ -600,9 +581,6 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         if (op.borrowAssets != 0) {
             IMorphoBlue(morpho).borrow(op.market, op.borrowAssets, 0, op.user, address(this));
         }
-
-        uint256 usd3lAfter = IERC20(usd3l).balanceOf(address(this));
-        if (usd3lAfter != usd3lBefore) revert Usd3lRetained(usd3lAfter, usd3lBefore);
     }
 
     /// @dev Pays the vault exactly `fill` through its `takeAuction`, measures the USD3l and margin-asset shares the
@@ -624,12 +602,12 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         IMorphoBlue(morpho).supplyCollateral(op.market, supplied, op.user, "");
     }
 
-    /// @dev Repays `repayShares` of the caller's debt by shares from the helper's flash-loaned USDC, withdraws
+    /// @dev Repays `repayShares` of the caller's debt by shares from the helper's flash-loaned USDC under the standing
+    /// allowance (Morpho pulls exactly the shares' value rounded up, which is `repayAssets`), withdraws
     /// `shares` of the caller's collateral to the helper, redeems exactly the USD3l that withdrawal delivered, and
     /// returns the USDC received from USD3. Any other USD3l, USD3, or USDC the helper holds is never touched.
     function _runUnwind(UnwindOperation memory op) private returns (uint256) {
         if (op.repayShares != 0) {
-            IERC20(usdc).forceApprove(morpho, op.repayAssets);
             IMorphoBlue(morpho).repay(op.market, 0, op.repayShares, op.user, "");
         }
         uint256 usd3lBefore = IERC20(usd3l).balanceOf(address(this));
@@ -742,7 +720,9 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     }
 
     /// @dev Consumes `shares` from the caller's matured cooldowns in `marketId`, oldest first, keeping the remaining
-    /// cooldowns in order and writing only cooldowns that changed or moved. Skipped while the USD3l cooldown is waived.
+    /// cooldowns in order and writing only cooldowns that changed or moved. Once nothing remains to consume and no
+    /// cooldown has been removed, the rest of the book is left unread and its length unchanged. Skipped while the USD3l
+    /// cooldown is waived.
     function _consumeCooldowns(address user, bytes32 marketId, uint256 shares) private {
         uint256 liveDuration = ILCCNotificationVault(usd3l).cooldownDuration();
         if (_cooldownWaived(liveDuration)) return;
@@ -751,6 +731,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         uint256 remaining = shares;
         uint256 kept;
         for (uint256 i; i < length; ++i) {
+            if (remaining == 0 && kept == i) return;
             Cooldown memory cooldown = book[i];
             bool changed;
             if (remaining != 0 && _isMatured(cooldown, liveDuration)) {
@@ -768,7 +749,6 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         for (uint256 i = kept; i < length; ++i) {
             book.pop();
         }
-        emit CooldownsConsumed(user, marketId, shares);
     }
 
     /// @dev Sum of `user`'s cooldown shares in `marketId` matured at `liveDuration`.
@@ -826,8 +806,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     {
         DebtState memory debt = _debtOf(id, user);
         positionCollateral = debt.collateral;
-        uint256 collateralValue =
-            positionCollateral.mulDivDown(IMorphoBlueOracle(market.oracle).price(), ORACLE_PRICE_SCALE);
+        uint256 collateralValue = positionCollateral.mulDivDown(IOracle(market.oracle).price(), ORACLE_PRICE_SCALE);
         uint256 ltv = collateralValue == 0 ? type(uint256).max : debt.assets.wDivUp(collateralValue);
         if (ltv > maxEntryLtv) revert EntryLtvExceeded(ltv, maxEntryLtv);
     }
@@ -858,10 +837,9 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         if (!_isAuthorized()) revert AuthorizationFailed();
     }
 
-    /// @dev Always submits the permit, so a signed permit cannot outlive this call to be submitted later and reset the
-    /// allowance. A permit that applies sets the allowance to its `value`; a revert (for example because a third party
-    /// already submitted it) is tolerated. The resulting allowance must then cover `required`, or the call reverts
-    /// with `InsufficientAllowance`, carrying the permit's revert data (empty when the permit applied).
+    /// @dev Submits the permit (see `PermitSignature`), tolerating a revert such as a third party's prior submission,
+    /// then requires the resulting allowance to cover `required` (`InsufficientAllowance`, carrying the permit's revert
+    /// data, empty when the permit applied).
     function _applyPermit(address token, PermitSignature calldata permit, uint256 required) private {
         bytes memory permitRevert;
         try IERC20Permit(token)
@@ -870,6 +848,11 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
             permitRevert = reason;
         }
         _requireAllowance(token, required, permitRevert);
+    }
+
+    /// @dev The standing-allowance check of a nonzero USDC contribution, shared by `fund` and `takeAuction`.
+    function _requireContributionAllowance(uint256 contribution) private view {
+        if (contribution != 0) _requireAllowance(usdc, contribution, "");
     }
 
     /// @dev Reverts with `InsufficientAllowance`, carrying `permitRevert`, unless the caller's allowance of `token` to
@@ -883,7 +866,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
 
     /// @dev Returns the vault's margin asset without calling the margin asset.
     function _validateVault(address vault) private view returns (address marginAsset) {
-        if (!LCCVaultFactory(factory).isVault(vault)) revert UnregisteredVault();
+        if (!ILCCVaultFactory(factory).isVault(vault)) revert UnregisteredVault();
         ILCCVault.AssetConfig memory config = ILCCVault(vault).assetConfig();
         if (config.fundingAsset != usdc || config.usd3 != usd3 || config.notificationVault != usd3l) {
             revert VaultAssetMismatch();

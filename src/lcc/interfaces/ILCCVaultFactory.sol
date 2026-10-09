@@ -16,4 +16,6 @@ interface ILCCVaultFactory {
     function isOwner(address account) external view returns (bool);
     function isGuardian(address account) external view returns (bool);
     function isBouncer(address account) external view returns (bool);
+    /// @notice True for a vault this factory deployed and registered.
+    function isVault(address vault) external view returns (bool);
 }

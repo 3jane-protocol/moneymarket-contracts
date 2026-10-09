@@ -3,9 +3,8 @@ pragma solidity 0.8.35;
 
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC4626} from "../../../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 
-import {LCCMainnetForkBase} from "./LCCMainnetForkBase.sol";
+import {LCCMorphoForkFixture, ILCCForkTokenizedVault} from "./LCCMorphoForkFixture.sol";
 import {IMorphoBlueTest} from "../IMorphoBlueTest.sol";
 import {IMorphoBlue, IMorphoBlueFlashLoanCallback} from "../../../../src/lcc/interfaces/IMorphoBlue.sol";
 import {SharesMathLib} from "../../../../src/libraries/SharesMathLib.sol";
@@ -55,38 +54,18 @@ contract LCCMorphoFlashLoanProbe is IMorphoBlueFlashLoanCallback {
     }
 }
 
-contract LCCMorphoFlashLoanForkTest is LCCMainnetForkBase {
+contract LCCMorphoFlashLoanForkTest is LCCMorphoForkFixture {
     using SafeERC20 for IERC20;
     using SharesMathLib for uint256;
 
-    uint256 internal constant ENTRY_FORK_BLOCK = 26_129_000;
-    uint256 internal constant LENDER_LIQUIDITY = 5_000_000e6;
-    IMorphoBlueTest internal constant MORPHO = IMorphoBlueTest(0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb);
-    address internal constant ADAPTIVE_CURVE_IRM = 0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC;
-    address internal constant USD3L = 0xDF697c55f0D696CA9E3E624cD52d8186C6745904;
-
     IMorphoBlue.MarketParams internal marketParams;
     LCCMorphoFlashLoanProbe internal probe;
-
-    function _forkBlock() internal pure override returns (uint256) {
-        return ENTRY_FORK_BLOCK;
-    }
 
     function setUp() public override {
         super.setUp();
         if (!forkEnabled) return;
 
-        marketParams = IMorphoBlue.MarketParams({
-            loanToken: USDC, collateralToken: USD3L, oracle: USD3_USDC_ORACLE, irm: ADAPTIVE_CURVE_IRM, lltv: 0.86e18
-        });
-        MORPHO.createMarket(marketParams);
-        address lender = makeAddr("lender");
-        deal(USDC, lender, LENDER_LIQUIDITY);
-        vm.startPrank(lender);
-        IERC20(USDC).forceApprove(address(MORPHO), LENDER_LIQUIDITY);
-        MORPHO.supply(marketParams, LENDER_LIQUIDITY, 0, lender, "");
-        vm.stopPrank();
-
+        marketParams = _createUsd3lMarket();
         probe = new LCCMorphoFlashLoanProbe(MORPHO, IERC20(USDC));
     }
 
@@ -123,7 +102,7 @@ contract LCCMorphoFlashLoanForkTest is LCCMainnetForkBase {
     function testNestedSupplyCollateralAndBorrowSucceedInsideCallback() public requiresFork {
         uint256 collateral = 1_000_000e6;
         uint256 borrowAssets = 500_000e6;
-        deal(USD3L, address(probe), collateral);
+        deal(address(USD3L), address(probe), collateral);
         uint256 assets = 2_000_000e6;
 
         probe.run(assets, abi.encode(marketParams, collateral, borrowAssets));
@@ -139,9 +118,9 @@ contract LCCMorphoFlashLoanForkTest is LCCMainnetForkBase {
     /* UNWIND PRIMITIVES */
 
     function _openBorrow(address borrower, uint256 collateral, uint256 borrowAssets) internal {
-        deal(USD3L, borrower, collateral);
+        deal(address(USD3L), borrower, collateral);
         vm.startPrank(borrower);
-        IERC20(USD3L).forceApprove(address(MORPHO), collateral);
+        IERC20(address(USD3L)).forceApprove(address(MORPHO), collateral);
         MORPHO.supplyCollateral(marketParams, collateral, borrower, "");
         MORPHO.borrow(marketParams, borrowAssets, 0, borrower, borrower);
         vm.stopPrank();
@@ -195,7 +174,7 @@ contract LCCMorphoFlashLoanForkTest is LCCMainnetForkBase {
 
         (,, uint128 collateral) = MORPHO.position(id, borrower);
         assertEq(collateral, 0);
-        assertEq(IERC20(USD3L).balanceOf(operator), 1_000_000e6);
+        assertEq(IERC20(address(USD3L)).balanceOf(operator), 1_000_000e6);
     }
 
     function testWithdrawCollateralWithDebtReadsOracle() public requiresFork {
@@ -209,15 +188,15 @@ contract LCCMorphoFlashLoanForkTest is LCCMainnetForkBase {
 
     function testBypassedOwnerRedeemsUsd3lOneToOneAndUsd3WithZeroLoss() public requiresFork {
         address holder = makeAddr("bypassed-holder");
-        ITokenizedStrategyLike usd3l = ITokenizedStrategyLike(USD3L);
+        ILCCForkTokenizedVault usd3l = ILCCForkTokenizedVault(address(USD3L));
         vm.prank(usd3l.management());
-        INotificationVaultLike(USD3L).setCooldownBypass(holder, true);
+        usd3l.setCooldownBypass(holder, true);
 
         uint256 assets = 250_000e6;
         deal(USD3, holder, assets);
         vm.startPrank(holder);
-        IERC20(USD3).forceApprove(USD3L, assets);
-        uint256 shares = IERC4626(USD3L).deposit(assets, holder);
+        IERC20(USD3).forceApprove(address(USD3L), assets);
+        uint256 shares = USD3L.deposit(assets, holder);
         vm.stopPrank();
         assertEq(shares, assets);
         uint256 usd3Before = IERC20(USD3).balanceOf(holder);
@@ -226,22 +205,11 @@ contract LCCMorphoFlashLoanForkTest is LCCMainnetForkBase {
         assertEq(usd3Out, shares, "USD3l redeems 1:1");
         assertEq(IERC20(USD3).balanceOf(holder) - usd3Before, shares);
 
-        uint256 previewUsdc = ITokenizedStrategyLike(USD3).previewRedeem(usd3Out);
-        assertLe(previewUsdc, ITokenizedStrategyLike(USD3).availableWithdrawLimit(holder));
+        uint256 previewUsdc = ILCCForkTokenizedVault(USD3).previewRedeem(usd3Out);
+        assertLe(previewUsdc, ILCCForkTokenizedVault(USD3).availableWithdrawLimit(holder));
         vm.prank(holder);
-        uint256 usdcOut = ITokenizedStrategyLike(USD3).redeem(usd3Out, holder, holder, 0);
+        uint256 usdcOut = ILCCForkTokenizedVault(USD3).redeem(usd3Out, holder, holder, 0);
         assertEq(usdcOut, previewUsdc, "USD3 redeems at preview with zero loss");
         assertEq(IERC20(USDC).balanceOf(holder), usdcOut);
     }
-}
-
-interface ITokenizedStrategyLike {
-    function management() external view returns (address);
-    function redeem(uint256 shares, address receiver, address owner, uint256 maxLoss) external returns (uint256);
-    function previewRedeem(uint256 shares) external view returns (uint256);
-    function availableWithdrawLimit(address owner) external view returns (uint256);
-}
-
-interface INotificationVaultLike {
-    function setCooldownBypass(address account, bool allowed) external;
 }

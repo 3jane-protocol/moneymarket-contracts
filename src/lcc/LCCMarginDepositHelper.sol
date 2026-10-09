@@ -7,11 +7,8 @@ import {ReentrancyGuardTransient} from "../../lib/openzeppelin/contracts/utils/R
 
 import {ILCCMarginDepositHelper} from "./interfaces/ILCCMarginDepositHelper.sol";
 import {ILCCVault} from "./interfaces/ILCCVault.sol";
+import {ILCCVaultFactory} from "./interfaces/ILCCVaultFactory.sol";
 import {IStataTokenV2} from "./interfaces/IStataTokenV2.sol";
-
-interface ILCCMarginDepositFactory {
-    function isVault(address vault) external view returns (bool);
-}
 
 /// @title LCCMarginDepositHelper
 /// @author 3Jane
@@ -125,7 +122,7 @@ contract LCCMarginDepositHelper is ILCCMarginDepositHelper, ReentrancyGuardTrans
     }
 
     function _validateVault(address vault, address expectedMarginAsset) private view {
-        if (!ILCCMarginDepositFactory(factory).isVault(vault)) revert UnregisteredVault();
+        if (!ILCCVaultFactory(factory).isVault(vault)) revert UnregisteredVault();
         if (ILCCVault(vault).assetConfig().marginAsset != expectedMarginAsset) revert WrongMarginAsset();
     }
 

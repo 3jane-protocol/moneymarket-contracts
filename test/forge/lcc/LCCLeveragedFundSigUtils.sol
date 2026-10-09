@@ -9,6 +9,16 @@ import {IMorphoBlue} from "../../../src/lcc/interfaces/IMorphoBlue.sol";
 import {IMorphoBlueTest} from "./IMorphoBlueTest.sol";
 import {AUTHORIZATION_TYPEHASH} from "../../../src/libraries/ConstantsLib.sol";
 
+/// @dev EIP-712 digest of a canonical Morpho Blue authorization under `domainSeparator`.
+function morphoAuthorizationDigest(bytes32 domainSeparator, IMorphoBlue.Authorization memory authorization)
+    pure
+    returns (bytes32)
+{
+    return keccak256(
+        abi.encodePacked("\x19\x01", domainSeparator, keccak256(abi.encode(AUTHORIZATION_TYPEHASH, authorization)))
+    );
+}
+
 /// @dev EIP-2612 permit and canonical Morpho Blue authorization signing shared by the unit and fork suites.
 abstract contract LCCLeveragedFundSigUtils is Test {
     bytes32 internal constant PERMIT_TYPEHASH =
@@ -48,10 +58,7 @@ abstract contract LCCLeveragedFundSigUtils is Test {
         returns (ILCCLeveragedFundHelper.PermitSignature memory permit)
     {
         address owner_ = vm.addr(key);
-        bytes32 structHash = keccak256(
-            abi.encode(PERMIT_TYPEHASH, owner_, spender, value, IERC20Permit(token).nonces(owner_), deadline)
-        );
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", IERC20Permit(token).DOMAIN_SEPARATOR(), structHash));
+        bytes32 digest = _permitDigest(token, owner_, spender, value, IERC20Permit(token).nonces(owner_), deadline);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, digest);
         permit = ILCCLeveragedFundHelper.PermitSignature({value: value, deadline: deadline, v: v, r: r, s: s});
     }
@@ -84,8 +91,28 @@ abstract contract LCCLeveragedFundSigUtils is Test {
         view
         returns (IMorphoBlue.Signature memory signature)
     {
-        bytes32 structHash = keccak256(abi.encode(AUTHORIZATION_TYPEHASH, authorization));
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", IMorphoBlueTest(morpho).DOMAIN_SEPARATOR(), structHash));
-        (signature.v, signature.r, signature.s) = vm.sign(key, digest);
+        (signature.v, signature.r, signature.s) = vm.sign(key, _authorizationDigest(morpho, authorization));
+    }
+
+    /// @dev EIP-2612 permit digest under `token`'s domain.
+    function _permitDigest(
+        address token,
+        address owner_,
+        address spender,
+        uint256 value,
+        uint256 nonce,
+        uint256 deadline
+    ) internal view returns (bytes32) {
+        bytes32 structHash = keccak256(abi.encode(PERMIT_TYPEHASH, owner_, spender, value, nonce, deadline));
+        return keccak256(abi.encodePacked("\x19\x01", IERC20Permit(token).DOMAIN_SEPARATOR(), structHash));
+    }
+
+    /// @dev Morpho authorization digest under `morpho`'s domain.
+    function _authorizationDigest(address morpho, IMorphoBlue.Authorization memory authorization)
+        internal
+        view
+        returns (bytes32)
+    {
+        return morphoAuthorizationDigest(IMorphoBlueTest(morpho).DOMAIN_SEPARATOR(), authorization);
     }
 }

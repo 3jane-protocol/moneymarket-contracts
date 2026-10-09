@@ -462,8 +462,10 @@ leaves an inert helper account in the vault. That account holds no margin or com
 `LCCLeveragedFundHelper.unwind` redeems a funder's withdrawn USD3l collateral without the 35-day vault cooldown, which
 works only while USD3l management has called `NotificationVault.setCooldownBypass(helper, true)`. The helper enforces
 its own per-user cooldowns instead: each funding or take entry through the helper opens one for the collateral it
-supplied, and an unwind may redeem at most the caller's matured cooldown shares. The bypass is owner-keyed to the helper
-address and grants no allowance over anyone else's shares.
+supplied, and an unwind may redeem at most the caller's matured cooldown shares. Unwinds emit no per-cooldown event; to
+answer a user's question about matured shares, read `cooldowns(user, marketId)` together with USD3l's live
+`cooldownDuration`, or `maxUnwindable(user, marketId)` for the amount the gate and live collateral allow. The bypass is
+owner-keyed to the helper address and grants no allowance over anyone else's shares.
 
 - Grant: a management transaction `setCooldownBypass(helper, true)` after verifying the deployed helper's runtime code.
   A bypass transition clears any vault cooldown the account holds; the helper never holds one, so nothing is lost.
