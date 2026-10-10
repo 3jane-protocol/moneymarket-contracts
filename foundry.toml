@@ -52,6 +52,9 @@ extra_output = ["storageLayout"]
 
 [profile.test]
 via_ir = false
+# Forge 1.8 defaults to isolated execution, which changes gas accounting; the suite's gas assertions and
+# accrual-spam bounds are calibrated to the non-isolated model.
+isolate = false
 evm_version = "cancun"
 script = "/dev/null"
 # Run all tests but exclude IRM tests
@@ -71,8 +74,9 @@ optimizer_details.optimizerSteps = "u"
 match_path = "**/irm/**"
 
 [profile.halmos]
-# IRM tests need via-ir due to stack complexity
 via_ir = false
+# Forge 1.8 rewrites `new` in test setUp into the deployCode cheatcode, which halmos cannot execute symbolically.
+dynamic_test_linking = false
 script = "/dev/null"
 test = "test/halmos"
 
