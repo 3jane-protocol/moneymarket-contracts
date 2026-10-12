@@ -3269,7 +3269,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         assertEq(helper.usd3(), address(usd3));
         assertEq(helper.usdc(), address(usdc));
         assertEq(helper.usd3l(), address(usd3l));
-        assertEq(helper.MAX_COOLDOWNS(), 32);
+        assertEq(helper.MAX_COOLDOWNS(), 12);
         assertEq(usd3l.allowance(address(helper), address(morpho)), type(uint256).max);
         assertEq(usdc.allowance(address(helper), address(morpho)), type(uint256).max);
     }

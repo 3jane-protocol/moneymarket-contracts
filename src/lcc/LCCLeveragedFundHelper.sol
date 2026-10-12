@@ -39,7 +39,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
     /// @dev Mirrors the vault's bound on the extra funding asset pulled so a dust obligation mints one USD3 share.
     uint256 internal constant MAX_FUNDING_TOP_UP = 1_000;
 
-    uint256 public constant MAX_COOLDOWNS = 32;
+    uint256 public constant MAX_COOLDOWNS = 12;
 
     /// @dev First field of every flash-loan payload, so the callback dispatches on the operation it was armed for.
     enum OperationKind {

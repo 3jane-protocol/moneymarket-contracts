@@ -446,7 +446,7 @@ handled; donated USD3l, USD3, USDC, and margin-asset shares are never spent.
 collateral alone through the vault. USD3l management grants the helper the vault's cooldown bypass, and the helper
 enforces its own per-user cooldown instead. Every funding or take entry opens a cooldown `{shares, start, duration}` for
 the collateral it supplied, keyed by user and market id; it matures at `start + max(duration, live cooldownDuration)` and
-never expires. A book holds at most `MAX_COOLDOWNS` (32) cooldowns. Except after a USD3l cooldown-duration decrease, an
+never expires. A book holds at most `MAX_COOLDOWNS` (12) cooldowns. Except after a USD3l cooldown-duration decrease, an
 entry into a full book never merges a matured cooldown with an unmatured one: when the two oldest are both matured they merge and the entry takes the freed last slot;
 otherwise the entry folds into the unmatured youngest cooldown in place. A merge keeps the later start and the later
 recorded maturity, so the result is never earlier than either input under any live duration, and no entry reverts for
