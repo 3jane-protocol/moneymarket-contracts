@@ -94,8 +94,7 @@ holds either sUSD3 strategy role without a live read.
 
 Begin with a live read of `CreditLine.mm()`. The recorded production value is nonzero, so the zero-manager early return
 in `_updateBorrowerMarkdown` does not apply; the remaining activation gate is the per-borrower flag controlled by
-`MarkdownController.setEnableMarkdown` (`src/MorphoCredit.sol:714-715`, `src/MarkdownController.sol:81-87`,
-`audit-round3/onchain-evidence.md:66-78`). Read that flag for every proposed borrower rather than treating the manager
+`MarkdownController.setEnableMarkdown` (`src/MorphoCredit.sol:714-715`, `src/MarkdownController.sol:81-87`, Known Issues register in Notion, MC-5 (https://app.notion.com/p/3ed6d08e68c0815abab3c476d913a69c)). Read that flag for every proposed borrower rather than treating the manager
 address as the active safety control.
 
 A future change may set `mm` to the zero address. Treat markdown activation as a two-step sequence if and only if the
@@ -148,7 +147,7 @@ before the privileged write:
   `src/MorphoCredit.sol:633-636` must be live before issuing it.
 - Setting `MIN_SUSD3_BACKING_RATIO` to a nonzero value takes one owner `ProtocolConfig.setConfig` write and restores the
   junior-backing deployment constraint; the recorded production value is zero (`src/ProtocolConfig.sol:80-86`,
-  `src/usd3/USD3.sol:193-213`, `audit-round3/onchain-evidence.md:44`).
+  `src/usd3/USD3.sol:193-213`, Known Issues register in Notion, USD-10 (https://app.notion.com/p/3ed6d08e68c0815abab3c476d913a69c)).
 - Setting `SUSD3_LOCK_DURATION` to a nonzero value takes one owner `ProtocolConfig.setConfig` write and causes successful
   deposits or mints to set `lockedUntil` (`src/ProtocolConfig.sol:47`, `src/ProtocolConfig.sol:80-86`,
   `src/usd3/sUSD3.sol:145-149`).
