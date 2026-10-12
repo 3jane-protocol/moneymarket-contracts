@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.22;
 
-import {Test} from "../../../lib/forge-std/src/Test.sol";
 import {Vm} from "../../../lib/forge-std/src/Vm.sol";
 import {BeaconProxy} from "../../../lib/openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
 import {UpgradeableBeacon} from "../../../lib/openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
@@ -21,6 +20,8 @@ import {OracleMock} from "../../../src/mocks/OracleMock.sol";
 import {ORACLE_PRICE_SCALE, BPS} from "../../../src/libraries/ConstantsLib.sol";
 import {IOracle} from "../../../src/interfaces/IOracle.sol";
 import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
+
+import {LCCLogCounter} from "./LCCLogCounter.sol";
 
 contract LCCMockToken is ERC20 {
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
@@ -122,6 +123,28 @@ contract LCCMockNotificationVault is ERC4626 {
     }
 }
 
+/// @dev Arms a single reentrant call that the inheriting mock fires from inside one of its own entrypoints; the call
+/// must fail and its error selector is recorded.
+abstract contract LCCReentryProbe {
+    address public reentryTarget;
+    bytes public reentryData;
+    bytes4 public reentryError;
+
+    function armReentry(address target, bytes calldata data) external {
+        reentryTarget = target;
+        reentryData = data;
+    }
+
+    function _fireReentry() internal {
+        if (reentryTarget == address(0)) return;
+        address target = reentryTarget;
+        reentryTarget = address(0);
+        (bool ok, bytes memory result) = target.call(reentryData);
+        require(!ok, "REENTRY_SUCCEEDED");
+        if (result.length >= 4) reentryError = bytes4(result);
+    }
+}
+
 contract LCCRevertingOracle is IOracle {
     function price() external pure returns (uint256) {
         revert("ORACLE_DOWN");
@@ -172,7 +195,7 @@ contract LCCDepositRouterMock {
     }
 }
 
-contract LCCBase is Test, ILCCVaultFactory {
+contract LCCBase is LCCLogCounter, ILCCVaultFactory {
     uint256 internal constant START = 1_000;
     uint256 internal constant EPOCH = 100;
     uint256 internal constant NORMAL = 40;
@@ -224,9 +247,7 @@ contract LCCBase is Test, ILCCVaultFactory {
     function setUp() public virtual {
         vm.warp(START);
         margin = new LCCMockToken("Margin", "MRG");
-        usdc = new LCCMockToken("USD Coin", "USDC");
-        usd3 = new LCCMockUSD3(IERC20(address(usdc)));
-        notificationVault = new LCCMockNotificationVault(IERC20(address(usd3)));
+        _deployTokens();
         oracle = new OracleMock();
         oracle.setPrice(ORACLE_PRICE_SCALE);
         vaultImplementation = new LCCVault(address(notificationVault), treasury);
@@ -259,6 +280,12 @@ contract LCCBase is Test, ILCCVaultFactory {
         _mintAndApprove(alice, 1_000_000e18, 1_000_000e18);
         _mintAndApprove(bob, 1_000_000e18, 1_000_000e18);
         _mintAndApprove(carol, 1_000_000e18, 1_000_000e18);
+    }
+
+    function _deployTokens() internal virtual {
+        usdc = new LCCMockToken("USD Coin", "USDC");
+        usd3 = new LCCMockUSD3(IERC20(address(usdc)));
+        notificationVault = new LCCMockNotificationVault(IERC20(address(usd3)));
     }
 
     function _params(uint256 protocolCap, uint256 userCap) internal view returns (ILCCVault.VaultParams memory) {
@@ -335,6 +362,10 @@ contract LCCBase is Test, ILCCVaultFactory {
 
     function isGuardian(address account) external view override returns (bool) {
         return account == guardian;
+    }
+
+    function isVault(address) external pure override returns (bool) {
+        return false;
     }
 
     function isBouncer(address account) external view override returns (bool) {
@@ -443,8 +474,12 @@ contract LCCBase is Test, ILCCVaultFactory {
     }
 
     function _deposit(address user, uint256 assets) internal returns (uint256 commitment) {
+        return _deposit(vault, user, assets);
+    }
+
+    function _deposit(LCCVault target, address user, uint256 assets) internal returns (uint256 commitment) {
         vm.prank(user);
-        commitment = vault.deposit(assets, user, 1, type(uint256).max, true, type(uint256).max);
+        commitment = target.deposit(assets, user, 1, type(uint256).max, true, type(uint256).max);
     }
 
     function _depositFor(address payer, address beneficiary, uint256 assets) internal returns (uint256 commitment) {
@@ -457,9 +492,13 @@ contract LCCBase is Test, ILCCVaultFactory {
     }
 
     function _openCallAtEpoch(uint256 epoch, uint256 amount) internal {
+        _openCallAtEpoch(vault, epoch, amount);
+    }
+
+    function _openCallAtEpoch(LCCVault target, uint256 epoch, uint256 amount) internal {
         vm.warp(START + EPOCH * epoch + NORMAL);
         vm.prank(owner);
-        vault.openEpochCall(epoch, amount);
+        target.openEpochCall(epoch, amount);
     }
 
     function _fund(address user) internal returns (uint256 obligation) {
@@ -467,9 +506,13 @@ contract LCCBase is Test, ILCCVaultFactory {
     }
 
     function _fundAtEpoch(address user, uint256 epoch) internal returns (uint256 obligation) {
+        return _fundAtEpoch(vault, user, epoch);
+    }
+
+    function _fundAtEpoch(LCCVault target, address user, uint256 epoch) internal returns (uint256 obligation) {
         vm.warp(START + EPOCH * epoch + NORMAL + PRE_CALL);
         vm.prank(user);
-        obligation = vault.fundCall(false);
+        obligation = target.fundCall(false);
     }
 
     function _fundRolling(address user) internal returns (uint256 obligation) {

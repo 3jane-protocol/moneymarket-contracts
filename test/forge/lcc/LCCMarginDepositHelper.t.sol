@@ -6,7 +6,7 @@ import {ERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuardTransient} from "../../../lib/openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
-import {LCCBase, LCCMockToken} from "./LCCBase.t.sol";
+import {LCCBase, LCCMockToken, LCCReentryProbe} from "./LCCBase.t.sol";
 import {LCCMarginDepositHelper} from "../../../src/lcc/LCCMarginDepositHelper.sol";
 import {ILCCMarginDepositHelper} from "../../../src/lcc/interfaces/ILCCMarginDepositHelper.sol";
 import {ILCCAdmissionsModule} from "../../../src/lcc/interfaces/ILCCAdmissionsModule.sol";
@@ -14,15 +14,12 @@ import {ILCCVault} from "../../../src/lcc/interfaces/ILCCVault.sol";
 import {LCCErrorsLib} from "../../../src/lcc/libraries/LCCErrorsLib.sol";
 import {Vm} from "../../../lib/forge-std/src/Vm.sol";
 
-contract LCCMockStataToken is ERC20 {
+contract LCCMockStataToken is ERC20, LCCReentryProbe {
     using SafeERC20 for IERC20;
 
     address public immutable asset;
     address public immutable aToken;
     uint256 public depositLimit = type(uint256).max;
-    address public reentryTarget;
-    bytes public reentryData;
-    bytes4 public reentryError;
 
     constructor(address asset_, address aToken_, string memory symbol_) ERC20(symbol_, symbol_) {
         asset = asset_;
@@ -33,24 +30,13 @@ contract LCCMockStataToken is ERC20 {
         depositLimit = limit;
     }
 
-    function armReentry(address target, bytes calldata data) external {
-        reentryTarget = target;
-        reentryData = data;
-    }
-
     function maxDeposit(address) external view returns (uint256) {
         return depositLimit;
     }
 
     function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
         IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
-        if (reentryTarget != address(0)) {
-            address target = reentryTarget;
-            reentryTarget = address(0);
-            (bool ok, bytes memory result) = target.call(reentryData);
-            require(!ok, "REENTRY_SUCCEEDED");
-            if (result.length >= 4) reentryError = bytes4(result);
-        }
+        _fireReentry();
         _mint(receiver, assets);
         return assets;
     }
