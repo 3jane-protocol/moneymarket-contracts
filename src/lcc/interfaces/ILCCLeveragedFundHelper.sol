@@ -22,29 +22,37 @@ import {IMorphoBlue} from "./IMorphoBlue.sol";
 /// an unwind. During a bridged entry the singleton must physically hold `2 * borrowAssets + marginAssets` of USDC (the
 /// flash loan, then the borrow). At most one operation is in flight: the helper records the hash of the loaned amount
 /// and the payload in transient storage, the callback runs only from Morpho and only for that hash, and the record is
-/// consumed before any external call. Every amount is a measured balance change, never a preview.
+/// consumed before any external call. Sizing reads previews (the funding amount's `usd3.previewMint(1)` and, on a
+/// `usd3Out` unwind, USD3's `previewWithdraw`), but every delivered amount is a measured balance change, never a
+/// preview.
 ///
 /// Allowances and balances. Morpho holds standing maximal USD3l and USDC allowances from the helper, granted at
-/// construction for collateral supply, flash-loan repayment, and debt repayment; Morpho pulls only from its
-/// `msg.sender`, and the helper holds no USD3l or USDC of its own between transactions. The standing USDC allowance
-/// means Morpho's pulls are not capped by an exact approval: the helper relies on canonical Morpho pulling exactly the
-/// repay and flash amounts, and an unwind's end-of-entry USDC balance check catches any excess. Each vault receives an
-/// exact USDC approval that must be spent in full (`VaultAmountMismatch`). Every entrypoint requires the helper's USD3l
-/// balance to end where it started (`UnexpectedBalance`), so donated USD3l is never touched.
+/// construction for collateral supply, flash-loan repayment, and debt repayment. They expose nothing because Morpho
+/// pulls only from its `msg.sender` and the helper holds no USD3l or USDC of its own between transactions. The standing
+/// USDC allowance does not cap Morpho's pulls the way an exact approval would: the helper relies on canonical Morpho
+/// pulling exactly the repay and flash amounts, and an unwind's end-of-entry USDC balance check catches any excess.
+/// Mainnet USDC decrements even a maximal allowance by each pull, so the standing USDC allowance declines by cumulative
+/// pulls from `2^256 - 1`. Each vault receives an exact USDC approval that must be spent in full
+/// (`VaultAmountMismatch`). Every entrypoint requires the helper's USD3l balance to end where it started
+/// (`UnexpectedBalance`), so donated USD3l is never touched.
 ///
 /// Cooldown book. Every entry opens a `Cooldown` for the collateral it supplied, at most `MAX_COOLDOWNS` per user and
-/// market; a full book first merges its two oldest cooldowns (`CooldownsMerged`), so no entry reverts for book reasons.
-/// Unwinds consume matured cooldowns oldest first and emit no per-cooldown record: a user's matured shares are read
-/// from `cooldowns()` together with the live USD3l `cooldownDuration`, and `maxUnwindable` combines them with live
-/// collateral. Entries are the only way a cooldown starts, unwind consumption the only way one is removed, and the
-/// full-book merge the only other change.
+/// market. A full book never merges a matured cooldown with an unmatured one unless the USD3l cooldown duration
+/// decreased between entries (see `CooldownsMerged`), so a matured cooldown otherwise stays unwindable however many
+/// entries follow it, and no entry reverts for book reasons. Unwinds consume
+/// cooldowns oldest first and emit no per-cooldown record: a user's matured shares are read from `cooldowns()` together
+/// with the live USD3l `cooldownDuration`, and `maxUnwindable` combines them with live collateral. Entries are the only
+/// way a cooldown starts, unwind consumption the only way one is removed, and the full-book merge the only other
+/// change.
 ///
 /// Unwind. USD3l management grants the helper the USD3l cooldown bypass, which it uses only for collateral it
-/// withdraws from the caller's own position and only up to the caller's matured cooldowns, so bypass redemptions for a
-/// user never exceed the USD3l the helper supplied for that user, each at least the cooldown after it was supplied. The
-/// gate is waived while USD3l is shut down or its cooldown is zero, mirroring the vault's own waivers. Accepted
-/// residual: a cooldown is not reduced when the collateral it covered leaves the position directly or by liquidation,
-/// which is weaker than the USD3l vault's own transfer lock on cooled shares.
+/// withdraws from the caller's own position and only up to the caller's matured cooldowns. The gate is waived while
+/// USD3l is shut down or its cooldown is zero, mirroring the vault's own waivers; a waived unwind still consumes
+/// cooldowns oldest first regardless of maturity, so bypass redemptions for a user never exceed the USD3l the helper
+/// supplied for that user, each at least the cooldown after it was supplied, across a waiver that later ends. Accepted
+/// residuals: a cooldown is not reduced when the collateral it covered leaves the position directly or by liquidation,
+/// which is weaker than the USD3l vault's own transfer lock on cooled shares; and cooldowns never expire, because the
+/// live USD3l `withdrawalWindow` is effectively unbounded (2^63 seconds).
 ///
 /// Surface. Entrypoints are `nonReentrant`. The helper holds no factory role, never deposits into USD3 itself (the
 /// vault is the USD3 depositor and holds the supply-cap exemption), and has no owner, rescue, receiver-choice,
@@ -100,7 +108,8 @@ interface ILCCLeveragedFundHelper {
     /// @param market Served market (see the interface's served-market rule) that holds the caller's position.
     /// @param shares USD3l collateral shares to withdraw and redeem; nonzero (`InvalidRequest`), at most the
     /// caller's live collateral in `market` (`SharesExceedCollateral`) and, unless the USD3l cooldown is waived, at
-    /// most the caller's matured cooldown shares there (`InsufficientMaturedShares`).
+    /// most the caller's matured cooldown shares there (`InsufficientMaturedShares`). While the cooldown is waived the
+    /// unwind consumes up to `shares` of the caller's cooldowns oldest first regardless of maturity.
     /// @param full Repay the caller's whole debt in `market`, priced on-chain after accruing interest and repaid by
     /// shares, leaving zero debt; `repayAssets` is then ignored.
     /// @param repayAssets USDC of debt to repay when `full` is false; at most the current debt (`RepayExceedsDebt`). It
@@ -185,15 +194,23 @@ interface ILCCLeveragedFundHelper {
     event CooldownStarted(
         address indexed user, bytes32 indexed marketId, uint256 shares, uint256 start, uint256 duration
     );
-    /// @notice A funding or take entry found the book full and merged the two oldest cooldowns into the oldest slot;
-    /// `shares` is their sum, `start` the later of their starts, and `duration` runs from that start to the later of
-    /// their recorded maturities (`start + duration`), so the merged cooldown matures no earlier than either input
-    /// under any live duration. The entry's own cooldown is then started in the freed last slot (`CooldownStarted`).
+    /// @notice A funding or take entry found the book full and merged two cooldowns; the fields are the merged
+    /// cooldown. Maturity is judged at the live USD3l duration: when the two oldest cooldowns are both matured they
+    /// merge into the oldest slot and the entry's cooldown takes the freed last slot; otherwise, when the youngest
+    /// cooldown is not matured, the entry's cooldown folds into it in place. Otherwise (the youngest matured while the
+    /// oldest pair is not both matured, reachable only after the USD3l cooldown duration decreased between entries,
+    /// which the current NotificationVault cannot do) the two oldest merge, which can delay a matured oldest cooldown
+    /// to the second's maturity. `shares` is the inputs' sum saturating at `type(uint128).max` (an unwind redeems at
+    /// most the position's `uint128` collateral, so nothing is lost), `start` the later of their starts, and `duration`
+    /// runs from that start to the later of their recorded maturities (`start + duration`), so the merged cooldown
+    /// matures no earlier than either input under any live duration. `CooldownStarted` still reports the entry's own
+    /// cooldown.
     event CooldownsMerged(
         address indexed user, bytes32 indexed marketId, uint256 shares, uint256 start, uint256 duration
     );
     /// @notice An unwind repaid `repaidAssets` of debt, redeemed `shares` of collateral (consuming that many matured
-    /// cooldown shares unless the gate was waived), and sent `amountOut` of `outToken` (USDC or USD3) to the caller.
+    /// cooldown shares, or up to that many cooldown shares regardless of maturity while the gate was waived), and sent
+    /// `amountOut` of `outToken` (USDC or USD3) to the caller.
     event Unwound(
         address indexed user,
         bytes32 indexed marketId,
@@ -332,7 +349,8 @@ interface ILCCLeveragedFundHelper {
     function usd3() external view returns (address);
     /// @notice USD3l, the notification vault wrapping USD3 and every served market's collateral token.
     function usd3l() external view returns (address);
-    /// @notice Maximum open cooldowns per user and market; a further entry first merges the two oldest cooldowns.
+    /// @notice Maximum open cooldowns per user and market; an entry into a full book merges two cooldowns as
+    /// `CooldownsMerged` describes.
     function MAX_COOLDOWNS() external view returns (uint256);
 
     /// @notice Funds the caller's current-epoch obligation in `params.vault` with amortizing push funding, borrowing
@@ -362,12 +380,10 @@ interface ILCCLeveragedFundHelper {
         external
         returns (uint256 obligation, uint256 fundingAmount, uint256 collateral);
 
-    /// @notice `fund` that first applies the caller's signatures: the USDC permit when the contribution is nonzero, the
-    /// USD3l permit, the margin-asset permit when `params.marginAssets` is nonzero, and, when `params.borrowAssets` is
-    /// nonzero and the caller has not yet authorized this helper on Morpho, an enabling Morpho authorization. The
-    /// margin permit and the authorization arguments are otherwise ignored and may be zeroed. Permits replace the
-    /// standing allowance as `PermitSignature` describes, and the resulting allowance must cover the requirement
-    /// (`InsufficientAllowance`, carrying the permit's revert data).
+    /// @notice `fund` that first applies the caller's signatures: the permits `PermitSignature` says it submits and,
+    /// when `params.borrowAssets` is nonzero and the caller has not yet authorized this helper on Morpho, an enabling
+    /// Morpho authorization. Signatures it does not apply are ignored and may be zeroed. The resulting allowance must
+    /// cover the requirement (`InsufficientAllowance`, carrying the permit's revert data).
     /// @dev A signature that fails to apply is tolerated when the allowance or authorization it grants is already in
     /// place, so a third party submitting the same signature first cannot make this call revert. An applied
     /// authorization payload must name the caller as authorizer and this helper as authorized and must enable

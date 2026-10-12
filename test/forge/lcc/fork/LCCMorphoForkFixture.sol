@@ -8,20 +8,21 @@ import {IERC4626} from "../../../../lib/openzeppelin/contracts/interfaces/IERC46
 import {LCCMainnetForkBase} from "./LCCMainnetForkBase.sol";
 import {IMorphoBlueTest} from "../IMorphoBlueTest.sol";
 import {IMorphoBlue} from "../../../../src/lcc/interfaces/IMorphoBlue.sol";
+import {ILCCNotificationVault} from "../../../../src/lcc/interfaces/ILCCNotificationVault.sol";
+import {SharesMathLib} from "../../../../src/libraries/SharesMathLib.sol";
 
-/// @dev The USD3l NotificationVault and USD3 TokenizedStrategy surface the helper fork suites read or drive.
-interface ILCCForkTokenizedVault {
+/// @dev The USD3l NotificationVault and USD3 TokenizedStrategy surface the helper fork suites drive beyond
+/// `ILCCNotificationVault`.
+interface ILCCForkTokenizedVault is ILCCNotificationVault {
     function management() external view returns (address);
-    function cooldownDuration() external view returns (uint64);
     function setCooldownBypass(address account, bool allowed) external;
     function availableWithdrawLimit(address owner) external view returns (uint256);
-    function previewRedeem(uint256 shares) external view returns (uint256);
-    function redeem(uint256 shares, address receiver, address owner, uint256 maxLoss) external returns (uint256);
 }
 
 /// @dev Canonical Morpho Blue and USD3l fixture for the leveraged-helper fork suites, pinned to its own block.
 abstract contract LCCMorphoForkFixture is LCCMainnetForkBase {
     using SafeERC20 for IERC20;
+    using SharesMathLib for uint256;
 
     uint256 internal constant HELPER_FORK_BLOCK = 26_129_000;
     uint256 internal constant LLTV = 0.86e18;
@@ -54,5 +55,12 @@ abstract contract LCCMorphoForkFixture is LCCMainnetForkBase {
         IERC20(USDC).forceApprove(address(MORPHO), LENDER_LIQUIDITY);
         MORPHO.supply(market, LENDER_LIQUIDITY, 0, lender, "");
         vm.stopPrank();
+    }
+
+    /// @dev `user`'s debt in market `id` at the stored totals, its borrow shares valued rounding up.
+    function _borrowAssetsOf(bytes32 id, address user) internal view returns (uint256) {
+        (, uint128 borrowShares,) = MORPHO.position(id, user);
+        (,, uint128 totalBorrowAssets, uint128 totalBorrowShares,,) = MORPHO.market(id);
+        return uint256(borrowShares).toAssetsUp(totalBorrowAssets, totalBorrowShares);
     }
 }

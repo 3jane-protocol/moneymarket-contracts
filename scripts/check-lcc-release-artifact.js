@@ -6,8 +6,9 @@ const path = require("path");
 const EXPECTED_COMPILER = "0.8.35+commit.47b9dedd";
 const EXPECTED_OPTIMIZER_RUNS = 150;
 const EXPECTED_NOTIFICATION_VAULT_OPTIMIZER_RUNS = 999999;
-const MAX_RUNTIME_BYTES = 24_376;
 const EIP_170_LIMIT = 24_576;
+const LCC_VAULT_MAX_RUNTIME_BYTES = 24_376;
+const LEVERAGED_FUND_HELPER_MAX_RUNTIME_BYTES = EIP_170_LIMIT;
 const AUCTION_LIBRARY_SOURCE = "src/lcc/libraries/LCCAuctionLib.sol";
 const CONFIG_LIBRARY_SOURCE = "src/lcc/libraries/LCCConfigLib.sol";
 const EXIT_LIBRARY_SOURCE = "src/lcc/libraries/LCCExitLib.sol";
@@ -33,7 +34,8 @@ const EXPECTED_ARTIFACT_RESOLUTION_FIXTURES = [
   "noncanonical-via-ir.json",
 ];
 const EXPECTED_LINK_REFERENCE_FIXTURES = ["two-library-only.json", "unexpected-fourth-library.json"];
-const LCC_VAULT_SETTINGS = {
+// LCCVault and LCCLeveragedFundHelper share these compiler settings and the optimizer-runs pin.
+const LCC_PINNED_SETTINGS = {
   compiler: EXPECTED_COMPILER,
   evmVersion: "cancun",
   viaIR: true,
@@ -41,8 +43,6 @@ const LCC_VAULT_SETTINGS = {
   optimizerRuns: EXPECTED_OPTIMIZER_RUNS,
   bytecodeHash: "none",
 };
-// LCCLeveragedFundHelper shares the vault's compiler settings, optimizer-runs pin, and runtime-size budget.
-const LEVERAGED_FUND_HELPER_SETTINGS = LCC_VAULT_SETTINGS;
 const NOTIFICATION_VAULT_SETTINGS = {
   compiler: EXPECTED_COMPILER,
   evmVersion: "shanghai",
@@ -173,12 +173,14 @@ function assertArtifactSettings(contractName, metadata, expected) {
   if (differences.length !== 0) fail(`${contractName}: ${differences.join("; ")}`);
 }
 
-function runtimeSize(contractName, artifact) {
+function assertRuntimeSize(contractName, artifact, maximum) {
   const bytecode = artifact.deployedBytecode?.object;
   if (typeof bytecode !== "string" || !bytecode.startsWith("0x") || bytecode.length % 2 !== 0) {
     fail(`${contractName} deployed bytecode is malformed`);
   }
-  return (bytecode.length - 2) / 2;
+  const runtimeBytes = (bytecode.length - 2) / 2;
+  if (runtimeBytes > maximum) fail(`${contractName} runtime is ${runtimeBytes} bytes; maximum is ${maximum}`);
+  return runtimeBytes;
 }
 
 function canonicalType(typeId, types, ancestry = new Set()) {
@@ -486,17 +488,14 @@ function main() {
     outputDirectory,
     "LCCVault.sol",
     "LCCVault",
-    LCC_VAULT_SETTINGS,
+    LCC_PINNED_SETTINGS,
   );
   const artifactPath = lccVaultResolution.artifactPath;
   const artifact = lccVaultResolution.artifact;
   const metadata = artifact.metadata;
 
-  assertArtifactSettings("LCCVault", metadata, LCC_VAULT_SETTINGS);
-  const runtimeBytes = runtimeSize("LCCVault", artifact);
-  if (runtimeBytes > MAX_RUNTIME_BYTES) {
-    fail(`runtime is ${runtimeBytes} bytes; maximum is ${MAX_RUNTIME_BYTES}`);
-  }
+  assertArtifactSettings("LCCVault", metadata, LCC_PINNED_SETTINGS);
+  const runtimeBytes = assertRuntimeSize("LCCVault", artifact, LCC_VAULT_MAX_RUNTIME_BYTES);
 
   const linkReferences = artifact.deployedBytecode?.linkReferences ?? {};
   const linkedLibraryError = linkedLibraryDifference(linkReferences);
@@ -548,17 +547,14 @@ function main() {
     outputDirectory,
     "LCCLeveragedFundHelper.sol",
     "LCCLeveragedFundHelper",
-    LEVERAGED_FUND_HELPER_SETTINGS,
+    LCC_PINNED_SETTINGS,
   );
-  assertArtifactSettings(
+  assertArtifactSettings("LCCLeveragedFundHelper", helperResolution.artifact.metadata, LCC_PINNED_SETTINGS);
+  const helperRuntimeBytes = assertRuntimeSize(
     "LCCLeveragedFundHelper",
-    helperResolution.artifact.metadata,
-    LEVERAGED_FUND_HELPER_SETTINGS,
+    helperResolution.artifact,
+    LEVERAGED_FUND_HELPER_MAX_RUNTIME_BYTES,
   );
-  const helperRuntimeBytes = runtimeSize("LCCLeveragedFundHelper", helperResolution.artifact);
-  if (helperRuntimeBytes > MAX_RUNTIME_BYTES) {
-    fail(`LCCLeveragedFundHelper runtime is ${helperRuntimeBytes} bytes; maximum is ${MAX_RUNTIME_BYTES}`);
-  }
 
   console.log(
     `LCCVault release artifact: ${runtimeBytes} bytes, ${EIP_170_LIMIT - runtimeBytes} bytes below EIP-170, ` +
@@ -568,7 +564,7 @@ function main() {
   );
   console.log(
     `LCCLeveragedFundHelper release artifact: ${helperRuntimeBytes} bytes, ` +
-      `${EIP_170_LIMIT - helperRuntimeBytes} bytes below EIP-170 (budget ${MAX_RUNTIME_BYTES}), ` +
+      `${LEVERAGED_FUND_HELPER_MAX_RUNTIME_BYTES - helperRuntimeBytes} bytes below its EIP-170 budget, ` +
       `${EXPECTED_OPTIMIZER_RUNS} runs; matches its canonical compiler, EVM, via-IR, optimizer, and metadata settings`,
   );
 }

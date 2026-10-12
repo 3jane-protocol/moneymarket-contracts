@@ -453,9 +453,9 @@ An entry with `borrowAssets == 0` and `marginAssets == 0`, or a take whose scale
 no flash loan and needs none of these checks. Any of these reverts leaves the obligation unfunded, so resubmit before
 the funding deadline with a smaller borrow, no margin, or a plain `fundCall`; a failed take leaves the auction
 unchanged, so resubmit before the Closed window ends with a smaller borrow, no margin, or a direct vault
-`takeAuction`. A take syncs the vault before sizing the fill: through `finalizeEpochSlash` of the live auction's epoch
-when a slot is already live, otherwise through `materializeAccount(helper)`, which can kick an untouched auction and
-leaves an inert helper account in the vault. That account holds no margin or commitment and needs no operator action.
+`takeAuction`. A take syncs the vault before sizing the fill (`ILCCLeveragedFundHelper.takeAuction` specifies the
+poke); when that poke is `materializeAccount(helper)` it leaves an inert helper account in the vault, which holds no
+margin or commitment and needs no operator action.
 
 ## Granting and revoking the leveraged helper's USD3l cooldown bypass
 
@@ -474,7 +474,8 @@ owner-keyed to the helper address and grants no allowance over anyone else's sha
   still exit the ordinary way: repay the Morpho debt with their own USDC, `withdrawCollateral`, start a USD3l
   `startCooldown`, and redeem after the vault's cooldown. Re-granting restores unwind with the same cooldowns.
 - While USD3l is shut down or its cooldown is zero, the helper waives its cooldown gate exactly as the vault waives its
-  own cooldown.
+  own cooldown. A waived unwind still consumes the user's cooldowns oldest first regardless of maturity, so once the
+  waiver ends `cooldowns()` no longer lists the shares redeemed during it.
 
 Unwinds also revert, without consuming cooldowns, whenever USD3's own withdraw limit cannot cover the redemption
 (pending loss, waUSDC pause, ring fence, redemption floors). With `usd3Out` only the repayment is converted to USDC, so

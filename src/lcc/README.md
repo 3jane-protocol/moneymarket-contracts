@@ -420,12 +420,9 @@ by the shares the vault released to the caller in this entry, so a pre-existing 
 with the helper as the vault's filler. Before any state-changing call it checks the Morpho authorization for a quoted
 borrow, the request bounds, the vault, and that the margin asset is neither USDC nor USD3: a USDC margin asset would
 make the helper's USDC balance change alias the fill, flash, and receipt measurements, and USD3 would put USD3 in the
-helper. It then syncs the vault through a permissionless `synced` entrypoint: `finalizeEpochSlash` of the live
-auction's epoch when a slot is already live (a no-op body on that slash-finalized epoch, so it cannot revert
-`SlashNotEligible` or write epoch state), otherwise `materializeAccount(helper)`, which can kick an untouched auction
-whose slash became eligible and leaves an inert helper account in the vault. Either sync settles an expired auction or
-one under shutdown and reverts `Paused` on a paused vault; the sync is part of the take's transaction, so a later revert
-rolls it back. The fill is `min(maxFill, remaining shortfall)` read from the vault, and every amount quoted at `maxFill`
+helper. It then syncs the vault through a permissionless `synced` entrypoint, as `ILCCLeveragedFundHelper.takeAuction`
+specifies (a no-op `finalizeEpochSlash` poke on a live slot, otherwise `materializeAccount(helper)`, which can kick an
+untouched auction). The fill is `min(maxFill, remaining shortfall)` read from the vault, and every amount quoted at `maxFill`
 is scaled by `fill / maxFill`, so a partial or front-run fill keeps the caller's per-unit protections (`TakeParams`
 states the rounding). The helper pays exactly the fill, receives the USD3l and the margin award, supplies all of the
 measured USD3l as the caller's collateral, forwards the award whole unless the caller sources part of the contribution
@@ -440,14 +437,8 @@ any other. Fills get no funding top-up, so a residual below one USD3 share is un
 from Morpho and only when Morpho's `assets` and `data` hash to that record, so the loaned amount is bound together with
 the payload, and the record is consumed before any external call (`InvalidCallback` for a failed guard or a callback
 that never ran). Payloads carry a funding, take, or unwind kind tag as their first field, on which the callback dispatches after the hash
-check. Morpho holds standing maximal USD3l and USDC allowances from the helper, granted at construction and used for
-collateral supply, flash-loan repayment, and debt repayment; this is safe because Morpho pulls only from its
-`msg.sender`, at exactly the amounts the helper's own calls determine, and the helper holds no USD3l or USDC of its own
-between transactions. The standing USDC allowance means Morpho's pulls are not capped by an exact approval: the helper
-relies on canonical Morpho pulling exactly the repay and flash amounts, and an unwind's end-of-entry USDC balance check
-catches any excess. (Mainnet USDC decrements even a maximal allowance by each pull, so the standing USDC allowance
-declines by cumulative pulls; it starts at `2^256 - 1`.) Each vault receives an exact USDC approval that must be spent
-in full. Every entrypoint (funding, take, and unwind) requires the helper's USD3l balance to end where it started
+check. Morpho holds standing maximal USD3l and USDC allowances from the helper; `ILCCLeveragedFundHelper` states why
+they are safe and what the USDC one relies on. Each vault receives an exact USDC approval that must be spent in full. Every entrypoint (funding, take, and unwind) requires the helper's USD3l balance to end where it started
 (`UnexpectedBalance` with the USD3l token), because the helper is a bypassed USD3l owner and must never keep USD3l it
 handled; donated USD3l, USD3, USDC, and margin-asset shares are never spent.
 
@@ -455,13 +446,15 @@ handled; donated USD3l, USD3, USDC, and margin-asset shares are never spent.
 collateral alone through the vault. USD3l management grants the helper the vault's cooldown bypass, and the helper
 enforces its own per-user cooldown instead. Every funding or take entry opens a cooldown `{shares, start, duration}` for
 the collateral it supplied, keyed by user and market id; it matures at `start + max(duration, live cooldownDuration)` and
-never expires. A book holds at most `MAX_COOLDOWNS` (32) cooldowns; when it is full, a further entry first merges the two
-oldest into one that keeps the later start and the later recorded maturity, so it is never earlier than either input
-under any live duration, then opens its own cooldown in the freed slot, so no entry reverts for cooldown reasons. Entries
-are the only way a cooldown starts and unwind consumption the only way one is removed; the full-book merge is the only
-other change. An unwind consumes matured cooldowns oldest first before any state-changing external call; once the
-requested shares are consumed and no cooldown has been removed it stops reading, so a partial unwind of the oldest
-cooldown touches only that entry. Consumption emits no per-cooldown event: `Unwound` records the shares redeemed, and a
+never expires. A book holds at most `MAX_COOLDOWNS` (32) cooldowns. Except after a USD3l cooldown-duration decrease, an
+entry into a full book never merges a matured cooldown with an unmatured one: when the two oldest are both matured they merge and the entry takes the freed last slot;
+otherwise the entry folds into the unmatured youngest cooldown in place. A merge keeps the later start and the later
+recorded maturity, so the result is never earlier than either input under any live duration, and no entry reverts for
+cooldown reasons; `CooldownsMerged` states the rule and its one residual branch. Entries are the only way a cooldown
+starts and unwind consumption the only way one is removed; the full-book merge is the only other change. An unwind
+consumes matured cooldowns oldest first before any state-changing external call; once the requested shares are
+consumed and no cooldown has been removed it stops reading, so a partial unwind of the oldest cooldown touches only that
+entry. Consumption emits no per-cooldown event: `Unwound` records the shares redeemed, and a
 user's matured bookkeeping is read from `cooldowns()` with the live `cooldownDuration` (`maxUnwindable` adds the
 live-collateral cap).
 
@@ -474,20 +467,18 @@ slice is converted through USD3's `withdraw(assets, …, maxLoss = 0)`, the USD3
 produced, the helper's USDC balance must end unchanged, and the rest is delivered as cooldown-free USD3; a
 zero-repayment `usd3Out` unwind converts nothing, so it never reads USD3's withdraw limit and works during a pending loss
 or waUSDC pause. A partial unwind leaves debt, so Morpho's health check and oracle apply to the withdrawal. The cooldown
-gate is waived while USD3l is shut down or its cooldown is zero, mirroring the vault. USD3's withdraw limit (pending
+gate is waived while USD3l is shut down or its cooldown is zero, mirroring the vault; a waived unwind still consumes
+cooldowns oldest first regardless of maturity, so shares redeemed during a waiver cannot be redeemed again after it
+ends. USD3's withdraw limit (pending
 loss, waUSDC pause, ring fence, floors) and a revoked bypass make an unwind revert atomically with cooldowns restored;
 users then exit by repaying with their own USDC and using the vault cooldown.
 
-**Accepted residuals and properties.** A cooldown outlives collateral that leaves the position directly or by
-liquidation, so the invariant is that bypass redemptions for a user never exceed the USD3l the helper supplied for that
-user, each at least the cooldown after supply, which is weaker than the vault's transfer lock on cooled shares. The
-helper deliberately mirrors no withdrawal window: cooldowns never expire because the live USD3l `withdrawalWindow` is
-effectively unbounded (2^63 seconds). The Morpho authorization is global across all of the caller's Morpho positions
-and stays enabled until the caller revokes it; there is no entry-LTV buffer below LLTV beyond the caller's own bound;
-levered entry is allowed while a USD3 loss is pending; the market's oracle, LLTV, and liquidation strategy belong to its
-curator. The helper holds no factory role, never deposits into USD3 itself (the vault is the USD3 depositor and holds
-the supply-cap exemption), and has no owner, rescue, receiver-choice, delegated-beneficiary, generic-call, or upgrade
-surface.
+**Accepted residuals and properties.** `ILCCLeveragedFundHelper` lists them: the cooldown residuals (a cooldown
+outlives collateral that leaves the position directly or by liquidation, and cooldowns never expire) and the accepted
+properties of its surface (a global Morpho authorization, no entry-LTV buffer below LLTV, levered entry during a
+pending USD3 loss, and the curator's ownership of oracle, LLTV, and liquidation strategy), together with the surface the
+helper lacks (no factory role, no USD3 deposit of its own, and no owner, rescue, receiver-choice, delegated-beneficiary,
+generic-call, or upgrade surface).
 
 **Errors.** The helper declares its errors on `ILCCLeveragedFundHelper` in three groups: caller bounds (a bound the
 caller set or a precondition the caller controls, most carrying the offending value and the bound), request, vault and

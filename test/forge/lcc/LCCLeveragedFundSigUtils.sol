@@ -24,11 +24,9 @@ abstract contract LCCLeveragedFundSigUtils is Test {
     bytes32 internal constant PERMIT_TYPEHASH =
         keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
 
+    /// @dev The helper supplies the spender, the Morpho singleton, and the permit tokens.
     struct SignRequest {
-        address helper;
-        address morpho;
-        address usdc;
-        address usd3l;
+        ILCCLeveragedFundHelper helper;
         uint256 key;
         uint256 usdcValue;
         uint256 usd3lValue;
@@ -44,12 +42,14 @@ abstract contract LCCLeveragedFundSigUtils is Test {
     }
 
     function _signAll(SignRequest memory request) internal view returns (Signed memory signed) {
-        signed.usdcPermit = _signPermit(request.usdc, request.key, request.helper, request.usdcValue, request.deadline);
+        address spender = address(request.helper);
+        address morpho = request.helper.morpho();
+        signed.usdcPermit =
+            _signPermit(request.helper.usdc(), request.key, spender, request.usdcValue, request.deadline);
         signed.usd3lPermit =
-            _signPermit(request.usd3l, request.key, request.helper, request.usd3lValue, request.deadline);
-        signed.authorization =
-            _morphoAuthorization(request.morpho, vm.addr(request.key), request.helper, request.deadline);
-        signed.signature = _signMorphoAuthorization(request.morpho, request.key, signed.authorization);
+            _signPermit(request.helper.usd3l(), request.key, spender, request.usd3lValue, request.deadline);
+        signed.authorization = _morphoAuthorization(morpho, vm.addr(request.key), spender, request.deadline);
+        signed.signature = _signMorphoAuthorization(morpho, request.key, signed.authorization);
     }
 
     function _signPermit(address token, uint256 key, address spender, uint256 value, uint256 deadline)

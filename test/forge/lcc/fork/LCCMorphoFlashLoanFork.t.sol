@@ -3,11 +3,11 @@ pragma solidity 0.8.35;
 
 import {IERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "../../../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC4626} from "../../../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
 
 import {LCCMorphoForkFixture, ILCCForkTokenizedVault} from "./LCCMorphoForkFixture.sol";
 import {IMorphoBlueTest} from "../IMorphoBlueTest.sol";
 import {IMorphoBlue, IMorphoBlueFlashLoanCallback} from "../../../../src/lcc/interfaces/IMorphoBlue.sol";
-import {SharesMathLib} from "../../../../src/libraries/SharesMathLib.sol";
 
 /// @dev Calls the canonical singleton's `flashLoan` and records what it observes inside the callback.
 contract LCCMorphoFlashLoanProbe is IMorphoBlueFlashLoanCallback {
@@ -56,7 +56,6 @@ contract LCCMorphoFlashLoanProbe is IMorphoBlueFlashLoanCallback {
 
 contract LCCMorphoFlashLoanForkTest is LCCMorphoForkFixture {
     using SafeERC20 for IERC20;
-    using SharesMathLib for uint256;
 
     IMorphoBlue.MarketParams internal marketParams;
     LCCMorphoFlashLoanProbe internal probe;
@@ -134,8 +133,7 @@ contract LCCMorphoFlashLoanForkTest is LCCMorphoForkFixture {
         MORPHO.accrueInterest(marketParams);
         bytes32 id = keccak256(abi.encode(marketParams));
         (, uint128 borrowShares,) = MORPHO.position(id, borrower);
-        (,, uint128 totalBorrowAssets, uint128 totalBorrowShares,,) = MORPHO.market(id);
-        uint256 owed = uint256(borrowShares).toAssetsUp(totalBorrowAssets, totalBorrowShares);
+        uint256 owed = _borrowAssetsOf(id, borrower);
         assertGt(owed, 500_000e6, "interest accrued");
 
         address payer = makeAddr("payer");
@@ -205,7 +203,7 @@ contract LCCMorphoFlashLoanForkTest is LCCMorphoForkFixture {
         assertEq(usd3Out, shares, "USD3l redeems 1:1");
         assertEq(IERC20(USD3).balanceOf(holder) - usd3Before, shares);
 
-        uint256 previewUsdc = ILCCForkTokenizedVault(USD3).previewRedeem(usd3Out);
+        uint256 previewUsdc = IERC4626(USD3).previewRedeem(usd3Out);
         assertLe(previewUsdc, ILCCForkTokenizedVault(USD3).availableWithdrawLimit(holder));
         vm.prank(holder);
         uint256 usdcOut = ILCCForkTokenizedVault(USD3).redeem(usd3Out, holder, holder, 0);

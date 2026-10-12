@@ -5,9 +5,10 @@ import {IERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol
 import {ERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC4626} from "../../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {ERC20Permit} from "../../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-import {UpgradeableBeacon} from "../../../lib/openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {SafeERC20} from "../../../lib/openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuardTransient} from "../../../lib/openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+import {Address} from "../../../lib/openzeppelin/contracts/utils/Address.sol";
+import {SafeCast} from "../../../lib/openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Math} from "../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 import {Vm} from "../../../lib/forge-std/src/Vm.sol";
 import {IERC4626} from "../../../lib/openzeppelin/contracts/interfaces/IERC4626.sol";
@@ -42,13 +43,7 @@ contract LCCHelperMulticallFunder {
     function execute(address[] calldata targets, bytes[] calldata calls) external returns (bytes[] memory results) {
         results = new bytes[](targets.length);
         for (uint256 i; i < targets.length; ++i) {
-            (bool ok, bytes memory result) = targets[i].call(calls[i]);
-            if (!ok) {
-                assembly ("memory-safe") {
-                    revert(add(result, 0x20), mload(result))
-                }
-            }
-            results[i] = result;
+            results[i] = Address.functionCall(targets[i], calls[i]);
         }
     }
 }
@@ -189,7 +184,6 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
     uint256 public callbackCount = 1;
     bool public tamperCallbackData;
     mapping(bytes32 => uint256) public pendingInterest;
-    bool public skipCallback;
     uint256 public callbackAssetsDelta;
     uint256 public flashRepayExtra;
     uint256 public flashLoanCount;
@@ -204,10 +198,6 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
 
     function setCallbackCount(uint256 count) external {
         callbackCount = count;
-    }
-
-    function setSkipCallback(bool skip) external {
-        skipCallback = skip;
     }
 
     function setTamperCallbackData(bool tamper) external {
@@ -287,14 +277,13 @@ contract LCCMockMorphoBlue is IMorphoBlueTest, LCCReentryProbe {
         flashRepayExtra = extra;
     }
 
-    /// @dev With `skipCallback` set, the loaned assets are left with the borrower and nothing is pulled back.
+    /// @dev Calls back `callbackCount` times, so a zero count skips the callback while still pulling the repayment.
     function flashLoan(address token, uint256 assets, bytes calldata data) external {
         require(assets != 0, "zero assets");
         ++flashLoanCount;
         lastFlashAssets = assets;
         lastFlashData = data;
         IERC20(token).safeTransfer(msg.sender, assets);
-        if (skipCallback) return;
         bytes memory payload = data;
         if (tamperCallbackData) payload[payload.length - 1] ^= 0x01;
         if (callbackKindOverride != 0) payload[31] = bytes1(uint8(callbackKindOverride - 1));
@@ -593,7 +582,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
 
         ILCCLeveragedFundHelper.FundParams memory params = _fundParams(80e18);
         params.maxEntryLtv = 0.65e18 - 1;
-        vm.expectPartialRevert(ILCCLeveragedFundHelper.EntryLtvExceeded.selector);
+        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.EntryLtvExceeded.selector, 0.65e18, 0.65e18 - 1));
         vm.prank(alice);
         helper.fund(params);
 
@@ -605,13 +594,14 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         assertEq(morpho.borrowAssetsOf(marketId, alice), 130e18);
     }
 
-    function testZeroBorrowEntrySucceedsDuringOracleOutage() public {
+    function testUnborrowedEntryUsesNoFlashLoanOracleOrAuthorization() public {
         _depositAndOpenCall(alice);
         deal(address(usd3l), alice, 100e18);
         vm.startPrank(alice);
         usd3l.approve(address(morpho), 100e18);
         morpho.supplyCollateral(marketParams, 100e18, alice, "");
         morpho.borrow(marketParams, 50e18, 0, alice, alice);
+        morpho.setAuthorization(address(helper), false);
         vm.stopPrank();
         usdc.mint(alice, CALL - 50e18);
         vm.mockCallRevert(address(marketOracle), abi.encodeCall(IOracle.price, ()), "ORACLE_DOWN");
@@ -619,8 +609,10 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         ILCCLeveragedFundHelper.FundParams memory params = _fundParams(0);
         params.maxEntryLtv = 0;
         vm.prank(alice);
-        helper.fund(params);
+        (,, uint256 collateral) = helper.fund(params);
 
+        assertEq(collateral, CALL);
+        assertEq(morpho.flashLoanCount(), 0);
         assertTrue(vault.fundedEpoch(0, alice));
         (,, uint128 positionCollateral) = morpho.position(marketId, alice);
         assertEq(positionCollateral, 100e18 + CALL);
@@ -903,8 +895,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         );
         vm.prank(alice);
         helper.fund(params);
-        assertFalse(marginFacility.fundedEpoch(0, alice));
-        assertEq(waUsdc.balanceOf(alice), 30e18);
     }
 
     function testSurplusHolderSpendsExactlyReleasedMargin() public {
@@ -980,16 +970,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.fund(params);
     }
 
-    function testCallbackAssetsMustEqualBorrowPlusMargin() public {
-        _openMarginFacility(alice);
-        usdc.mint(alice, CALL - 40e18 - RELEASED);
-        morpho.setCallbackAssetsDelta(1);
-
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
-        vm.prank(alice);
-        helper.fund(_marginParams(40e18, RELEASED));
-    }
-
     function testFundWithShortMarginAllowanceRevertsBeforeFunding() public {
         _openMarginFacility(alice);
         usdc.mint(alice, CALL - RELEASED);
@@ -1058,7 +1038,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
 
     /* COOLDOWNS */
 
-    function testEntryOpensCooldownForSuppliedCollateral() public {
+    function testEntryOpensCooldownThatMaturesExactlyAtItsEnd() public {
         uint256 start = _enterLevered(alice);
 
         ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
@@ -1068,10 +1048,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         assertEq(book[0].duration, cooldown);
         assertEq(_maturedShares(alice), 0);
         assertEq(helper.maxUnwindable(alice, marketId), 0);
-    }
-
-    function testCooldownMaturesExactlyAtCooldownEnd() public {
-        uint256 start = _enterLevered(alice);
 
         vm.warp(start + cooldown - 1);
         vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.InsufficientMaturedShares.selector, CALL, 0));
@@ -1152,15 +1128,12 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
     }
 
     function testPartialConsumptionOfOldestCooldownTouchesOnlyThatEntry() public {
-        _deposit(alice, MARGIN);
-        for (uint256 epoch; epoch < maxCooldowns; ++epoch) {
-            _fundUnleveredAtEpoch(alice, epoch, 1e18);
-        }
+        _fillBook(alice);
         ILCCLeveragedFundHelper.Cooldown[] memory before = helper.cooldowns(alice, marketId);
         vm.warp(uint256(before[0].start) + cooldown);
         assertEq(_maturedShares(alice), 1e18);
-        bytes32 bookSlot = keccak256(abi.encode(marketId, keccak256(abi.encode(alice, uint256(0)))));
-        bytes32 oldestSlot = keccak256(abi.encode(bookSlot));
+        bytes32 bookSlot = _bookSlot(alice);
+        bytes32 oldestSlot = _cooldownSlot(alice, 0);
 
         vm.record();
         vm.prank(alice);
@@ -1189,85 +1162,168 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         }
     }
 
-    function testFullBookMergesTheTwoOldestCooldownsAndFundingNeverReverts() public {
+    function testFullBookFoldsEntryIntoUnmaturedYoungestWhenNothingIsMatured() public {
         _deposit(alice, MARGIN);
-        uint256[] memory starts = new uint256[](maxCooldowns + 1);
-        for (uint256 epoch; epoch < maxCooldowns; ++epoch) {
-            starts[epoch] = _fundUnleveredAtEpoch(alice, epoch, 1e18);
+        for (uint256 epoch; epoch < maxCooldowns - 1; ++epoch) {
+            _fundUnleveredAtEpoch(alice, epoch, 1e18);
         }
+        usd3l.setCooldownDuration(uint64(100 days));
+        uint256 youngestStart = _fundUnleveredAtEpoch(alice, maxCooldowns - 1, 1e18);
+        usd3l.setCooldownDuration(uint64(cooldown));
+        ILCCLeveragedFundHelper.Cooldown[] memory before = helper.cooldowns(alice, marketId);
+        assertEq(_maturedShares(alice), 0);
 
         vm.recordLogs();
-        starts[maxCooldowns] = _fundUnleveredAtEpoch(alice, maxCooldowns, 1e18);
-        assertEq(_countLogs(address(helper), ILCCLeveragedFundHelper.CooldownsMerged.selector), 1);
+        uint256 start = _fundUnleveredAtEpoch(alice, maxCooldowns, 2e18);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 mergedDuration = youngestStart + 100 days - start;
+        assertEq(
+            _singleLogData(logs, address(helper), ILCCLeveragedFundHelper.CooldownsMerged.selector),
+            abi.encode(uint256(3e18), start, mergedDuration),
+            "merged entry keeps the incoming start and the later recorded maturity"
+        );
+        assertEq(
+            _singleLogData(logs, address(helper), ILCCLeveragedFundHelper.CooldownStarted.selector),
+            abi.encode(uint256(2e18), start, cooldown),
+            "CooldownStarted reports the incoming entry"
+        );
 
         ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
         assertEq(book.length, maxCooldowns);
-        assertEq(book[0].shares, 2e18);
-        assertEq(book[0].start, starts[1], "merged pair keeps the later start");
-        assertEq(book[0].duration, cooldown, "merged pair keeps the later recorded maturity");
-        assertEq(book[1].start, starts[2]);
-        assertEq(book[maxCooldowns - 2].start, starts[maxCooldowns - 1], "previous newest untouched");
-        assertEq(book[maxCooldowns - 2].shares, 1e18);
-        assertEq(book[maxCooldowns - 1].start, starts[maxCooldowns]);
-        assertEq(book[maxCooldowns - 1].shares, 1e18);
-    }
-
-    function testFullBookMergeLeavesUnmaturedNewestCooldownUntouched() public {
-        _deposit(alice, MARGIN);
-        for (uint256 epoch; epoch < maxCooldowns; ++epoch) {
-            _fundUnleveredAtEpoch(alice, epoch, 1e18);
+        for (uint256 i; i < maxCooldowns - 1; ++i) {
+            assertEq(abi.encode(book[i]), abi.encode(before[i]));
         }
-        ILCCLeveragedFundHelper.Cooldown memory newestBefore = helper.cooldowns(alice, marketId)[maxCooldowns - 1];
-        ILCCLeveragedFundHelper.Cooldown memory oldestBefore = helper.cooldowns(alice, marketId)[0];
-        vm.warp(uint256(oldestBefore.start) + cooldown);
-        assertGt(_maturedShares(alice), 0);
-
-        uint256 epoch = (block.timestamp - START) / EPOCH + 1;
-        _fundUnleveredAtEpoch(alice, epoch, 1e18);
-
-        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
-        assertEq(book[maxCooldowns - 2].start, newestBefore.start);
-        assertEq(book[maxCooldowns - 2].shares, newestBefore.shares);
-        assertEq(book[maxCooldowns - 2].duration, newestBefore.duration);
-        assertGt(uint256(book[0].start) + book[0].duration, uint256(oldestBefore.start) + oldestBefore.duration);
-    }
-
-    function testFullBookMergeKeepsLaterStartAndLaterRecordedMaturity() public {
-        _deposit(alice, MARGIN);
-        usd3l.setCooldownDuration(uint64(100 days));
-        uint256 firstStart = _fundUnleveredAtEpoch(alice, 0, 1e18);
-        usd3l.setCooldownDuration(uint64(1 days));
-        uint256 secondStart = _fundUnleveredAtEpoch(alice, 1, 1e18);
-        usd3l.setCooldownDuration(uint64(cooldown));
-        for (uint256 epoch = 2; epoch < maxCooldowns; ++epoch) {
-            _fundUnleveredAtEpoch(alice, epoch, 1e18);
-        }
-        assertGt(secondStart, firstStart);
-        uint256 mergedDuration = firstStart + 100 days - secondStart;
-
-        vm.recordLogs();
-        _fundUnleveredAtEpoch(alice, maxCooldowns, 1e18);
-        assertEq(
-            _singleLogData(ILCCLeveragedFundHelper.CooldownsMerged.selector),
-            abi.encode(uint256(2e18), secondStart, mergedDuration)
-        );
-
-        assertEq(helper.cooldowns(alice, marketId)[0].shares, 2e18);
-        assertEq(helper.cooldowns(alice, marketId)[0].start, secondStart);
-        assertEq(helper.cooldowns(alice, marketId)[0].duration, mergedDuration);
+        _assertCooldown(book[maxCooldowns - 1], 3e18, start, mergedDuration);
 
         usd3l.setCooldownDuration(uint64(200 days));
-        vm.warp(secondStart + 200 days - 1);
-        assertEq(_maturedShares(alice), 0);
-        vm.warp(secondStart + 200 days);
-        assertEq(_maturedShares(alice), 2e18);
+        vm.warp(start + 200 days - 1);
+        assertEq(helper.maxUnwindable(alice, marketId), (maxCooldowns - 1) * 1e18);
+        vm.warp(start + 200 days);
+        assertEq(helper.maxUnwindable(alice, marketId), (maxCooldowns + 2) * 1e18);
+    }
+
+    function testFullBookMergesTheTwoOldestWhenBothAreMatured() public {
+        uint256[] memory starts = _fillBook(alice);
+        ILCCLeveragedFundHelper.Cooldown[] memory before = helper.cooldowns(alice, marketId);
+
+        vm.recordLogs();
+        uint256 start = _fundUnleveredAtEpoch(alice, cooldown / EPOCH + 1, 1e18);
+        assertEq(start, starts[1] + cooldown, "only the two oldest are matured");
+        assertEq(
+            _singleLogData(address(helper), ILCCLeveragedFundHelper.CooldownsMerged.selector),
+            abi.encode(uint256(2e18), starts[1], cooldown)
+        );
+
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+        assertEq(book.length, maxCooldowns);
+        _assertCooldown(book[0], 2e18, starts[1], cooldown);
+        for (uint256 i = 1; i < maxCooldowns - 1; ++i) {
+            assertEq(abi.encode(book[i]), abi.encode(before[i + 1]));
+        }
+        _assertCooldown(book[maxCooldowns - 1], 1e18, start, cooldown);
+        assertEq(helper.maxUnwindable(alice, marketId), 2e18);
+    }
+
+    function testFullBookKeepsMaturedOldestUnwindableAndFoldsIntoYoungest() public {
+        uint256[] memory starts = _fillBook(alice);
+        ILCCLeveragedFundHelper.Cooldown[] memory before = helper.cooldowns(alice, marketId);
+
+        vm.recordLogs();
+        uint256 start = _fundUnleveredAtEpoch(alice, cooldown / EPOCH, 1e18);
+        assertEq(start, starts[0] + cooldown, "only the oldest is matured");
+        assertEq(
+            _singleLogData(address(helper), ILCCLeveragedFundHelper.CooldownsMerged.selector),
+            abi.encode(uint256(2e18), start, cooldown)
+        );
+
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+        assertEq(book.length, maxCooldowns);
+        for (uint256 i; i < maxCooldowns - 1; ++i) {
+            assertEq(abi.encode(book[i]), abi.encode(before[i]));
+        }
+        _assertCooldown(book[maxCooldowns - 1], 2e18, start, cooldown);
+        assertEq(helper.maxUnwindable(alice, marketId), 1e18);
+
+        vm.prank(alice);
+        helper.unwind(_unwindParams(1e18, true, 0));
+        assertEq(helper.cooldowns(alice, marketId).length, maxCooldowns - 1);
+    }
+
+    function testFullBookMergesTheTwoOldestWhenOnlyTheYoungestMaturedAfterADurationDecrease() public {
+        _deposit(alice, MARGIN);
+        usd3l.setCooldownDuration(uint64(100 days));
+        uint256[] memory starts = new uint256[](maxCooldowns);
+        for (uint256 epoch; epoch < maxCooldowns - 1; ++epoch) {
+            starts[epoch] = _fundUnleveredAtEpoch(alice, epoch, 1e18);
+        }
+        usd3l.setCooldownDuration(uint64(1 days));
+        starts[maxCooldowns - 1] = _fundUnleveredAtEpoch(alice, maxCooldowns - 1, 1e18);
+        ILCCLeveragedFundHelper.Cooldown[] memory before = helper.cooldowns(alice, marketId);
+
+        vm.recordLogs();
+        uint256 start = _fundUnleveredAtEpoch(alice, maxCooldowns - 1 + 1 days / EPOCH, 1e18);
+        assertEq(start, starts[maxCooldowns - 1] + 1 days, "the youngest is matured, the oldest pair is not");
+        assertEq(
+            _singleLogData(address(helper), ILCCLeveragedFundHelper.CooldownsMerged.selector),
+            abi.encode(uint256(2e18), starts[1], 100 days)
+        );
+
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+        _assertCooldown(book[0], 2e18, starts[1], 100 days);
+        assertEq(abi.encode(book[maxCooldowns - 2]), abi.encode(before[maxCooldowns - 1]));
+        _assertCooldown(book[maxCooldowns - 1], 1e18, start, 1 days);
+    }
+
+    function testMaturedOldestStaysUnwindableAfterFortyEntriesInOneCooldownWindow() public {
+        _deposit(alice, MARGIN);
+        uint256 first = _fundUnleveredAtEpoch(alice, 0, 1e18);
+        for (uint256 epoch = 1; epoch < 40; ++epoch) {
+            _fundUnleveredAtEpoch(alice, epoch, 1e18);
+        }
+        assertLt(block.timestamp, first + cooldown);
+
+        vm.warp(first + cooldown);
+        _assertCooldown(helper.cooldowns(alice, marketId)[0], 1e18, first, cooldown);
+        assertEq(helper.maxUnwindable(alice, marketId), 1e18);
+        vm.prank(alice);
+        helper.unwind(_unwindParams(1e18, true, 0));
+    }
+
+    function testMergedShareCountSaturatesOnBothMergePaths() public {
+        _fillBook(alice);
+        uint128 nearMax = type(uint128).max - 1;
+        uint256 snapshot = vm.snapshotState();
+
+        _setCooldownShares(alice, maxCooldowns - 1, nearMax);
+        _fundUnleveredAtEpoch(alice, maxCooldowns, 1e18);
+        assertEq(helper.cooldowns(alice, marketId)[maxCooldowns - 1].shares, type(uint128).max);
+        vm.revertToState(snapshot);
+
+        _setCooldownShares(alice, 0, nearMax);
+        _setCooldownShares(alice, 1, nearMax);
+        _fundUnleveredAtEpoch(alice, cooldown / EPOCH + 1, 1e18);
+        assertEq(helper.cooldowns(alice, marketId)[0].shares, type(uint128).max);
+    }
+
+    function testEntryAboveUint128SharesRevertsTheCooldownCast() public {
+        _depositAndOpenCall(alice);
+        usdc.mint(alice, CALL);
+        usd3l.setExtraMint(type(uint128).max);
+        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(0);
+        params.maxContribution = CALL;
+        params.maxCollateral = type(uint256).max;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SafeCast.SafeCastOverflowedUintDowncast.selector, 128, uint256(type(uint128).max) + CALL
+            )
+        );
+        vm.prank(alice);
+        helper.fund(params);
     }
 
     function testFundAfterUnwindRefillsBookWithoutMerging() public {
-        _deposit(alice, MARGIN);
-        for (uint256 epoch; epoch < maxCooldowns; ++epoch) {
-            _fundUnleveredAtEpoch(alice, epoch, 1e18);
-        }
+        _fillBook(alice);
         vm.warp(uint256(helper.cooldowns(alice, marketId)[0].start) + cooldown);
         vm.prank(alice);
         helper.unwind(_unwindParams(1e18, true, 0));
@@ -1329,21 +1385,45 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.unwind(params);
     }
 
-    function testShutdownAndZeroCooldownWaiveTheCooldownGate() public {
+    function testWaivedUnwindConsumesCooldownsThatStayConsumedAfterTheWaiverEnds() public {
+        uint256 clean = vm.snapshotState();
+        for (uint256 waiver; waiver < 2; ++waiver) {
+            uint256 start = _enterUnlevered(alice);
+            if (waiver == 0) usd3l.setCooldownDuration(0);
+            else usd3l.setShutdown(true);
+            assertEq(helper.maxUnwindable(alice, marketId), CALL);
+
+            vm.prank(alice);
+            helper.unwind(_unwindParams(40e18, true, 0));
+            ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+            assertEq(book.length, 1);
+            assertEq(book[0].shares, 60e18);
+
+            if (waiver == 0) usd3l.setCooldownDuration(uint64(cooldown));
+            else usd3l.setShutdown(false);
+            _supplyExtraCollateral(alice, 40e18);
+            vm.warp(start + cooldown);
+            assertEq(helper.maxUnwindable(alice, marketId), 60e18);
+            vm.expectRevert(
+                abi.encodeWithSelector(ILCCLeveragedFundHelper.InsufficientMaturedShares.selector, CALL, 60e18)
+            );
+            vm.prank(alice);
+            helper.unwind(_unwindParams(CALL, true, 0));
+            vm.revertToState(clean);
+        }
+    }
+
+    function testWaivedUnwindLargerThanTheBookEmptiesIt() public {
         _enterUnlevered(alice);
-
-        usd3l.setShutdown(true);
-        assertEq(helper.maxUnwindable(alice, marketId), CALL);
-        vm.prank(alice);
-        helper.unwind(_unwindParams(40e18, true, 0));
-        assertEq(helper.cooldowns(alice, marketId)[0].shares, CALL);
-
-        usd3l.setShutdown(false);
+        _supplyBackedCollateral(alice, 50e18);
         usd3l.setCooldownDuration(0);
+
         vm.prank(alice);
-        helper.unwind(_unwindParams(60e18, true, 0));
-        (,, uint128 collateral) = morpho.position(marketId, alice);
-        assertEq(collateral, 0);
+        (, uint256 usdcOut) = helper.unwind(_unwindParams(CALL + 50e18, true, 0));
+
+        assertEq(usdcOut, CALL + 50e18);
+        assertEq(helper.cooldowns(alice, marketId).length, 0);
+        _assertUnwindHelperClean();
     }
 
     function testLiveCooldownIncreaseDelaysOpenCooldown() public {
@@ -1387,6 +1467,8 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         uint256 start = _enterLevered(alice);
         vm.warp(start + cooldown);
 
+        vm.expectEmit(address(helper));
+        emit ILCCLeveragedFundHelper.Unwound(alice, marketId, address(usdc), 40e18, 50e18, 10e18);
         vm.prank(alice);
         (uint256 repaid, uint256 usdcOut) = helper.unwind(_unwindParams(50e18, false, 40e18));
 
@@ -1425,14 +1507,17 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         uint256 start = _enterLevered(alice);
         vm.warp(start + cooldown);
         uint256 usd3Before = usd3.balanceOf(alice);
+        uint256 expectedOut = CALL - usd3.previewWithdraw(80e18);
 
         ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(CALL, true, 0);
         params.usd3Out = true;
+        vm.expectEmit(address(helper));
+        emit ILCCLeveragedFundHelper.Unwound(alice, marketId, address(usd3), 80e18, CALL, expectedOut);
         vm.prank(alice);
         (uint256 repaid, uint256 amountOut) = helper.unwind(params);
 
         assertEq(repaid, 80e18);
-        assertEq(amountOut, CALL - usd3.previewWithdraw(80e18));
+        assertEq(amountOut, expectedOut);
         assertEq(usd3.balanceOf(alice) - usd3Before, amountOut);
         assertEq(usdc.balanceOf(alice), 0);
         assertEq(morpho.borrowAssetsOf(marketId, alice), 0);
@@ -1482,7 +1567,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         vm.expectRevert("ERC4626: withdraw more than max");
         vm.prank(alice);
         helper.unwind(params);
-        assertEq(helper.cooldowns(alice, marketId)[0].shares, CALL);
     }
 
     function testUsd3OutMinimumIsEnforcedOnUsd3() public {
@@ -1553,48 +1637,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.unwind(params);
     }
 
-    function testUnwoundEventCarriesUsdcOutput() public {
-        uint256 start = _enterLevered(alice);
-        vm.warp(start + cooldown);
-
-        vm.expectEmit(address(helper));
-        emit ILCCLeveragedFundHelper.Unwound(alice, marketId, address(usdc), 80e18, CALL, 20e18);
-        vm.prank(alice);
-        helper.unwind(_unwindParams(CALL, true, 0));
-    }
-
-    function testUnwoundEventCarriesUsd3Output() public {
-        uint256 start = _enterLevered(alice);
-        vm.warp(start + cooldown);
-        uint256 amountOut = CALL - usd3.previewWithdraw(80e18);
-
-        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(CALL, true, 0);
-        params.usd3Out = true;
-        vm.expectEmit(address(helper));
-        emit ILCCLeveragedFundHelper.Unwound(alice, marketId, address(usd3), 80e18, CALL, amountOut);
-        vm.prank(alice);
-        helper.unwind(params);
-    }
-
-    function testUsd3OutUnwindWithAuthorizationSignature() public {
-        uint256 start = _enterUnlevered(signer);
-        vm.warp(start + cooldown);
-        IMorphoBlue.Authorization memory authorization =
-            _morphoAuthorization(address(morpho), signer, address(helper), type(uint256).max);
-        IMorphoBlue.Signature memory signature = _signMorphoAuthorization(address(morpho), signerKey, authorization);
-
-        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(CALL, true, 0);
-        params.usd3Out = true;
-        vm.prank(signer);
-        (uint256 repaid, uint256 amountOut) = helper.unwindWithAuthorization(params, authorization, signature);
-
-        assertEq(repaid, 0);
-        assertEq(amountOut, CALL);
-        assertEq(usd3.balanceOf(signer), CALL);
-        assertTrue(morpho.isAuthorized(signer, address(helper)));
-        _assertUnwindHelperClean();
-    }
-
     function testUsd3OutRepaymentCannotBurnDonatedUsd3() public {
         uint256 start = _enterLevered(alice);
         vm.warp(start + cooldown);
@@ -1622,69 +1664,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         );
         vm.prank(alice);
         helper.unwind(_unwindParams(10e18, true, 0));
-    }
-
-    function testRedemptionBelowRepaymentReportsTheTokenOfItsPath() public {
-        uint256 start = _enterLevered(alice);
-        vm.warp(start + cooldown);
-        uint256 snapshot = vm.snapshotState();
-
-        _assertRevertToken(
-            _unwindRevert(_unwindParams(10e18, true, 0)),
-            ILCCLeveragedFundHelper.RedemptionBelowRepayment.selector,
-            address(usdc)
-        );
-        vm.revertToState(snapshot);
-
-        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(10e18, true, 0);
-        params.usd3Out = true;
-        _assertRevertToken(
-            _unwindRevert(params), ILCCLeveragedFundHelper.RedemptionBelowRepayment.selector, address(usd3)
-        );
-    }
-
-    function testUnexpectedBalanceReportsTheTokenOfItsPath() public {
-        uint256 snapshot = vm.snapshotState();
-        _depositAndOpenCall(alice);
-        _supplyExtraCollateral(alice, CALL);
-        usdc.mint(alice, CALL);
-        vm.mockCall(address(morpho), abi.encodeWithSelector(IMorphoBlue.supplyCollateral.selector), "");
-        ILCCLeveragedFundHelper.FundParams memory fundParams = _fundParams(0);
-        fundParams.maxContribution = CALL;
-        vm.prank(alice);
-        try helper.fund(fundParams) {
-            revert("fund succeeded");
-        } catch (bytes memory reason) {
-            _assertRevertToken(reason, ILCCLeveragedFundHelper.UnexpectedBalance.selector, address(usd3l));
-        }
-        vm.clearMockedCalls();
-        vm.revertToState(snapshot);
-
-        uint256 start = _enterLevered(alice);
-        vm.warp(start + cooldown);
-        unwindUsd3.setWithdrawOverDelivery(1);
-        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(CALL, true, 0);
-        params.usd3Out = true;
-        _assertRevertToken(_unwindRevert(params), ILCCLeveragedFundHelper.UnexpectedBalance.selector, address(usdc));
-    }
-
-    function _unwindRevert(ILCCLeveragedFundHelper.UnwindParams memory params) private returns (bytes memory reason) {
-        vm.prank(alice);
-        try helper.unwind(params) {
-            revert("unwind succeeded");
-        } catch (bytes memory data) {
-            reason = data;
-        }
-    }
-
-    function _assertRevertToken(bytes memory reason, bytes4 selector, address token) private pure {
-        assertGe(reason.length, 36);
-        assertEq(bytes4(reason), selector);
-        address reported;
-        assembly ("memory-safe") {
-            reported := mload(add(reason, 36))
-        }
-        assertEq(reported, token);
     }
 
     function testDustPartialRepaymentThatBuysNoShareReverts() public {
@@ -1730,35 +1709,19 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.unwind(_unwindParams(0, true, 0));
     }
 
-    function testRedemptionLimitsRevertAtomicallyWithCooldownsRestored() public {
+    function testRedemptionLimitsAndRevokedBypassRevertTheUnwind() public {
         uint256 start = _enterLevered(alice);
         vm.warp(start + cooldown);
 
         unwindUsd3.setWithdrawLimit(CALL - 1);
-        _expectFailedUnwindRestoresState(bytes("ERC4626: redeem more than max"));
+        _expectRedeemLimitRevert();
 
         unwindUsd3.setWithdrawLimit(0);
-        _expectFailedUnwindRestoresState(bytes("ERC4626: redeem more than max"));
+        _expectRedeemLimitRevert();
 
         unwindUsd3.setWithdrawLimit(type(uint256).max);
         usd3l.setCooldownBypass(address(helper), false);
-        _expectFailedUnwindRestoresState(bytes("ERC4626: redeem more than max"));
-    }
-
-    function testUnwindPayloadContentAndAmountAreBound() public {
-        uint256 start = _enterLevered(alice);
-        vm.warp(start + cooldown);
-
-        morpho.setTamperCallbackData(true);
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
-        vm.prank(alice);
-        helper.unwind(_unwindParams(CALL, true, 0));
-
-        morpho.setTamperCallbackData(false);
-        morpho.setCallbackAssetsDelta(1);
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
-        vm.prank(alice);
-        helper.unwind(_unwindParams(CALL, true, 0));
+        _expectRedeemLimitRevert();
     }
 
     function testDonatedUsd3lAndUsd3StayUntouched() public {
@@ -1826,11 +1789,16 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         IMorphoBlue.Authorization memory authorization =
             _morphoAuthorization(address(morpho), signer, address(helper), type(uint256).max);
         IMorphoBlue.Signature memory signature = _signMorphoAuthorization(address(morpho), signerKey, authorization);
+        ILCCLeveragedFundHelper.UnwindParams memory params = _unwindParams(CALL, true, 0);
+        params.usd3Out = true;
         vm.prank(signer);
-        (, uint256 usdcOut) = helper.unwindWithAuthorization(_unwindParams(CALL, true, 0), authorization, signature);
+        (uint256 repaid, uint256 amountOut) = helper.unwindWithAuthorization(params, authorization, signature);
 
-        assertEq(usdcOut, CALL);
+        assertEq(repaid, 0);
+        assertEq(amountOut, CALL);
+        assertEq(usd3.balanceOf(signer), CALL);
         assertTrue(morpho.isAuthorized(signer, address(helper)));
+        _assertUnwindHelperClean();
     }
 
     function testZeroDebtUnwindTakesNoFlashLoan() public {
@@ -2137,20 +2105,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.fund(params);
     }
 
-    function testEntryLtvAboveMaximumRejected() public {
-        _depositAndOpenCall(alice);
-        usdc.mint(alice, 20e18);
-        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(80e18);
-        params.maxEntryLtv = 0.8e18 - 1;
-        vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.EntryLtvExceeded.selector, 0.8e18, 0.8e18 - 1));
-        vm.prank(alice);
-        helper.fund(params);
-
-        params.maxEntryLtv = 0.8e18;
-        vm.prank(alice);
-        helper.fund(params);
-    }
-
     function testZeroOraclePriceAfterBorrowRevertsAsUnboundedLtv() public {
         _depositAndOpenCall(alice);
         usdc.mint(alice, 20e18);
@@ -2186,16 +2140,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.fund(_fundParams(80e18));
     }
 
-    function testSkippedCallbackRejected() public {
-        _depositAndOpenCall(alice);
-        usdc.mint(alice, 20e18);
-        morpho.setSkipCallback(true);
-
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
-        vm.prank(alice);
-        helper.fund(_fundParams(80e18));
-    }
-
     function testCollateralBelowMinimumRejected() public {
         _depositAndOpenCall(alice);
         usdc.mint(alice, 20e18);
@@ -2206,19 +2150,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         vm.expectRevert(abi.encodeWithSelector(ILCCLeveragedFundHelper.CollateralBelowMinimum.selector, CALL, CALL + 1));
         vm.prank(alice);
         helper.fund(params);
-    }
-
-    function testCollateralAtMinimumAccepted() public {
-        _depositAndOpenCall(alice);
-        usdc.mint(alice, 20e18);
-
-        vm.prank(alice);
-        (,, uint256 collateral) = helper.fund(_fundParams(80e18));
-
-        assertEq(collateral, CALL);
-        (,, uint128 positionCollateral) = morpho.position(marketId, alice);
-        assertEq(positionCollateral, CALL);
-        _assertHelperClean(address(vault));
     }
 
     function testDeliveryAboveMaximumLeavesSurplusWithCaller() public {
@@ -2263,9 +2194,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         _expectInsufficientAllowance(address(usdc), 20e18 - 1, 20e18, "");
         vm.prank(alice);
         helper.fund(_fundParams(80e18));
-        assertFalse(vault.fundedEpoch(0, alice));
-        assertEq(morpho.flashLoanCount(), 0);
-        assertEq(usdc.balanceOf(alice), 20e18);
     }
 
     function testFundWithShortUsd3lAllowanceRevertsBeforeFunding() public {
@@ -2278,9 +2206,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         _expectInsufficientAllowance(address(usd3l), CALL - 1, CALL, "");
         vm.prank(alice);
         helper.fund(_fundParams(80e18));
-        assertFalse(vault.fundedEpoch(0, alice));
-        assertEq(morpho.flashLoanCount(), 0);
-        assertEq(usdc.balanceOf(alice), 20e18);
     }
 
     function testZeroMinimumCollateralRejected() public {
@@ -2316,8 +2241,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         _expectNoFunding();
         _expectInsufficientAllowance(address(usd3l), CALL, CALL + 5, "");
         _fundSigned(params, s);
-        assertFalse(vault.fundedEpoch(0, signer));
-        assertEq(morpho.flashLoanCount(), 0);
     }
 
     function testLeveredEntryRevertsWhenSingletonHoldsLessThanTwiceTheBorrow() public {
@@ -2330,26 +2253,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         );
         vm.prank(alice);
         helper.fund(_fundParams(80e18));
-    }
-
-    function testUnleveredEntryUsesNoFlashLoanOracleOrAuthorization() public {
-        _depositAndOpenCall(alice);
-        usdc.mint(alice, CALL);
-        vm.prank(alice);
-        morpho.setAuthorization(address(helper), false);
-        vm.mockCallRevert(address(marketOracle), abi.encodeCall(IOracle.price, ()), "ORACLE_DOWN");
-
-        ILCCLeveragedFundHelper.FundParams memory params = _fundParams(0);
-        params.maxEntryLtv = 0;
-        vm.prank(alice);
-        (,, uint256 collateral) = helper.fund(params);
-
-        assertEq(collateral, CALL);
-        assertEq(morpho.flashLoanCount(), 0);
-        (, uint128 borrowShares, uint128 positionCollateral) = morpho.position(marketId, alice);
-        assertEq(borrowShares, 0);
-        assertEq(positionCollateral, CALL);
-        _assertHelperClean(address(vault));
     }
 
     function testTwoEntriesInOneTransactionKeepSeparateResults() public {
@@ -2437,33 +2340,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.onMorphoFlashLoan(1, hex"01");
     }
 
-    function testRepeatedCallbackRejected() public {
-        _depositAndOpenCall(alice);
-        usdc.mint(alice, 20e18);
-        morpho.setCallbackCount(2);
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
-        vm.prank(alice);
-        helper.fund(_fundParams(80e18));
-    }
-
-    function testCallbackWithMismatchedOperationRejected() public {
-        _depositAndOpenCall(alice);
-        usdc.mint(alice, 20e18);
-        morpho.setTamperCallbackData(true);
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
-        vm.prank(alice);
-        helper.fund(_fundParams(80e18));
-    }
-
-    function testCallbackWithWrongAmountRejected() public {
-        _depositAndOpenCall(alice);
-        usdc.mint(alice, 20e18);
-        morpho.setCallbackAssetsDelta(1);
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
-        vm.prank(alice);
-        helper.fund(_fundParams(80e18));
-    }
-
     function testDonatedBalancesDoNotBlockFunding() public {
         _depositAndOpenCall(alice);
         usdc.mint(alice, 20e18);
@@ -2480,14 +2356,18 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
 
     /* AUCTION TAKES */
 
-    function testTakeFillsRemainderAndForwardsWholeAward() public {
+    function testUnborrowedTakeFillsRemainderAndForwardsWholeAwardWithoutAuthorizationOrOracle() public {
         _openTakeAuction(false, true);
-        uint256 award = _dryRunAward(SHORTFALL);
+        uint256 award = _dryRunAward(address(auctionVault), SHORTFALL);
         assertGt(award, 0);
         uint256 usdcBefore = usdc.balanceOf(carol);
         uint256 marginBefore = margin.balanceOf(carol);
+        vm.prank(carol);
+        morpho.setAuthorization(address(helper), false);
+        vm.mockCallRevert(address(marketOracle), abi.encodeCall(IOracle.price, ()), "ORACLE_DOWN");
 
         ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(80e18);
+        params.maxEntryLtv = 0;
         vm.expectEmit(true, true, true, true, address(helper));
         emit ILCCLeveragedFundHelper.AuctionTaken(carol, address(auctionVault), marketId, SHORTFALL, SHORTFALL, 0, 0);
         vm.prank(carol);
@@ -2563,25 +2443,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.takeAuction(params);
     }
 
-    function testUnleveredPartialTakeContributesExactFillWithoutAuthorizationOrOracle() public {
-        _openTakeAuction(false, true);
-        vm.prank(carol);
-        morpho.setAuthorization(address(helper), false);
-        vm.mockCallRevert(address(marketOracle), abi.encodeCall(IOracle.price, ()), "ORACLE_DOWN");
-        uint256 usdcBefore = usdc.balanceOf(carol);
-
-        ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(100e18 + 7);
-        params.maxEntryLtv = 0;
-        vm.prank(carol);
-        (uint256 filled,) = helper.takeAuction(params);
-
-        assertEq(filled, SHORTFALL);
-        assertEq(usdcBefore - usdc.balanceOf(carol), SHORTFALL);
-        assertEq(morpho.flashLoanCount(), 0);
-        assertEq(morpho.borrowAssetsOf(marketId, carol), 0);
-        _assertHelperClean(address(auctionVault));
-    }
-
     function testNominalDustBorrowStillBorrowsAndNeedsAuthorization() public {
         _openTakeAuction(false, true);
         ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(100e18);
@@ -2634,7 +2495,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         vm.warp(START + NORMAL + PRE_CALL + FUNDING + 3 * AUCTION_STEP);
         _directFill(stranger, 40e18);
         uint256 remaining = 60e18;
-        assertEq(_dryRunAward(remaining), remaining);
+        assertEq(_dryRunAward(address(auctionVault), remaining), remaining);
         vm.prank(carol);
         usdc.approve(address(helper), 0);
         vm.prank(carol);
@@ -2658,7 +2519,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
     function testScaledMinMarginAwardRoundsDown() public {
         _openTakeAuction(false, true);
         _directFill(stranger, 30e18);
-        uint256 award = _dryRunAward(20e18);
+        uint256 award = _dryRunAward(address(auctionVault), 20e18);
         assertGt(award, 0);
         ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(60e18);
 
@@ -2682,7 +2543,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         params.borrowAssets = 10e18 + 1;
         params.minMarginAward = 1;
         params.minCollateral = 20e18 - 1;
-        uint256 award = _dryRunAward(20e18);
+        uint256 award = _dryRunAward(address(auctionVault), 20e18);
 
         vm.expectCall(address(auctionVault), abi.encodeCall(LCCVault.takeAuction, (20e18, 1, block.timestamp)));
         vm.prank(carol);
@@ -2858,7 +2719,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         vm.prank(carol);
         morpho.setAuthorization(address(helper), false);
         vm.mockCallRevert(address(marketOracle), abi.encodeCall(IOracle.price, ()), "ORACLE_DOWN");
-        uint256 award = _dryRunAward(SHORTFALL);
+        uint256 award = _dryRunAward(address(auctionVault), SHORTFALL);
         uint256 marginPart = 10e18;
         assertGt(award, marginPart);
         ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(SHORTFALL);
@@ -2917,18 +2778,13 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         assertEq(auctionVault.getAuctionState(0).filledAmount, 20e18);
     }
 
-    function testExpiredAuctionRevertsNothingToFundAndRollsBackSettlement() public {
+    function testExpiredAuctionRevertsNothingToFund() public {
         _openTakeAuction(false, true);
         vm.warp(START + EPOCH);
-        uint256 treasuryBefore = auctionVault.pendingTreasuryMargin();
 
         vm.expectRevert(ILCCLeveragedFundHelper.NothingToFund.selector);
         vm.prank(carol);
         helper.takeAuction(_takeParams(SHORTFALL));
-
-        assertEq(auctionVault.syncState().pendingAuctionEpochPlusOne, 1);
-        assertEq(auctionVault.pendingTreasuryMargin(), treasuryBefore);
-        assertEq(auctionVault.getEpochState(0).returnPool, 0);
     }
 
     function testTakeAfterExpiredAuctionFillsNewerCall() public {
@@ -2983,33 +2839,27 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
 
     /* AUCTION TAKES: VAULT CHECKS AND SETTLEMENT */
 
-    function testInsufficientMarginAwardRevertsAtomically() public {
+    function testInsufficientMarginAwardReverts() public {
         _openTakeAuction(false, true);
-        uint256 award = _dryRunAward(SHORTFALL);
+        uint256 award = _dryRunAward(address(auctionVault), SHORTFALL);
         ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(SHORTFALL);
         params.borrowAssets = 40e18;
         params.minMarginAward = award + 1;
-        uint256 usdcBefore = usdc.balanceOf(carol);
 
         vm.expectRevert(LCCErrorsLib.InsufficientMarginAward.selector);
         vm.prank(carol);
         helper.takeAuction(params);
-
-        _assertTakeRolledBack(usdcBefore);
     }
 
-    function testMarginOracleFailureRevertsAtomically() public {
+    function testMarginOracleFailureReverts() public {
         _openTakeAuction(false, true);
         vm.mockCallRevert(address(oracle), abi.encodeWithSignature("price()"), "MARGIN_ORACLE_DOWN");
         ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(SHORTFALL);
         params.borrowAssets = 40e18;
-        uint256 usdcBefore = usdc.balanceOf(carol);
 
         vm.expectRevert(bytes("MARGIN_ORACLE_DOWN"));
         vm.prank(carol);
         helper.takeAuction(params);
-
-        _assertTakeRolledBack(usdcBefore);
     }
 
     function testCompletingTakeSettlesAuction() public {
@@ -3030,19 +2880,15 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         _assertHelperClean(address(auctionVault));
     }
 
-    function testCompletingTakeWithMissingPriceSnapshotRevertsAtomically() public {
+    function testCompletingTakeWithMissingPriceSnapshotRevertsWhileAPartialTakeSucceeds() public {
         _openTakeAuction(false, true);
         vm.store(address(auctionVault), _mappingSlot(0, MARGIN_PRICE_AT_CALL_OPEN_SLOT), bytes32(0));
         ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(SHORTFALL);
         params.borrowAssets = 40e18;
-        uint256 usdcBefore = usdc.balanceOf(carol);
 
         vm.expectRevert(LCCErrorsLib.OraclePriceInvalid.selector);
         vm.prank(carol);
         helper.takeAuction(params);
-
-        _assertTakeRolledBack(usdcBefore);
-        assertEq(auctionVault.syncState().pendingAuctionEpochPlusOne, 1);
 
         params = _takeParams(20e18);
         params.borrowAssets = 10e18;
@@ -3119,7 +2965,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
     function testStepZeroAwardWithMarginRevertsEvenWithDonatedShares() public {
         _openTakeAuction(true, true);
         vm.warp(START + NORMAL + PRE_CALL + FUNDING + 1);
-        assertEq(_dryRunAward(SHORTFALL), 0);
+        assertEq(_dryRunAward(address(auctionVault), SHORTFALL), 0);
         _mintSurplusMargin(address(helper), 20e18);
         ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(SHORTFALL);
         params.marginAssets = 10e18;
@@ -3145,7 +2991,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
     function testDonatedMarginSharesNeverSpentOnTake() public {
         _openTakeAuction(true, true);
         _mintSurplusMargin(address(helper), 7);
-        uint256 award = _dryRunAward(SHORTFALL);
+        uint256 award = _dryRunAward(address(auctionVault), SHORTFALL);
         uint256 sharesBefore = waUsdc.balanceOf(carol);
         ILCCLeveragedFundHelper.TakeParams memory params = _takeParams(SHORTFALL);
         params.marginAssets = 10e18;
@@ -3224,62 +3070,38 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.takeAuction(params);
     }
 
-    function testTakeCallbackWithWrongAmountRejected() public {
-        _openTakeAuction(false, true);
-        morpho.setCallbackAssetsDelta(1);
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
-        vm.prank(carol);
-        helper.takeAuction(_leveredTakeParams());
-    }
-
-    function testEveryOperationKindRelabelIsRejectedByTheHashCheck() public {
-        _openTakeAuction(false, true);
-        uint256 snapshot = vm.snapshotState();
-
-        uint8[3] memory fromTake = [uint8(0), 1, 3];
-        for (uint256 i; i < fromTake.length; ++i) {
-            morpho.setCallbackKind(fromTake[i]);
-            vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
-            vm.prank(carol);
-            helper.takeAuction(_leveredTakeParams());
-            vm.revertToState(snapshot);
+    /// @dev Each flash-loan lifecycle (a levered funding, a levered take, and a repaying unwind) rejects with
+    /// `InvalidCallback` a repeated callback, a callback that never ran, a tampered payload, a wrong amount, and every
+    /// other operation kind.
+    function testCallbackGuardRejectsEveryTamperOnEveryLifecycle() public {
+        uint256[3] memory entrypoints = [uint256(0), 2, 3];
+        uint8[3] memory ownKinds = [uint8(0), 2, 1];
+        uint256 clean = vm.snapshotState();
+        for (uint256 lifecycle; lifecycle < entrypoints.length; ++lifecycle) {
+            (address caller, bytes memory call) = _prepareEntrypoint(entrypoints[lifecycle]);
+            uint256 prepared = vm.snapshotState();
+            for (uint256 tamper; tamper < 7; ++tamper) {
+                if (tamper == 0) {
+                    morpho.setCallbackCount(2);
+                } else if (tamper == 1) {
+                    morpho.setCallbackCount(0);
+                } else if (tamper == 2) {
+                    morpho.setTamperCallbackData(true);
+                } else if (tamper == 3) {
+                    morpho.setCallbackAssetsDelta(1);
+                } else {
+                    uint8 kind = uint8(tamper - 4);
+                    if (kind >= ownKinds[lifecycle]) ++kind;
+                    morpho.setCallbackKind(kind);
+                }
+                vm.prank(caller);
+                (bool ok, bytes memory reason) = address(helper).call(call);
+                assertFalse(ok);
+                assertEq(reason, abi.encodeWithSelector(ILCCLeveragedFundHelper.InvalidCallback.selector));
+                vm.revertToState(prepared);
+            }
+            vm.revertToState(clean);
         }
-
-        _deposit(alice, MARGIN);
-        _openCallAtEpoch(1, CALL);
-        vm.warp(START + EPOCH + NORMAL + PRE_CALL);
-        assertEq(vault.obligationOf(1, alice), CALL);
-        usdc.mint(alice, 20e18);
-        snapshot = vm.snapshotState();
-        uint8[3] memory fromFunding = [uint8(1), 2, 3];
-        for (uint256 i; i < fromFunding.length; ++i) {
-            morpho.setCallbackKind(fromFunding[i]);
-            vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
-            vm.prank(alice);
-            helper.fund(_fundParams(80e18));
-            vm.revertToState(snapshot);
-        }
-
-        vm.prank(alice);
-        helper.fund(_fundParams(80e18));
-        vm.warp(block.timestamp + cooldown);
-        snapshot = vm.snapshotState();
-        uint8[3] memory fromUnwind = [uint8(0), 2, 3];
-        for (uint256 i; i < fromUnwind.length; ++i) {
-            morpho.setCallbackKind(fromUnwind[i]);
-            vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
-            vm.prank(alice);
-            helper.unwind(_unwindParams(CALL, true, 0));
-            vm.revertToState(snapshot);
-        }
-    }
-
-    function testRepeatedTakeCallbackRejected() public {
-        _openTakeAuction(false, true);
-        morpho.setCallbackCount(2);
-        vm.expectRevert(ILCCLeveragedFundHelper.InvalidCallback.selector);
-        vm.prank(carol);
-        helper.takeAuction(_leveredTakeParams());
     }
 
     /* REENTRANCY */
@@ -3310,7 +3132,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
 
         uint256 clean = vm.snapshotState();
         for (uint256 outer; outer < nested.length; ++outer) {
-            (address caller, bytes memory call) = _prepareReentryOuter(outer);
+            (address caller, bytes memory call) = _prepareEntrypoint(outer);
             uint256 prepared = vm.snapshotState();
             for (uint256 inner; inner < nested.length; ++inner) {
                 morpho.armReentry(address(helper), nested[inner]);
@@ -3328,9 +3150,9 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         }
     }
 
-    /// @dev Prepares outer entrypoint `index` (fund, fundWithSignatures, takeAuction, unwind, unwindWithAuthorization)
-    /// on a path that borrows or repays through Morpho, and returns its caller and calldata.
-    function _prepareReentryOuter(uint256 index) internal returns (address caller, bytes memory call) {
+    /// @dev Prepares entrypoint `index` (fund, fundWithSignatures, takeAuction, unwind, unwindWithAuthorization) on a
+    /// path that bridges a flash loan and borrows or repays through Morpho, and returns its caller and calldata.
+    function _prepareEntrypoint(uint256 index) internal returns (address caller, bytes memory call) {
         Signed memory empty;
         if (index == 0) {
             _depositAndOpenCall(alice);
@@ -3365,7 +3187,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
 
     /* AUCTION TAKES: COOLDOWNS */
 
-    function testFullBookMixingFundAndTakeEntriesMergesTheTwoOldest() public {
+    function testFullBookMixingFundAndTakeEntriesMergesTheTwoMaturedOldest() public {
         _openTakeAuction(false, true);
         usdc.mint(alice, 20e18);
         vm.prank(alice);
@@ -3383,9 +3205,10 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         assertEq(book[0].start, takeStart);
 
         vm.recordLogs();
-        uint256 newestStart = _fundUnleveredAtEpoch(alice, maxCooldowns, 1e18);
+        uint256 newestStart = _fundUnleveredAtEpoch(alice, cooldown / EPOCH + 1, 1e18);
+        assertEq(newestStart, secondStart + cooldown);
         assertEq(
-            _singleLogData(ILCCLeveragedFundHelper.CooldownsMerged.selector),
+            _singleLogData(address(helper), ILCCLeveragedFundHelper.CooldownsMerged.selector),
             abi.encode(takeCollateral + 1e18, secondStart, cooldown)
         );
 
@@ -3597,6 +3420,57 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         return vm.getBlockTimestamp();
     }
 
+    /// @dev Deposits for `user` and opens `MAX_COOLDOWNS` unlevered 1e18 entries at epochs 0 onward, filling its book
+    /// within one cooldown window; returns their starts.
+    function _fillBook(address user) internal returns (uint256[] memory starts) {
+        _deposit(user, MARGIN);
+        starts = new uint256[](maxCooldowns);
+        for (uint256 epoch; epoch < maxCooldowns; ++epoch) {
+            starts[epoch] = _fundUnleveredAtEpoch(user, epoch, 1e18);
+        }
+    }
+
+    /// @dev Storage slot of `user`'s cooldown array in `marketId` (the helper's first storage variable).
+    function _bookSlot(address user) internal view returns (bytes32) {
+        return keccak256(abi.encode(marketId, keccak256(abi.encode(user, uint256(0)))));
+    }
+
+    /// @dev Storage slot of `user`'s cooldown `index`; a cooldown packs into one slot with `shares` in the low bits.
+    function _cooldownSlot(address user, uint256 index) internal view returns (bytes32) {
+        return bytes32(uint256(keccak256(abi.encode(_bookSlot(user)))) + index);
+    }
+
+    function _setCooldownShares(address user, uint256 index, uint128 shares) internal {
+        bytes32 slot = _cooldownSlot(user, index);
+        uint256 word = uint256(vm.load(address(helper), slot));
+        vm.store(address(helper), slot, bytes32(((word >> 128) << 128) | shares));
+    }
+
+    function _assertCooldown(
+        ILCCLeveragedFundHelper.Cooldown memory entry,
+        uint256 shares,
+        uint256 start,
+        uint256 duration
+    ) internal pure {
+        assertEq(entry.shares, shares);
+        assertEq(entry.start, start);
+        assertEq(entry.duration, duration);
+    }
+
+    /// @dev Supplies `assets` of USD3l that `user` mints through USD3 as collateral, outside the helper's cooldown
+    /// book.
+    function _supplyBackedCollateral(address user, uint256 assets) internal {
+        usdc.mint(user, assets);
+        vm.startPrank(user);
+        usdc.approve(address(usd3), assets);
+        uint256 usd3Shares = usd3.deposit(assets, user);
+        usd3.approve(address(usd3l), usd3Shares);
+        uint256 shares = usd3l.deposit(usd3Shares, user);
+        usd3l.approve(address(morpho), shares);
+        morpho.supplyCollateral(marketParams, shares, user, "");
+        vm.stopPrank();
+    }
+
     /// @dev `user`'s matured cooldown shares, read from `cooldowns()` and the live USD3l duration.
     function _maturedShares(address user) internal view returns (uint256 shares) {
         ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(user, marketId);
@@ -3608,27 +3482,10 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         }
     }
 
-    function _singleLogData(bytes32 topic) internal returns (bytes memory data) {
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        uint256 count;
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].emitter == address(helper) && logs[i].topics[0] == topic) {
-                data = logs[i].data;
-                ++count;
-            }
-        }
-        assertEq(count, 1);
-    }
-
-    function _expectFailedUnwindRestoresState(bytes memory reason) internal {
-        uint256 debtBefore = morpho.borrowAssetsOf(marketId, alice);
-        vm.expectRevert(reason);
+    function _expectRedeemLimitRevert() internal {
+        vm.expectRevert(bytes("ERC4626: redeem more than max"));
         vm.prank(alice);
         helper.unwind(_unwindParams(CALL, true, 0));
-        assertEq(helper.cooldowns(alice, marketId)[0].shares, CALL);
-        assertEq(morpho.borrowAssetsOf(marketId, alice), debtBefore);
-        (,, uint128 collateral) = morpho.position(marketId, alice);
-        assertEq(collateral, CALL);
     }
 
     function _supplyExtraCollateral(address user, uint256 amount) internal {
@@ -3647,10 +3504,7 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
     function _sign(uint256 usdcValue, uint256 usd3lValue) internal view returns (Signed memory) {
         return _signAll(
             SignRequest({
-                helper: address(helper),
-                morpho: address(morpho),
-                usdc: address(usdc),
-                usd3l: address(usd3l),
+                helper: helper,
                 key: signerKey,
                 usdcValue: usdcValue,
                 usd3lValue: usd3lValue,
@@ -3752,17 +3606,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         params.borrowAssets = 40e18;
     }
 
-    /// @dev The margin award a direct `fill` would receive now, measured and rolled back.
-    function _dryRunAward(uint256 fill) internal returns (uint256 award) {
-        IERC20 marginToken = IERC20(auctionVault.assetConfig().marginAsset);
-        address filler = makeAddr("dry-run-filler");
-        uint256 snapshot = vm.snapshotState();
-        uint256 before = marginToken.balanceOf(filler);
-        _directFill(filler, fill);
-        award = marginToken.balanceOf(filler) - before;
-        vm.revertToState(snapshot);
-    }
-
     function _directFill(address filler, uint256 amount) internal {
         usdc.mint(filler, amount);
         vm.startPrank(filler);
@@ -3784,17 +3627,5 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         uint8 kind;
         (kind, op) = abi.decode(morpho.lastFlashData(), (uint8, LCCLeveragedFundHelper.TakeOperation));
         assertEq(kind, 2);
-    }
-
-    function _assertTakeRolledBack(uint256 usdcBefore) internal view {
-        assertEq(usdc.balanceOf(carol), usdcBefore);
-        assertEq(usd3l.balanceOf(carol), 0);
-        assertEq(auctionVault.getAuctionState(0).filledAmount, 0);
-        assertEq(auctionVault.getAuctionState(0).marginAwarded, 0);
-        assertEq(morpho.borrowAssetsOf(marketId, carol), 0);
-        (,, uint128 positionCollateral) = morpho.position(marketId, carol);
-        assertEq(positionCollateral, 0);
-        assertEq(helper.cooldowns(carol, marketId).length, 0);
-        _assertHelperClean(address(auctionVault));
     }
 }
