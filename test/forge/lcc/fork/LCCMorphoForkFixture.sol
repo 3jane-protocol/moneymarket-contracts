@@ -14,9 +14,13 @@ import {SharesMathLib} from "../../../../src/libraries/SharesMathLib.sol";
 /// @dev The USD3l NotificationVault and USD3 TokenizedStrategy surface the helper fork suites drive beyond
 /// `ILCCNotificationVault`.
 interface ILCCForkTokenizedVault is ILCCNotificationVault {
+    error InsufficientShares();
+
     function management() external view returns (address);
     function setCooldownBypass(address account, bool allowed) external;
     function availableWithdrawLimit(address owner) external view returns (uint256);
+    function startCooldown(uint256 shares) external;
+    function shutdownStrategy() external;
 }
 
 /// @dev Canonical Morpho Blue and USD3l fixture for the leveraged-helper fork suites, pinned to its own block.

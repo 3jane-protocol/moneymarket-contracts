@@ -3446,17 +3446,6 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         vm.store(address(helper), slot, bytes32(((word >> 128) << 128) | shares));
     }
 
-    function _assertCooldown(
-        ILCCLeveragedFundHelper.Cooldown memory entry,
-        uint256 shares,
-        uint256 start,
-        uint256 duration
-    ) internal pure {
-        assertEq(entry.shares, shares);
-        assertEq(entry.start, start);
-        assertEq(entry.duration, duration);
-    }
-
     /// @dev Supplies `assets` of USD3l that `user` mints through USD3 as collateral, outside the helper's cooldown
     /// book.
     function _supplyBackedCollateral(address user, uint256 assets) internal {

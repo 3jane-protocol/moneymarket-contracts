@@ -474,7 +474,10 @@ loss, waUSDC pause, ring fence, floors) and a revoked bypass make an unwind reve
 users then exit by repaying with their own USDC and using the vault cooldown.
 
 **Accepted residuals and properties.** `ILCCLeveragedFundHelper` lists them: the cooldown residuals (a cooldown
-outlives collateral that leaves the position directly or by liquidation, and cooldowns never expire) and the accepted
+outlives collateral that leaves the position directly or by liquidation, and cooldowns never expire). The leftover
+matured cooldown then lets a later entry's collateral be unwound immediately up to the shares that left, which stays
+within the stated bound: bypass redemptions never exceed the USD3l supplied for that user at least one cooldown earlier.
+The interface also lists the accepted
 properties of its surface (a global Morpho authorization, no entry-LTV buffer below LLTV, levered entry during a
 pending USD3 loss, and the curator's ownership of oracle, LLTV, and liquidation strategy), together with the surface the
 helper lacks (no factory role, no USD3 deposit of its own, and no owner, rescue, receiver-choice, delegated-beneficiary,

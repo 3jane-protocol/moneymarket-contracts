@@ -35,18 +35,34 @@ abstract contract LCCLeveragedFundTestBase is LCCLogCounter {
         });
     }
 
-    /// @dev The margin award a direct `fill` of `vault`'s live auction would receive now, measured and rolled back.
-    function _dryRunAward(address vault, uint256 fill) internal returns (uint256 award) {
-        address filler = makeAddr("dry-run-filler");
+    /// @dev `filler` takes `fill` of `vault`'s live auction directly on the vault, funded by `deal`.
+    function _directTake(address vault, address filler, uint256 fill) internal returns (uint256 filled, uint256 award) {
         IERC20 fundingToken = IERC20(helper.usdc());
-        uint256 snapshot = vm.snapshotState();
         deal(address(fundingToken), filler, fill);
         vm.startPrank(filler);
         fundingToken.forceApprove(vault, fill);
-        (, award) = ILCCVault(vault).takeAuction(fill, 0, block.timestamp);
+        (filled, award) = ILCCVault(vault).takeAuction(fill, 0, block.timestamp);
         vm.stopPrank();
+    }
+
+    /// @dev The margin award a direct `fill` of `vault`'s live auction would receive now, measured and rolled back.
+    function _dryRunAward(address vault, uint256 fill) internal returns (uint256 award) {
+        address filler = makeAddr("dry-run-filler");
+        uint256 snapshot = vm.snapshotState();
+        (, award) = _directTake(vault, filler, fill);
         assertEq(IERC20(ILCCVault(vault).assetConfig().marginAsset).balanceOf(filler), award);
         vm.revertToState(snapshot);
+    }
+
+    function _assertCooldown(
+        ILCCLeveragedFundHelper.Cooldown memory entry,
+        uint256 shares,
+        uint256 start,
+        uint256 duration
+    ) internal pure {
+        assertEq(entry.shares, shares);
+        assertEq(entry.start, start);
+        assertEq(entry.duration, duration);
     }
 
     /// @dev After an entry into `vault`: the helper holds no USDC, USD3l, or margin asset, its exact per-vault USDC
