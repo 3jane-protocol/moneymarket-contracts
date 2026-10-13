@@ -25,6 +25,8 @@ interface IAaveV3PoolSupply {
     function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
 }
 
+/// @dev This suite mutates process-global environment variables and must run single-threaded, as test:forge:fork:lcc
+/// does.
 contract LCCMarginDepositHelperForkTest is LCCMainnetForkBase {
     using SafeERC20 for IERC20;
 

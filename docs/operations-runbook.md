@@ -455,12 +455,16 @@ the snapshot and live oracle are dead, call `setMarginOracle` first with a respo
 send an owner-side `synced` call. `shutdown()` alone is non-bricking in that state, but it is not recovery: price
 failure is tolerated by sending the otherwise returnable pool to treasury, and the disposal cannot be replayed.
 
-**Before submitting `setRiskCaps`.** Settle pending auctions first. `setRiskCaps` is `synced`, so it can finalize a
-newly eligible default, create the auction slot, and then revert on its own pending-auction guard when the transaction
-also changes `protocolCommitmentCap`. That reverts the entire timelocked transaction, including unrelated
-`userCommitmentCap`, `exitCapBps`, and `minDeposit` changes, even if no slot existed when it was queued. The risk is
-bounded by the pending auction's Closed window. If the other three parameters must change while a slot is live,
-re-pass the current protocol cap unchanged.
+**Before submitting `setRiskCaps`.** Use `SetLCCVaultRiskParamsSafe.schedule(uint256,bool)` to queue the selected
+fields through the 24-hour parameters timelock, wait for the delay, then call
+`SetLCCVaultRiskParamsSafe.execute(uint256)` with the exact six target values and `LCC_FIELDS_MASK` logged by the
+schedule step. At execution, any pending auction slot reverts `setMaxAuctionAwardBps` and `setSlashFeeBps` regardless
+of the other selected fields; it reverts `setRiskCaps` only when `protocolCommitmentCap` changes. The batch is atomic,
+so a slot opened during the 24-hour delay can revert the whole operation. `setMaxAuctionAwardBps` must land while the
+epoch is in Funding or earlier (round-3 A/L-05), so schedule it with enough time for the timelock delay. `setRiskCaps`
+rewrites all four cap fields, and execute refuses to proceed if a non-selected one changed since scheduling. Serialize
+overlapping risk-parameter operations on the same vault rather than allowing one operation to restore another's
+values.
 
 ## Granting DEPOSIT_OPERATOR_ROLE
 
