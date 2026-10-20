@@ -37,22 +37,27 @@ import {IMorphoBlue} from "./IMorphoBlue.sol";
 /// (`UnexpectedBalance`), so donated USD3l is never touched.
 ///
 /// Cooldown book. Every entry opens a `Cooldown` for the collateral it supplied, at most `MAX_COOLDOWNS` per user and
-/// market. A full book never merges a matured cooldown with an unmatured one unless the USD3l cooldown duration
+/// market. The book total is bounded by the user's live collateral in the market at every entry and every
+/// `trimCooldowns`: an entry first trims the book to the collateral the user held before it, and `trimCooldowns` trims
+/// it to live collateral, each removing the excess oldest first regardless of maturity (`CooldownsTrimmed`). A book
+/// still full after the trim never merges a matured cooldown with an unmatured one unless the USD3l cooldown duration
 /// decreased between entries (see `CooldownsMerged`), so a matured cooldown otherwise stays unwindable however many
-/// entries follow it, and no entry reverts for book reasons. Unwinds consume
-/// cooldowns oldest first and emit no per-cooldown record: a user's matured shares are read from `cooldowns()` together
-/// with the live USD3l `cooldownDuration`, and `maxUnwindable` combines them with live collateral. Entries are the only
-/// way a cooldown starts, unwind consumption the only way one is removed, and the full-book merge the only other
-/// change.
+/// entries follow it while the collateral covering it stays in the position, and no entry reverts for book reasons.
+/// Unwinds consume cooldowns oldest first and emit no per-cooldown record: a user's matured shares are read from
+/// `cooldowns()` together with the live USD3l `cooldownDuration`, and `maxUnwindable` combines them with live
+/// collateral. Entries are the only way a cooldown starts, unwind consumption and the trim the only ways one is
+/// reduced or removed, and the full-book merge the only other change.
 ///
 /// Unwind. USD3l management grants the helper the USD3l cooldown bypass, which it uses only for collateral it
 /// withdraws from the caller's own position and only up to the caller's matured cooldowns. The gate is waived while
 /// USD3l is shut down or its cooldown is zero, mirroring the vault's own waivers; a waived unwind still consumes
-/// cooldowns oldest first regardless of maturity, so bypass redemptions for a user never exceed the USD3l the helper
-/// supplied for that user, each at least the cooldown after it was supplied, across a waiver that later ends. Accepted
-/// residuals: a cooldown is not reduced when the collateral it covered leaves the position directly or by liquidation,
-/// which is weaker than the USD3l vault's own transfer lock on cooled shares; and cooldowns never expire, because the
-/// live USD3l `withdrawalWindow` is effectively unbounded (2^63 seconds).
+/// cooldowns oldest first regardless of maturity, so outside a USD3l cooldown waiver bypass redemptions for a user
+/// never exceed the USD3l the helper supplied for that user, each at least the cooldown after it was supplied, even
+/// after a waiver that has ended. Under a waiver USD3l itself applies no cooldown, so a waived unwind can redeem more
+/// than the book holds. Accepted residuals: collateral that leaves the position (directly or by liquidation) and is
+/// re-supplied directly, with no entry or `trimCooldowns` in between, can be unwound against the departed shares'
+/// matured cooldowns, which is weaker than the USD3l vault's own transfer lock on cooled shares; and cooldowns never
+/// expire, because the live USD3l `withdrawalWindow` is effectively unbounded (2^63 seconds).
 ///
 /// Surface. Entrypoints are `nonReentrant`. The helper holds no factory role, never deposits into USD3 itself (the
 /// vault is the USD3 depositor and holds the supply-cap exemption), and has no owner, rescue, receiver-choice,
@@ -194,9 +199,10 @@ interface ILCCLeveragedFundHelper {
     event CooldownStarted(
         address indexed user, bytes32 indexed marketId, uint256 shares, uint256 start, uint256 duration
     );
-    /// @notice A funding or take entry found the book full and merged two cooldowns; the fields are the merged
-    /// cooldown. Maturity is judged at the live USD3l duration: when the two oldest cooldowns are both matured they
-    /// merge into the oldest slot and the entry's cooldown takes the freed last slot; otherwise, when the youngest
+    /// @notice A funding or take entry found the book still full after its trim and merged two cooldowns; the fields
+    /// are the merged cooldown. Maturity is judged at the live USD3l duration: when the two oldest cooldowns are both
+    /// matured they merge into the oldest slot and the entry's cooldown takes the freed last slot; otherwise, when the
+    /// youngest
     /// cooldown is not matured, the entry's cooldown folds into it in place. Otherwise (the youngest matured while the
     /// oldest pair is not both matured, reachable only after the USD3l cooldown duration decreased between entries,
     /// which the current NotificationVault cannot do) the two oldest merge, which can delay a matured oldest cooldown
@@ -208,6 +214,10 @@ interface ILCCLeveragedFundHelper {
     event CooldownsMerged(
         address indexed user, bytes32 indexed marketId, uint256 shares, uint256 start, uint256 duration
     );
+    /// @notice `shares` were removed from `user`'s cooldowns in `marketId`, oldest first regardless of maturity, to
+    /// bring the book total down to the user's collateral there: at an entry, the collateral held before it; at
+    /// `trimCooldowns`, live collateral. Emitted only when shares were removed.
+    event CooldownsTrimmed(address indexed user, bytes32 indexed marketId, uint256 shares);
     /// @notice An unwind repaid `repaidAssets` of debt, redeemed `shares` of collateral (consuming that many matured
     /// cooldown shares, or up to that many cooldown shares regardless of maturity while the gate was waived), and sent
     /// `amountOut` of `outToken` (USDC or USD3) to the caller.
@@ -349,8 +359,8 @@ interface ILCCLeveragedFundHelper {
     function usd3() external view returns (address);
     /// @notice USD3l, the notification vault wrapping USD3 and every served market's collateral token.
     function usd3l() external view returns (address);
-    /// @notice Maximum open cooldowns per user and market; an entry into a full book merges two cooldowns as
-    /// `CooldownsMerged` describes.
+    /// @notice Maximum open cooldowns per user and market; an entry into a book still full after its trim merges two
+    /// cooldowns as `CooldownsMerged` describes.
     function MAX_COOLDOWNS() external view returns (uint256);
 
     /// @notice Funds the caller's current-epoch obligation in `params.vault` with amortizing push funding, borrowing
@@ -449,6 +459,16 @@ interface ILCCLeveragedFundHelper {
         IMorphoBlue.Authorization calldata authorization,
         IMorphoBlue.Signature calldata authorizationSignature
     ) external returns (uint256 repaidAssets, uint256 amountOut);
+
+    /// @notice Trims `user`'s cooldowns in market `marketId` to `user`'s live collateral there: when the book total
+    /// exceeds it, the excess is removed oldest first regardless of maturity (`CooldownsTrimmed`); otherwise this is a
+    /// no-op that emits nothing. Permissionless, and moves no tokens. Consequence: anyone can trim a user who withdrew
+    /// collateral directly from Morpho and later re-supplies it, so that user waits one more cooldown for the
+    /// re-supplied shares; a user avoids this by unwinding through the helper. A liquidation executor that holds its
+    /// own USD3l cooldown bypass is expected to call this in the liquidation transaction, so the liquidated user's
+    /// book never covers collateral that left the position.
+    /// @return trimmed Shares removed from the book.
+    function trimCooldowns(address user, bytes32 marketId) external returns (uint256 trimmed);
 
     /// @notice `user`'s open cooldowns in market `marketId`, oldest first. With the live USD3l `cooldownDuration`
     /// this is the matured-share bookkeeping: a cooldown is matured from `start + max(duration, cooldownDuration)` on.

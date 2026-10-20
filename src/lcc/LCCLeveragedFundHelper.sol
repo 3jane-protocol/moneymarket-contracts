@@ -28,7 +28,8 @@ import {ILCCNotificationVault, ILCCRedeemableVault} from "./interfaces/ILCCNotif
 /// @dev Layout: entrypoints size and validate a request with view reads (a take also syncs the vault), then
 /// `_executeFund`, `takeAuction`, or `_executeUnwind` runs it directly or through `_bridge`, whose flash-loan
 /// callback dispatches on the payload's `OperationKind` to `_runFund`, `_runTake`, or `_runUnwind`. Persistent state is
-/// the cooldown book; the in-flight operation hash and the reentrancy lock are transient.
+/// the cooldown book, which every entry and `trimCooldowns` bound by live collateral; the in-flight operation hash and
+/// the reentrancy lock are transient.
 contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoanCallback, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
     using MathLib for uint256;
@@ -267,6 +268,13 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         }
     }
 
+    /* COOLDOWN TRIM */
+
+    /// @inheritdoc ILCCLeveragedFundHelper
+    function trimCooldowns(address user, bytes32 marketId) external nonReentrant returns (uint256 trimmed) {
+        return _trimCooldowns(user, marketId, 0);
+    }
+
     /* VIEWS */
 
     /// @inheritdoc ILCCLeveragedFundHelper
@@ -473,7 +481,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         bytes32 id = _marketId(params.market);
         uint256 collateral = _positionCollateral(id, msg.sender);
         if (params.shares > collateral) revert SharesExceedCollateral(params.shares, collateral);
-        _consumeCooldowns(msg.sender, id, params.shares);
+        _consumeCooldowns(msg.sender, id, params.shares, false);
 
         IMorphoBlue(morpho).accrueInterest(params.market);
         UnwindOperation memory op = _sizeUnwind(params, id);
@@ -690,19 +698,22 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
 
     /* COOLDOWN BOOK */
 
-    /// @dev Opens a cooldown for `shares` supplied in this entry. Judged at the live USD3l duration just read: when the
-    /// two oldest cooldowns are both matured they merge into the oldest slot and the entry's cooldown takes the freed
-    /// last slot; otherwise, when the youngest
-    /// cooldown is not matured, the entry's shares fold into it in place (see `CooldownsMerged`). The remaining case,
-    /// a matured youngest cooldown while the oldest pair is not both matured, is reachable only after the USD3l
-    /// cooldown duration decreased between entries, which the current NotificationVault cannot do; it merges the two
-    /// oldest, and when only the oldest of them is matured that merge delays it to the second's maturity. A merged
-    /// share count saturates at `type(uint128).max`, which loses nothing because an unwind redeems at most the
-    /// position's `uint128` collateral. Never reverts for book reasons.
+    /// @dev Opens a cooldown for `shares` supplied in this entry, after trimming the book to the collateral the user
+    /// held before it (`_trimCooldowns`). Judged at the live USD3l duration just read, a book still full after the
+    /// trim merges: when the two oldest cooldowns are both matured they merge into the oldest slot and the entry's
+    /// cooldown takes the freed last slot; otherwise, when the youngest cooldown is not matured, the entry's shares
+    /// fold into it in place (see `CooldownsMerged`). The remaining case, a matured youngest cooldown while the oldest
+    /// pair is not both matured, is reachable only after the USD3l cooldown duration decreased between entries, which
+    /// the current NotificationVault cannot do; it merges the two oldest, and when only the oldest of them is matured
+    /// that merge delays it to the second's maturity. A merged share count saturates at `type(uint128).max`, which
+    /// loses nothing because an unwind redeems at most the position's `uint128` collateral. Never reverts for book
+    /// reasons.
     function _startCooldown(address user, bytes32 marketId, uint256 shares) private {
+        uint128 entryShares = SafeCast.toUint128(shares);
+        _trimCooldowns(user, marketId, shares);
         uint64 duration = ILCCNotificationVault(usd3l).cooldownDuration();
         uint64 start = uint64(block.timestamp); // deliberate wall-clock read
-        Cooldown memory cooldown = Cooldown({shares: SafeCast.toUint128(shares), start: start, duration: duration});
+        Cooldown memory cooldown = Cooldown({shares: entryShares, start: start, duration: duration});
         Cooldown[] storage book = _cooldowns[user][marketId];
         uint256 length = book.length;
         if (length < MAX_COOLDOWNS) {
@@ -737,15 +748,36 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
         merged.shares = uint128(Math.min(uint256(a.shares) + b.shares, type(uint128).max));
     }
 
-    /// @dev Consumes `shares` from the caller's cooldowns in `marketId`, oldest first, keeping the remaining cooldowns
-    /// in order and writing only cooldowns that changed or moved. Once nothing remains to consume and no cooldown has
-    /// been removed, the rest of the book is left unread and its length unchanged. Only matured cooldowns are consumed
-    /// and they must cover `shares` (`InsufficientMaturedShares`), except while the USD3l cooldown is waived: then any
-    /// cooldown is consumed regardless of maturity, and a book holding fewer than `shares` is emptied without
-    /// reverting.
-    function _consumeCooldowns(address user, bytes32 marketId, uint256 shares) private {
-        uint256 liveDuration = ILCCNotificationVault(usd3l).cooldownDuration();
-        bool waived = _cooldownWaived(liveDuration);
+    /// @dev Trims `user`'s cooldowns in `marketId` to the user's live collateral there less `excluded`: when the book
+    /// total exceeds that bound, the excess is consumed oldest first regardless of maturity and reported as
+    /// `CooldownsTrimmed`. Returns the shares removed.
+    function _trimCooldowns(address user, bytes32 marketId, uint256 excluded) private returns (uint256 trimmed) {
+        uint256 bound = _positionCollateral(marketId, user) - excluded;
+        Cooldown[] storage book = _cooldowns[user][marketId];
+        uint256 length = book.length;
+        uint256 total;
+        for (uint256 i; i < length; ++i) {
+            total += book[i].shares;
+        }
+        if (total <= bound) return 0;
+        trimmed = total - bound;
+        _consumeCooldowns(user, marketId, trimmed, true);
+        emit CooldownsTrimmed(user, marketId, trimmed);
+    }
+
+    /// @dev Consumes `shares` from `user`'s cooldowns in `marketId`, oldest first, keeping the remaining cooldowns in
+    /// order and writing only cooldowns that changed or moved. Once nothing remains to consume and no cooldown has
+    /// been removed, the rest of the book is left unread and its length unchanged. With `anyMaturity` (a trim) every
+    /// cooldown is consumed regardless of maturity and the USD3l cooldown is not read. Otherwise (an unwind) only
+    /// matured cooldowns are consumed and they must cover `shares` (`InsufficientMaturedShares`), except while the
+    /// USD3l cooldown is waived: then any cooldown is consumed regardless of maturity. A book holding fewer than
+    /// `shares` is emptied without reverting whenever maturity is ignored.
+    function _consumeCooldowns(address user, bytes32 marketId, uint256 shares, bool anyMaturity) private {
+        uint256 liveDuration;
+        if (!anyMaturity) {
+            liveDuration = ILCCNotificationVault(usd3l).cooldownDuration();
+            anyMaturity = _cooldownWaived(liveDuration);
+        }
         Cooldown[] storage book = _cooldowns[user][marketId];
         uint256 length = book.length;
         uint256 remaining = shares;
@@ -754,7 +786,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
             if (remaining == 0 && kept == i) return;
             Cooldown memory cooldown = book[i];
             bool changed;
-            if (remaining != 0 && (waived || _isMatured(cooldown, liveDuration))) {
+            if (remaining != 0 && (anyMaturity || _isMatured(cooldown, liveDuration))) {
                 uint256 taken = Math.min(remaining, cooldown.shares);
                 cooldown.shares -= uint128(taken);
                 remaining -= taken;
@@ -765,7 +797,7 @@ contract LCCLeveragedFundHelper is ILCCLeveragedFundHelper, IMorphoBlueFlashLoan
                 ++kept;
             }
         }
-        if (remaining != 0 && !waived) revert InsufficientMaturedShares(shares, shares - remaining);
+        if (remaining != 0 && !anyMaturity) revert InsufficientMaturedShares(shares, shares - remaining);
         for (uint256 i = kept; i < length; ++i) {
             book.pop();
         }

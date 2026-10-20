@@ -1127,6 +1127,187 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.unwind(_unwindParams(CALL, true, 0));
     }
 
+    /* COOLDOWN TRIM */
+
+    function testFullDepartureThenReentryLeavesOnlyTheNewCooldown() public {
+        _deposit(alice, MARGIN);
+        _fundUnleveredAtEpoch(alice, 0, 30e18);
+        _fundUnleveredAtEpoch(alice, 1, 20e18);
+        vm.prank(alice);
+        morpho.withdrawCollateral(marketParams, 50e18, alice, alice);
+
+        vm.recordLogs();
+        uint256 start = _fundUnleveredAtEpoch(alice, 2, 10e18);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        _assertTrimmedLog(logs, alice, 50e18);
+        assertEq(_scanLogCount(logs, ILCCLeveragedFundHelper.CooldownsMerged.selector), 0);
+
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+        assertEq(book.length, 1);
+        _assertCooldown(book[0], 10e18, start, cooldown);
+    }
+
+    function testPartialDepartureTrimsOldestFirstRegardlessOfMaturity() public {
+        _deposit(alice, MARGIN);
+        uint256 first = _fundUnleveredAtEpoch(alice, 0, 30e18);
+        uint256 second = _fundUnleveredAtEpoch(alice, 1 days / EPOCH, 30e18);
+        uint256 third = _fundUnleveredAtEpoch(alice, 2 days / EPOCH, 10e18);
+        vm.prank(alice);
+        morpho.withdrawCollateral(marketParams, 45e18, alice, alice);
+
+        uint256 epoch = (first + cooldown - START) / EPOCH + 1;
+        vm.warp(START + EPOCH * epoch);
+        assertEq(_maturedShares(alice), 30e18, "only the oldest is matured");
+        vm.recordLogs();
+        uint256 start = _fundUnleveredAtEpoch(alice, epoch, 5e18);
+        assertLt(start, second + cooldown);
+        _assertTrimmedLog(vm.getRecordedLogs(), alice, 45e18);
+
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+        assertEq(book.length, 3);
+        _assertCooldown(book[0], 15e18, second, cooldown);
+        _assertCooldown(book[1], 10e18, third, cooldown);
+        _assertCooldown(book[2], 5e18, start, cooldown);
+        assertEq(helper.maxUnwindable(alice, marketId), 0);
+    }
+
+    function testNoTrimWhileLiveCollateralCoversTheBook() public {
+        _deposit(alice, MARGIN);
+        _fundUnleveredAtEpoch(alice, 0, 30e18);
+        vm.recordLogs();
+        _fundUnleveredAtEpoch(alice, 1, 20e18);
+        assertEq(_countLogs(address(helper), ILCCLeveragedFundHelper.CooldownsTrimmed.selector), 0);
+
+        vm.prank(alice);
+        morpho.withdrawCollateral(marketParams, 40e18, alice, alice);
+        _supplyBackedCollateral(alice, 40e18);
+        ILCCLeveragedFundHelper.Cooldown[] memory before = helper.cooldowns(alice, marketId);
+
+        vm.recordLogs();
+        uint256 start = _fundUnleveredAtEpoch(alice, 2, 10e18);
+        assertEq(_countLogs(address(helper), ILCCLeveragedFundHelper.CooldownsTrimmed.selector), 0);
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+        assertEq(book.length, 3);
+        assertEq(abi.encode(book[0]), abi.encode(before[0]));
+        assertEq(abi.encode(book[1]), abi.encode(before[1]));
+        _assertCooldown(book[2], 10e18, start, cooldown);
+    }
+
+    function testTrimFreesSlotsInAFullBookSoTheEntryPushes() public {
+        _fillBook(alice);
+        ILCCLeveragedFundHelper.Cooldown[] memory before = helper.cooldowns(alice, marketId);
+        vm.prank(alice);
+        morpho.withdrawCollateral(marketParams, 3e18, alice, alice);
+
+        vm.recordLogs();
+        uint256 start = _fundUnleveredAtEpoch(alice, maxCooldowns, 1e18);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        _assertTrimmedLog(logs, alice, 3e18);
+        assertEq(_scanLogCount(logs, ILCCLeveragedFundHelper.CooldownsMerged.selector), 0);
+
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+        assertEq(book.length, maxCooldowns - 2);
+        for (uint256 i; i < maxCooldowns - 3; ++i) {
+            assertEq(abi.encode(book[i]), abi.encode(before[i + 3]));
+        }
+        _assertCooldown(book[maxCooldowns - 3], 1e18, start, cooldown);
+    }
+
+    function testEntryTrimUnderAWaiverMatchesTheUnwaivedTrim() public {
+        uint256 clean = vm.snapshotState();
+        for (uint256 waiver; waiver < 2; ++waiver) {
+            _deposit(alice, MARGIN);
+            _fundUnleveredAtEpoch(alice, 0, 30e18);
+            uint256 second = _fundUnleveredAtEpoch(alice, 1, 20e18);
+            vm.prank(alice);
+            morpho.withdrawCollateral(marketParams, 40e18, alice, alice);
+            if (waiver == 0) usd3l.setCooldownDuration(0);
+            else usd3l.setShutdown(true);
+
+            vm.recordLogs();
+            uint256 start = _fundUnleveredAtEpoch(alice, 2, 10e18);
+            _assertTrimmedLog(vm.getRecordedLogs(), alice, 40e18);
+
+            ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+            assertEq(book.length, 2);
+            _assertCooldown(book[0], 10e18, second, cooldown);
+            _assertCooldown(book[1], 10e18, start, usd3l.cooldownDuration());
+            vm.revertToState(clean);
+        }
+    }
+
+    function testTrimCooldownsIsPermissionlessAndTrimsToLiveCollateral() public {
+        _deposit(alice, MARGIN);
+        uint256 first = _fundUnleveredAtEpoch(alice, 0, 30e18);
+        uint256 second = _fundUnleveredAtEpoch(alice, 1, 20e18);
+        vm.prank(alice);
+        morpho.withdrawCollateral(marketParams, 25e18, alice, alice);
+        uint256 aliceUsd3l = usd3l.balanceOf(alice);
+        uint256 morphoUsd3l = usd3l.balanceOf(address(morpho));
+
+        vm.recordLogs();
+        vm.prank(bob);
+        uint256 trimmed = helper.trimCooldowns(alice, marketId);
+        assertEq(trimmed, 25e18);
+        _assertTrimmedLog(vm.getRecordedLogs(), alice, 25e18);
+
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+        assertEq(book.length, 2);
+        _assertCooldown(book[0], 5e18, first, cooldown);
+        _assertCooldown(book[1], 20e18, second, cooldown);
+        (,, uint128 collateral) = morpho.position(marketId, alice);
+        assertEq(collateral, 25e18);
+        assertEq(usd3l.balanceOf(alice), aliceUsd3l);
+        assertEq(usd3l.balanceOf(address(morpho)), morphoUsd3l);
+        _assertUnwindHelperClean();
+
+        vm.recordLogs();
+        vm.prank(bob);
+        assertEq(helper.trimCooldowns(alice, marketId), 0);
+        assertEq(vm.getRecordedLogs().length, 0);
+        assertEq(abi.encode(helper.cooldowns(alice, marketId)), abi.encode(book));
+    }
+
+    function testTrimCooldownsWithinLiveCollateralIsANoOp() public {
+        uint256 start = _enterUnlevered(alice);
+        _supplyBackedCollateral(alice, 10e18);
+
+        vm.recordLogs();
+        vm.prank(bob);
+        assertEq(helper.trimCooldowns(alice, marketId), 0);
+        vm.prank(bob);
+        assertEq(helper.trimCooldowns(bob, marketId), 0);
+        assertEq(vm.getRecordedLogs().length, 0);
+
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+        assertEq(book.length, 1);
+        _assertCooldown(book[0], CALL, start, cooldown);
+    }
+
+    function testTrimCooldownsAfterLiquidationEmptiesTheSeizedShares() public {
+        uint256 start = _enterLevered(alice);
+        morpho.seizeCollateral(marketParams, alice, 30e18);
+
+        vm.prank(bob);
+        assertEq(helper.trimCooldowns(alice, marketId), 30e18);
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+        assertEq(book.length, 1);
+        _assertCooldown(book[0], 70e18, start, cooldown);
+
+        vm.warp(start + cooldown);
+        assertEq(_maturedShares(alice), 70e18);
+        assertEq(helper.maxUnwindable(alice, marketId), 70e18);
+    }
+
+    function testTrimCooldownsIsNotReenterable() public {
+        (address caller, bytes memory call) = _prepareEntrypoint(0);
+        morpho.armReentry(address(helper), abi.encodeCall(ILCCLeveragedFundHelper.trimCooldowns, (alice, marketId)));
+        vm.prank(caller);
+        (bool ok,) = address(helper).call(call);
+        assertTrue(ok, "outer entrypoint completes");
+        assertEq(morpho.reentryError(), ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector);
+    }
+
     function testPartialConsumptionOfOldestCooldownTouchesOnlyThatEntry() public {
         _fillBook(alice);
         ILCCLeveragedFundHelper.Cooldown[] memory before = helper.cooldowns(alice, marketId);
@@ -1289,20 +1470,40 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.unwind(_unwindParams(1e18, true, 0));
     }
 
-    function testMergedShareCountSaturatesOnBothMergePaths() public {
+    /// @dev Storage-inflated cooldowns stand in for a book far above live collateral on both merge paths (the
+    /// youngest, then the two oldest); the entry trims the book to its pre-entry collateral first, so no merge runs
+    /// and the merged share count can never approach `type(uint128).max`.
+    function testInflatedBookIsTrimmedToCollateralBeforeAnyMerge() public {
         _fillBook(alice);
         uint128 nearMax = type(uint128).max - 1;
         uint256 snapshot = vm.snapshotState();
 
         _setCooldownShares(alice, maxCooldowns - 1, nearMax);
-        _fundUnleveredAtEpoch(alice, maxCooldowns, 1e18);
-        assertEq(helper.cooldowns(alice, marketId)[maxCooldowns - 1].shares, type(uint128).max);
+        _assertEntryTrimsInflatedBook(maxCooldowns, (maxCooldowns - 1) * 1e18 + nearMax);
         vm.revertToState(snapshot);
 
         _setCooldownShares(alice, 0, nearMax);
         _setCooldownShares(alice, 1, nearMax);
-        _fundUnleveredAtEpoch(alice, cooldown / EPOCH + 1, 1e18);
-        assertEq(helper.cooldowns(alice, marketId)[0].shares, type(uint128).max);
+        _assertEntryTrimsInflatedBook(cooldown / EPOCH + 1, (maxCooldowns - 2) * 1e18 + 2 * uint256(nearMax));
+    }
+
+    /// @dev Enters 1e18 for alice at `epoch` over a `MAX_COOLDOWNS` book of `bookTotal` shares and 12e18 collateral,
+    /// and checks the trim removed the excess, no merge ran, and the book total equals live collateral.
+    function _assertEntryTrimsInflatedBook(uint256 epoch, uint256 bookTotal) internal {
+        uint256 collateralBefore = maxCooldowns * 1e18;
+        vm.recordLogs();
+        _fundUnleveredAtEpoch(alice, epoch, 1e18);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        _assertTrimmedLog(logs, alice, bookTotal - collateralBefore);
+        assertEq(_scanLogCount(logs, ILCCLeveragedFundHelper.CooldownsMerged.selector), 0);
+
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+        uint256 total;
+        for (uint256 i; i < book.length; ++i) {
+            total += book[i].shares;
+        }
+        assertLe(book.length, maxCooldowns);
+        assertEq(total, collateralBefore + 1e18);
     }
 
     function testEntryAboveUint128SharesRevertsTheCooldownCast() public {
@@ -3428,6 +3629,25 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         for (uint256 epoch; epoch < maxCooldowns; ++epoch) {
             starts[epoch] = _fundUnleveredAtEpoch(user, epoch, 1e18);
         }
+    }
+
+    /// @dev `logs` holds exactly one helper `CooldownsTrimmed` for `user` in `marketId`, removing `shares`.
+    function _assertTrimmedLog(Vm.Log[] memory logs, address user, uint256 shares) internal view {
+        uint256 found;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(helper)) continue;
+            if (logs[i].topics[0] != ILCCLeveragedFundHelper.CooldownsTrimmed.selector) continue;
+            assertEq(logs[i].topics[1], bytes32(uint256(uint160(user))));
+            assertEq(logs[i].topics[2], marketId);
+            assertEq(logs[i].data, abi.encode(shares));
+            ++found;
+        }
+        assertEq(found, 1);
+    }
+
+    /// @dev Number of helper logs in `logs` whose first topic is `topic`.
+    function _scanLogCount(Vm.Log[] memory logs, bytes32 topic) internal view returns (uint256 count) {
+        (count,) = _scanLogs(logs, address(helper), topic);
     }
 
     /// @dev Storage slot of `user`'s cooldown array in `marketId` (the helper's first storage variable).
