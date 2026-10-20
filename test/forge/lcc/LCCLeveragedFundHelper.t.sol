@@ -1139,8 +1139,12 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         vm.recordLogs();
         uint256 start = _fundUnleveredAtEpoch(alice, 2, 10e18);
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        _assertTrimmedLog(logs, alice, 50e18);
-        assertEq(_scanLogCount(logs, ILCCLeveragedFundHelper.CooldownsMerged.selector), 0);
+        assertEq(
+            _singleLogData(logs, address(helper), ILCCLeveragedFundHelper.CooldownsTrimmed.selector),
+            abi.encode(uint256(50e18))
+        );
+        (uint256 merges,) = _scanLogs(logs, address(helper), ILCCLeveragedFundHelper.CooldownsMerged.selector);
+        assertEq(merges, 0);
 
         ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
         assertEq(book.length, 1);
@@ -1161,7 +1165,10 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         vm.recordLogs();
         uint256 start = _fundUnleveredAtEpoch(alice, epoch, 5e18);
         assertLt(start, second + cooldown);
-        _assertTrimmedLog(vm.getRecordedLogs(), alice, 45e18);
+        assertEq(
+            _singleLogData(address(helper), ILCCLeveragedFundHelper.CooldownsTrimmed.selector),
+            abi.encode(uint256(45e18))
+        );
 
         ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
         assertEq(book.length, 3);
@@ -1202,8 +1209,12 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         vm.recordLogs();
         uint256 start = _fundUnleveredAtEpoch(alice, maxCooldowns, 1e18);
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        _assertTrimmedLog(logs, alice, 3e18);
-        assertEq(_scanLogCount(logs, ILCCLeveragedFundHelper.CooldownsMerged.selector), 0);
+        assertEq(
+            _singleLogData(logs, address(helper), ILCCLeveragedFundHelper.CooldownsTrimmed.selector),
+            abi.encode(uint256(3e18))
+        );
+        (uint256 merges,) = _scanLogs(logs, address(helper), ILCCLeveragedFundHelper.CooldownsMerged.selector);
+        assertEq(merges, 0);
 
         ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
         assertEq(book.length, maxCooldowns - 2);
@@ -1213,27 +1224,12 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         _assertCooldown(book[maxCooldowns - 3], 1e18, start, cooldown);
     }
 
-    function testEntryTrimUnderAWaiverMatchesTheUnwaivedTrim() public {
-        uint256 clean = vm.snapshotState();
-        for (uint256 waiver; waiver < 2; ++waiver) {
-            _deposit(alice, MARGIN);
-            _fundUnleveredAtEpoch(alice, 0, 30e18);
-            uint256 second = _fundUnleveredAtEpoch(alice, 1, 20e18);
-            vm.prank(alice);
-            morpho.withdrawCollateral(marketParams, 40e18, alice, alice);
-            if (waiver == 0) usd3l.setCooldownDuration(0);
-            else usd3l.setShutdown(true);
+    function testEntryTrimIgnoresMaturityUnderAZeroUsd3lCooldown() public {
+        _assertEntryTrimUnderWaiver(false);
+    }
 
-            vm.recordLogs();
-            uint256 start = _fundUnleveredAtEpoch(alice, 2, 10e18);
-            _assertTrimmedLog(vm.getRecordedLogs(), alice, 40e18);
-
-            ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
-            assertEq(book.length, 2);
-            _assertCooldown(book[0], 10e18, second, cooldown);
-            _assertCooldown(book[1], 10e18, start, usd3l.cooldownDuration());
-            vm.revertToState(clean);
-        }
+    function testEntryTrimIgnoresMaturityWhileUsd3lIsShutDown() public {
+        _assertEntryTrimUnderWaiver(true);
     }
 
     function testTrimCooldownsIsPermissionlessAndTrimsToLiveCollateral() public {
@@ -1245,11 +1241,11 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         uint256 aliceUsd3l = usd3l.balanceOf(alice);
         uint256 morphoUsd3l = usd3l.balanceOf(address(morpho));
 
-        vm.recordLogs();
+        vm.expectEmit(address(helper));
+        emit ILCCLeveragedFundHelper.CooldownsTrimmed(alice, marketId, 25e18);
         vm.prank(bob);
         uint256 trimmed = helper.trimCooldowns(alice, marketId);
         assertEq(trimmed, 25e18);
-        _assertTrimmedLog(vm.getRecordedLogs(), alice, 25e18);
 
         ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
         assertEq(book.length, 2);
@@ -1470,40 +1466,58 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         helper.unwind(_unwindParams(1e18, true, 0));
     }
 
-    /// @dev Storage-inflated cooldowns stand in for a book far above live collateral on both merge paths (the
-    /// youngest, then the two oldest); the entry trims the book to its pre-entry collateral first, so no merge runs
-    /// and the merged share count can never approach `type(uint128).max`.
+    /// @dev Storage-inflated oldest cooldowns stand in for a full book far above live collateral, whose two oldest
+    /// would otherwise merge past `type(uint128).max`; the entry trims the book to its pre-entry collateral first.
     function testInflatedBookIsTrimmedToCollateralBeforeAnyMerge() public {
         _fillBook(alice);
         uint128 nearMax = type(uint128).max - 1;
-        uint256 snapshot = vm.snapshotState();
-
-        _setCooldownShares(alice, maxCooldowns - 1, nearMax);
-        _assertEntryTrimsInflatedBook(maxCooldowns, (maxCooldowns - 1) * 1e18 + nearMax);
-        vm.revertToState(snapshot);
-
         _setCooldownShares(alice, 0, nearMax);
         _setCooldownShares(alice, 1, nearMax);
-        _assertEntryTrimsInflatedBook(cooldown / EPOCH + 1, (maxCooldowns - 2) * 1e18 + 2 * uint256(nearMax));
+        uint256 collateralBefore = maxCooldowns * 1e18;
+        uint256 bookTotal = (maxCooldowns - 2) * 1e18 + 2 * uint256(nearMax);
+
+        vm.recordLogs();
+        _fundUnleveredAtEpoch(alice, cooldown / EPOCH + 1, 1e18);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(
+            _singleLogData(logs, address(helper), ILCCLeveragedFundHelper.CooldownsTrimmed.selector),
+            abi.encode(bookTotal - collateralBefore)
+        );
+        (uint256 merges,) = _scanLogs(logs, address(helper), ILCCLeveragedFundHelper.CooldownsMerged.selector);
+        assertEq(merges, 0);
+        assertLe(helper.cooldowns(alice, marketId).length, maxCooldowns);
+        assertEq(_bookTotal(alice), collateralBefore + 1e18);
     }
 
-    /// @dev Enters 1e18 for alice at `epoch` over a `MAX_COOLDOWNS` book of `bookTotal` shares and 12e18 collateral,
-    /// and checks the trim removed the excess, no merge ran, and the book total equals live collateral.
-    function _assertEntryTrimsInflatedBook(uint256 epoch, uint256 bookTotal) internal {
-        uint256 collateralBefore = maxCooldowns * 1e18;
+    function testPartialTrimOfAFullBookStillMergesTheTwoOldest() public {
+        uint256[] memory starts = _fillBook(alice);
+        ILCCLeveragedFundHelper.Cooldown[] memory before = helper.cooldowns(alice, marketId);
+        vm.prank(alice);
+        morpho.withdrawCollateral(marketParams, 0.5e18, alice, alice);
+
         vm.recordLogs();
-        _fundUnleveredAtEpoch(alice, epoch, 1e18);
+        uint256 start = _fundUnleveredAtEpoch(alice, cooldown / EPOCH + 1, 1e18);
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        _assertTrimmedLog(logs, alice, bookTotal - collateralBefore);
-        assertEq(_scanLogCount(logs, ILCCLeveragedFundHelper.CooldownsMerged.selector), 0);
+        assertEq(start, starts[1] + cooldown, "only the two oldest are matured");
+        assertEq(
+            _singleLogData(logs, address(helper), ILCCLeveragedFundHelper.CooldownsTrimmed.selector),
+            abi.encode(uint256(0.5e18))
+        );
+        assertEq(
+            _singleLogData(logs, address(helper), ILCCLeveragedFundHelper.CooldownsMerged.selector),
+            abi.encode(uint256(1.5e18), starts[1], cooldown)
+        );
 
         ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
-        uint256 total;
-        for (uint256 i; i < book.length; ++i) {
-            total += book[i].shares;
+        assertEq(book.length, maxCooldowns);
+        _assertCooldown(book[0], 1.5e18, starts[1], cooldown);
+        for (uint256 i = 1; i < maxCooldowns - 1; ++i) {
+            assertEq(abi.encode(book[i]), abi.encode(before[i + 1]));
         }
-        assertLe(book.length, maxCooldowns);
-        assertEq(total, collateralBefore + 1e18);
+        _assertCooldown(book[maxCooldowns - 1], 1e18, start, cooldown);
+        (,, uint128 collateral) = morpho.position(marketId, alice);
+        assertEq(_bookTotal(alice), collateral);
+        assertEq(helper.maxUnwindable(alice, marketId), 1.5e18);
     }
 
     function testEntryAboveUint128SharesRevertsTheCooldownCast() public {
@@ -3631,23 +3645,29 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         }
     }
 
-    /// @dev `logs` holds exactly one helper `CooldownsTrimmed` for `user` in `marketId`, removing `shares`.
-    function _assertTrimmedLog(Vm.Log[] memory logs, address user, uint256 shares) internal view {
-        uint256 found;
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].emitter != address(helper)) continue;
-            if (logs[i].topics[0] != ILCCLeveragedFundHelper.CooldownsTrimmed.selector) continue;
-            assertEq(logs[i].topics[1], bytes32(uint256(uint160(user))));
-            assertEq(logs[i].topics[2], marketId);
-            assertEq(logs[i].data, abi.encode(shares));
-            ++found;
-        }
-        assertEq(found, 1);
-    }
+    /// @dev Enters 10e18 for alice over a 30e18 + 20e18 book after she withdrew 40e18 collateral directly, under
+    /// a USD3l waiver (`shutdown`, else a zero cooldown duration), and checks the trim ignored maturity as it does
+    /// outside a waiver.
+    function _assertEntryTrimUnderWaiver(bool shutdown) private {
+        _deposit(alice, MARGIN);
+        _fundUnleveredAtEpoch(alice, 0, 30e18);
+        uint256 second = _fundUnleveredAtEpoch(alice, 1, 20e18);
+        vm.prank(alice);
+        morpho.withdrawCollateral(marketParams, 40e18, alice, alice);
+        if (shutdown) usd3l.setShutdown(true);
+        else usd3l.setCooldownDuration(0);
 
-    /// @dev Number of helper logs in `logs` whose first topic is `topic`.
-    function _scanLogCount(Vm.Log[] memory logs, bytes32 topic) internal view returns (uint256 count) {
-        (count,) = _scanLogs(logs, address(helper), topic);
+        vm.recordLogs();
+        uint256 start = _fundUnleveredAtEpoch(alice, 2, 10e18);
+        assertEq(
+            _singleLogData(address(helper), ILCCLeveragedFundHelper.CooldownsTrimmed.selector),
+            abi.encode(uint256(40e18))
+        );
+
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(alice, marketId);
+        assertEq(book.length, 2);
+        _assertCooldown(book[0], 10e18, second, cooldown);
+        _assertCooldown(book[1], 10e18, start, usd3l.cooldownDuration());
     }
 
     /// @dev Storage slot of `user`'s cooldown array in `marketId` (the helper's first storage variable).
@@ -3678,6 +3698,14 @@ contract LCCLeveragedFundHelperTest is LCCBase, LCCLeveragedFundSigUtils, LCCLev
         usd3l.approve(address(morpho), shares);
         morpho.supplyCollateral(marketParams, shares, user, "");
         vm.stopPrank();
+    }
+
+    /// @dev Sum of `user`'s cooldown shares in `marketId`.
+    function _bookTotal(address user) internal view returns (uint256 total) {
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(user, marketId);
+        for (uint256 i; i < book.length; ++i) {
+            total += book[i].shares;
+        }
     }
 
     /// @dev `user`'s matured cooldown shares, read from `cooldowns()` and the live USD3l duration.
