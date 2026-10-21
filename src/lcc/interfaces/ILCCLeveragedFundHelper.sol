@@ -237,17 +237,17 @@ interface ILCCLeveragedFundHelper {
     /// @dev Permit replacement: `fundWithSignatures` always submits the USD3l permit, the USDC permit whenever the USDC
     /// contribution is nonzero, and the margin-asset permit whenever `marginAssets` is nonzero, so a permit that
     /// applies replaces the caller's standing allowance to this helper with `value`. A caller whose standing allowance
-    /// already
-    /// suffices should use `fund`, or sign for the allowance it wants to stand after the call. A submitted permit
-    /// cannot outlive the call to be submitted later and reset the allowance. `value` must cover the amount pulled at
-    /// execution. The USDC contribution is `fundingAmount - borrowAssets - marginAssets`; a fully levered entry (see
-    /// `FundParams.borrowAssets`) pulls no USDC, ignores its USDC permit, and leaves the standing USDC allowance
-    /// untouched. The contribution depends on the obligation and the `usd3.previewMint(1)` top-up at inclusion time,
-    /// which can move between signing and inclusion (for example after a USD3 report), so signers should over-approve.
-    /// The USD3l pulled is at most `FundParams.maxCollateral` and the USD3l permit is checked against that value before
-    /// any funding, so signers sign it for `maxCollateral`. The margin-asset permit is checked against
-    /// `FundParams.maxMarginShares`, so signers sign it for that value; an entry without margin ignores it and leaves
-    /// the standing margin-asset allowance untouched.
+    /// already suffices should use `fund`, or sign for the allowance it wants to stand after the call. A submitted
+    /// permit cannot outlive the call to be submitted later and reset the allowance. `value` must cover the amount
+    /// pulled at execution. The USDC contribution is `fundingAmount - borrowAssets - marginAssets`; a fully levered
+    /// entry (see `FundParams.borrowAssets`) pulls no USDC, does not submit its USDC permit, and leaves the standing
+    /// USDC allowance untouched (`fundWithSignatures` states what an unsubmitted permit can still do). The
+    /// contribution depends on the obligation and the `usd3.previewMint(1)` top-up at inclusion time, which can move
+    /// between signing and inclusion (for example after a USD3 report), so signers should over-approve. The USD3l
+    /// pulled is at most `FundParams.maxCollateral` and the USD3l permit is checked against that value before any
+    /// funding, so signers sign it for `maxCollateral`. The margin-asset permit is checked against
+    /// `FundParams.maxMarginShares`, so signers sign it for that value; an entry without margin does not submit it and
+    /// leaves the standing margin-asset allowance untouched.
     struct PermitSignature {
         uint256 value;
         uint256 deadline;
@@ -382,10 +382,14 @@ interface ILCCLeveragedFundHelper {
 
     /// @notice `fund` that first applies the caller's signatures: the permits `PermitSignature` says it submits and,
     /// when `params.borrowAssets` is nonzero and the caller has not yet authorized this helper on Morpho, an enabling
-    /// Morpho authorization. Signatures it does not apply are ignored and may be zeroed. The resulting allowance must
-    /// cover the requirement (`InsufficientAllowance`, carrying the permit's revert data).
-    /// @dev A signature that fails to apply is tolerated when the allowance or authorization it grants is already in
-    /// place, so a third party submitting the same signature first cannot make this call revert. An applied
+    /// Morpho authorization. A signature this call does not apply is not submitted and stays unused: anyone can
+    /// submit a nonzero one once until its deadline, and it then restores the allowance or authorization it signs for
+    /// this helper, even after the caller has lowered or revoked it. Because this helper pulls tokens and borrows only
+    /// for `msg.sender`, that serves only the caller's own later helper calls; callers should zero a signature they do
+    /// not need or give it a short deadline. The resulting allowance must cover the requirement
+    /// (`InsufficientAllowance`, carrying the permit's revert data).
+    /// @dev A submitted signature that fails to apply is tolerated when the allowance or authorization it grants is
+    /// already in place, so a third party submitting the same signature first cannot make this call revert. An applied
     /// authorization payload must name the caller as authorizer and this helper as authorized and must enable
     /// (`InvalidRequest`); an authorization that is still missing after submission reverts `NotAuthorized`. The enable
     /// signature is separable: a third party can submit it on its own, and the authorization then stands even if this
