@@ -446,17 +446,19 @@ handled; donated USD3l, USD3, USDC, and margin-asset shares are never spent.
 collateral alone through the vault. USD3l management grants the helper the vault's cooldown bypass, and the helper
 enforces its own per-user cooldown instead. Every funding or take entry opens a cooldown `{shares, start, duration}` for
 the collateral it supplied, keyed by user and market id; it matures at `start + max(duration, live cooldownDuration)` and
-never expires. A book holds at most `MAX_COOLDOWNS` (12) cooldowns. Except after a USD3l cooldown-duration decrease, an
-entry into a full book never merges a matured cooldown with an unmatured one: when the two oldest are both matured they merge and the entry takes the freed last slot;
-otherwise the entry folds into the unmatured youngest cooldown in place. A merge keeps the later start and the later
-recorded maturity, so the result is never earlier than either input under any live duration, and no entry reverts for
-cooldown reasons; `CooldownsMerged` states the rule and its one residual branch. Entries are the only way a cooldown
-starts and unwind consumption the only way one is removed; the full-book merge is the only other change. An unwind
-consumes matured cooldowns oldest first before any state-changing external call; once the requested shares are
-consumed and no cooldown has been removed it stops reading, so a partial unwind of the oldest cooldown touches only that
-entry. Consumption emits no per-cooldown event: `Unwound` records the shares redeemed, and a
-user's matured bookkeeping is read from `cooldowns()` with the live `cooldownDuration` (`maxUnwindable` adds the
-live-collateral cap).
+never expires. A book holds at most `MAX_COOLDOWNS` (12) cooldowns, and every entry and the permissionless
+`trimCooldowns` first trim its total to the user's live collateral (`ILCCLeveragedFundHelper.trimCooldowns` states the
+rule and its consequences). Except after a USD3l cooldown-duration decrease, an entry into a book still full after its
+trim never merges a matured cooldown with an unmatured one: when the two oldest are both matured they merge and the
+entry takes the freed last slot; otherwise the entry folds into the unmatured youngest cooldown in place. A merge keeps
+the later start and the later recorded maturity, so the result is never earlier than either input under any live
+duration, and no entry reverts for cooldown reasons; `CooldownsMerged` states the rule and its one residual branch.
+Entries are the only way a cooldown starts, unwind consumption and the trim the only ways one is reduced or removed,
+and the full-book merge the only other change. An unwind consumes matured cooldowns oldest first before any
+state-changing external call; once the requested shares are consumed and no cooldown has been removed it stops
+reading, so a partial unwind of the oldest cooldown touches only that entry. Consumption emits no per-cooldown event:
+`Unwound` records the shares redeemed, and a user's matured bookkeeping is read from `cooldowns()` with the live
+`cooldownDuration` (`maxUnwindable` adds the live-collateral cap).
 
 `unwind` (or `unwindWithAuthorization`, needed because unlevered and margin-only funders never authorized the helper)
 accrues the market and repays by shares, the whole debt in `full` mode or the shares `repayAssets` buys rounding down,
@@ -469,19 +471,18 @@ zero-repayment `usd3Out` unwind converts nothing, so it never reads USD3's withd
 or waUSDC pause. A partial unwind leaves debt, so Morpho's health check and oracle apply to the withdrawal. The cooldown
 gate is waived while USD3l is shut down or its cooldown is zero, mirroring the vault; a waived unwind still consumes
 cooldowns oldest first regardless of maturity, so shares redeemed during a waiver cannot be redeemed again after it
-ends. USD3's withdraw limit (pending
-loss, waUSDC pause, ring fence, floors) and a revoked bypass make an unwind revert atomically with cooldowns restored;
-users then exit by repaying with their own USDC and using the vault cooldown.
+ends; under a waiver USD3l itself applies no cooldown, so a waived unwind can redeem more than the book holds. USD3's
+withdraw limit (pending loss, waUSDC pause, ring fence, floors) and a revoked bypass make an unwind revert atomically
+with cooldowns restored; users then exit by repaying with their own USDC and using the vault cooldown.
 
-**Accepted residuals and properties.** `ILCCLeveragedFundHelper` lists them: the cooldown residuals (a cooldown
-outlives collateral that leaves the position directly or by liquidation, and cooldowns never expire). The leftover
-matured cooldown then lets a later entry's collateral be unwound immediately up to the shares that left, which stays
-within the stated bound: bypass redemptions never exceed the USD3l supplied for that user at least one cooldown earlier.
-The interface also lists the accepted
-properties of its surface (a global Morpho authorization, no entry-LTV buffer below LLTV, levered entry during a
-pending USD3 loss, and the curator's ownership of oracle, LLTV, and liquidation strategy), together with the surface the
-helper lacks (no factory role, no USD3 deposit of its own, and no owner, rescue, receiver-choice, delegated-beneficiary,
-generic-call, or upgrade surface).
+**Accepted residuals and properties.** `ILCCLeveragedFundHelper` lists them: the cooldown residuals (collateral
+that leaves the position directly or by liquidation and is re-supplied directly, with no entry or `trimCooldowns` in
+between, can be unwound against the departed shares' matured cooldowns; and cooldowns never expire). Outside a USD3l
+cooldown waiver, bypass redemptions never exceed the USD3l supplied for that user at least one cooldown earlier. The
+interface also lists the accepted properties of its surface (a global Morpho authorization, no entry-LTV buffer below
+LLTV, levered entry during a pending USD3 loss, and the curator's ownership of oracle, LLTV, and liquidation strategy),
+together with the surface the helper lacks (no factory role, no USD3 deposit of its own, and no owner, rescue,
+receiver-choice, delegated-beneficiary, generic-call, or upgrade surface).
 
 **Errors.** The helper declares its errors on `ILCCLeveragedFundHelper` in three groups: caller bounds (a bound the
 caller set or a precondition the caller controls, most carrying the offending value and the bound), request, vault and

@@ -721,8 +721,10 @@ contract LCCLeveragedFundEntryForkTest is LCCLeveragedFundForkBase {
     /// @dev After a levered entry the funder withdraws part of its collateral directly on Morpho, staying healthy. At
     /// maturity live collateral, not the cooldown book, caps the unwind: `maxUnwindable` is the remaining collateral,
     /// one share more reverts `SharesExceedCollateral`, and a full unwind of the remainder closes the position while
-    /// the book keeps the withdrawn shares' cooldown, as the interface documents for collateral leaving directly.
-    function testDirectCollateralWithdrawalCapsUnwindsWhileTheCooldownOutlivesIt() public requiresFork {
+    /// the book keeps the withdrawn shares' cooldown. A re-entry by the same funder in the same market then trims the
+    /// book to its pre-entry collateral, zero, before adding its own cooldown, so the departed shares' matured cooldown
+    /// makes none of the new collateral unwindable.
+    function testDirectCollateralWithdrawalCapsUnwindsAndReentryTrimsTheDepartedCooldown() public requiresFork {
         address user = funders[2];
         (uint256 start, uint256 collateral) = _enterFunder(user, true);
         uint256 withdrawn = collateral / 20;
@@ -733,31 +735,51 @@ contract LCCLeveragedFundEntryForkTest is LCCLeveragedFundForkBase {
 
         vm.warp(start + _cooldown());
         _assertUnwindCappedByLiveCollateral(user, collateral, start, withdrawn);
+        _assertReentryTrimsDepartedCooldown(user, start, withdrawn);
     }
 
     /// @dev Mocks only the market oracle's `price()`, 10% below the USD3 share rate, because no reachable USD3 share
     /// price makes the entry liquidatable; Morpho's real `liquidate` then seizes half the funder's collateral from a
-    /// liquidator holding USDC, and the mock is cleared. At maturity the post-liquidation collateral caps the unwind
-    /// as for a direct withdrawal, the full unwind repays Morpho's post-liquidation debt, and the seized shares'
-    /// cooldown outlives them. A re-entry by the same funder in the same market then appends its cooldown behind that
-    /// residual, which, being matured, makes up to the seized shares of the new collateral unwindable at once: the
-    /// accepted residual that a cooldown is not reduced when its collateral leaves by liquidation.
-    function testLiquidationCapsUnwindsWhileTheCooldownOutlivesItAndReentryAppends() public requiresFork {
+    /// liquidator holding USDC, and the mock is cleared. A third party calling `trimCooldowns` right after the
+    /// liquidation trims the book to Morpho's post-liquidation collateral. Without that trim, at maturity the
+    /// post-liquidation collateral caps the unwind as for a direct withdrawal, the full unwind repays Morpho's
+    /// post-liquidation debt, and the seized shares' cooldown stays in the book until a re-entry by the same funder in
+    /// the same market trims it before adding its own cooldown.
+    function testLiquidationCapsUnwindsAndTrimCooldownsOrReentryTrimsTheSeizedCooldown() public requiresFork {
         address user = funders[2];
         (uint256 start, uint256 collateral) = _enterFunder(user, true);
         uint256 seized = _liquidateHalf(user);
+        uint256 liquidated = vm.snapshotState();
+
+        vm.recordLogs();
+        vm.prank(makeAddr("third-party"));
+        assertEq(helper.trimCooldowns(user, marketId), seized);
+        assertEq(_singleLogData(address(helper), ILCCLeveragedFundHelper.CooldownsTrimmed.selector), abi.encode(seized));
+        assertEq(_collateralOf(user), collateral - seized);
+        ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(user, marketId);
+        assertEq(book.length, 1);
+        _assertCooldown(book[0], collateral - seized, start, _cooldown());
+        vm.revertToState(liquidated);
 
         vm.warp(start + _cooldown());
         _assertUnwindCappedByLiveCollateral(user, collateral, start, seized);
+        _assertReentryTrimsDepartedCooldown(user, start, seized);
+    }
 
+    /// @dev After `user`'s position closed with `departed` shares of the cooldown started at `start` left in its book,
+    /// a re-entry at a later call trims those shares (`CooldownsTrimmed`) and leaves only its own, unmatured cooldown.
+    function _assertReentryTrimsDepartedCooldown(address user, uint256 start, uint256 departed) internal {
         _openLaterCall(CALL_EPOCH + 2);
+        vm.recordLogs();
         (uint256 reentryStart, uint256 reentryCollateral) = _enterFunder(user, true);
+        assertEq(
+            _singleLogData(address(helper), ILCCLeveragedFundHelper.CooldownsTrimmed.selector), abi.encode(departed)
+        );
         assertGt(reentryStart, start + _cooldown());
         ILCCLeveragedFundHelper.Cooldown[] memory book = helper.cooldowns(user, marketId);
-        assertEq(book.length, 2);
-        _assertCooldown(book[0], seized, start, _cooldown());
-        _assertCooldown(book[1], reentryCollateral, reentryStart, _cooldown());
-        assertEq(helper.maxUnwindable(user, marketId), Math.min(seized, reentryCollateral));
+        assertEq(book.length, 1);
+        _assertCooldown(book[0], reentryCollateral, reentryStart, _cooldown());
+        assertEq(helper.maxUnwindable(user, marketId), 0);
     }
 
     /// @dev Makes `user`'s position liquidatable by mocking the market oracle's `price()` 10% low, liquidates half
