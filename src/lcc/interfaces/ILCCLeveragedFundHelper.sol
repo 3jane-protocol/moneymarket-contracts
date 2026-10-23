@@ -155,11 +155,14 @@ interface ILCCLeveragedFundHelper {
     /// @param marginAssets USDC sourced from the margin award at `maxFill`; scaled to the fill rounding down, or taking
     /// the rounding dust when `borrowAssets` is zero. Zero forwards the whole award to the caller. When nonzero, the
     /// vault's margin asset must be an ERC-4626 vault whose `asset()` is USDC (`UnsupportedMarginAsset` otherwise);
-    /// the helper withdraws exactly the scaled amount of USDC from the award it received (`UnexpectedBalance`),
-    /// burning no more shares than the award (`MarginSharesUnavailable`), and forwards the rest.
+    /// the helper withdraws exactly the scaled amount of USDC from the award it received (`UnexpectedBalance`) at the
+    /// margin asset's conversion rate at execution, and forwards the rest. The shares this burns are bounded only by
+    /// the award received in this take (`MarginSharesUnavailable`), with no caller-set share bound like
+    /// `FundParams.maxMarginShares`, so the award the caller retains depends on that rate.
     /// @param minMarginAward Minimum margin award at `maxFill`, scaled to the fill rounding down (it is a floor, and
     /// the vault floors its award) and passed to the vault. The award is pro-rata in the fill, so the scaled bound
-    /// keeps its per-unit meaning.
+    /// keeps its per-unit meaning. It bounds the gross award the vault pays, before the `marginAssets` withdrawal, not
+    /// the remainder forwarded to the caller.
     /// @param minCollateral Minimum USD3l the vault must deliver at `maxFill`; must be nonzero
     /// (`InvalidRequest`). It scales rounding down with a floor of one share, because the delivery itself
     /// floors twice (USD3, then USD3l). Integrators quote it at `maxFill` from
@@ -459,6 +462,9 @@ interface ILCCLeveragedFundHelper {
     function cooldowns(address user, bytes32 marketId) external view returns (Cooldown[] memory);
 
     /// @notice The most shares `user` can unwind in market `marketId` by the cooldown gate and live collateral; USD3's
-    /// withdraw limit and Morpho's health check are not included.
+    /// withdraw limit and Morpho's health check are not included. `marketId` is meant to be a market on the pinned
+    /// Morpho lending USDC against USD3l (the markets `unwind` accepts), which the view does not check: while the
+    /// USD3l cooldown is waived (shutdown or zero `cooldownDuration`) it returns `user`'s whole collateral for any
+    /// market id, including one `unwind` rejects. Outside a waiver, a market with no booked cooldowns returns zero.
     function maxUnwindable(address user, bytes32 marketId) external view returns (uint256);
 }
