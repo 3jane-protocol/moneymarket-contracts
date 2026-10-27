@@ -5,7 +5,7 @@ import {IAaveMarket, ReserveDataLegacy} from "../../../src/irm/adaptive-curve-ir
 
 /// @notice Mock Aave pool for testing AdaptiveCurveIrm
 contract AavePoolMock is IAaveMarket {
-    mapping(address => ReserveDataLegacy) public reserveData;
+    mapping(address => ReserveDataLegacy) internal reserveData;
 
     function setReserveData(
         address asset,
