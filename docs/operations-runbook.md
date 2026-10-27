@@ -467,12 +467,57 @@ answer a user's question about matured shares, read `cooldowns(user, marketId)` 
 `cooldownDuration`, or `maxUnwindable(user, marketId)` for the amount the gate and live collateral allow. The bypass is
 owner-keyed to the helper address and grants no allowance over anyone else's shares.
 
-- Grant: a management transaction `setCooldownBypass(helper, true)` after verifying the deployed helper's runtime code.
-  A bypass transition clears any vault cooldown the account holds; the helper never holds one, so nothing is lost.
-- Revoke: `setCooldownBypass(helper, false)`. Every `unwind` then reverts at the USD3l redemption (the helper has no
-  vault cooldown, so its USD3l withdraw limit is zero) and rolls back atomically with the user's helper cooldowns intact. Users
-  still exit the ordinary way: repay the Morpho debt with their own USDC, `withdrawCollateral`, start a USD3l
-  `startCooldown`, and redeem after the vault's cooldown. Re-granting restores unwind with the same cooldowns.
+`SetUSD3lCooldownBypassTimelock` routes a grant or revoke through USD3l's 24-hour parameters timelock. The main Safe
+schedules the one-call `scheduleBatch`; after the delay a timelock executor broadcasts `executeBatch` directly. Use the
+same `attempt` and the full execute environment printed by `schedule`, then verify the live state:
+
+```sh
+unset ETH_PRIORITY_GAS_PRICE
+export USD3L_BYPASS_ACCOUNT=<account>
+export USD3L_BYPASS_ALLOWED=true
+export USD3L_BYPASS_EXPECTED_CODEHASH=<reviewed-runtime-code-hash>
+export USD3L_BYPASS_LCC_HELPER_FACTORY=<factory> # only for an LCC leveraged-helper grant
+export WALLET_TYPE=<local|account|ledger>
+# Set the matching SAFE_PROPOSER_* credential and optional SAFE_ADDRESS/SAFE_NONCE.
+yarn script:forge \
+  script/operations/SetUSD3lCooldownBypassTimelock.s.sol:SetUSD3lCooldownBypassTimelock \
+  --sig "schedule(uint256,bool)" <attempt> true --rpc-url "$ETH_RPC_URL"
+
+# Wait at least 24 hours. Keep the USD3L_BYPASS_* values printed by schedule.
+unset ETH_PRIORITY_GAS_PRICE
+yarn script:forge \
+  script/operations/SetUSD3lCooldownBypassTimelock.s.sol:SetUSD3lCooldownBypassTimelock \
+  --sig "execute(uint256)" <attempt> --account <timelock-executor> --sender <timelock-executor> \
+  --rpc-url "$ETH_RPC_URL" --broadcast
+
+unset ETH_PRIORITY_GAS_PRICE
+yarn script:forge \
+  script/operations/SetUSD3lCooldownBypassTimelock.s.sol:SetUSD3lCooldownBypassTimelock \
+  --sig "verify()" --rpc-url "$ETH_RPC_URL"
+```
+
+For the first leveraged-helper grant, take `USD3L_BYPASS_ACCOUNT` and its runtime code hash from
+`DeployLCCLeveragedFundHelper`, and set `USD3L_BYPASS_LCC_HELPER_FACTORY` to the factory used by that deployment. This
+mode rebuilds the helper before both schedule and execute, compares runtime code hashes, and checks its Morpho,
+factory, USD3l, USD3, and USDC wiring. A grant always requires `USD3L_BYPASS_EXPECTED_CODEHASH`, including for an EOA:
+pass `keccak256("")` for an existing or funded EOA, or zero for an otherwise nonexistent address. The code hash is in
+the salt and is checked again after the delay. A revoke uses `USD3L_BYPASS_ALLOWED=false`, commits a zero code hash,
+and neither requires nor reads the account's code.
+
+Any grant or revoke transition clears a vault cooldown already held by the account. The script prints that cooldown
+and refuses both scheduling and execution unless `USD3L_BYPASS_ACKNOWLEDGE_COOLDOWN_CLEAR=true`. The leveraged helper
+normally holds no vault cooldown, so its grant does not discard a ticket.
+
+Revoking the helper makes every `unwind` revert at the USD3l redemption (the helper has no vault cooldown, so its USD3l
+withdraw limit is zero) and rolls back atomically with the user's helper cooldowns intact. Users still exit the
+ordinary way: repay the Morpho debt with their own USDC, `withdrawCollateral`, start a USD3l `startCooldown`, and
+redeem after the vault's cooldown. Re-granting restores unwind with the same helper cooldowns.
+
+The same script grants or revokes bypasses for contract or EOA Morpho Blue liquidation executors that seize USD3l.
+Review the executor code hash as for any other grant. A liquidation executor that holds its own USD3l cooldown bypass
+is expected to call `LCCLeveragedFundHelper.trimCooldowns(user, marketId)` in the liquidation transaction, so the
+liquidated user's helper cooldown book never covers collateral that left the position.
+
 - While USD3l is shut down or its cooldown is zero, the helper waives its cooldown gate exactly as the vault waives its
   own cooldown. A waived unwind still consumes the user's cooldowns oldest first regardless of maturity, so once the
   waiver ends `cooldowns()` no longer lists the shares redeemed during it.
