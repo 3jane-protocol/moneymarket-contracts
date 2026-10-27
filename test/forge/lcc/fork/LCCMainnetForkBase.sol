@@ -48,6 +48,8 @@ abstract contract LCCMainnetForkBase is Test, LCCMarginOracleConfigs {
     address internal constant A_USDT = 0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a;
     address internal constant WA_ETH_USDC = 0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E;
     address internal constant WA_ETH_USDT = 0x7Bc3485026Ac48b6cf9BaF0A377477Fff5703Af8;
+    address internal constant USD3 = 0x056B269Eb1f75477a8666ae8C7fE01b64dD55eCc;
+    address internal constant USD3_USDC_ORACLE = 0x68b4c2B2b2e245AB54a3bD55DfD5A9d84f029C06;
 
     bool internal forkEnabled;
 
@@ -64,8 +66,12 @@ abstract contract LCCMainnetForkBase is Test, LCCMarginOracleConfigs {
         string memory rpcUrl = vm.envOr("MAINNET_RPC_URL", string(""));
         if (bytes(rpcUrl).length == 0) rpcUrl = vm.envOr("ETH_RPC_URL", string(""));
         require(bytes(rpcUrl).length != 0, "fork profile is active but neither MAINNET_RPC_URL nor ETH_RPC_URL is set");
-        vm.createSelectFork(rpcUrl, FORK_BLOCK);
+        vm.createSelectFork(rpcUrl, _forkBlock());
         forkEnabled = true;
+    }
+
+    function _forkBlock() internal pure virtual returns (uint256) {
+        return FORK_BLOCK;
     }
 
     function _createOracle(OracleConfig memory config) internal returns (ILCCForkOracle oracle) {
