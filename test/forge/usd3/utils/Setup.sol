@@ -12,6 +12,8 @@ import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
 
 // Add imports for USD3 testing
 import {USD3} from "../../../../src/usd3/USD3.sol";
+import {USD3_old} from "../../../../src/usd3/USD3_old.sol";
+import {sUSD3} from "../../../../src/usd3/sUSD3.sol";
 import {IMorpho, MarketParams, Id} from "../../../../src/interfaces/IMorpho.sol";
 import {MarketParamsLib} from "../../../../src/libraries/MarketParamsLib.sol";
 import {MorphoCredit} from "../../../../src/MorphoCredit.sol";
@@ -24,6 +26,7 @@ import {
     ITransparentUpgradeableProxy
 } from "../../../../lib/openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ProxyAdmin} from "../../../../lib/openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {ERC1967Utils} from "../../../../lib/openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
 import {ProtocolConfigLib} from "../../../../src/libraries/ProtocolConfigLib.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
@@ -40,6 +43,9 @@ interface IFactory {
 }
 
 contract Setup is Test, IEvents {
+    bytes32 internal constant INITIALIZABLE_STORAGE_SLOT =
+        0xf0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00;
+
     // Contract instances that we will use repeatedly.
     ERC20 public asset;
     ERC20 public underlyingAsset;
@@ -124,9 +130,9 @@ contract Setup is Test, IEvents {
         ProxyAdmin proxyAdmin = new ProxyAdmin(proxyAdminOwner);
 
         // Deploy proxy with initialization
-        bytes memory initData = abi.encodeWithSelector(MorphoCredit.initialize.selector, morphoOwner);
+        bytes memory morphoInitData = abi.encodeWithSelector(MorphoCredit.initialize.selector, morphoOwner);
         TransparentUpgradeableProxy morphoProxy =
-            new TransparentUpgradeableProxy(address(morphoImpl), address(proxyAdmin), initData);
+            new TransparentUpgradeableProxy(address(morphoImpl), address(proxyAdmin), morphoInitData);
 
         IMorpho morpho = IMorpho(address(morphoProxy));
 
@@ -157,37 +163,66 @@ contract Setup is Test, IEvents {
         morpho.createMarket(marketParams);
         vm.stopPrank();
 
-        // Deploy USD3 implementation
-        USD3 usd3Implementation = new USD3();
-
-        // Deploy proxy admin
-        ProxyAdmin usd3ProxyAdmin = new ProxyAdmin(proxyAdminOwner);
-
-        // Deploy proxy with initialization
-        bytes memory usd3InitData = abi.encodeWithSelector(
-            USD3.initialize.selector, address(morpho), MarketParamsLib.id(marketParams), management, keeper
-        );
-
-        TransparentUpgradeableProxy usd3Proxy =
-            new TransparentUpgradeableProxy(address(usd3Implementation), address(usd3ProxyAdmin), usd3InitData);
-
-        // Upgrade and call reinitialize in a separate internal function to avoid stack too deep
-        _upgradeAndReinitialize(address(usd3Proxy), proxyAdminOwner, address(usd3ProxyAdmin));
+        // Bootstrap the proxy the way mainnet reached the current state: deploy the frozen prior implementation,
+        // walk it through the waUSDC->USDC asset migration, then upgrade to the current USD3 logic.
+        (USD3_old oldUsd3, ProxyAdmin usd3ProxyAdmin) =
+            _deployFrozenUsd3Proxy(address(morpho), MarketParamsLib.id(marketParams), proxyAdminOwner);
+        _forceMainnetInitializerVersion(address(oldUsd3));
+        USD3 newImpl = new USD3();
+        vm.prank(proxyAdminOwner);
+        usd3ProxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(oldUsd3)), address(newImpl), "");
 
         // Set emergency admin
         vm.prank(management);
-        IUSD3(address(usd3Proxy)).setEmergencyAdmin(emergencyAdmin);
+        IUSD3(address(oldUsd3)).setEmergencyAdmin(emergencyAdmin);
 
         // Set USD3 address on MorphoCredit for access control
         vm.prank(morphoOwner);
-        MorphoCredit(address(morpho)).setUsd3(address(usd3Proxy));
+        MorphoCredit(address(morpho)).setUsd3(address(oldUsd3));
 
         // Deploy and set helper for borrowing operations
         helper = new HelperMock(address(morpho));
         vm.prank(morphoOwner);
         MorphoCredit(address(morpho)).setHelper(address(helper));
 
-        return address(usd3Proxy);
+        return address(oldUsd3);
+    }
+
+    /// @dev Deploys a frozen USD3_old proxy and walks it through the mainnet asset migration: initialize
+    /// (asset = waUSDC) then reinitialize (asset = USDC). Returns the proxy typed as USD3_old and the
+    /// ProxyAdmin the transparent proxy generated for `proxyOwner`. Shared by the base strategy setup and the
+    /// upgrade regression test so the bootstrap idiom lives in one place.
+    function _deployFrozenUsd3Proxy(address morphoCredit_, Id marketId_, address proxyOwner)
+        internal
+        returns (USD3_old oldUsd3, ProxyAdmin proxyAdmin)
+    {
+        USD3_old oldImpl = new USD3_old();
+        bytes memory initData =
+            abi.encodeWithSelector(USD3_old.initialize.selector, morphoCredit_, marketId_, management, keeper);
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(oldImpl), proxyOwner, initData);
+        proxyAdmin = ProxyAdmin(address(uint160(uint256(vm.load(address(proxy), ERC1967Utils.ADMIN_SLOT)))));
+        oldUsd3 = USD3_old(address(proxy));
+        oldUsd3.reinitialize();
+    }
+
+    function _forceMainnetInitializerVersion(address proxy) internal {
+        // Models mainnet's consumed reinitializer(3): the current upgrade-from logic carries no restart hook, so
+        // the initializer version is set directly rather than by calling one.
+        vm.store(proxy, INITIALIZABLE_STORAGE_SLOT, bytes32(uint256(3)));
+    }
+
+    function setUpSUSD3() internal returns (sUSD3 susd3Strategy) {
+        sUSD3 susd3Implementation = new sUSD3();
+        ProxyAdmin susd3ProxyAdmin = new ProxyAdmin(management);
+        TransparentUpgradeableProxy susd3Proxy = new TransparentUpgradeableProxy(
+            address(susd3Implementation),
+            address(susd3ProxyAdmin),
+            abi.encodeCall(sUSD3.initialize, (address(strategy), management, keeper))
+        );
+        susd3Strategy = sUSD3(address(susd3Proxy));
+
+        vm.prank(management);
+        USD3(address(strategy)).setSUSD3(address(susd3Strategy));
     }
 
     function depositIntoStrategy(IUSD3 _strategy, address _user, uint256 _amount) public {
@@ -293,7 +328,7 @@ contract Setup is Test, IEvents {
     }
 
     function _setTokenAddrs() internal {
-        // Deploy mock USDC at the mainnet address expected by reinitialize()
+        // Deploy mock USDC at the mainnet address; the frozen USD3_old reinitialize() hardcodes it.
         address expectedUsdcAddress = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
         // Deploy the mock USDC
@@ -327,12 +362,6 @@ contract Setup is Test, IEvents {
         // Label for debugging
         vm.label(expectedAddress, "TokenizedStrategy");
         vm.label(address(mockFactory), "MockStrategyFactory");
-    }
-
-    function _upgradeAndReinitialize(address usd3Proxy, address proxyAdminOwner, address proxyAdmin) internal {
-        // Since reinitializer(2) is used, we can call it directly after initialize()
-        // No need to upgrade the implementation for testing
-        USD3(usd3Proxy).reinitialize();
     }
 
     function _deployWaUSDC() internal {

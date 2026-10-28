@@ -53,8 +53,63 @@ contract PremiumCompoundingTest is BaseTest {
         loanToken.setBalance(BORROWER, HIGH_COLLATERAL_AMOUNT);
     }
 
-    // This test demonstrates the compounding issue in premium calculation
-    function test_premiumCompoundingIssue() public {
+    function testPremiumUsesCurrentDebtAfterMaterialBaseGrowth() public {
+        configurableIrm.setApr(1e18);
+
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
+
+        uint256 premiumRate = uint256(0.1e18) / 365 days;
+        vm.prank(address(creditLine));
+        creditLine.setCreditLine(id, BORROWER, 10_000e18, uint128(premiumRate));
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1_000e18, 0, BORROWER, BORROWER);
+
+        vm.warp(block.timestamp + 365 days);
+        morpho.accrueInterest(marketParams);
+
+        Position memory positionBefore = morpho.position(id, BORROWER);
+        Market memory marketBefore = morpho.market(id);
+        uint256 currentDebt = uint256(positionBefore.borrowShares)
+            .toAssetsUp(marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares);
+        uint256 expectedPremium = currentDebt.wMulDown(premiumRate.wTaylorCompounded(365 days));
+
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+
+        Position memory positionAfter = morpho.position(id, BORROWER);
+        Market memory marketAfter = morpho.market(id);
+        uint256 finalDebt = uint256(positionAfter.borrowShares)
+            .toAssetsUp(marketAfter.totalBorrowAssets, marketAfter.totalBorrowShares);
+
+        assertApproxEqAbs(finalDebt, currentDebt + expectedPremium, 2, "premium must apply directly to current debt");
+    }
+
+    // Regression guard: with base growth above 3x, premium accrual reverted before c55efd41
+    // (wInverseTaylorCompounded underflow in the old base-rate reconstruction). The guarded
+    // behaviour is that accruePremiumsForBorrowers completes without reverting; the assertion
+    // below only pins the >3x precondition that used to trigger the underflow.
+    function testPremiumAccrualSurvivesBaseGrowthAboveThreeX() public {
+        configurableIrm.setApr(1.5e18);
+
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
+
+        uint256 premiumRate = uint256(0.1e18) / 365 days;
+        vm.prank(address(creditLine));
+        creditLine.setCreditLine(id, BORROWER, 10_000e18, uint128(premiumRate));
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1_000e18, 0, BORROWER, BORROWER);
+
+        vm.warp(block.timestamp + 365 days);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+
+        (,, uint128 borrowAssetsAtLastAccrual) = morphoCredit.borrowerPremium(id, BORROWER);
+        assertGt(borrowAssetsAtLastAccrual, 3_000e18, "base-accrued debt should exceed three times principal");
+    }
+
+    function testPremiumCrossCompoundsWithBaseGrowth() public {
         // Set base rate to 10% APR
         uint256 baseRateAPR = 0.1e18; // 10% in WAD
         configurableIrm.setApr(baseRateAPR);
@@ -63,7 +118,7 @@ contract PremiumCompoundingTest is BaseTest {
         vm.prank(SUPPLIER);
         morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
 
-        // Set up borrower with 10% premium (20% total APR)
+        // Set up borrower with a 10% premium.
         uint256 premiumAPR = 0.1e18; // 10% in WAD
         uint256 premiumRatePerSecond = premiumAPR / 365 days;
 
@@ -75,58 +130,262 @@ contract PremiumCompoundingTest is BaseTest {
         vm.prank(BORROWER);
         morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
 
-        // === DEMONSTRATE THE ISSUE ===
-
-        // After 1 year with continuous compounding at 20% APR:
-        // Amount = Principal * e^(rate * time) = 1000 * e^0.2 ≈ 1221.4
-        uint256 expectedFinalAmount = borrowAmount.wMulDown(1.2214e18); // e^0.2
-
-        // Fast forward 1 year
         vm.warp(block.timestamp + 365 days);
-
-        // Accrue base interest
         morpho.accrueInterest(marketParams);
 
-        // Get position after base interest only
         Position memory pos = morpho.position(id, BORROWER);
         Market memory market = morpho.market(id);
         uint256 amountAfterBase =
             uint256(pos.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
+        uint256 expectedPremium = amountAfterBase.wMulDown(premiumRatePerSecond.wTaylorCompounded(365 days));
 
-        console.log("\n=== COMPOUNDING ISSUE DEMONSTRATION ===");
-        console.log("Initial borrow: %e", borrowAmount / 1e18);
-        console.log("After base interest (10% APR): %e", amountAfterBase / 1e18);
-
-        // Now accrue premium
         morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
-        // Get final position
         pos = morpho.position(id, BORROWER);
         market = morpho.market(id);
         uint256 finalAmount = uint256(pos.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
 
-        console.log("After premium accrual: %d", finalAmount);
-        console.log("Expected with true compounding (e^0.2): %d", expectedFinalAmount);
+        assertApproxEqAbs(finalAmount, amountAfterBase + expectedPremium, 2, "base growth must carry the premium");
 
-        // The issue: When we calculate premium, we:
-        // 1. See base grew from 1000 to ~1105 (10% simple interest approximation)
-        // 2. Reverse-engineer base rate: (1105-1000)/(1000*365days) ≈ 10%/year
-        // 3. Add premium rate: 10% + 10% = 20%
-        // 4. Compound at 20% from original 1000
-        //
-        // But this misses that the base already compounded!
-        // The true calculation should compound the premium on top of
-        // the already-compounded base amount.
-
-        uint256 difference =
-            expectedFinalAmount > finalAmount ? expectedFinalAmount - finalAmount : finalAmount - expectedFinalAmount;
-
-        console.log("Difference: %e", difference);
-        console.log("Difference bps: %e", difference * 1e18 / expectedFinalAmount / 1e14);
+        // Independent oracle: 10% base + 10% premium continuously compounded over one year
+        // is borrowAmount * e^0.2. This bound is implementation-agnostic and must keep holding
+        // even if the premium expression is rewritten self-consistently.
+        assertApproxEqRel(
+            finalAmount, borrowAmount.wMulDown(1.2214e18), 1e14, "premium+base must match continuous compounding e^0.2"
+        );
     }
 
-    // Test showing the issue gets worse with multiple accruals
-    function test_multipleAccrualsCompoundingDrift() public {
+    function testPremiumElapsedTimeClampedToOneYearOnDormantBorrower() public {
+        configurableIrm.setApr(0.1e18);
+
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
+
+        uint256 premiumRate = uint256(0.1e18) / 365 days;
+        vm.prank(address(creditLine));
+        creditLine.setCreditLine(id, BORROWER, 10_000e18, uint128(premiumRate));
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1_000e18, 0, BORROWER, BORROWER);
+
+        // Leave the borrower untouched for materially longer than MAX_ELAPSED_TIME (365 days).
+        uint256 dormancy = 550 days;
+        vm.warp(block.timestamp + dormancy);
+        morpho.accrueInterest(marketParams);
+
+        Position memory positionBefore = morpho.position(id, BORROWER);
+        Market memory marketBefore = morpho.market(id);
+        uint256 currentDebt = uint256(positionBefore.borrowShares)
+            .toAssetsUp(marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares);
+
+        // The premium factor is clamped to 365 days while currentDebt carries the full
+        // unclamped 550 days of base growth: premium = currentDebt * (e^{p*365d} - 1).
+        // Pre-c55efd41 this scenario charged zero premium: the clamped total-growth figure
+        // fell below full-period base growth, so the old subtraction guard zeroed it out and
+        // a borrower untouched for over a year escaped premium entirely. Charging the
+        // clamped-period premium on current debt is a deliberate behaviour change.
+        uint256 expectedPremium = currentDebt.wMulDown(premiumRate.wTaylorCompounded(365 days));
+        assertGt(expectedPremium, 0, "dormant borrower must still be charged premium");
+
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+
+        Position memory positionAfter = morpho.position(id, BORROWER);
+        Market memory marketAfter = morpho.market(id);
+        uint256 finalDebt = uint256(positionAfter.borrowShares)
+            .toAssetsUp(marketAfter.totalBorrowAssets, marketAfter.totalBorrowShares);
+
+        assertApproxEqAbs(
+            finalDebt, currentDebt + expectedPremium, 2, "premium must equal the 365-day clamped figure on current debt"
+        );
+
+        uint256 unclampedPremium = currentDebt.wMulDown(premiumRate.wTaylorCompounded(dormancy));
+        assertLt(finalDebt, currentDebt + unclampedPremium, "elapsed time must be clamped to MAX_ELAPSED_TIME");
+    }
+
+    function testBorrowRestampsClockAfterThirdPartyRepayToDust() public {
+        configurableIrm.setApr(0);
+
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
+
+        uint256 premiumRate = uint256(0.1e18) / 365 days;
+        vm.prank(address(creditLine));
+        creditLine.setCreditLine(id, BORROWER, 10_000e18, uint128(premiumRate));
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1e18, 0, BORROWER, BORROWER);
+
+        loanToken.setBalance(REPAYER, 1e18);
+        vm.prank(REPAYER);
+        morpho.repay(marketParams, 1e18 - 1, 0, BORROWER, "");
+        assertEq(_currentBorrowerDebt(), 1, "third-party repay must leave dust debt");
+
+        (uint128 accrualClockBeforeDustPeriod,,) = morphoCredit.borrowerPremium(id, BORROWER);
+        vm.warp(block.timestamp + 20 days);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+
+        (uint128 accrualClockAfterDustAccrual,,) = morphoCredit.borrowerPremium(id, BORROWER);
+        assertEq(
+            accrualClockAfterDustAccrual,
+            accrualClockBeforeDustPeriod,
+            "below-threshold dust accrual must leave the clock unchanged"
+        );
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1_000e18, 0, BORROWER, BORROWER);
+        uint256 debtAfterBorrow = _currentBorrowerDebt();
+
+        uint256 postBorrowPeriod = 1 days;
+        vm.warp(block.timestamp + postBorrowPeriod);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+
+        uint256 expectedPremium = debtAfterBorrow.wMulDown(premiumRate.wTaylorCompounded(postBorrowPeriod));
+        assertApproxEqAbs(
+            _currentBorrowerDebt(),
+            debtAfterBorrow + expectedPremium,
+            2,
+            "new principal premium must cover only the post-borrow interval"
+        );
+    }
+
+    function testBorrowChargesPendingPremiumBeforeRestampingClock() public {
+        configurableIrm.setApr(0);
+
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
+
+        uint256 premiumRate = uint256(0.1e18) / 365 days;
+        vm.prank(address(creditLine));
+        creditLine.setCreditLine(id, BORROWER, 10_000e18, uint128(premiumRate));
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1_000e18, 0, BORROWER, BORROWER);
+
+        uint256 pendingPeriod = 2 days;
+        vm.warp(block.timestamp + pendingPeriod);
+        uint256 debtBeforeBorrow = _currentBorrowerDebt();
+        uint256 pendingPremium = debtBeforeBorrow.wMulDown(premiumRate.wTaylorCompounded(pendingPeriod));
+        assertGt(pendingPremium, 0, "pending premium must be chargeable");
+
+        uint256 additionalPrincipal = 100e18;
+        uint256 borrowTime = block.timestamp;
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, additionalPrincipal, 0, BORROWER, BORROWER);
+
+        assertApproxEqAbs(
+            _currentBorrowerDebt(),
+            debtBeforeBorrow + pendingPremium + additionalPrincipal,
+            2,
+            "borrow must charge pending premium before adding principal"
+        );
+        (uint128 accrualClock,,) = morphoCredit.borrowerPremium(id, BORROWER);
+        assertEq(accrualClock, borrowTime, "borrow must restamp the clock after charging pending premium");
+    }
+
+    function testBorrowTimestampChangeDoesNotAlterInitialPenaltyFromCycleEnd() public {
+        configurableIrm.setApr(0);
+
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
+
+        uint256 borrowAmount = 1_000e18;
+        vm.prank(address(creditLine));
+        creditLine.setCreditLine(id, BORROWER, 10_000e18, 0);
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, borrowAmount, 0, BORROWER, BORROWER);
+
+        _createPastObligation(BORROWER, 1_000, borrowAmount);
+        vm.warp(block.timestamp + 7 days);
+
+        (uint128 cycleId,, uint128 endingBalance, RepaymentStatus status) = _getRepaymentDetails(id, BORROWER);
+        assertEq(uint256(status), uint256(RepaymentStatus.Delinquent), "borrower must be delinquent");
+
+        uint256 debtBeforePenalty = _currentBorrowerDebt();
+        uint256 penaltyPrincipal = debtBeforePenalty > endingBalance ? debtBeforePenalty : endingBalance;
+        uint256 cycleEnd = morphoCredit.paymentCycle(id, cycleId);
+        uint256 expectedPenalty =
+            penaltyPrincipal.wMulDown(PENALTY_RATE_PER_SECOND.wTaylorCompounded(block.timestamp - cycleEnd));
+
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+
+        assertApproxEqAbs(
+            _currentBorrowerDebt(), debtBeforePenalty + expectedPenalty, 2, "initial penalty must accrue from cycle end"
+        );
+    }
+
+    // Anti-griefing guard: spamming accruePremiumsForBorrowers every few seconds must not suppress
+    // premium yield. Two properties make this hold, and this test breaks if either is lost:
+    // 1. Sub-threshold accruals (totalPremium < MIN_PREMIUM_THRESHOLD) return before the
+    //    lastAccrualTime write, so elapsed time is deferred and keeps accumulating, not discarded.
+    // 2. Premium is charged on current borrow assets, not borrowAssetsAtLastAccrual, so the
+    //    unconditional snapshot rewrite performed on every accruePremiumsForBorrowers call cannot
+    //    shrink the amount charged.
+    function testAccrualSpamCannotSuppressPremiumYield() public {
+        // Zero base rate isolates premium: all debt growth below is charged premium.
+        configurableIrm.setApr(0);
+
+        // The 1-wei MIN_PREMIUM_THRESHOLD is only reachable per-call with small debt; lift the
+        // dust floor so the borrower can sit in the sub-threshold regime.
+        vm.prank(OWNER);
+        protocolConfig.setConfig(keccak256("MIN_BORROW"), 0);
+
+        vm.prank(SUPPLIER);
+        morpho.supply(marketParams, 10_000e18, 0, SUPPLIER, "");
+
+        // 2.5e9 per-second WAD (~7.9% APR) on 1e7 wei of debt accrues exactly 0.25 wei of premium
+        // per 10-second step, so three out of every four spam calls are sub-threshold.
+        uint256 premiumRate = 2.5e9;
+        vm.prank(address(creditLine));
+        creditLine.setCreditLine(id, BORROWER, 10_000e18, uint128(premiumRate));
+
+        vm.prank(BORROWER);
+        morpho.borrow(marketParams, 1e7, 0, BORROWER, BORROWER);
+
+        uint256 debtStart = _currentBorrowerDebt();
+        (uint128 accrualClockStart,,) = morphoCredit.borrowerPremium(id, BORROWER);
+
+        uint256 step = 10 seconds;
+        uint256 totalPeriod = 3 days;
+
+        // First spam call is sub-threshold: it must charge nothing AND leave the accrual clock
+        // untouched, so the elapsed time it covers is deferred rather than discarded.
+        vm.warp(block.timestamp + step);
+        morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        (uint128 accrualClockAfterOne,,) = morphoCredit.borrowerPremium(id, BORROWER);
+        assertEq(accrualClockAfterOne, accrualClockStart, "sub-threshold accrual must not advance the clock");
+        assertEq(_currentBorrowerDebt(), debtStart, "sub-threshold accrual must charge nothing");
+
+        for (uint256 elapsed = step; elapsed < totalPeriod; elapsed += step) {
+            vm.warp(block.timestamp + step);
+            morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
+        }
+
+        uint256 totalCharged = _currentBorrowerDebt() - debtStart;
+        uint256 singleAccrualReference = debtStart.wMulDown(premiumRate.wTaylorCompounded(totalPeriod));
+
+        assertGt(totalCharged, 0, "spammed accrual must still charge premium");
+
+        // Tolerance 0.5% relative. Legitimate drift between the spammed and single-shot figures is
+        // (a) Taylor partitioning: the single accrual carries the x^2/2 and x^3/6 compounding terms
+        //     over the full 3 days (~3e-4 relative here) that per-slice charging realizes only
+        //     through debt growth, and
+        // (b) rounding: each charging event floors via wMulDown (losing the sub-wei residual, under
+        //     0.25 wei per event with these parameters) and share conversion rounds by 1 wei.
+        // Both are orders of magnitude inside 0.5%, while the guarded failure -- yield collapsing
+        // toward zero under spam -- is a 100% deviation.
+        assertApproxEqRel(
+            totalCharged, singleAccrualReference, 0.005e18, "spam must not suppress premium versus a single accrual"
+        );
+    }
+
+    function _currentBorrowerDebt() internal view returns (uint256) {
+        Position memory pos = morpho.position(id, BORROWER);
+        Market memory market = morpho.market(id);
+        return uint256(pos.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
+    }
+
+    function testMonthlyPremiumAccrualAppliesStableRateToCurrentDebt() public {
         // Set base rate to 10% APR
         configurableIrm.setApr(0.1e18);
 
@@ -142,13 +401,17 @@ contract PremiumCompoundingTest is BaseTest {
         vm.prank(BORROWER);
         morpho.borrow(marketParams, 1000e18, 0, BORROWER, BORROWER);
 
-        uint256 lastAmount = 1000e18;
-
-        // Accrue monthly for a year
+        uint256 lastGrowthRate;
         for (uint256 i = 0; i < 12; i++) {
             vm.warp(block.timestamp + 30 days);
 
             morpho.accrueInterest(marketParams);
+            Position memory positionAfterBase = morpho.position(id, BORROWER);
+            Market memory marketAfterBase = morpho.market(id);
+            uint256 debtAfterBase = uint256(positionAfterBase.borrowShares)
+                .toAssetsUp(marketAfterBase.totalBorrowAssets, marketAfterBase.totalBorrowShares);
+            uint256 expectedPremium = debtAfterBase.wMulDown(premiumRatePerSecond.wTaylorCompounded(30 days));
+
             morphoCredit.accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
             Position memory pos = morpho.position(id, BORROWER);
@@ -156,16 +419,13 @@ contract PremiumCompoundingTest is BaseTest {
             uint256 currentAmount =
                 uint256(pos.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
 
-            uint256 monthlyGrowth = currentAmount - lastAmount;
-            uint256 growthRate = monthlyGrowth * 10000 / lastAmount; // basis points
+            assertApproxEqAbs(
+                currentAmount, debtAfterBase + expectedPremium, 2, "monthly premium must apply to base-accrued debt"
+            );
 
-            console.log(string.concat("Month ", vm.toString(i + 1)));
-            console.log("Amount:", currentAmount / 1e18);
-            console.log("Growth (bps):", growthRate);
-
-            lastAmount = currentAmount;
+            uint256 growthRate = expectedPremium.wDivDown(debtAfterBase);
+            if (i != 0) assertApproxEqAbs(growthRate, lastGrowthRate, 1, "premium factor must be checkpoint-stable");
+            lastGrowthRate = growthRate;
         }
-
-        console.log("\nNotice how the growth rate changes each month due to compounding drift");
     }
 }

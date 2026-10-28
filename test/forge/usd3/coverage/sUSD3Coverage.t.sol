@@ -256,10 +256,10 @@ contract sUSD3Coverage is Setup {
         uint256 newDuration = susd3Strategy.lockDuration();
         assertEq(newDuration, 60 days, "Should return updated duration");
 
-        // Test zero fallback
+        // Test zero duration
         protocolConfig.setConfig(SUSD3_LOCK_DURATION, 0);
         uint256 zeroDuration = susd3Strategy.lockDuration();
-        assertEq(zeroDuration, 90 days, "Should fallback to 90 days when 0");
+        assertEq(zeroDuration, 0, "Should return zero when configured");
     }
 
     /**
@@ -283,10 +283,10 @@ contract sUSD3Coverage is Setup {
         uint256 newCooldown = susd3Strategy.cooldownDuration();
         assertEq(newCooldown, 14 days, "Should return updated cooldown");
 
-        // Test zero fallback
+        // Test zero disables cooldown
         protocolConfig.setConfig(SUSD3_COOLDOWN_PERIOD, 0);
         uint256 zeroCooldown = susd3Strategy.cooldownDuration();
-        assertEq(zeroCooldown, 7 days, "Should fallback to 7 days when 0");
+        assertEq(zeroCooldown, 0, "Zero means cooldown disabled");
     }
 
     /**

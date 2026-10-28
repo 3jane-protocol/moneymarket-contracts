@@ -142,12 +142,21 @@ library EventsLib {
     /// @param remainingDue Remaining amount due after payment.
     event RepaymentTracked(Id indexed id, address indexed borrower, uint256 payment, uint256 remainingDue);
 
-    /// @notice Emitted when a borrower's markdown is updated.
+    /// @notice Emitted when a borrower's markdown applied to the market changes.
     /// @param id Market id.
     /// @param borrower Borrower address.
-    /// @param oldMarkdown Previous markdown amount.
-    /// @param newMarkdown New markdown amount.
+    /// @param oldMarkdown Previous markdown applied to the market for the borrower.
+    /// @param newMarkdown New markdown applied to the market for the borrower.
     event BorrowerMarkdownUpdated(Id indexed id, address indexed borrower, uint256 oldMarkdown, uint256 newMarkdown);
+
+    /// @notice Emitted when the supply-share price floor truncates a borrower's markdown increase.
+    /// @param id Market id.
+    /// @param borrower Borrower address.
+    /// @param requestedMarkdown Markdown requested by the markdown controller.
+    /// @param appliedMarkdown Markdown applied to the market for the borrower after truncation.
+    event MarkdownTruncated(
+        Id indexed id, address indexed borrower, uint256 requestedMarkdown, uint256 appliedMarkdown
+    );
 
     /// @notice Emitted when a borrower enters default status.
     /// @param id Market id.
@@ -165,6 +174,10 @@ library EventsLib {
     /// @param oldManager Previous markdown manager.
     /// @param newManager New markdown manager.
     event MarkdownManagerSet(Id indexed id, address oldManager, address newManager);
+
+    /// @notice Emitted when governance clears a market's wind-down state.
+    /// @param id Market id.
+    event MarketWindDownCleared(Id indexed id);
 
     /// @notice Emitted when an account is settled with all remaining debt written off.
     /// @param id Market id.

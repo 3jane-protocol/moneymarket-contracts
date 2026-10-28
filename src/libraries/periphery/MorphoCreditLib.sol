@@ -144,7 +144,8 @@ library MorphoCreditLib {
     /// @param morpho The MorphoCredit instance
     /// @param id Market ID
     /// @param borrower Borrower address
-    /// @return lastCalculatedMarkdown The last calculated markdown amount
+    /// @return lastCalculatedMarkdown The markdown currently applied to the market for this borrower; the slot's
+    /// upper 128 bits carry the default-entry latch and are masked off here
     function getMarkdownState(IMorphoCredit morpho, Id id, address borrower)
         internal
         view

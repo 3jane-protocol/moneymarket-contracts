@@ -158,8 +158,15 @@ abstract contract BaseHooksUpgradeable is BaseStrategyUpgradeable, Hooks {
      */
     function report() external virtual returns (uint256 profit, uint256 loss) {
         _preReportHook();
+        (profit, loss) = _reportInternal();
+        _postReportHook(profit, loss);
+    }
+
+    /**
+     * @dev Internal report execution hook to centralize delegatecall logic.
+     */
+    function _reportInternal() internal returns (uint256 profit, uint256 loss) {
         (profit, loss) =
             abi.decode(_delegateCall(abi.encodeCall(ITokenizedStrategy(address(this)).report, ())), (uint256, uint256));
-        _postReportHook(profit, loss);
     }
 }

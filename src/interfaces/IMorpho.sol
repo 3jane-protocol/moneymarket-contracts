@@ -64,9 +64,14 @@ struct RepaymentObligation {
 }
 
 /// @notice Markdown state for tracking defaulted debt value reduction
-/// @param lastCalculatedMarkdown Last calculated markdown amount
+/// @param lastCalculatedMarkdown Markdown currently applied to the market for this borrower; may be less than the
+/// requested markdown when the supply-share price floor truncated the increase
+/// @param inDefault Default-entry latch: 1 once the borrower's default entry has been processed, 0 otherwise.
+/// State written before this field existed carries 0 while in default, so a nonzero applied markdown also counts
+/// as a processed entry
 struct MarkdownState {
     uint128 lastCalculatedMarkdown;
+    uint128 inDefault;
 }
 
 struct Authorization {
@@ -346,6 +351,11 @@ interface IMorphoCredit {
     /// @param newUsd3 The new usd3 address
     function setUsd3(address newUsd3) external;
 
+    /// @notice Clears wind-down once `S + V <= R * (T + 1) / 2`, providing 2x margin to the floor.
+    /// @dev Only callable by the governance owner.
+    /// @param id The market ID
+    function clearMarketWindDown(Id id) external;
+
     /// @notice Sets the credit line and premium rate for a borrower
     /// @param id The market ID
     /// @param borrower The borrower address
@@ -427,6 +437,11 @@ interface IMorphoCredit {
     /// @notice Get markdown state for a borrower
     /// @param id Market ID
     /// @param borrower Borrower address
-    /// @return lastCalculatedMarkdown Last calculated markdown amount
+    /// @return lastCalculatedMarkdown Markdown currently applied to the market for this borrower
     function markdownState(Id id, address borrower) external view returns (uint128 lastCalculatedMarkdown);
+
+    /// @notice Whether a supply-share floor truncated a market's markdown or settlement loss.
+    /// @dev Wind-down blocks new supply and borrowing while permitting withdrawal, repayment, and settlement. It can
+    /// only be cleared by governance through `clearMarketWindDown` once `S + V <= R * (T + 1) / 2`.
+    function marketInWindDown(Id id) external view returns (bool);
 }

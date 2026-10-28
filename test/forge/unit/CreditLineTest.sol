@@ -144,6 +144,8 @@ contract MockProtocolConfig is IProtocolConfig {
 
     function setConfig(bytes32, uint256) external {}
 
+    function setEmergencyConfig(bytes32, uint256) external {}
+
     function getIsPaused() external pure returns (uint256) {
         return 0;
     }

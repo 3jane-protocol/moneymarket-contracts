@@ -10,6 +10,14 @@ import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 /// @author 3Jane
 /// @custom:contact support@3jane.xyz
 contract ProtocolConfig is Initializable {
+    // Custom errors for emergency functions
+    error EmergencyCanOnlyPause();
+    error EmergencyCanOnlySetToZero();
+    error UnauthorizedEmergencyConfig();
+
+    // Custom events for emergency actions
+    event EmergencyAdminSet(address indexed emergencyAdmin);
+
     // Configuration keys
     // Credit Line
     bytes32 private constant MAX_LTV = keccak256("MAX_LTV");
@@ -19,7 +27,7 @@ contract ProtocolConfig is Initializable {
     bytes32 private constant MAX_DRP = keccak256("MAX_DRP");
     // Market
     bytes32 private constant IS_PAUSED = keccak256("IS_PAUSED");
-    bytes32 private constant MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
+    bytes32 private constant DEBT_CAP = keccak256("DEBT_CAP");
     bytes32 private constant IRP = keccak256("IRP");
     bytes32 private constant MIN_BORROW = keccak256("MIN_BORROW");
     bytes32 private constant GRACE_PERIOD = keccak256("GRACE_PERIOD");
@@ -33,6 +41,7 @@ contract ProtocolConfig is Initializable {
     bytes32 private constant MIN_RATE_AT_TARGET = keccak256("MIN_RATE_AT_TARGET");
     bytes32 private constant MAX_RATE_AT_TARGET = keccak256("MAX_RATE_AT_TARGET");
     // USD3 & sUSD3
+    bytes32 private constant MAX_ON_CREDIT = keccak256("MAX_ON_CREDIT");
     bytes32 private constant TRANCHE_RATIO = keccak256("TRANCHE_RATIO");
     bytes32 private constant TRANCHE_SHARE_VARIANT = keccak256("TRANCHE_SHARE_VARIANT");
     bytes32 private constant SUSD3_LOCK_DURATION = keccak256("SUSD3_LOCK_DURATION");
@@ -45,9 +54,10 @@ contract ProtocolConfig is Initializable {
     mapping(bytes32 => uint256) public config;
 
     address public owner;
+    address public emergencyAdmin;
 
-    /// @dev Storage gap for future upgrades (20 slots).
-    uint256[20] private __gap;
+    /// @dev Storage gap for future upgrades
+    uint256[19] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -72,6 +82,42 @@ contract ProtocolConfig is Initializable {
     /// @param value The configuration value
     function setConfig(bytes32 key, uint256 value) external {
         if (msg.sender != owner) revert ErrorsLib.NotOwner();
+        config[key] = value;
+    }
+
+    /// @dev Set the emergency admin address
+    /// @param _emergencyAdmin The new emergency admin address
+    function setEmergencyAdmin(address _emergencyAdmin) external {
+        if (msg.sender != owner) revert ErrorsLib.NotOwner();
+        emergencyAdmin = _emergencyAdmin;
+        emit EmergencyAdminSet(_emergencyAdmin);
+    }
+
+    /// @dev Set emergency configuration with binary constraints
+    /// @param key The configuration key
+    /// @param value The configuration value (restricted to binary values)
+    /// @notice Emergency parameters and their effects:
+    /// - IS_PAUSED: Set to 1 to pause all borrowing operations
+    /// - DEBT_CAP: Set to 0 to prevent new borrows
+    /// - MAX_ON_CREDIT: Set to 0 to stop USD3 deployments to MorphoCredit (protects lenders)
+    /// - USD3_SUPPLY_CAP: Set to 0 to prevent new USD3 deposits
+    function setEmergencyConfig(bytes32 key, uint256 value) external {
+        if (msg.sender != owner && msg.sender != emergencyAdmin) {
+            revert ErrorsLib.Unauthorized();
+        }
+        // IS_PAUSED: can only set to 1 (pause)
+        if (key == IS_PAUSED) {
+            if (value != 1) revert EmergencyCanOnlyPause();
+        }
+        // All other emergency params: can only set to 0 (full stop)
+        else if (key == DEBT_CAP || key == MAX_ON_CREDIT || key == USD3_SUPPLY_CAP) {
+            if (value != 0) revert EmergencyCanOnlySetToZero();
+        }
+        // Parameter not allowed for emergency admin
+        else {
+            revert UnauthorizedEmergencyConfig();
+        }
+
         config[key] = value;
     }
 
@@ -147,5 +193,9 @@ contract ProtocolConfig is Initializable {
 
     function getUsd3SupplyCap() external view returns (uint256) {
         return config[USD3_SUPPLY_CAP];
+    }
+
+    function getDebtCap() external view returns (uint256) {
+        return config[DEBT_CAP];
     }
 }

@@ -1,0 +1,4 @@
+# One address per line; blank lines and # comments are ignored.
+# Copy to data/usd3-supply-cap-exempt.txt and replace with the reviewed account list.
+0x0000000000000000000000000000000000000001
+0x0000000000000000000000000000000000000002

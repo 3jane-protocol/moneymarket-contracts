@@ -1,12 +1,8 @@
 name: Certora
 
-# Temporarily disabled due to failing tests
-# on:
-#   push:
-#     branches:
-#       - main
-#   pull_request:
-#   workflow_dispatch:
+# Temporarily disabled due to failing tests: manual dispatch only. A workflow with no trigger at all is
+# invalid and GitHub records a 0-second failure run against every push.
+on: workflow_dispatch
 
 jobs:
   verify:

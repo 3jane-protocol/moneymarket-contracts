@@ -392,7 +392,8 @@ abstract contract Morpho is IMorphoStaticTyping, Initializable {
     {
         uint256 borrowed = uint256(position[id][borrower].borrowShares)
             .toAssetsUp(market[id].totalBorrowAssets, market[id].totalBorrowShares);
-        uint256 maxBorrow = uint256(position[id][borrower].collateral).mulDivDown(collateralPrice, ORACLE_PRICE_SCALE)
+        uint256 maxBorrow = uint256(position[id][borrower].collateral)
+            .mulDivDown(collateralPrice, ORACLE_PRICE_SCALE)
             .wMulDown(marketParams.lltv);
 
         return maxBorrow >= borrowed;

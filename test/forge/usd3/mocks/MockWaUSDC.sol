@@ -13,7 +13,13 @@ import {Math} from "../../../../lib/openzeppelin/contracts/utils/math/Math.sol";
 contract MockWaUSDC is ERC20 {
     using Math for uint256;
 
-    // Storage slot 0 for underlying asset (avoiding immutables for etching)
+    uint256 public constant RAY = 1e27;
+
+    error EnforcedPause();
+    error StaticATokenInvalidZeroShares();
+    error AaveReservePaused();
+
+    // Storage slot 5 for the underlying asset (avoiding immutables for etching)
     address private _asset;
 
     // Share price in 6 decimals (1e6 = 1:1 ratio, 1.1e6 = 1.1:1 ratio)
@@ -21,6 +27,17 @@ contract MockWaUSDC is ERC20 {
 
     // Pause state for testing EIP-4626 compliance
     bool private _paused;
+
+    uint128 private _virtualUnderlyingBalance;
+
+    // Append-only test controls; Setup.sol etches only the earlier _asset/sharePrice slots 5/6.
+    bool private _reserveFrozen;
+    uint128 private _maxMintOverride;
+    bool private _aaveReservePaused;
+
+    // Optional RAY-scale rate for realistic StataTokenV2 rounding tests. Kept append-only so the
+    // canonical etched mock's manually initialized _asset/sharePrice slots remain unchanged.
+    uint256 public rateOverride;
 
     constructor(address _usdc) ERC20("Wrapped Aave USDC", "waUSDC") {
         _asset = _usdc;
@@ -30,7 +47,7 @@ contract MockWaUSDC is ERC20 {
      * @dev Modifier to check if contract is not paused
      */
     modifier whenNotPaused() {
-        require(!_paused, "EnforcedPause");
+        if (_paused) revert EnforcedPause();
         _;
     }
 
@@ -41,11 +58,45 @@ contract MockWaUSDC is ERC20 {
         return _paused;
     }
 
+    function POOL() public view returns (MockWaUSDC) {
+        return this;
+    }
+
     /**
      * @dev Set the pause state (for testing)
      */
     function setPaused(bool paused_) external {
         _paused = paused_;
+    }
+
+    function transfer(address to, uint256 value) public override whenNotPaused returns (bool) {
+        return super.transfer(to, value);
+    }
+
+    function transferFrom(address from, address to, uint256 value) public override whenNotPaused returns (bool) {
+        return super.transferFrom(from, to, value);
+    }
+
+    function setReserveFrozen(bool reserveFrozen_) external {
+        _reserveFrozen = reserveFrozen_;
+    }
+
+    function setMaxMintOverride(uint128 maxMintOverride_) external {
+        _maxMintOverride = maxMintOverride_;
+    }
+
+    function setAaveReservePaused(bool aaveReservePaused_) external {
+        _aaveReservePaused = aaveReservePaused_;
+    }
+
+    function setVirtualUnderlyingBalance(uint128 virtualUnderlyingBalance_) external {
+        _virtualUnderlyingBalance = virtualUnderlyingBalance_;
+    }
+
+    function getVirtualUnderlyingBalance(address asset_) external view returns (uint128) {
+        require(asset_ == _asset, "invalid asset");
+        if (_virtualUnderlyingBalance != 0) return _virtualUnderlyingBalance;
+        return uint128(totalAssets());
     }
 
     /**
@@ -67,6 +118,7 @@ contract MockWaUSDC is ERC20 {
      */
     function deposit(uint256 assets, address receiver) public whenNotPaused returns (uint256 shares) {
         shares = previewDeposit(assets);
+        if (shares == 0) revert StaticATokenInvalidZeroShares();
         IERC20(_asset).transferFrom(msg.sender, address(this), assets);
         _mint(receiver, shares);
         return shares;
@@ -77,6 +129,7 @@ contract MockWaUSDC is ERC20 {
      */
     function withdraw(uint256 assets, address receiver, address owner) public whenNotPaused returns (uint256 shares) {
         shares = previewWithdraw(assets);
+        require(shares <= maxRedeem(owner), "ERC4626: withdraw more than max");
         if (msg.sender != owner) {
             uint256 allowed = allowance(owner, msg.sender);
             if (allowed != type(uint256).max) {
@@ -92,6 +145,7 @@ contract MockWaUSDC is ERC20 {
      * @dev Redeem waUSDC shares for USDC
      */
     function redeem(uint256 shares, address receiver, address owner) public whenNotPaused returns (uint256 assets) {
+        require(shares <= maxRedeem(owner), "ERC4626: redeem more than max");
         assets = previewRedeem(shares);
         if (msg.sender != owner) {
             uint256 allowed = allowance(owner, msg.sender);
@@ -108,15 +162,11 @@ contract MockWaUSDC is ERC20 {
      * @dev Preview functions for ERC4626 compatibility
      */
     function convertToShares(uint256 assets) public view returns (uint256) {
-        // For first deposit, avoid rounding issues while still respecting share price
-        if (totalSupply() == 0 && sharePrice == 1e6) {
-            return assets; // 1:1 when price is exactly 1.0
-        }
-        return assets.mulDiv(1e6, sharePrice, Math.Rounding.Floor);
+        return assets.mulDiv(RAY, effectiveRate(), Math.Rounding.Floor);
     }
 
     function convertToAssets(uint256 shares) public view returns (uint256) {
-        return shares.mulDiv(sharePrice, 1e6, Math.Rounding.Floor);
+        return shares.mulDiv(effectiveRate(), RAY, Math.Rounding.Floor);
     }
 
     function previewDeposit(uint256 assets) public view returns (uint256) {
@@ -124,7 +174,7 @@ contract MockWaUSDC is ERC20 {
     }
 
     function previewWithdraw(uint256 assets) public view returns (uint256) {
-        return assets.mulDiv(1e6, sharePrice, Math.Rounding.Ceil);
+        return assets.mulDiv(RAY, effectiveRate(), Math.Rounding.Ceil);
     }
 
     function previewRedeem(uint256 shares) public view returns (uint256) {
@@ -132,7 +182,13 @@ contract MockWaUSDC is ERC20 {
     }
 
     function previewMint(uint256 shares) public view returns (uint256) {
-        return shares.mulDiv(sharePrice, 1e6, Math.Rounding.Ceil);
+        return shares.mulDiv(effectiveRate(), RAY, Math.Rounding.Ceil);
+    }
+
+    /// @dev Returns a StataTokenV2-compatible RAY rate. The share-price fallback makes an etched
+    /// mock immediately usable because Setup initializes slot 6 while appended slots remain zero.
+    function effectiveRate() public view returns (uint256) {
+        return rateOverride != 0 ? rateOverride : sharePrice * 1e21;
     }
 
     /**
@@ -146,29 +202,35 @@ contract MockWaUSDC is ERC20 {
      * @dev Max deposit/mint/withdraw/redeem functions
      */
     function maxDeposit(address) public view returns (uint256) {
-        if (_paused) return 0;
+        if (_reserveFrozen) return 0;
         return type(uint256).max;
     }
 
     function maxMint(address) public view returns (uint256) {
-        if (_paused) return 0;
+        if (_reserveFrozen) return 0;
+        if (_maxMintOverride != 0) return _maxMintOverride;
         return type(uint256).max;
     }
 
     function maxWithdraw(address owner) public view returns (uint256) {
-        if (_paused) return 0;
-        return convertToAssets(balanceOf(owner));
+        if (_paused || _reserveFrozen) return 0;
+        return convertToAssets(maxRedeem(owner));
     }
 
     function maxRedeem(address owner) public view returns (uint256) {
-        if (_paused) return 0;
-        return balanceOf(owner);
+        if (_paused || _reserveFrozen) return 0;
+        uint256 underlyingTokenBalanceInShares =
+            convertToShares(_virtualUnderlyingBalance == 0 ? totalAssets() : _virtualUnderlyingBalance);
+        uint256 cachedUserBalance = balanceOf(owner);
+        return underlyingTokenBalanceInShares >= cachedUserBalance ? cachedUserBalance : underlyingTokenBalanceInShares;
     }
 
     /**
      * @dev Mint function for ERC4626 compatibility
      */
     function mint(uint256 shares, address receiver) public whenNotPaused returns (uint256 assets) {
+        if (_aaveReservePaused) revert AaveReservePaused();
+        if (shares == 0) revert StaticATokenInvalidZeroShares();
         assets = previewMint(shares);
         IERC20(_asset).transferFrom(msg.sender, address(this), assets);
         _mint(receiver, shares);
@@ -190,5 +252,11 @@ contract MockWaUSDC is ERC20 {
     function setSharePrice(uint256 newPrice) external {
         require(newPrice > 0, "Invalid price");
         sharePrice = newPrice;
+    }
+
+    /// @dev Override the effective conversion rate with a RAY-scale value; zero restores the
+    /// sharePrice-derived fallback.
+    function setRate(uint256 rayRate) external {
+        rateOverride = rayRate;
     }
 }

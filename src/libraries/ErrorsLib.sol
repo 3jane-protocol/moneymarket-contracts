@@ -45,6 +45,9 @@ library ErrorsLib {
     /// @notice Thrown when the value is already set.
     error AlreadySet();
 
+    /// @notice Thrown when trying to renounce the owner role.
+    error CannotRenounceOwnerRole();
+
     /// @notice Thrown when the IRM is not enabled at market creation.
     error IrmNotEnabled();
 
@@ -143,4 +146,10 @@ library ErrorsLib {
 
     /// @notice Thrown when borrow or repay would result in debt below minimum borrow amount.
     error BelowMinimumBorrow();
+
+    /// @notice Thrown when supply shares exceed the maximum ratio to supply assets.
+    error SupplySharePriceBelowFloor();
+
+    /// @notice Thrown when new lending is attempted in a market that is winding down.
+    error MarketInWindDown();
 }

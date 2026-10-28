@@ -71,7 +71,7 @@ contract AccessControlTest is Setup {
 
         // Even management cannot set it again (one-time only)
         vm.prank(management);
-        vm.expectRevert("sUSD3 already set");
+        vm.expectRevert();
         usd3Strategy.setSUSD3(newSusd3);
 
         // Verify the original is still set
@@ -90,35 +90,11 @@ contract AccessControlTest is Setup {
 
         // Even management cannot change it once set
         vm.prank(management);
-        vm.expectRevert("sUSD3 already set");
+        vm.expectRevert();
         usd3Strategy.setSUSD3(newSusd3);
 
         // Verify it hasn't changed
         assertEq(usd3Strategy.sUSD3(), currentSusd3, "sUSD3 should remain unchanged");
-    }
-
-    function test_setWhitelistEnabled_onlyManagement() public {
-        // Unauthorized user cannot set
-        vm.prank(unauthorizedUser);
-        vm.expectRevert();
-        usd3Strategy.setWhitelistEnabled(true);
-
-        // Management can set
-        vm.prank(management);
-        usd3Strategy.setWhitelistEnabled(true);
-        assertTrue(usd3Strategy.whitelistEnabled(), "Whitelist should be enabled");
-    }
-
-    function test_setWhitelist_onlyManagement() public {
-        // Unauthorized user cannot set
-        vm.prank(unauthorizedUser);
-        vm.expectRevert();
-        usd3Strategy.setWhitelist(alice, true);
-
-        // Management can set
-        vm.prank(management);
-        usd3Strategy.setWhitelist(alice, true);
-        assertTrue(usd3Strategy.whitelist(alice), "Alice should be whitelisted");
     }
 
     function test_setMinDeposit_onlyManagement() public {

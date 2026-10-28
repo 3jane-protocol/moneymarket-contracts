@@ -307,6 +307,198 @@ contract USD3sUSD3IntegrationTest is Setup {
         assertGt(withdrawn, 0, "Should be able to withdraw after cooldown");
     }
 
+    function test_staleNavBlocksSusd3WithdrawLimit() public {
+        uint256 borrowAmount = 5_000e6;
+
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), LARGE_DEPOSIT);
+        usd3Strategy.deposit(LARGE_DEPOSIT, alice);
+        vm.stopPrank();
+
+        createMarketDebt(charlie, borrowAmount);
+
+        vm.startPrank(bob);
+        asset.approve(address(usd3Strategy), MEDIUM_DEPOSIT);
+        usd3Strategy.deposit(MEDIUM_DEPOSIT, bob);
+
+        uint256 bobDepositAmount = ERC20(address(usd3Strategy)).balanceOf(bob) / 10;
+        ERC20(address(usd3Strategy)).approve(address(susd3Strategy), bobDepositAmount);
+        susd3Strategy.deposit(bobDepositAmount, bob);
+        vm.stopPrank();
+
+        vm.prank(keeper);
+        susd3Strategy.report();
+
+        skip(susd3Strategy.lockDuration() + 1);
+
+        uint256 bobSusd3Shares = ERC20(address(susd3Strategy)).balanceOf(bob);
+        vm.prank(bob);
+        susd3Strategy.startCooldown(bobSusd3Shares);
+
+        skip(susd3Strategy.cooldownDuration() + 1);
+
+        assertGt(susd3Strategy.availableWithdrawLimit(bob), 0, "setup should allow sUSD3 withdrawals");
+
+        uint256 usd3StoredAssets = ITokenizedStrategy(address(usd3Strategy)).totalAssets();
+        MarketParams memory params = usd3Strategy.marketParams();
+        IMorpho morpho = usd3Strategy.morphoCredit();
+        vm.prank(params.creditLine);
+        MorphoCredit(address(morpho)).settleAccount(params, charlie);
+
+        assertLt(usd3Strategy.nav(), usd3StoredAssets, "USD3 nav should be stale before report");
+        assertEq(susd3Strategy.availableWithdrawLimit(bob), 0, "stale USD3 nav should block sUSD3 withdrawals");
+        assertEq(ITokenizedStrategy(address(susd3Strategy)).maxWithdraw(bob), 0, "maxWithdraw should be zero");
+        assertEq(ITokenizedStrategy(address(susd3Strategy)).maxRedeem(bob), 0, "maxRedeem should be zero");
+
+        vm.prank(keeper);
+        (uint256 profit, uint256 loss) = usd3Strategy.report();
+        assertEq(profit, 0, "settlement should not report profit");
+        assertApproxEqAbs(loss, borrowAmount, 1, "report should recognize settled debt");
+
+        uint256 susd3StoredAssets = ITokenizedStrategy(address(susd3Strategy)).totalAssets();
+        uint256 susd3SpotAssets = ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        assertLt(susd3SpotAssets, susd3StoredAssets, "sUSD3 spot nav should be stale before sUSD3 report");
+        assertEq(susd3Strategy.availableWithdrawLimit(bob), 0, "stale sUSD3 nav should block withdrawals");
+
+        vm.prank(keeper);
+        susd3Strategy.report();
+
+        assertApproxEqAbs(
+            ITokenizedStrategy(address(susd3Strategy)).totalAssets(),
+            ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)),
+            2,
+            "sUSD3 report should refresh stored assets"
+        );
+        assertGt(susd3Strategy.availableWithdrawLimit(bob), 0, "sUSD3 withdrawals should reopen after report");
+    }
+
+    function test_staleSusd3AccountingBlocksDepositsUntilReport() public {
+        uint256 borrowAmount = 5_000e6;
+
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), LARGE_DEPOSIT);
+        usd3Strategy.deposit(LARGE_DEPOSIT, alice);
+        vm.stopPrank();
+
+        createMarketDebt(charlie, borrowAmount);
+
+        vm.startPrank(bob);
+        asset.approve(address(usd3Strategy), MEDIUM_DEPOSIT);
+        usd3Strategy.deposit(MEDIUM_DEPOSIT, bob);
+
+        uint256 bobDepositAmount = ERC20(address(usd3Strategy)).balanceOf(bob) / 10;
+        ERC20(address(usd3Strategy)).approve(address(susd3Strategy), type(uint256).max);
+        susd3Strategy.deposit(bobDepositAmount, bob);
+        vm.stopPrank();
+
+        MarketParams memory params = usd3Strategy.marketParams();
+        IMorpho morpho = usd3Strategy.morphoCredit();
+        vm.prank(params.creditLine);
+        MorphoCredit(address(morpho)).settleAccount(params, charlie);
+
+        vm.prank(keeper);
+        (uint256 profit, uint256 loss) = usd3Strategy.report();
+        assertEq(profit, 0, "settlement should not report profit");
+        assertApproxEqAbs(loss, borrowAmount, 1, "report should recognize settled debt");
+
+        uint256 storedAssets = ITokenizedStrategy(address(susd3Strategy)).totalAssets();
+        uint256 liveAssets = ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy));
+        assertLt(liveAssets + 2, storedAssets, "USD3 report should leave stale sUSD3 accounting");
+        assertEq(susd3Strategy.availableDepositLimit(bob), 0, "stale accounting should block deposits");
+        assertEq(ITokenizedStrategy(address(susd3Strategy)).maxDeposit(bob), 0, "maxDeposit should be zero");
+        assertEq(ITokenizedStrategy(address(susd3Strategy)).maxMint(bob), 0, "maxMint should be zero");
+
+        vm.startPrank(bob);
+        vm.expectRevert(bytes("ERC4626: deposit more than max"));
+        susd3Strategy.deposit(1_000e6, bob);
+        vm.expectRevert(bytes("ERC4626: mint more than max"));
+        susd3Strategy.mint(1_000e6, bob);
+        vm.stopPrank();
+
+        vm.prank(keeper);
+        susd3Strategy.report();
+
+        uint256 reconciledAssets = ITokenizedStrategy(address(susd3Strategy)).totalAssets();
+        assertEq(
+            reconciledAssets,
+            ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)),
+            "report should reconcile sUSD3 accounting"
+        );
+        assertGt(susd3Strategy.availableDepositLimit(bob), 0, "deposits should reopen after report");
+        assertGt(ITokenizedStrategy(address(susd3Strategy)).maxDeposit(bob), 0, "maxDeposit should reopen");
+        assertGt(ITokenizedStrategy(address(susd3Strategy)).maxMint(bob), 0, "maxMint should reopen");
+
+        uint256 depositAmount = 1_000e6;
+        uint256 expectedShares = ITokenizedStrategy(address(susd3Strategy)).previewDeposit(depositAmount);
+        vm.prank(bob);
+        uint256 mintedShares = susd3Strategy.deposit(depositAmount, bob);
+        assertEq(mintedShares, expectedShares, "deposit should use the reconciled share price");
+        assertGt(mintedShares, depositAmount, "new shares should reflect the recognized first loss");
+    }
+
+    function test_susd3DepositLimitAllowsTwoUnitAccountingTolerance() public {
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), MEDIUM_DEPOSIT);
+        usd3Strategy.deposit(MEDIUM_DEPOSIT, alice);
+
+        ERC20(address(usd3Strategy)).approve(address(susd3Strategy), SMALL_DEPOSIT);
+        susd3Strategy.deposit(SMALL_DEPOSIT, alice);
+        vm.stopPrank();
+
+        uint256 storedAssets = ITokenizedStrategy(address(susd3Strategy)).totalAssets();
+        assertEq(
+            ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)),
+            storedAssets,
+            "setup accounting should be synchronized"
+        );
+
+        address roundingSink = makeAddr("roundingSink");
+        vm.prank(address(susd3Strategy));
+        ERC20(address(usd3Strategy)).transfer(roundingSink, 1);
+        assertGt(susd3Strategy.availableDepositLimit(bob), 0, "one-unit discrepancy should be tolerated");
+
+        vm.prank(address(susd3Strategy));
+        ERC20(address(usd3Strategy)).transfer(roundingSink, 1);
+        assertEq(
+            ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)) + 2,
+            storedAssets,
+            "setup should leave a two-unit discrepancy"
+        );
+        assertGt(susd3Strategy.availableDepositLimit(bob), 0, "two-unit discrepancy should be tolerated");
+    }
+
+    function test_susd3DepositLimitPreservesSubordinationCapWhenAccountingIsSynchronized() public {
+        setMorphoDebtCap(1_000e6);
+
+        vm.startPrank(bob);
+        asset.approve(address(usd3Strategy), MEDIUM_DEPOSIT);
+        usd3Strategy.deposit(MEDIUM_DEPOSIT, bob);
+
+        uint256 initialDeposit = 50e6;
+        ERC20(address(usd3Strategy)).approve(address(susd3Strategy), type(uint256).max);
+        susd3Strategy.deposit(initialDeposit, bob);
+        vm.stopPrank();
+
+        assertEq(
+            ERC20(address(usd3Strategy)).balanceOf(address(susd3Strategy)),
+            ITokenizedStrategy(address(susd3Strategy)).totalAssets(),
+            "setup accounting should be synchronized"
+        );
+
+        uint256 capUSDC = susd3Strategy.getSubordinatedDebtCapInUSDC();
+        uint256 holdingsUSDC = ITokenizedStrategy(address(usd3Strategy)).convertToAssets(initialDeposit);
+        uint256 expectedCapacity = ITokenizedStrategy(address(usd3Strategy)).convertToShares(capUSDC - holdingsUSDC);
+        assertEq(
+            susd3Strategy.availableDepositLimit(bob),
+            expectedCapacity,
+            "available capacity should retain the subordination-cap conversion"
+        );
+
+        vm.prank(bob);
+        susd3Strategy.deposit(expectedCapacity, bob);
+        assertEq(susd3Strategy.availableDepositLimit(bob), 0, "deposit limit should be zero at the cap");
+    }
+
     /*//////////////////////////////////////////////////////////////
                     HELPER FUNCTIONS
     //////////////////////////////////////////////////////////////*/

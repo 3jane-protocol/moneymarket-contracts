@@ -84,11 +84,10 @@ contract DebtSettlementTest is BaseTest {
         Market memory marketBefore = morpho.market(id);
 
         // Calculate expected repay amount for exact shares - ensure we have enough
-        uint256 expectedRepayAmount =
-            uint256(positionBefore.borrowShares)
-                    .toAssetsUp(marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares) + 1; // Add 1 wei buffer
-            // to
-            // ensure enough assets
+        uint256 expectedRepayAmount = uint256(positionBefore.borrowShares)
+            .toAssetsUp(marketBefore.totalBorrowAssets, marketBefore.totalBorrowShares) + 1; // Add 1 wei buffer
+        // to
+        // ensure enough assets
 
         // Prepare full repayment
         loanToken.setBalance(address(creditLine), expectedRepayAmount);
@@ -336,7 +335,8 @@ contract DebtSettlementTest is BaseTest {
         // Setup loan in new market
         Id callbackMarketId = MarketParams(
                 address(loanToken), address(0), address(oracle), address(irm), 0, address(callbackHandler)
-            ).id();
+            )
+            .id();
 
         vm.prank(address(callbackHandler));
         morphoCredit.setCreditLine(callbackMarketId, BORROWER, borrowAmount * 2, 0);

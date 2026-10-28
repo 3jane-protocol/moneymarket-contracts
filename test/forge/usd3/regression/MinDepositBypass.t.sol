@@ -56,7 +56,7 @@ contract MinDepositBypassTest is Setup {
         asset.approve(address(usd3Strategy), belowMinAmount);
 
         // Should revert for first-time depositor with amount below minimum
-        vm.expectRevert("Below minimum deposit");
+        vm.expectRevert(bytes("<min"));
         usd3Strategy.deposit(belowMinAmount, alice);
         vm.stopPrank();
 
@@ -82,7 +82,7 @@ contract MinDepositBypassTest is Setup {
 
         // This SHOULD revert but doesn't due to the bug
         // The test expects this to revert, so it will FAIL when the bug exists
-        vm.expectRevert("Below minimum deposit");
+        vm.expectRevert(bytes("<min"));
         usd3Strategy.deposit(type(uint256).max, alice);
 
         vm.stopPrank();
@@ -107,7 +107,7 @@ contract MinDepositBypassTest is Setup {
 
         // This SHOULD revert but doesn't due to the bug
         // The test expects this to revert, so it will FAIL when the bug exists
-        vm.expectRevert("Below minimum deposit");
+        vm.expectRevert(bytes("<min"));
         usd3Strategy.mint(type(uint256).max, bob);
 
         vm.stopPrank();
@@ -133,7 +133,7 @@ contract MinDepositBypassTest is Setup {
 
         // Using type(uint256).max should still respect minDeposit
         // This SHOULD revert but doesn't due to the bug
-        vm.expectRevert("Below minimum deposit");
+        vm.expectRevert(bytes("<min"));
         usd3Strategy.deposit(type(uint256).max, charlie);
 
         vm.stopPrank();
@@ -151,9 +151,6 @@ contract MinDepositBypassTest is Setup {
         vm.startPrank(alice);
         asset.approve(address(usd3Strategy), MIN_DEPOSIT);
         usd3Strategy.deposit(MIN_DEPOSIT, alice);
-
-        // Clear the commitment period for alice
-        vm.warp(block.timestamp + 1 days);
 
         // Now alice should be able to deposit any amount, even 1 wei
         deal(address(asset), alice, 1);
@@ -189,7 +186,7 @@ contract MinDepositBypassTest is Setup {
 
         // This SHOULD fail but doesn't due to the bug
         // The test expects this to revert, so it will FAIL when the bug exists
-        vm.expectRevert("Below minimum deposit");
+        vm.expectRevert(bytes("<min"));
         usd3Strategy.deposit(type(uint256).max, attacker);
 
         vm.stopPrank();

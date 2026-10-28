@@ -42,7 +42,9 @@ jobs:
           path: |
             cache_hardhat
             artifacts
-          key: ${{ github.ref_name }}-hardhat
+          key: ${{ github.ref_name }}-hardhat-${{ hashFiles('src/**/*.sol', 'hardhat.config.ts', 'package.json', 'yarn.lock') }}
+          restore-keys: |
+            ${{ github.ref_name }}-hardhat-
 
       - name: Run Hardhat tests
         run: yarn test:hardhat

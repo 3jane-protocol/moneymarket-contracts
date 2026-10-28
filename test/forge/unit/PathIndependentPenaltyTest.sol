@@ -124,27 +124,37 @@ contract PathIndependentPenaltyTest is BaseTest {
     }
 
     function testPenaltyCompoundsAfterGracePeriod() public {
-        // Create an obligation that ended more than 7 days ago (past grace period)
-        _createRepaymentObligation(id, BORROWER, 5000e18, 10_000e18, 8); // 8 days ago = 1 day past grace period
+        // The shared helper posts a cycle ending one day ago. Advance seven more days to enter delinquency.
+        _createRepaymentObligation(id, BORROWER, 5000e18, 10_000e18, 8);
+        vm.warp(block.timestamp + 7 days);
 
         // Record debt at this point - penalty should already be active
         uint256 debtAtStart = _calculateBorrowerDebt(id, BORROWER);
 
-        // Move forward in time
-        vm.warp(block.timestamp + 7 days); // Now 8 days past grace period
+        vm.warp(block.timestamp + 7 days);
+        morpho.accrueInterest(marketParams);
 
-        uint256 debtAfterWeek = _calculateBorrowerDebt(id, BORROWER);
+        // Base interest is already embedded in current debt. Ongoing premium and IRP apply directly to that debt.
+        Market memory marketAfterBase = morpho.market(id);
+        Position memory positionAfterBase = morpho.position(id, BORROWER);
+        uint256 debtAfterBase = uint256(positionAfterBase.borrowShares)
+            .toAssetsUp(marketAfterBase.totalBorrowAssets, marketAfterBase.totalBorrowShares);
+        uint256 expectedPremiumAndPenalty =
+            debtAfterBase.wMulDown((PREMIUM_RATE_PER_SECOND + PENALTY_RATE_PER_SECOND).wTaylorCompounded(7 days));
+        IMorphoCredit(address(morpho)).accruePremiumsForBorrowers(id, _toArray(BORROWER));
 
-        // Verify penalty is compounding
-        uint256 increase = debtAfterWeek - debtAtStart;
+        Market memory marketAfter = morpho.market(id);
+        Position memory positionAfter = morpho.position(id, BORROWER);
+        uint256 debtAfterWeek = uint256(positionAfter.borrowShares)
+            .toAssetsUp(marketAfter.totalBorrowAssets, marketAfter.totalBorrowShares);
 
-        // The increase should be meaningful
-        // With 10% APR penalty + 10% base + 2% premium = 22% total APR
-        // Over 7 days that's roughly 0.42% growth
-        // We'll check for at least 0.2% to be conservative
-        uint256 minExpectedIncrease = debtAtStart * 2 / 1000; // 0.2%
-
-        assertGt(increase, minExpectedIncrease, "Penalty not properly compounding");
+        assertGt(debtAfterBase, debtAtStart, "base rate must accrue before the premium leg");
+        assertApproxEqAbs(
+            debtAfterWeek,
+            debtAfterBase + expectedPremiumAndPenalty,
+            2,
+            "ongoing premium and IRP must compound on current debt"
+        );
     }
 
     // Helper function to calculate borrower's total debt including premiums

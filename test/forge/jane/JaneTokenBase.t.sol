@@ -19,7 +19,7 @@ contract JaneTokenBaseTest is JaneSetup {
     }
 
     function test_tokenMetadata() public view {
-        assertEq(token.name(), "JANE");
+        assertEq(token.name(), "Jane");
         assertEq(token.symbol(), "JANE");
         assertEq(token.decimals(), 18);
     }

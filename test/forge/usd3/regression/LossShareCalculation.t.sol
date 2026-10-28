@@ -238,6 +238,67 @@ contract LossShareCalculationTest is Setup {
     }
 
     /**
+     * @notice Losses should not increase PPS when locked shares exist
+     * @dev When profits are locked, loss reporting already burns locked shares.
+     *      The post-report sUSD3 burn should only cover the remaining loss.
+     */
+    function test_loss_with_locked_shares_no_pps_increase() public {
+        // Setup deposits
+        vm.startPrank(alice);
+        asset.approve(address(usd3Strategy), 900e6);
+        usd3Strategy.deposit(900e6, alice);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        asset.approve(address(usd3Strategy), 100e6);
+        usd3Strategy.deposit(100e6, bob);
+        IERC20(address(usd3Strategy)).approve(address(susd3Strategy), 100e6);
+        susd3Strategy.deposit(100e6, bob);
+        vm.stopPrank();
+
+        // Disable performance fee to maximize locked shares for clarity
+        vm.prank(management);
+        ITokenizedStrategy(address(usd3Strategy)).setPerformanceFee(0);
+
+        // Simulate profit to create locked shares
+        airdrop(asset, address(usd3Strategy), 100e6);
+        vm.prank(keeper);
+        ITokenizedStrategy(address(usd3Strategy)).report();
+
+        uint256 lockedSharesBefore = IERC20(address(usd3Strategy)).balanceOf(address(usd3Strategy));
+        assertGt(lockedSharesBefore, 0, "Locked shares should exist");
+
+        uint256 preLossPps = (ITokenizedStrategy(address(usd3Strategy)).totalAssets() * 1e18)
+            / IERC20(address(usd3Strategy)).totalSupply();
+
+        // Simulate loss by removing waUSDC
+        uint256 lossAmount = 50e6;
+        MarketParams memory params = usd3Strategy.marketParams();
+        IMorpho morpho = usd3Strategy.morphoCredit();
+
+        vm.startPrank(address(usd3Strategy));
+        uint256 localWaUSDC = IERC20(address(waUSDC)).balanceOf(address(usd3Strategy));
+        if (localWaUSDC < lossAmount) {
+            morpho.withdraw(params, lossAmount - localWaUSDC, 0, address(usd3Strategy), address(usd3Strategy));
+        }
+        IERC20(address(waUSDC)).transfer(address(0xdead), lossAmount);
+        vm.stopPrank();
+
+        // Report the loss
+        vm.prank(keeper);
+        ITokenizedStrategy(address(usd3Strategy)).report();
+
+        uint256 lockedSharesAfter = IERC20(address(usd3Strategy)).balanceOf(address(usd3Strategy));
+        assertLt(lockedSharesAfter, lockedSharesBefore, "Locked shares should burn on loss");
+
+        uint256 postLossPps = (ITokenizedStrategy(address(usd3Strategy)).totalAssets() * 1e18)
+            / IERC20(address(usd3Strategy)).totalSupply();
+
+        // PPS should not increase as a result of a loss
+        assertLe(postLossPps, preLossPps, "Loss report should not increase PPS");
+    }
+
+    /**
      * @notice Test edge case where sUSD3 has insufficient shares to cover loss
      */
     function test_loss_exceeds_susd3_balance() public {
