@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
-import {Jane} from "../../../../src/jane/Jane.sol";
+import {JaneV1} from "../../../../src/jane/JaneV1.sol";
 import {MarkdownController} from "../../../../src/MarkdownController.sol";
 import {IMarkdownController} from "../../../../src/interfaces/IMarkdownController.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
@@ -20,7 +20,7 @@ contract MarkdownControllerJaneTest is BaseTest {
     using MorphoBalancesLib for IMorpho;
     using MorphoCreditLib for IMorphoCredit;
 
-    Jane public jane;
+    JaneV1 public jane;
     MarkdownController public markdownController;
     CreditLineMock public creditLine;
     IMorphoCredit public morphoCredit;
@@ -54,7 +54,7 @@ contract MarkdownControllerJaneTest is BaseTest {
         janeOwner = makeAddr("janeOwner");
         janeMinter = makeAddr("janeMinter");
         janeDistributor = makeAddr("janeDistributor");
-        jane = new Jane(janeOwner, janeDistributor);
+        jane = new JaneV1(janeOwner, janeDistributor);
 
         // Grant MINTER_ROLE to janeMinter
         vm.prank(janeOwner);
@@ -137,7 +137,7 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         // Try to transfer JANE - should fail
         vm.prank(BORROWER);
-        vm.expectRevert(Jane.TransferNotAllowed.selector);
+        vm.expectRevert(JaneV1.TransferNotAllowed.selector);
         jane.transfer(SUPPLIER, 100e18);
     }
 
@@ -519,7 +519,7 @@ contract MarkdownControllerJaneTest is BaseTest {
 
         assertTrue(markdownController.isFrozen(BORROWER), "Should be frozen when delinquent");
         vm.prank(BORROWER);
-        vm.expectRevert(Jane.TransferNotAllowed.selector);
+        vm.expectRevert(JaneV1.TransferNotAllowed.selector);
         jane.transfer(SUPPLIER, 100e18);
 
         // 4. Move to default - progressive redistribution starts

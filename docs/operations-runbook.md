@@ -245,19 +245,23 @@ nonzero, but the slash returns zero on the disabled borrower flag (`src/MorphoCr
 `src/MarkdownController.sol:191`); a zero manager would also skip the call. Either way the JANE slash is deferred
 rather than performed automatically.
 
+This procedure applies to the deployed legacy `JaneV1` token (`src/jane/JaneV1.sol`), which is the token the
+MarkdownController integrates with. The JANE 2.0 token (`src/jane/Jane.sol`) has no controller slot and no
+`redistributeFromBorrower`.
+
 **Procedure.**
 
-1. Verify `Jane.transferable()` is false and record the current `Jane.markdownController` value.
+1. Verify `JaneV1.transferable()` is false and record the current `JaneV1.markdownController` value.
 2. Have the JANE `OWNER_ROLE` point the controller slot at a purpose-built slasher, or a Safe adapter with the same
    callable surface.
 3. From that address call `redistributeFromBorrower(borrower, amount)`, using the borrower's full current balance for
-   the settlement slash. The function calls `_transfer` directly (`src/jane/Jane.sol:129-133`), so the slash itself
+   the settlement slash. The function calls `_transfer` directly (`src/jane/JaneV1.sol:130-134`), so the slash itself
    bypasses ordinary transfer and freeze checks.
 4. Have the JANE owner restore the recorded controller and verify the slot.
 
 Every nonzero address placed in the controller slot, including a temporary or restored controller, must implement
 `isFrozen(address)`: every transfer that would otherwise be permitted calls that interface while the slot is nonzero
-(`src/jane/Jane.sol:142-154`). Do not call the one-way `setTransferable()` switch. Non-transferability is what
+(`src/jane/JaneV1.sol:143-155`). Do not call the one-way `setTransferable()` switch. Non-transferability is what
 prevents an ordinary settled borrower from moving JANE before the manual slash lands; once transfers are enabled,
 this deferred recovery cannot protect borrowers settled in the intervening window.
 

@@ -88,7 +88,7 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         address[] memory attackers = new address[](3);
         attackers[0] = alice;
         attackers[1] = bob;
-        attackers[2] = address(distributor);
+        attackers[2] = charlie;
 
         for (uint256 i = 0; i < attackers.length; i++) {
             vm.prank(attackers[i]);
@@ -107,7 +107,7 @@ contract RewardsDistributorSecurityTest is RewardsDistributorSetup {
         address[] memory attackers = new address[](3);
         attackers[0] = alice;
         attackers[1] = bob;
-        attackers[2] = address(distributor);
+        attackers[2] = charlie;
 
         for (uint256 i = 0; i < attackers.length; i++) {
             vm.prank(attackers[i]);

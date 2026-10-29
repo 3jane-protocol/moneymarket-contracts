@@ -166,8 +166,8 @@ contract RewardsDistributorIntegrationTest is RewardsDistributorSetup {
 
     /// @notice Test sweep functionality with multiple tokens
     function test_sweepMultipleTokens() public {
-        Jane token2 = new Jane(owner, distributor);
-        Jane token3 = new Jane(owner, distributor);
+        Jane token2 = new Jane(owner);
+        Jane token3 = new Jane(owner);
 
         vm.startPrank(owner);
         token2.setTransferable();

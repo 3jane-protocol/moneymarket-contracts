@@ -9,7 +9,6 @@ contract JaneSetup is Test {
 
     address public owner;
     address public minter;
-    address public distributor;
     address public alice;
     address public bob;
     address public charlie;
@@ -30,13 +29,12 @@ contract JaneSetup is Test {
     function setUp() public virtual {
         owner = makeAddr("owner");
         minter = makeAddr("minter");
-        distributor = makeAddr("distributor");
         alice = makeAddr("alice");
         bob = makeAddr("bob");
         charlie = makeAddr("charlie");
         treasury = makeAddr("treasury");
 
-        token = new Jane(owner, distributor);
+        token = new Jane(owner);
 
         // Grant MINTER_ROLE to minter for tests
         vm.prank(owner);
@@ -45,7 +43,6 @@ contract JaneSetup is Test {
         vm.label(address(token), "JaneToken");
         vm.label(owner, "Owner");
         vm.label(minter, "Minter");
-        vm.label(distributor, "Distributor");
         vm.label(alice, "Alice");
         vm.label(bob, "Bob");
         vm.label(charlie, "Charlie");

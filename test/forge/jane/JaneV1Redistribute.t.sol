@@ -1,24 +1,46 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import {JaneSetup} from "./utils/JaneSetup.sol";
-import {Jane} from "../../../src/jane/Jane.sol";
+import {Test} from "forge-std/Test.sol";
+import {JaneV1} from "../../../src/jane/JaneV1.sol";
 
-contract JaneTokenRedistributeTest is JaneSetup {
-    address public markdownController;
+contract JaneV1RedistributeTest is Test {
+    bytes32 internal constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
-    function setUp() public override {
-        super.setUp();
+    JaneV1 internal token;
+
+    address internal owner;
+    address internal minter;
+    address internal distributor;
+    address internal alice;
+    address internal bob;
+    address internal charlie;
+    address internal markdownController;
+
+    function setUp() public {
+        owner = makeAddr("owner");
+        minter = makeAddr("minter");
+        distributor = makeAddr("distributor");
+        alice = makeAddr("alice");
+        bob = makeAddr("bob");
+        charlie = makeAddr("charlie");
+        markdownController = makeAddr("markdownController");
+
+        token = new JaneV1(owner, distributor);
+
+        vm.startPrank(owner);
+        token.grantRole(MINTER_ROLE, minter);
+        token.setMarkdownController(markdownController);
+        vm.stopPrank();
+
         mintTokens(alice, 1000e18);
         mintTokens(bob, 1000e18);
         mintTokens(charlie, 1000e18);
+    }
 
-        markdownController = makeAddr("markdownController");
-        vm.label(markdownController, "MarkdownController");
-
-        // Set markdown controller
-        vm.prank(owner);
-        token.setMarkdownController(markdownController);
+    function mintTokens(address to, uint256 amount) internal {
+        vm.prank(minter);
+        token.mint(to, amount);
     }
 
     function test_redistributeFromBorrower_success() public {
@@ -46,31 +68,30 @@ contract JaneTokenRedistributeTest is JaneSetup {
 
     function test_redistributeFromBorrower_unauthorizedCaller() public {
         vm.prank(alice);
-        vm.expectRevert(Jane.Unauthorized.selector);
+        vm.expectRevert(JaneV1.Unauthorized.selector);
         token.redistributeFromBorrower(bob, 100e18);
     }
 
     function test_redistributeFromBorrower_nonMarkdownController() public {
         vm.prank(owner);
-        vm.expectRevert(Jane.Unauthorized.selector);
+        vm.expectRevert(JaneV1.Unauthorized.selector);
         token.redistributeFromBorrower(alice, 100e18);
     }
 
     function test_redistributeFromBorrower_zeroAddressBorrower() public {
         vm.prank(markdownController);
-        vm.expectRevert(Jane.InvalidAddress.selector);
+        vm.expectRevert(JaneV1.InvalidAddress.selector);
         token.redistributeFromBorrower(address(0), 100e18);
     }
 
     function test_redistributeFromBorrower_noDistributorSet() public {
-        // Deploy new token without distributor
-        Jane newToken = new Jane(owner, address(0));
+        JaneV1 newToken = new JaneV1(owner, address(0));
 
         vm.prank(owner);
         newToken.setMarkdownController(markdownController);
 
         vm.prank(markdownController);
-        vm.expectRevert(Jane.InvalidAddress.selector);
+        vm.expectRevert(JaneV1.InvalidAddress.selector);
         newToken.redistributeFromBorrower(alice, 100e18);
     }
 
@@ -108,11 +129,10 @@ contract JaneTokenRedistributeTest is JaneSetup {
     }
 
     function test_redistributeFromBorrower_withTransferRestrictions() public {
-        // Transfer restrictions should not affect redistribution
         assertFalse(token.transferable());
 
         vm.prank(alice);
-        vm.expectRevert(Jane.TransferNotAllowed.selector);
+        vm.expectRevert(JaneV1.TransferNotAllowed.selector);
         token.transfer(bob, 100e18);
 
         vm.prank(markdownController);

@@ -99,15 +99,19 @@ Foundry CI jobs seed fuzz/invariant runs from base SHA or commit SHA for determi
 
 ## Jane Module Guide (`src/jane/`)
 
-- `src/jane/Jane.sol`: ERC20 + permit token with role-based minting/transfer gates and MarkdownController-driven redistribution from delinquent borrowers.
+- `src/jane/Jane.sol`: JANE 2.0 — ERC20 + permit token with role-based minting/transfer gates and a holder self-burn (`burn`, not gated by `transferable` or `TRANSFER_ROLE`; no `burnFrom`). It has no MarkdownController coupling.
+- `src/jane/JaneV1.sol`: the deployed legacy JANE token the MarkdownController integrates with (borrower freeze checks on transfer and controller-only `redistributeFromBorrower`). Retained unchanged apart from its name.
+- `src/interfaces/IJane.sol`: minimal `IERC20` + `mint` surface used by `RewardsDistributor`; both `Jane` and `JaneV1` satisfy it.
 - `src/jane/RewardsDistributor.sol`: merkle-based cumulative rewards claims with epoch emission caps and transfer/mint distribution modes.
-- Integration point: `src/MarkdownController.sol` freezes borrower transferability and can slash/redistribute JANE during delinquency/default transitions.
+- Integration point: `src/MarkdownController.sol` freezes borrower transferability and can slash/redistribute legacy `JaneV1` during delinquency/default transitions.
 
 Primary Jane tests:
 
 - `test/forge/jane/JaneTokenAccessControl.t.sol`
 - `test/forge/jane/JaneTokenTransfer.t.sol`
 - `test/forge/jane/JaneTokenMintFinalization.t.sol`
+- `test/forge/jane/JaneTokenBurn.t.sol`
+- `test/forge/jane/JaneV1Redistribute.t.sol`
 - `test/forge/jane/rewards/RewardsDistributorUnit.t.sol`
 - `test/forge/jane/rewards/RewardsDistributorSecurity.t.sol`
 - `test/forge/jane/rewards/RewardsDistributorIntegration.t.sol`
@@ -270,17 +274,17 @@ Two properties of the premium leg must not be forgotten. The measured ratio is a
 - Share-based accounting via `SharesMathLib` and market/position state.
 - Hook points (`_before*`, `_after*`) are used to integrate borrower-premium accrual behavior.
 - 3Jane model introduces unsecured credit-line behavior and borrower-specific pricing.
-- JANE token behavior is enforced through role controls plus borrower freeze/redistribution interactions with `MarkdownController`.
+- JANE token behavior is enforced through role controls; the legacy `JaneV1` token adds borrower freeze/redistribution interactions with `MarkdownController`.
 
 ## Markdown + JANE Redistribution Flow
 
-JANE redistribution is driven by markdown/default logic rather than a separate burner-controller stack.
+JANE redistribution applies to the legacy `JaneV1` token and is driven by markdown/default logic rather than a separate burner-controller stack. The JANE 2.0 token (`src/jane/Jane.sol`) takes no part in it.
 
 - `src/MarkdownController.sol`: tracks borrower markdown state, freeze status, and proportional/full JANE slashing.
-- `src/jane/Jane.sol`: enforces transfer restrictions and only allows redistribution through the configured markdown controller.
+- `src/jane/JaneV1.sol`: enforces transfer restrictions and only allows redistribution through the configured markdown controller.
 - `src/jane/RewardsDistributor.sol`: handles protocol rewards independently of markdown redistribution.
 
-Owner and authorization boundaries across `Jane`, `RewardsDistributor`, and `MarkdownController` should be validated whenever JANE flows are modified.
+Owner and authorization boundaries across `Jane`, `JaneV1`, `RewardsDistributor`, and `MarkdownController` should be validated whenever JANE flows are modified.
 
 ## Documentation Index
 

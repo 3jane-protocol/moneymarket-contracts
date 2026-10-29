@@ -14,7 +14,7 @@ import {OracleMock} from "../../../../src/mocks/OracleMock.sol";
 import {ConfigurableIrmMock} from "../../mocks/ConfigurableIrmMock.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {MockProtocolConfig} from "../mocks/MockProtocolConfig.sol";
-import {Jane} from "../../../../src/jane/Jane.sol";
+import {JaneV1} from "../../../../src/jane/JaneV1.sol";
 import {HelperMock} from "../../../../src/mocks/HelperMock.sol";
 import {
     TransparentUpgradeableProxy
@@ -54,7 +54,7 @@ contract StaleMarkdownBurnBaselineTest is Test {
     MockProtocolConfig public protocolConfig;
     CreditLineMock public creditLine;
     MarkdownController public markdownController;
-    Jane public janeToken;
+    JaneV1 public janeToken;
     HelperMock public helper;
 
     ERC20Mock public loanToken;
@@ -107,7 +107,7 @@ contract StaleMarkdownBurnBaselineTest is Test {
         morpho.setUsd3(morphoOwner);
 
         // Deploy JANE token - test contract is owner for easier role management
-        janeToken = new Jane(address(this), address(this));
+        janeToken = new JaneV1(address(this), address(this));
 
         // Deploy credit line mock
         creditLine = new CreditLineMock(address(morpho));

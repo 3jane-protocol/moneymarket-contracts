@@ -278,7 +278,7 @@ contract RewardsDistributorUnitTest is RewardsDistributorSetup {
 
     /// @notice Test sweep function
     function test_sweep() public {
-        Jane otherToken = new Jane(owner, distributor);
+        Jane otherToken = new Jane(owner);
         vm.startPrank(owner);
         otherToken.setTransferable();
         otherToken.grantRole(MINTER_ROLE, minter);
