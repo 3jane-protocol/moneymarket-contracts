@@ -3,7 +3,6 @@ pragma solidity ^0.8.22;
 
 import {ERC20, ERC20Permit} from "../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import {AccessControlEnumerable} from "../../lib/openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
-import {IMarkdownController} from "../interfaces/IMarkdownController.sol";
 
 /**
  * @title Jane
@@ -12,10 +11,8 @@ import {IMarkdownController} from "../interfaces/IMarkdownController.sol";
 contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
     error TransferNotAllowed();
     error InvalidAddress();
-    error Unauthorized();
 
     event TransferEnabled();
-    event MarkdownControllerSet(address indexed controller);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     /// @notice Role identifier for the owner (can manage all roles and contract parameters)
@@ -31,23 +28,15 @@ contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
     /// @dev When true, anyone can transfer. When false, only addresses with transfer role can participate in transfers
     bool public transferable;
 
-    /// @notice MarkdownController that manages transfer freezes for delinquent borrowers
-    address public markdownController;
-
-    /// @notice Address that will receive redistributed tokens
-    address public distributor;
-
     /**
-     * @notice Initializes the JANE token with owner and distributor
+     * @notice Initializes the JANE token with its owner
      * @param _initialOwner Address that will be the contract owner
-     * @param _distributor Address that will receive redistributed tokens from defaulted borrowers
      */
-    constructor(address _initialOwner, address _distributor) ERC20("JANE", "JANE") ERC20Permit("JANE") {
+    constructor(address _initialOwner) ERC20("JANE", "JANE") ERC20Permit("JANE") {
         if (_initialOwner == address(0)) revert InvalidAddress();
         _grantRole(OWNER_ROLE, _initialOwner);
         _setRoleAdmin(MINTER_ROLE, OWNER_ROLE);
         _setRoleAdmin(TRANSFER_ROLE, OWNER_ROLE);
-        distributor = _distributor;
     }
 
     /**
@@ -57,15 +46,6 @@ contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
     function setTransferable() external onlyRole(OWNER_ROLE) {
         transferable = true;
         emit TransferEnabled();
-    }
-
-    /**
-     * @notice Sets the MarkdownController address
-     * @param _controller Address of the MarkdownController contract
-     */
-    function setMarkdownController(address _controller) external onlyRole(OWNER_ROLE) {
-        markdownController = _controller;
-        emit MarkdownControllerSet(_controller);
     }
 
     /**
@@ -120,16 +100,10 @@ contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
         _mint(account, value);
     }
 
-    /**
-     * @notice Redistributes JANE from defaulted borrower to distributor
-     * @dev Only callable by MarkdownController during default/settlement
-     * @param borrower Address of the defaulted borrower
-     * @param amount Amount of tokens to redistribute
-     */
-    function redistributeFromBorrower(address borrower, uint256 amount) external {
-        if (msg.sender != markdownController) revert Unauthorized();
-        if (borrower == address(0) || distributor == address(0)) revert InvalidAddress();
-        _transfer(borrower, distributor, amount);
+    /// @notice Burns `value` tokens from the caller's balance
+    /// @dev Not gated by `transferable` or `TRANSFER_ROLE`; a holder may always burn their own tokens
+    function burn(uint256 value) external {
+        _burn(_msgSender(), value);
     }
 
     /**
@@ -137,21 +111,10 @@ contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
      * @dev Internal helper function for transfer validation
      * @param from Address sending tokens
      * @param to Address receiving tokens
-     * @return bool True if the transfer is allowed
+     * @return bool True if transfers are globally enabled or either party holds the transfer role
      */
     function _canTransfer(address from, address to) internal view returns (bool) {
-        // First check if transfers are even allowed (cheap checks)
-        if (!transferable && !hasRole(TRANSFER_ROLE, from) && !hasRole(TRANSFER_ROLE, to)) {
-            return false;
-        }
-
-        // Only if transfers would be allowed, check the expensive freeze status
-        address _markdownController = markdownController;
-        if (_markdownController != address(0)) {
-            return !IMarkdownController(_markdownController).isFrozen(from);
-        }
-
-        return true;
+        return transferable || hasRole(TRANSFER_ROLE, from) || hasRole(TRANSFER_ROLE, to);
     }
 
     /**

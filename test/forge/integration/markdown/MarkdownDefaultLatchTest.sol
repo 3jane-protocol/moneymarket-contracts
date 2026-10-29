@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "../../BaseTest.sol";
-import {Jane} from "../../../../src/jane/Jane.sol";
+import {JaneV1} from "../../../../src/jane/JaneV1.sol";
 import {MarkdownController} from "../../../../src/MarkdownController.sol";
 import {CreditLineMock} from "../../../../src/mocks/CreditLineMock.sol";
 import {Market} from "../../../../src/interfaces/IMorpho.sol";
@@ -34,7 +34,7 @@ contract MarkdownDefaultLatchTest is BaseTest {
 
     bytes32 internal constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
-    Jane internal jane;
+    JaneV1 internal jane;
     MarkdownController internal markdownController;
     CreditLineMock internal creditLine;
     IMorphoCredit internal morphoCredit;
@@ -51,7 +51,7 @@ contract MarkdownDefaultLatchTest is BaseTest {
         janeOwner = makeAddr("janeOwner");
         janeMinter = makeAddr("janeMinter");
         janeDistributor = makeAddr("janeDistributor");
-        jane = new Jane(janeOwner, janeDistributor);
+        jane = new JaneV1(janeOwner, janeDistributor);
         vm.prank(janeOwner);
         jane.grantRole(MINTER_ROLE, janeMinter);
 

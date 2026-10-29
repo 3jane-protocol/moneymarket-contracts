@@ -36,7 +36,7 @@ contract JaneSetup is Test {
         charlie = makeAddr("charlie");
         treasury = makeAddr("treasury");
 
-        token = new Jane(owner, distributor);
+        token = new Jane(owner);
 
         // Grant MINTER_ROLE to minter for tests
         vm.prank(owner);

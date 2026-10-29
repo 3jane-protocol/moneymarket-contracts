@@ -23,7 +23,7 @@ This repository extends Morpho Blue with 3Jane credit primitives and USD3/sUSD3 
 
 - Unsecured lending path via credit-line controls.
 - Per-borrower premium model layered on top of base IRM rate.
-- Settlement paths include write-off handling and JANE markdown/redistribution integration.
+- Settlement paths include write-off handling and markdown/redistribution integration with the legacy `JaneV1` token.
 
 ## USD3/sUSD3 Tranche Waterfall and Risk Disclosure
 
@@ -48,11 +48,13 @@ Those live addresses must be read before relying on that path.
 
 ## Jane Domain (Token + Rewards)
 
-- `src/jane/Jane.sol` implements the JANE token with role-based mint/transfer controls and `MarkdownController` integration for borrower freezes and redistribution.
+- `src/jane/Jane.sol` implements the JANE 2.0 token with role-based mint/transfer controls and a holder self-burn (`burn`, not gated by transferability); it has no `MarkdownController` coupling.
+- `src/jane/JaneV1.sol` is the deployed legacy JANE token retained for the `MarkdownController` integration: borrower freeze checks on transfer and controller-only `redistributeFromBorrower`.
 - `src/jane/RewardsDistributor.sol` implements cumulative merkle-based rewards claims, optional mint-vs-transfer payout mode, and global emissions caps.
-- `src/MarkdownController.sol` orchestrates markdown-driven borrower freezing and proportional/full redistribution calls into `Jane`.
+- `src/MarkdownController.sol` orchestrates markdown-driven borrower freezing and proportional/full redistribution calls into `JaneV1`.
+- `src/interfaces/IJane.sol` is the minimal `IERC20` + `mint` surface `RewardsDistributor` uses; both `Jane` and `JaneV1` satisfy it.
 - Security boundaries center on:
-  - role ownership and minter finalization in `Jane`
+  - role ownership and minter finalization in `Jane` and `JaneV1`
   - owner-only root/emission updates in `RewardsDistributor`
   - `onlyMorphoCredit` and markdown enablement gates in `MarkdownController`
 

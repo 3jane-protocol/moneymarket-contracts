@@ -5,7 +5,7 @@ import {Ownable} from "../../lib/openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "../../lib/openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MerkleProof} from "../../lib/openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {ReentrancyGuard} from "../../lib/openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Jane} from "./Jane.sol";
+import {IJane} from "../interfaces/IJane.sol";
 
 /**
  * @title RewardsDistributor
@@ -35,7 +35,7 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
     uint256 internal constant EPOCH = 604800;
 
     /// @notice The JANE token being distributed
-    Jane public immutable jane;
+    IJane public immutable jane;
 
     /// @notice Whether to mint tokens on claim (true) or transfer from balance (false)
     bool public useMint;
@@ -63,7 +63,7 @@ contract RewardsDistributor is Ownable, ReentrancyGuard {
      * @param _start The start timestamp of epoch 0
      */
     constructor(address _initialOwner, address _jane, bool _useMint, uint256 _start) Ownable(_initialOwner) {
-        jane = Jane(_jane);
+        jane = IJane(_jane);
         useMint = _useMint;
         START = _start;
     }

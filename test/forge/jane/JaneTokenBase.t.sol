@@ -10,12 +10,11 @@ contract JaneTokenBaseTest is JaneSetup {
         assertTrue(token.hasRole(MINTER_ROLE, minter));
         assertEq(token.getRoleMemberCount(MINTER_ROLE), 1);
         assertFalse(token.hasRole(TRANSFER_ROLE, owner));
-        assertEq(token.distributor(), distributor);
     }
 
     function test_constructor_revertsWithZeroOwner() public {
         vm.expectRevert(Jane.InvalidAddress.selector);
-        new Jane(address(0), distributor);
+        new Jane(address(0));
     }
 
     function test_tokenMetadata() public view {
@@ -89,10 +88,9 @@ contract JaneTokenBaseTest is JaneSetup {
         assertEq(token.balanceOf(recipient), amount);
     }
 
-    function test_constructor_allowsZeroDistributor() public {
-        Jane newToken = new Jane(owner, address(0));
+    function test_constructor_grantsNoMinters() public {
+        Jane newToken = new Jane(owner);
         assertEq(newToken.getRoleMemberCount(MINTER_ROLE), 0);
         assertEq(newToken.owner(), owner);
-        assertEq(newToken.distributor(), address(0));
     }
 }

@@ -5,7 +5,7 @@ import {IMarkdownController} from "./interfaces/IMarkdownController.sol";
 import {IProtocolConfig} from "./interfaces/IProtocolConfig.sol";
 import {ProtocolConfigLib} from "./libraries/ProtocolConfigLib.sol";
 import {Ownable} from "../lib/openzeppelin/contracts/access/Ownable.sol";
-import {Jane} from "./jane/Jane.sol";
+import {JaneV1} from "./jane/JaneV1.sol";
 import {IMorphoCredit} from "./interfaces/IMorpho.sol";
 import {MorphoCreditLib} from "./libraries/periphery/MorphoCreditLib.sol";
 import {Id, RepaymentStatus} from "./interfaces/IMorpho.sol";
@@ -26,7 +26,7 @@ contract MarkdownController is IMarkdownController, Ownable {
     address public immutable protocolConfig;
 
     /// @notice The JANE token contract
-    Jane public immutable jane;
+    JaneV1 public immutable jane;
 
     /// @notice The MorphoCredit contract address
     address public immutable morphoCredit;
@@ -61,7 +61,7 @@ contract MarkdownController is IMarkdownController, Ownable {
         require(_jane != address(0), "Invalid jane");
         require(_morphoCredit != address(0), "Invalid morphoCredit");
         protocolConfig = _protocolConfig;
-        jane = Jane(_jane);
+        jane = JaneV1(_jane);
         morphoCredit = _morphoCredit;
         marketId = _marketId;
     }
