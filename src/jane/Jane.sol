@@ -2,18 +2,31 @@
 pragma solidity ^0.8.22;
 
 import {ERC20, ERC20Permit} from "../../lib/openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-import {AccessControlEnumerable} from "../../lib/openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
+import {
+    AccessControl,
+    AccessControlEnumerable
+} from "../../lib/openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
+import {IAccessControl} from "../../lib/openzeppelin/contracts/access/IAccessControl.sol";
+import {ITransferController} from "../interfaces/ITransferController.sol";
 
 /**
  * @title Jane
  * @notice 3Jane protocol governance and rewards token with controlled transfer capabilities
+ * @dev An optional owner-set transfer controller is consulted on `transfer` and `transferFrom` only: `canTransfer`
+ * before balances change and `didTransfer` after. It is additive to the `transferable` / `TRANSFER_ROLE` gate, so
+ * both must allow a transfer and `TRANSFER_ROLE` does not bypass the controller. `mint` and `burn` bypass the
+ * controller, and `permit` does not consult it. The controller is trusted; a revert in either hook reverts the
+ * transfer. The controller hooks live in `transfer` and `transferFrom` only, so any function that moves balances
+ * through `_transfer` or `_update` must call the same hooks explicitly to stay under the controller.
  */
 contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
     error TransferNotAllowed();
     error InvalidAddress();
+    error ControllerStillSet();
 
     event TransferEnabled();
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event TransferControllerSet(address indexed controller);
 
     /// @notice Role identifier for the owner (can manage all roles and contract parameters)
     bytes32 public constant OWNER_ROLE = keccak256("OWNER_ROLE");
@@ -27,6 +40,9 @@ contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
     /// @notice Whether transfers are globally enabled for all users
     /// @dev When true, anyone can transfer. When false, only addresses with transfer role can participate in transfers
     bool public transferable;
+
+    /// @notice External transfer policy consulted on `transfer` and `transferFrom`; address(0) when disabled
+    address public transferController;
 
     /**
      * @notice Initializes the JANE token with its owner
@@ -46,6 +62,15 @@ contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
     function setTransferable() external onlyRole(OWNER_ROLE) {
         transferable = true;
         emit TransferEnabled();
+    }
+
+    /**
+     * @notice Sets the transfer controller consulted on `transfer` and `transferFrom`
+     * @param controller Controller address, or address(0) to disable
+     */
+    function setTransferController(address controller) external onlyRole(OWNER_ROLE) {
+        transferController = controller;
+        emit TransferControllerSet(controller);
     }
 
     /**
@@ -72,21 +97,44 @@ contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
     }
 
     /**
-     * @inheritdoc ERC20
-     * @dev Adds transfer restrictions based on transferable status and transfer roles
+     * @inheritdoc AccessControl
+     * @dev Reverts with `ControllerStillSet` when an OWNER_ROLE holder renounces OWNER_ROLE while a transfer
+     * controller is set, which guarantees that an OWNER_ROLE holder continues to exist while a controller is set.
+     * Other calls fall through to the inherited checks. Transferring ownership to an address that cannot operate the
+     * token is the owner's responsibility, as with every other owner-gated function.
      */
-    function transfer(address to, uint256 value) public override returns (bool) {
-        if (!_canTransfer(_msgSender(), to)) revert TransferNotAllowed();
-        return super.transfer(to, value);
+    function renounceRole(bytes32 role, address callerConfirmation) public override(AccessControl, IAccessControl) {
+        if (
+            role == OWNER_ROLE && transferController != address(0) && callerConfirmation == _msgSender()
+                && hasRole(OWNER_ROLE, callerConfirmation)
+        ) revert ControllerStillSet();
+        super.renounceRole(role, callerConfirmation);
     }
 
     /**
      * @inheritdoc ERC20
-     * @dev Adds transfer restrictions based on transferable status and transfer roles
+     * @dev Adds transfer restrictions based on transferable status, transfer roles and the transfer controller
+     */
+    function transfer(address to, uint256 value) public override returns (bool) {
+        address controller = transferController;
+        address from = _msgSender();
+        if (!_canTransfer(controller, from, to, value)) revert TransferNotAllowed();
+        bool success = super.transfer(to, value);
+        _afterTransfer(controller, from, to, value);
+        return success;
+    }
+
+    /**
+     * @inheritdoc ERC20
+     * @dev Adds transfer restrictions based on transferable status, transfer roles and the transfer controller.
+     * The controller receives the token owner `from`, not the spender.
      */
     function transferFrom(address from, address to, uint256 value) public override returns (bool) {
-        if (!_canTransfer(from, to)) revert TransferNotAllowed();
-        return super.transferFrom(from, to, value);
+        address controller = transferController;
+        if (!_canTransfer(controller, from, to, value)) revert TransferNotAllowed();
+        bool success = super.transferFrom(from, to, value);
+        _afterTransfer(controller, from, to, value);
+        return success;
     }
 
     /**
@@ -101,20 +149,36 @@ contract Jane is ERC20, ERC20Permit, AccessControlEnumerable {
     }
 
     /// @notice Burns `value` tokens from the caller's balance
-    /// @dev Not gated by `transferable` or `TRANSFER_ROLE`; a holder may always burn their own tokens
+    /// @dev Not gated by `transferable`, `TRANSFER_ROLE` or the transfer controller; a holder may always burn their
+    /// own tokens
     function burn(uint256 value) external {
         _burn(_msgSender(), value);
     }
 
     /**
      * @notice Checks if a transfer is allowed based on current restrictions
-     * @dev Internal helper function for transfer validation
+     * @dev The role gate is evaluated first; the controller is consulted only when the role gate passes
+     * @param controller Transfer controller, or address(0) when disabled
      * @param from Address sending tokens
      * @param to Address receiving tokens
-     * @return bool True if transfers are globally enabled or either party holds the transfer role
+     * @param amount Amount being transferred
+     * @return bool True if transfers are globally enabled or either party holds the transfer role, and the
+     * controller is unset or allows the transfer
      */
-    function _canTransfer(address from, address to) internal view returns (bool) {
-        return transferable || hasRole(TRANSFER_ROLE, from) || hasRole(TRANSFER_ROLE, to);
+    function _canTransfer(address controller, address from, address to, uint256 amount) internal view returns (bool) {
+        if (!transferable && !hasRole(TRANSFER_ROLE, from) && !hasRole(TRANSFER_ROLE, to)) return false;
+        return controller == address(0) || ITransferController(controller).canTransfer(from, to, amount);
+    }
+
+    /**
+     * @notice Notifies the transfer controller after balances have changed
+     * @param controller Transfer controller, or address(0) when disabled
+     * @param from Address that sent tokens
+     * @param to Address that received tokens
+     * @param amount Amount transferred
+     */
+    function _afterTransfer(address controller, address from, address to, uint256 amount) internal {
+        if (controller != address(0)) ITransferController(controller).didTransfer(from, to, amount);
     }
 
     /**

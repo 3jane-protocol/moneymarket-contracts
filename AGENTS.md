@@ -99,7 +99,8 @@ Foundry CI jobs seed fuzz/invariant runs from base SHA or commit SHA for determi
 
 ## Jane Module Guide (`src/jane/`)
 
-- `src/jane/Jane.sol`: JANE 2.0 — ERC20 + permit token with role-based minting/transfer gates and a holder self-burn (`burn`, not gated by `transferable` or `TRANSFER_ROLE`; no `burnFrom`). It has no MarkdownController coupling.
+- `src/jane/Jane.sol`: JANE 2.0 — ERC20 + permit token with role-based minting/transfer gates and a holder self-burn (`burn`, not gated by `transferable` or `TRANSFER_ROLE`; no `burnFrom`). It has no MarkdownController coupling. An optional owner-set transfer controller (`setTransferController`, `address(0)` disables) is consulted on `transfer`/`transferFrom` only: `canTransfer(from, to, amount)` before balances change and `didTransfer` after, with `from` the token owner rather than the spender. It is additive to the `transferable`/`TRANSFER_ROLE` gate (the role gate runs first and `TRANSFER_ROLE` does not bypass the controller); `mint`, `burn`, and `permit` do not consult it. The controller is trusted, and a revert in either hook reverts the transfer, so an `OWNER_ROLE` holder's `renounceRole(OWNER_ROLE, self)` reverts `ControllerStillSet` while a controller is set, guaranteeing an `OWNER_ROLE` holder continues to exist; `transferOwnership` to an inoperable address is the owner's responsibility, as with every other owner-gated function. `RewardsDistributor` transfer-mode claims pay out through `jane.transfer` from the distributor's balance and so pass through the controller (`from` = distributor, `to` = claimant), so a controller must permit the distributor's outbound transfers or the distributor must run in mint mode.
+- `src/interfaces/ITransferController.sol`: the `canTransfer` / `didTransfer` hook surface `Jane` calls; `src/mocks/TransferControllerMock.sol` is its configurable test mock.
 - `src/jane/JaneV1.sol`: the deployed legacy JANE token the MarkdownController integrates with (borrower freeze checks on transfer and controller-only `redistributeFromBorrower`). Retained unchanged apart from its name.
 - `src/interfaces/IJane.sol`: minimal `IERC20` + `mint` surface used by `RewardsDistributor`; both `Jane` and `JaneV1` satisfy it.
 - `src/jane/RewardsDistributor.sol`: merkle-based cumulative rewards claims with epoch emission caps and transfer/mint distribution modes.
@@ -109,6 +110,7 @@ Primary Jane tests:
 
 - `test/forge/jane/JaneTokenAccessControl.t.sol`
 - `test/forge/jane/JaneTokenTransfer.t.sol`
+- `test/forge/jane/JaneTokenTransferController.t.sol`
 - `test/forge/jane/JaneTokenMintFinalization.t.sol`
 - `test/forge/jane/JaneTokenBurn.t.sol`
 - `test/forge/jane/JaneV1Redistribute.t.sol`
